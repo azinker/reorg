@@ -1,0 +1,41 @@
+---
+description: Prisma schema and database conventions for reorG
+globs: "**/prisma/**"
+alwaysApply: false
+---
+
+# reorG Prisma / Database Conventions
+
+## Schema Design
+
+- Every table has a `id` field (cuid or uuid)
+- Use `@unique` on natural keys (e.g., `sku` on MasterRow, `key` on AppSetting)
+- Use explicit foreign key relations with `@relation` — no implicit relations
+- Use `DateTime` with `@default(now())` for `createdAt` and `@updatedAt` for `updatedAt`
+- Store JSON blobs in `Json` type fields (e.g., `rawData`, `config`, `details`)
+- Use enums for fixed sets: `Role`, `Platform`, `SyncStatus`, `ChangeStatus`, `PushStatus`
+
+## Key Tables and Their Purpose
+
+- `MasterRow` — one per unique master-store SKU; holds shared internal data (weight, supplier cost, etc.)
+- `MarketplaceListing` — one per marketplace item/variant; linked to MasterRow by SKU; holds live marketplace data
+- `StagedChange` — separate from MarketplaceListing; holds user edits until pushed or cancelled
+- `Integration` — one per connected store; holds platform type, config, write lock state
+- `ShippingRate` — weight-to-cost mapping table
+- `SyncJob` / `PushJob` — audit records for sync and push operations
+- `AuditLog` — general audit trail
+- `Backup` — backup metadata with R2 storage keys
+
+## Migration Safety
+
+- Always review generated SQL before applying migrations
+- Never use `prisma db push` in production — use `prisma migrate deploy`
+- Name migrations descriptively: `add_staged_change_table`, `add_platform_fee_to_master_row`
+- Test migrations against a copy of production data shape before deploying
+
+## Query Patterns
+
+- Use Prisma Client in service functions only (`src/lib/services/`)
+- Use `select` or `include` to limit fetched fields — never fetch entire rows with all relations by default
+- Use transactions (`prisma.$transaction`) for multi-table writes
+- Use `findFirst` with `where` for single-record lookups, not `findMany()[0]`

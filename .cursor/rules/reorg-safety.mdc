@@ -1,0 +1,47 @@
+---
+description: Absolute safety rules for reorG marketplace operations — write safety, no-delete, staged value protection, environment guards
+alwaysApply: true
+---
+
+# reorG Safety Rules
+
+These rules are non-negotiable across every file, feature, and refactor.
+
+## No Deletion
+
+- NEVER create, reference, or implement marketplace listing deletion logic
+- NEVER create API endpoints, service functions, UI buttons, or code paths that delete listings
+- If an SDK/API client exposes delete methods, do not call them — do not even import them
+- If a pull request introduces any delete-adjacent code for listings, reject it
+
+## No Silent Writes
+
+- NEVER push data to any marketplace without explicit user confirmation
+- Every push must go through: write lock check → dry-run → user confirmation → execute → audit log
+- Sync is always pull-only — it must never write to any marketplace
+- Sync must never overwrite StagedChange records; it only updates MarketplaceListing (live values)
+
+## Staged Value Protection
+
+- StagedChange is a separate table from MarketplaceListing
+- When sync runs, it updates MarketplaceListing fields — never StagedChange
+- Autosaved edits create/update StagedChange records — they never directly mutate MarketplaceListing
+- A staged value persists until the user explicitly pushes or cancels it
+
+## Environment Guards
+
+- Staging environment (`stage.reorg.theperfectpart.net`) is write-protected by default
+- Check `NEXT_PUBLIC_APP_ENV` and enforce write blocks in staging unless explicitly overridden
+- Production must launch with write locks easily accessible and controllable
+
+## Backup Safety
+
+- v1 backups are export/download only
+- Do not implement automated restore-to-marketplace functionality in v1
+- Architecture may be future-ready for restore, but no restore execution code in v1
+
+## Secrets
+
+- Never log, return in API responses, or render in client components: API keys, tokens, passwords, connection strings
+- Use server-only environment variables; prefix public-safe values with `NEXT_PUBLIC_`
+- Never commit `.env` files to git

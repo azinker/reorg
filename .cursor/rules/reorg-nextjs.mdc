@@ -1,0 +1,60 @@
+---
+description: Next.js and TypeScript conventions for the reorG project
+globs: "**/*.ts,**/*.tsx"
+alwaysApply: false
+---
+
+# reorG Next.js / TypeScript Conventions
+
+## TypeScript
+
+- Strict mode is mandatory (`"strict": true` in tsconfig)
+- No `any` types unless unavoidable and documented with a comment explaining why
+- Use Zod schemas for all API request validation
+- Export typed interfaces/types from dedicated files, not inline in components
+- Use the `@/*` import alias for all project imports
+
+## Component Architecture
+
+- Prefer React Server Components by default
+- Only add `"use client"` when the component needs browser APIs, event handlers, hooks, or state
+- File naming: kebab-case (e.g., `master-row.tsx`, `push-confirm-modal.tsx`)
+- Component naming: PascalCase (e.g., `MasterRow`, `PushConfirmModal`)
+- Utility/service naming: camelCase (e.g., `calculateProfit`, `syncEbayListings`)
+
+## API Routes
+
+- All route handlers live in `src/app/api/`
+- Validate input with Zod before any processing
+- Never call Prisma directly in route handlers — go through service functions in `src/lib/services/`
+- Return typed JSON responses with consistent shape: `{ data, error, meta }`
+- Always include proper HTTP status codes
+
+## Error Handling
+
+```typescript
+// Always catch, log with context, and return structured errors
+try {
+  const result = await someService.doThing(input);
+  return NextResponse.json({ data: result });
+} catch (error) {
+  console.error('[push] Failed to push changes', { sku, error });
+  return NextResponse.json(
+    { error: 'Failed to push changes' },
+    { status: 500 }
+  );
+}
+```
+
+## State Management
+
+- Server state: fetch in server components or use React Query if needed client-side
+- Client state: Zustand stores in `src/stores/`
+- Grid state: managed by TanStack Table instance, synced to Zustand for cross-component access
+- No Redux, no Context API for global state
+
+## Performance
+
+- Use `React.memo` and `useMemo` judiciously for expensive grid cell renders
+- Virtualize the main data grid with TanStack Virtual
+- Lazy load heavy components (modals, drawers, Engine Room charts) with `dynamic` or `React.lazy`

@@ -1,0 +1,23 @@
+# Virtual environment
+.venv/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+*.swp
+*.swo
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Skill-generated files
+.cursor/skills/ui-ux-pro-max/design-system/
+
+# Env files (secrets)
+reorg/.env
+reorg/.env.local
+reorg/.env.*.local

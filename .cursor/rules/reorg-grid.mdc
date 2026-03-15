@@ -1,0 +1,62 @@
+---
+description: Data grid, row model, and table UX rules for the reorG main dashboard
+globs: "**/grid/**,**/dashboard/**"
+alwaysApply: false
+---
+
+# reorG Grid / Table Conventions
+
+## Row Model
+
+- One main row = one master-store SKU group (MasterRow + linked MarketplaceListings)
+- NOT one row per marketplace listing, NOT one row per store
+- Shared internal values (weight, supplier cost, supplier shipping) display once at row level
+- Store-specific values (sale price, profit, ad rate, item IDs) display as uniform mini-blocks inside the cell
+
+## Store Mini-Blocks
+
+- Each store-specific cell contains equal-size mini-blocks tagged with store acronym (TPP, TT, BC, SHPFY)
+- Mini-blocks must be visually uniform and aligned across rows
+- Use store logos/icons where helpful
+- Support multiple blocks per store (duplicate listings for same SKU)
+- Empty store slots should not cause layout shifts — use consistent sizing
+
+## Frozen Columns
+
+- Default frozen: UPC, Item IDs, SKU, Title
+- User can unfreeze via Settings
+- Frozen columns stay visible during horizontal scroll
+
+## Search
+
+- Sticky at top of the grid page; hideable via user preference
+- Dynamic autocomplete — no need to press Enter
+- Search by: UPC, Item ID, SKU, Title
+- Support prefix, contains, and fuzzy typo tolerance
+- Selecting a result scrolls/jumps to the row in the virtualized grid
+
+## Variations
+
+- Parent row = synthetic grouping row
+- Child rows = indented underneath, clearly labeled
+- Collapsed by default; expandable
+- Auto-collapse on page refresh
+
+## Sorting and Density
+
+- Default sort: alphabetical by master-store title
+- Comfortable density default; density toggle available
+
+## Cell Editing
+
+- Editable cells: Sale Price, Promoted Ad Rate (push-enabled); Weight, Supplier Cost, Supplier Shipping, Platform Fee (internal only)
+- Edits autosave to StagedChange after 500ms debounce
+- Edits recalculate dependent values (profit, shipping cost) immediately on client
+- Edits never auto-push to marketplaces
+
+## Staged Visual Treatment
+
+- Staged values: prominent display with purple staged badge
+- Live values: smaller, shown underneath for comparison
+- Use subtle highlight — not error-red
+- Compare drawer available for detailed inspection

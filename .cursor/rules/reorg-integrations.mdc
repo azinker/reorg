@@ -1,0 +1,57 @@
+---
+description: Marketplace integration adapter patterns and sync rules for reorG
+globs: "**/integrations/**,**/services/sync*,**/services/push*"
+alwaysApply: false
+---
+
+# reorG Integration Conventions
+
+## Adapter Pattern
+
+All marketplace integrations implement a shared adapter interface:
+
+```typescript
+interface MarketplaceAdapter {
+  fetchListings(cursor?: string): AsyncGenerator<RawListing[]>;
+  fetchInventory(itemIds: string[]): Promise<InventoryMap>;
+  pushPriceUpdate(updates: PriceUpdate[]): Promise<PushResult>;
+  pushAdRateUpdate(updates: AdRateUpdate[]): Promise<PushResult>;
+  // NO delete methods — ever
+}
+```
+
+- Each adapter lives in `src/lib/integrations/` (ebay.ts, bigcommerce.ts, shopify.ts)
+- Shared types in `src/lib/integrations/types.ts`
+- Each adapter handles its own rate limiting, pagination, and error mapping
+
+## Sync Rules
+
+- Sync is always pull-only — it fetches data and updates `MarketplaceListing` records
+- Sync NEVER writes to marketplaces
+- Sync NEVER touches `StagedChange` records
+- After fetching, the sync service runs SKU matching to link listings to `MasterRow`
+- Unmatched listings go to `UnmatchedListing` table
+- Every sync creates a `SyncJob` record with status, timing, item counts, and errors
+
+## Push Rules
+
+- Push goes through the write safety chain (lock checks → dry-run → confirmation → execute → audit)
+- Push only modifies the specific fields the user confirmed (sale price, ad rate)
+- Push creates a `PushJob` record with full payload and result
+- Push triggers a targeted re-sync of affected listings after completion
+- Auto-backup before bulk pushes (>10 items)
+
+## Rate Limiting
+
+- eBay: ~5000 calls/day; use bulk endpoints where available; 30-min sync interval
+- BigCommerce: tier-based generous limits; 15-min sync interval
+- Shopify: 2 req/sec REST or cost-based GraphQL; 15-min sync interval
+- Implement exponential backoff on rate limit errors (429 responses)
+- Log rate limit events to SyncJob errors
+
+## Error Handling
+
+- Map platform-specific errors to a unified error type
+- Log raw API error payloads behind a technical detail toggle
+- Surface plain-English summaries on the Errors page
+- Send critical failure alerts via Resend email

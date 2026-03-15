@@ -1,0 +1,354 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Enums ───────────────────────────────────────────────────────────────────
+
+enum Role {
+  ADMIN
+  OPERATOR
+}
+
+enum Platform {
+  TPP_EBAY
+  TT_EBAY
+  BIGCOMMERCE
+  SHOPIFY
+}
+
+enum SyncStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+enum ChangeStatus {
+  STAGED
+  PUSHED
+  CANCELLED
+}
+
+enum PushJobStatus {
+  PENDING
+  DRY_RUN
+  CONFIRMED
+  EXECUTING
+  COMPLETED
+  FAILED
+}
+
+enum BackupType {
+  DAILY
+  MANUAL
+  PRE_PUSH
+}
+
+enum BackupStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  FAILED
+}
+
+enum ListingStatus {
+  ACTIVE
+  OUT_OF_STOCK
+}
+
+// ─── Auth & Users ────────────────────────────────────────────────────────────
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  name          String?
+  passwordHash  String?
+  emailVerified DateTime?
+  image         String?
+  role          Role      @default(OPERATOR)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  accounts      Account[]
+  sessions      Session[]
+  stagedChanges StagedChange[]
+  pushJobs      PushJob[]
+  auditLogs     AuditLog[]
+
+  @@map("users")
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@map("accounts")
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+  @@map("verification_tokens")
+}
+
+// ─── Integrations ────────────────────────────────────────────────────────────
+
+model Integration {
+  id          String   @id @default(cuid())
+  platform    Platform @unique
+  label       String
+  enabled     Boolean  @default(false)
+  isMaster    Boolean  @default(false)
+  writeLocked Boolean  @default(true)
+  config      Json     @default("{}")
+  lastSyncAt  DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  listings          MarketplaceListing[]
+  unmatchedListings UnmatchedListing[]
+  syncJobs          SyncJob[]
+
+  @@map("integrations")
+}
+
+// ─── Core Data Model ─────────────────────────────────────────────────────────
+
+model MasterRow {
+  id                   String  @id @default(cuid())
+  sku                  String  @unique
+  title                String?
+  alternateTitles      Json    @default("[]")
+  imageUrl             String?
+  imageSource          String?
+  upc                  String?
+  weight               String?
+  weightDisplay        String?
+  weightOz             Float?
+  supplierCost         Float?
+  supplierShipping     Float?
+  shippingCostOverride Float?
+  platformFeeRate      Float   @default(0.136)
+  notes                String?
+  isActive             Boolean @default(true)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  listings      MarketplaceListing[]
+  stagedChanges StagedChange[]
+
+  @@index([sku])
+  @@index([title])
+  @@map("master_rows")
+}
+
+model MarketplaceListing {
+  id              String        @id @default(cuid())
+  masterRowId     String
+  integrationId   String
+  platformItemId  String
+  platformVariantId String?
+  sku             String
+  title           String?
+  imageUrl        String?
+  salePrice       Float?
+  adRate          Float?
+  inventory       Int?
+  status          ListingStatus @default(ACTIVE)
+  isVariation     Boolean       @default(false)
+  parentListingId String?
+  rawData         Json          @default("{}")
+  lastSyncedAt    DateTime?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  masterRow     MasterRow     @relation(fields: [masterRowId], references: [id])
+  integration   Integration   @relation(fields: [integrationId], references: [id])
+  parentListing MarketplaceListing? @relation("VariationParent", fields: [parentListingId], references: [id])
+  childListings MarketplaceListing[] @relation("VariationParent")
+  stagedChanges StagedChange[]
+
+  @@unique([integrationId, platformItemId, platformVariantId])
+  @@index([sku])
+  @@index([masterRowId])
+  @@index([integrationId])
+  @@index([parentListingId])
+  @@map("marketplace_listings")
+}
+
+model UnmatchedListing {
+  id             String   @id @default(cuid())
+  integrationId  String
+  platformItemId String
+  sku            String?
+  title          String?
+  rawData        Json     @default("{}")
+  lastSyncedAt   DateTime?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  integration Integration @relation(fields: [integrationId], references: [id])
+
+  @@unique([integrationId, platformItemId])
+  @@index([sku])
+  @@map("unmatched_listings")
+}
+
+// ─── Staged Changes ──────────────────────────────────────────────────────────
+
+model StagedChange {
+  id                   String       @id @default(cuid())
+  masterRowId          String
+  marketplaceListingId String?
+  field                String
+  stagedValue          String
+  liveValue            String?
+  changedById          String
+  status               ChangeStatus @default(STAGED)
+  pushedAt             DateTime?
+  createdAt            DateTime     @default(now())
+  updatedAt            DateTime     @updatedAt
+
+  masterRow          MasterRow           @relation(fields: [masterRowId], references: [id])
+  marketplaceListing MarketplaceListing? @relation(fields: [marketplaceListingId], references: [id])
+  changedBy          User                @relation(fields: [changedById], references: [id])
+
+  @@index([masterRowId])
+  @@index([status])
+  @@index([changedById])
+  @@map("staged_changes")
+}
+
+// ─── Shipping Rate Table ─────────────────────────────────────────────────────
+
+model ShippingRate {
+  id        String @id @default(cuid())
+  weightKey String @unique
+  weightOz  Float
+  cost      Float?
+  sortOrder Int    @default(0)
+
+  @@map("shipping_rates")
+}
+
+// ─── Sync & Push Jobs ────────────────────────────────────────────────────────
+
+model SyncJob {
+  id             String     @id @default(cuid())
+  integrationId  String
+  status         SyncStatus @default(PENDING)
+  triggeredBy    String?
+  itemsProcessed Int        @default(0)
+  itemsCreated   Int        @default(0)
+  itemsUpdated   Int        @default(0)
+  errors         Json       @default("[]")
+  startedAt      DateTime?
+  completedAt    DateTime?
+  createdAt      DateTime   @default(now())
+
+  integration Integration @relation(fields: [integrationId], references: [id])
+
+  @@index([integrationId])
+  @@index([status])
+  @@map("sync_jobs")
+}
+
+model PushJob {
+  id          String        @id @default(cuid())
+  userId      String
+  status      PushJobStatus @default(PENDING)
+  dryRun      Boolean       @default(true)
+  payload     Json          @default("[]")
+  result      Json          @default("{}")
+  createdAt   DateTime      @default(now())
+  completedAt DateTime?
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([status])
+  @@map("push_jobs")
+}
+
+// ─── Audit & Logs ────────────────────────────────────────────────────────────
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  userId     String?
+  action     String
+  entityType String?
+  entityId   String?
+  details    Json     @default("{}")
+  createdAt  DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([action])
+  @@index([entityType, entityId])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+// ─── Backups ─────────────────────────────────────────────────────────────────
+
+model Backup {
+  id         String       @id @default(cuid())
+  type       BackupType
+  storageKey String
+  fileName   String
+  size       Int?
+  stores     Json         @default("[]")
+  status     BackupStatus @default(PENDING)
+  notes      String?
+  expiresAt  DateTime
+  createdAt  DateTime     @default(now())
+
+  @@index([type])
+  @@index([status])
+  @@index([expiresAt])
+  @@map("backups")
+}
+
+// ─── App Settings ────────────────────────────────────────────────────────────
+
+model AppSetting {
+  key       String   @id
+  value     Json
+  updatedBy String?
+  updatedAt DateTime @updatedAt
+
+  @@map("app_settings")
+}

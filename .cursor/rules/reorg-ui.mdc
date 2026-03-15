@@ -1,0 +1,68 @@
+---
+description: UI and design system conventions for the reorG application
+globs: "**/*.tsx,**/components/**"
+alwaysApply: false
+---
+
+# reorG UI Conventions
+
+## Visual Identity
+
+- App: reorG by The Perfect Part
+- Premium operational dashboard feel — not a generic admin template
+- Dark mode default; light mode available via toggle
+- Color scheme ties into The Perfect Part brand from www.theperfectpart.net
+- High-contrast, clean, modern, professional
+
+## Component Library
+
+- Use shadcn/ui as the base component library
+- Use Tailwind CSS for styling — no CSS modules, no styled-components
+- Use Lucide icons (via lucide-react) — never use emojis as UI icons
+- Use proper brand SVGs from Simple Icons for marketplace logos where applicable
+
+## Layout
+
+- Sidebar navigation on the left (collapsible)
+- Top bar with app branding, user menu, theme toggle
+- Main content area with proper padding
+- Sticky search bar on the dashboard page
+- No content hidden behind fixed elements
+
+## Interaction Standards
+
+- All clickable elements: `cursor-pointer`
+- Hover feedback: color/opacity transitions (150-300ms) — no scale transforms that shift layout
+- Focus states visible for keyboard navigation
+- Modals close via X button and Esc key
+- Links to marketplace listings open in new tabs (`target="_blank"` with `rel="noopener noreferrer"`)
+- Confirm dialogs for all destructive or push operations
+
+## Data Display
+
+- Default timezone: America/New_York (configurable)
+- Numbers: locale-formatted with appropriate decimal places
+- Currency: USD with $ prefix, 2 decimal places
+- Percentages: display with % suffix, 1-2 decimal places
+- Dates: relative where recent ("2 min ago"), absolute where precision matters
+- Use consistent number formatting across all pages
+
+## Accessibility
+
+- All images have alt text
+- Form inputs have labels (visible or sr-only)
+- Color is never the sole indicator — pair with icons, text, or patterns
+- Respect `prefers-reduced-motion`
+- Minimum contrast ratios: 4.5:1 for normal text, 3:1 for large text
+
+## Responsive
+
+- Primary target: desktop (1280px+)
+- Must remain functional at 1024px
+- Mobile is not a priority but basic navigation should not break
+
+## Design System Reference
+
+- Global design rules: `design-system/MASTER.md`
+- Page-specific overrides: `design-system/pages/{page-name}.md`
+- When building a page, check for a page-specific override first; fall back to MASTER
