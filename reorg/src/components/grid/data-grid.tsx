@@ -803,8 +803,33 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
 
   useEffect(() => {
     const main = parentRef.current;
+    if (!main) return;
+
+    const updateOverflow = () => {
+      const overflowWidth = Math.max(0, main.scrollWidth - main.clientWidth);
+      setHorizontalOverflow({
+        active: overflowWidth > 24,
+        scrollWidth: Math.max(main.scrollWidth, main.clientWidth),
+      });
+    };
+
+    updateOverflow();
+
+    const observer = new ResizeObserver(updateOverflow);
+    observer.observe(main);
+    Array.from(main.children).forEach((child) => observer.observe(child));
+    window.addEventListener("resize", updateOverflow);
+
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", updateOverflow);
+    };
+  }, [totalMinWidth, flatRows.length, settings.density, columns]);
+
+  useEffect(() => {
+    const main = parentRef.current;
     const bottom = bottomScrollRef.current;
-    if (!main || !bottom) return;
+    if (!main || !bottom || !horizontalOverflow.active) return;
 
     const releaseSync = () => {
       requestAnimationFrame(() => {
@@ -826,34 +851,16 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
       releaseSync();
     };
 
-    const updateOverflow = () => {
-      const overflowWidth = Math.max(0, main.scrollWidth - main.clientWidth);
-      setHorizontalOverflow({
-        active: overflowWidth > 24,
-        scrollWidth: Math.max(main.scrollWidth, main.clientWidth),
-      });
-      if (Math.abs(bottom.scrollLeft - main.scrollLeft) > 1) {
-        bottom.scrollLeft = main.scrollLeft;
-      }
-    };
-
-    updateOverflow();
+    bottom.scrollLeft = main.scrollLeft;
 
     main.addEventListener("scroll", syncFromMain);
     bottom.addEventListener("scroll", syncFromBottom);
 
-    const observer = new ResizeObserver(updateOverflow);
-    observer.observe(main);
-    Array.from(main.children).forEach((child) => observer.observe(child));
-    window.addEventListener("resize", updateOverflow);
-
     return () => {
       main.removeEventListener("scroll", syncFromMain);
       bottom.removeEventListener("scroll", syncFromBottom);
-      observer.disconnect();
-      window.removeEventListener("resize", updateOverflow);
     };
-  }, [totalMinWidth, flatRows.length, settings.density, columns]);
+  }, [horizontalOverflow.active, horizontalOverflow.scrollWidth]);
 
   return (
     <div className="grid h-full min-h-0 grid-rows-[auto_auto_auto_minmax(0,1fr)_auto]">

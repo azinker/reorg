@@ -169,12 +169,16 @@
     scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
   }
 
+  .app-grid-scroll {
+    scrollbar-gutter: stable both-edges;
+  }
+
   .app-grid-scroll::-webkit-scrollbar:vertical {
     width: 18px;
   }
 
   .app-grid-scroll::-webkit-scrollbar:horizontal {
-    height: 18px;
+    height: 0;
   }
 
   .app-grid-scrollbar::-webkit-scrollbar:horizontal {
