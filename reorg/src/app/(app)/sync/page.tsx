@@ -42,9 +42,32 @@ type IntegrationStatus = {
   lastSyncAt: string | null;
 };
 
-type SyncState = "idle" | "syncing" | "done" | "error";
+type SyncPageState = "idle" | "syncing" | "done" | "error";
 
 type SyncError = { sku: string; message: string };
+
+type SyncProfile = {
+  autoSyncEnabled: boolean;
+  timezone: string;
+  dayStartHour: number;
+  dayEndHour: number;
+  dayIntervalMinutes: number;
+  overnightIntervalMinutes: number;
+  preferredMode: "full" | "incremental";
+  fullReconcileIntervalHours: number;
+  incrementalStrategy: string;
+};
+
+type IntegrationSyncState = {
+  lastRequestedMode: "full" | "incremental" | null;
+  lastEffectiveMode: "full" | "incremental" | null;
+  lastScheduledSyncAt: string | null;
+  lastFullSyncAt: string | null;
+  lastIncrementalSyncAt: string | null;
+  lastCursor: string | null;
+  lastWebhookAt: string | null;
+  lastFallbackReason: string | null;
+};
 
 type SyncJobInfo = {
   id: string;
@@ -57,46 +80,330 @@ type SyncJobInfo = {
   completedAt: string | null;
 };
 
+type SyncRouteData = {
+  integrationId: string;
+  platform: string;
+  label: string;
+  enabled: boolean;
+  lastSyncAt: string | null;
+  syncProfile: SyncProfile;
+  syncState: IntegrationSyncState;
+  lastJob: SyncJobInfo | null;
+};
+
+type CompletionTone = "success" | "warning" | "error" | "info";
+
+function formatDateTime(value: string | null) {
+  if (!value) return "Never";
+  return new Date(value).toLocaleString();
+}
+
+function formatDurationMs(ms: number) {
+  if (!Number.isFinite(ms) || ms <= 0) return "0s";
+  const totalSeconds = Math.floor(ms / 1000);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  if (hours > 0) return `${hours}h ${minutes}m ${seconds}s`;
+  if (minutes > 0) return `${minutes}m ${seconds}s`;
+  return `${seconds}s`;
+}
+
+function getJobDurationMs(job: SyncJobInfo | null, now: number) {
+  if (!job?.startedAt) return null;
+  const startedAt = new Date(job.startedAt).getTime();
+  const finishedAt = job.completedAt ? new Date(job.completedAt).getTime() : now;
+  if (!Number.isFinite(startedAt) || !Number.isFinite(finishedAt)) return null;
+  return Math.max(0, finishedAt - startedAt);
+}
+
+function getLocalDateTimeParts(date: Date, timeZone: string) {
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    hour12: false,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+  const parts = formatter.formatToParts(date);
+  const value = (type: string) =>
+    Number(parts.find((part) => part.type === type)?.value ?? "0");
+  return {
+    year: value("year"),
+    month: value("month"),
+    day: value("day"),
+    hour: value("hour"),
+    minute: value("minute"),
+    second: value("second"),
+  };
+}
+
+function getTimeZoneOffsetMs(date: Date, timeZone: string) {
+  const parts = getLocalDateTimeParts(date, timeZone);
+  const asUtc = Date.UTC(
+    parts.year,
+    parts.month - 1,
+    parts.day,
+    parts.hour,
+    parts.minute,
+    parts.second,
+  );
+  return asUtc - date.getTime();
+}
+
+function zonedDateTimeToUtc(
+  timeZone: string,
+  year: number,
+  month: number,
+  day: number,
+  hour: number,
+  minute: number,
+  second = 0,
+) {
+  const utcGuess = Date.UTC(year, month - 1, day, hour, minute, second);
+  const offset = getTimeZoneOffsetMs(new Date(utcGuess), timeZone);
+  return new Date(utcGuess - offset);
+}
+
+function addDaysToParts(
+  parts: ReturnType<typeof getLocalDateTimeParts>,
+  days: number,
+  timeZone: string,
+) {
+  const baseUtc = zonedDateTimeToUtc(
+    timeZone,
+    parts.year,
+    parts.month,
+    parts.day,
+    12,
+    0,
+    0,
+  );
+  baseUtc.setUTCDate(baseUtc.getUTCDate() + days);
+  return getLocalDateTimeParts(baseUtc, timeZone);
+}
+
+function getNextPullAt(profile: SyncProfile, now: Date) {
+  if (!profile.autoSyncEnabled) return null;
+
+  const nowParts = getLocalDateTimeParts(now, profile.timezone);
+  const candidates: Date[] = [];
+
+  for (let dayOffset = 0; dayOffset <= 2; dayOffset += 1) {
+    const dayParts = addDaysToParts(nowParts, dayOffset, profile.timezone);
+
+    for (
+      let minute = profile.dayStartHour * 60;
+      minute < profile.dayEndHour * 60;
+      minute += profile.dayIntervalMinutes
+    ) {
+      candidates.push(
+        zonedDateTimeToUtc(
+          profile.timezone,
+          dayParts.year,
+          dayParts.month,
+          dayParts.day,
+          Math.floor(minute / 60),
+          minute % 60,
+        ),
+      );
+    }
+
+    const overnightEnd = profile.dayStartHour * 60 + 24 * 60;
+    for (
+      let minute = profile.dayEndHour * 60;
+      minute < overnightEnd;
+      minute += profile.overnightIntervalMinutes
+    ) {
+      const targetDayParts =
+        minute >= 24 * 60
+          ? addDaysToParts(dayParts, 1, profile.timezone)
+          : dayParts;
+      const normalizedMinute = minute % (24 * 60);
+      candidates.push(
+        zonedDateTimeToUtc(
+          profile.timezone,
+          targetDayParts.year,
+          targetDayParts.month,
+          targetDayParts.day,
+          Math.floor(normalizedMinute / 60),
+          normalizedMinute % 60,
+        ),
+      );
+    }
+  }
+
+  const nowTime = now.getTime();
+  return candidates
+    .filter((candidate) => candidate.getTime() > nowTime)
+    .sort((a, b) => a.getTime() - b.getTime())[0] ?? null;
+}
+
+function formatCountdown(target: Date | null, now: number) {
+  if (!target) return "Not scheduled";
+  const remaining = target.getTime() - now;
+  if (remaining <= 0) return "Due now";
+
+  const totalSeconds = Math.floor(remaining / 1000);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+
+  if (hours > 0) return `${hours}h ${minutes}m ${seconds}s`;
+  return `${minutes}m ${seconds}s`;
+}
+
+function formatSchedule(profile: SyncProfile) {
+  const overnightWindowMinutes =
+    (24 - profile.dayEndHour + profile.dayStartHour) * 60;
+  const overnightLabel =
+    profile.overnightIntervalMinutes >= overnightWindowMinutes
+      ? "Once overnight"
+      : profile.overnightIntervalMinutes >= 60 &&
+          profile.overnightIntervalMinutes % 60 === 0
+        ? `Every ${profile.overnightIntervalMinutes / 60}h overnight`
+        : `Every ${profile.overnightIntervalMinutes}m overnight`;
+
+  const daytimeLabel =
+    profile.dayIntervalMinutes >= 60 && profile.dayIntervalMinutes % 60 === 0
+      ? `Every ${profile.dayIntervalMinutes / 60}h`
+      : `Every ${profile.dayIntervalMinutes}m`;
+
+  return `${daytimeLabel} from ${profile.dayStartHour}:00-${profile.dayEndHour}:00, ${overnightLabel}`;
+}
+
+function getCompletionSummary(
+  job: SyncJobInfo | null,
+  fallbackReason: string | null,
+): { label: string; tone: CompletionTone; detail: string } {
+  if (!job) {
+    return {
+      label: "No sync yet",
+      tone: "info",
+      detail: "No completed sync has been recorded for this store yet.",
+    };
+  }
+
+  const issueCount = Array.isArray(job.errors) ? job.errors.length : 0;
+
+  if (job.status === "RUNNING") {
+    return {
+      label: "Sync running",
+      tone: "info",
+      detail: "Pull is in progress now.",
+    };
+  }
+
+  if (job.status === "FAILED") {
+    return {
+      label: "Sync failed",
+      tone: "error",
+      detail:
+        issueCount > 0
+          ? `${issueCount} issue${issueCount === 1 ? "" : "s"} blocked completion.`
+          : "The last pull did not complete successfully.",
+    };
+  }
+
+  if (issueCount > 0) {
+    return {
+      label: "Semi-complete",
+      tone: "warning",
+      detail: `100% finished, but ${issueCount} row${issueCount === 1 ? "" : "s"} had issues and may have been skipped.`,
+    };
+  }
+
+  return {
+    label: "100% complete",
+    tone: "success",
+    detail: fallbackReason
+      ? "Completed successfully with a safe fallback path."
+      : "Completed successfully with no reported errors.",
+  };
+}
+
 export default function SyncPage() {
   const [integrations, setIntegrations] = useState<IntegrationStatus[]>([]);
-  const [syncing, setSyncing] = useState<Record<string, SyncState>>({});
+  const [schedulerEnabled, setSchedulerEnabled] = useState(false);
+  const [syncing, setSyncing] = useState<Record<string, SyncPageState>>({});
   const [results, setResults] = useState<Record<string, string>>({});
   const [liveJobs, setLiveJobs] = useState<Record<string, SyncJobInfo | null>>({});
+  const [syncMeta, setSyncMeta] = useState<Record<string, SyncRouteData | null>>(
+    {},
+  );
   const [errorsExpanded, setErrorsExpanded] = useState<Record<string, boolean>>({});
   const [copied, setCopied] = useState<string | null>(null);
   const [syncAllRunning, setSyncAllRunning] = useState(false);
+  const [nowMs, setNowMs] = useState(() => Date.now());
   const pollTimers = useRef<Record<string, ReturnType<typeof setInterval>>>({});
+  const initialCheckDone = useRef(false);
 
   const fetchIntegrations = useCallback(async () => {
     try {
       const res = await fetch("/api/integrations");
       const json = await res.json();
       if (json.data) setIntegrations(json.data);
-    } catch { /* ignore */ }
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  const fetchSchedulerSetting = useCallback(async () => {
+    try {
+      const res = await fetch("/api/settings?key=scheduler_enabled");
+      const json = await res.json();
+      setSchedulerEnabled(Boolean(json.data));
+    } catch {
+      setSchedulerEnabled(false);
+    }
   }, []);
 
   useEffect(() => {
     fetchIntegrations();
+    fetchSchedulerSetting();
     return () => {
       Object.values(pollTimers.current).forEach(clearInterval);
     };
-  }, [fetchIntegrations]);
+  }, [fetchIntegrations, fetchSchedulerSetting]);
+
+  useEffect(() => {
+    const timer = setInterval(() => setNowMs(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
 
   const getStatus = (apiPlatform: string) =>
-    integrations.find((i) => i.platform === apiPlatform);
+    integrations.find((integration) => integration.platform === apiPlatform);
 
   function copyErrors(apiPlatform: string) {
     const job = liveJobs[apiPlatform];
     if (!job?.errors?.length) return;
+
     const text = job.errors
-      .map((e) => `Item: ${e.sku}\nError: ${e.message}`)
+      .map((error) => `Item: ${error.sku}\nError: ${error.message}`)
       .join("\n\n---\n\n");
     const header = `=== ${apiPlatform} Sync Errors (${job.errors.length}) ===\nJob ID: ${job.id}\nCompleted: ${job.completedAt ?? "N/A"}\n\n`;
+
     navigator.clipboard.writeText(header + text).then(() => {
       setCopied(apiPlatform);
       setTimeout(() => setCopied(null), 2000);
     });
   }
+
+  const loadStoreStatus = useCallback(async (apiPlatform: string) => {
+    const res = await fetch(`/api/sync/${apiPlatform}`);
+    const json = await res.json();
+    const data = (json.data ?? null) as SyncRouteData | null;
+
+    if (!data) return null;
+
+    setSyncMeta((prev) => ({ ...prev, [apiPlatform]: data }));
+    setLiveJobs((prev) => ({ ...prev, [apiPlatform]: data.lastJob }));
+
+    return data;
+  }, []);
 
   const pollSyncStatus = useCallback(
     (apiPlatform: string) => {
@@ -106,44 +413,41 @@ export default function SyncPage() {
 
       const timer = setInterval(async () => {
         try {
-          const res = await fetch(`/api/sync/${apiPlatform}`);
-          const json = await res.json();
-          const job = json.data?.lastJob as SyncJobInfo | null;
+          const data = await loadStoreStatus(apiPlatform);
+          const job = data?.lastJob ?? null;
 
-          if (job) {
-            setLiveJobs((prev) => ({ ...prev, [apiPlatform]: job }));
+          if (job && (job.status === "COMPLETED" || job.status === "FAILED")) {
+            clearInterval(pollTimers.current[apiPlatform]);
+            delete pollTimers.current[apiPlatform];
 
-            if (job.status === "COMPLETED" || job.status === "FAILED") {
-              clearInterval(pollTimers.current[apiPlatform]);
-              delete pollTimers.current[apiPlatform];
+            const issueCount = Array.isArray(job.errors) ? job.errors.length : 0;
+            const message =
+              job.status === "COMPLETED"
+                ? `Done - ${job.itemsProcessed} processed, ${job.itemsCreated} created, ${job.itemsUpdated} updated${issueCount > 0 ? `, ${issueCount} issues` : ""}`
+                : "Failed - see details below";
 
-              const errorCount = Array.isArray(job.errors) ? job.errors.length : 0;
-              const msg =
-                job.status === "COMPLETED"
-                  ? `Done — ${job.itemsProcessed} items processed, ${job.itemsCreated} created, ${job.itemsUpdated} updated${errorCount > 0 ? `, ${errorCount} errors` : ""}`
-                  : `Failed — see errors below`;
+            setSyncing((prev) => ({
+              ...prev,
+              [apiPlatform]: job.status === "COMPLETED" ? "done" : "error",
+            }));
+            setResults((prev) => ({ ...prev, [apiPlatform]: message }));
 
-              setSyncing((prev) => ({
-                ...prev,
-                [apiPlatform]: job.status === "COMPLETED" ? "done" : "error",
-              }));
-              setResults((prev) => ({ ...prev, [apiPlatform]: msg }));
-              if (errorCount > 0) {
-                setErrorsExpanded((prev) => ({ ...prev, [apiPlatform]: true }));
-              }
-              fetchIntegrations();
+            if (issueCount > 0) {
+              setErrorsExpanded((prev) => ({ ...prev, [apiPlatform]: true }));
             }
+
+            fetchIntegrations();
           }
-        } catch { /* ignore */ }
+        } catch {
+          // ignore
+        }
       }, 2000);
 
       pollTimers.current[apiPlatform] = timer;
     },
-    [fetchIntegrations]
+    [fetchIntegrations, loadStoreStatus],
   );
 
-  // On mount: check each store for a running or last completed sync job
-  const initialCheckDone = useRef(false);
   useEffect(() => {
     if (initialCheckDone.current) return;
     initialCheckDone.current = true;
@@ -151,32 +455,32 @@ export default function SyncPage() {
     (async () => {
       for (const store of stores) {
         try {
-          const res = await fetch(`/api/sync/${store.apiPlatform}`);
-          const json = await res.json();
-          const job = json.data?.lastJob as SyncJobInfo | null;
+          const data = await loadStoreStatus(store.apiPlatform);
+          const job = data?.lastJob ?? null;
           if (!job) continue;
-
-          setLiveJobs((prev) => ({ ...prev, [store.apiPlatform]: job }));
 
           if (job.status === "RUNNING") {
             setSyncing((prev) => ({ ...prev, [store.apiPlatform]: "syncing" }));
             pollSyncStatus(store.apiPlatform);
           } else if (job.status === "COMPLETED" || job.status === "FAILED") {
-            const errorCount = Array.isArray(job.errors) ? job.errors.length : 0;
-            const msg =
+            const issueCount = Array.isArray(job.errors) ? job.errors.length : 0;
+            const message =
               job.status === "COMPLETED"
-                ? `Last sync: ${job.itemsProcessed} processed, ${job.itemsCreated} created, ${job.itemsUpdated} updated${errorCount > 0 ? `, ${errorCount} errors` : ""}`
-                : `Last sync failed — see errors below`;
+                ? `Last sync: ${job.itemsProcessed} processed, ${job.itemsCreated} created, ${job.itemsUpdated} updated${issueCount > 0 ? `, ${issueCount} issues` : ""}`
+                : "Last sync failed - see details below";
+
             setSyncing((prev) => ({
               ...prev,
               [store.apiPlatform]: job.status === "COMPLETED" ? "done" : "error",
             }));
-            setResults((prev) => ({ ...prev, [store.apiPlatform]: msg }));
+            setResults((prev) => ({ ...prev, [store.apiPlatform]: message }));
           }
-        } catch { /* ignore */ }
+        } catch {
+          // ignore
+        }
       }
     })();
-  }, [pollSyncStatus]);
+  }, [loadStoreStatus, pollSyncStatus]);
 
   const syncStore = useCallback(
     async (apiPlatform: string) => {
@@ -189,54 +493,66 @@ export default function SyncPage() {
         const res = await fetch(`/api/sync/${apiPlatform}`, { method: "POST" });
         const text = await res.text();
         let json: { data?: Record<string, unknown>; error?: string };
+
         try {
           json = text ? JSON.parse(text) : {};
         } catch {
           setSyncing((prev) => ({ ...prev, [apiPlatform]: "error" }));
           setResults((prev) => ({
             ...prev,
-            [apiPlatform]: res.ok ? "Invalid response from server" : `Sync failed (${res.status}). Check server logs.`,
+            [apiPlatform]: res.ok
+              ? "Invalid response from server"
+              : `Sync failed (${res.status}). Check server logs.`,
           }));
           return;
         }
 
         if (!res.ok) {
           setSyncing((prev) => ({ ...prev, [apiPlatform]: "error" }));
-          setResults((prev) => ({ ...prev, [apiPlatform]: json.error ?? "Sync failed" }));
+          setResults((prev) => ({
+            ...prev,
+            [apiPlatform]: json.error ?? "Sync failed",
+          }));
           return;
         }
 
-        const d = json.data;
-
-        if (d?.status === "STARTED" || d?.status === "ALREADY_RUNNING") {
+        const data = json.data;
+        if (data?.status === "STARTED" || data?.status === "ALREADY_RUNNING") {
+          const fallbackReason =
+            typeof data.fallbackReason === "string" ? data.fallbackReason : null;
+          if (fallbackReason) {
+            setResults((prev) => ({ ...prev, [apiPlatform]: fallbackReason }));
+          }
           pollSyncStatus(apiPlatform);
           return;
         }
 
-        const msg = d
-          ? `Done — ${d.itemsProcessed ?? 0} processed, ${d.itemsCreated ?? 0} created, ${d.itemsUpdated ?? 0} updated`
+        const message = data
+          ? `Done - ${data.itemsProcessed ?? 0} processed, ${data.itemsCreated ?? 0} created, ${data.itemsUpdated ?? 0} updated`
           : "Sync completed";
 
         setSyncing((prev) => ({ ...prev, [apiPlatform]: "done" }));
-        setResults((prev) => ({ ...prev, [apiPlatform]: msg }));
+        setResults((prev) => ({ ...prev, [apiPlatform]: message }));
         fetchIntegrations();
-      } catch (err) {
+        await loadStoreStatus(apiPlatform);
+      } catch (error) {
         setSyncing((prev) => ({ ...prev, [apiPlatform]: "error" }));
         setResults((prev) => ({
           ...prev,
-          [apiPlatform]: err instanceof Error ? err.message : "Network error",
+          [apiPlatform]: error instanceof Error ? error.message : "Network error",
         }));
       }
     },
-    [fetchIntegrations, pollSyncStatus]
+    [fetchIntegrations, loadStoreStatus, pollSyncStatus],
   );
 
   const syncAll = useCallback(async () => {
     setSyncAllRunning(true);
-    const connected = stores.filter((s) => getStatus(s.apiPlatform)?.connected);
-    await Promise.allSettled(connected.map((s) => syncStore(s.apiPlatform)));
+    const connectedStores = stores.filter((store) => getStatus(store.apiPlatform)?.connected);
+    await Promise.allSettled(
+      connectedStores.map((store) => syncStore(store.apiPlatform)),
+    );
     setSyncAllRunning(false);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [integrations, syncStore]);
 
   return (
@@ -244,7 +560,7 @@ export default function SyncPage() {
       <div className="mb-6">
         <h1 className="text-2xl font-bold tracking-tight text-foreground">Sync</h1>
         <p className="text-sm text-muted-foreground">
-          Pull-only sync controls — fetch latest data from connected marketplaces
+          Pull-only sync controls - fetch latest data from connected marketplaces
         </p>
       </div>
 
@@ -267,7 +583,7 @@ export default function SyncPage() {
           ) : (
             <RefreshCw className="h-4 w-4" aria-hidden />
           )}
-          {syncAllRunning ? "Syncing All…" : "Sync All"}
+          {syncAllRunning ? "Syncing All..." : "Sync All"}
         </button>
       </div>
 
@@ -280,27 +596,56 @@ export default function SyncPage() {
           const storeSync = syncing[store.apiPlatform] ?? "idle";
           const result = results[store.apiPlatform];
           const liveJob = liveJobs[store.apiPlatform];
+          const meta = syncMeta[store.apiPlatform];
+          const syncProfile = meta?.syncProfile ?? null;
+          const syncState = meta?.syncState ?? null;
           const isSyncing = storeSync === "syncing";
           const jobErrors = (liveJob?.errors ?? []) as SyncError[];
           const showErrors = errorsExpanded[store.apiPlatform] && jobErrors.length > 0;
+          const durationMs = getJobDurationMs(liveJob, nowMs);
+          const nextPullAt = syncProfile ? getNextPullAt(syncProfile, new Date(nowMs)) : null;
+          const completionSummary = getCompletionSummary(
+            liveJob,
+            syncState?.lastFallbackReason ?? null,
+          );
+          const summaryClasses =
+            completionSummary.tone === "success"
+              ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-400"
+              : completionSummary.tone === "warning"
+                ? "border-amber-500/30 bg-amber-500/10 text-amber-400"
+                : completionSummary.tone === "error"
+                  ? "border-destructive/30 bg-destructive/10 text-destructive"
+                  : "border-blue-500/30 bg-blue-500/10 text-blue-400";
 
           return (
             <article
               key={store.id}
               className={cn(
                 "rounded-lg border border-border bg-card p-6 transition-colors duration-200",
-                "hover:border-border/80 hover:bg-card/95"
+                "hover:border-border/80 hover:bg-card/95",
               )}
             >
-              {/* Header */}
               <div className="mb-4 flex items-center justify-between gap-2">
                 <div className="flex min-w-0 items-center gap-2">
-                  {logoSrc && (
-                    <img src={logoSrc} alt={store.platform} width={20} height={20}
-                      style={{ width: 20, height: 20, minWidth: 20 }} className="shrink-0" />
-                  )}
-                  <h3 className="truncate text-base font-semibold text-foreground">{store.name}</h3>
-                  <span className={cn("shrink-0 rounded border px-2 py-0.5 text-xs font-medium", theme.badge)}>
+                  {logoSrc ? (
+                    <img
+                      src={logoSrc}
+                      alt={store.platform}
+                      width={20}
+                      height={20}
+                      style={{ width: 20, height: 20, minWidth: 20 }}
+                      className="shrink-0"
+                    />
+                  ) : null}
+                  <h3 className="truncate text-base font-semibold text-foreground">
+                    {store.name}
+                  </h3>
+                  <span
+                    className={cn(
+                      "shrink-0 rounded border px-2 py-0.5 text-xs font-medium",
+                      theme.badge,
+                    )}
+                  >
                     {store.acronym}
                   </span>
                 </div>
@@ -319,23 +664,88 @@ export default function SyncPage() {
                 </div>
               </div>
 
-              {/* Last synced */}
               <div className="mb-4 flex flex-wrap items-center gap-4 text-sm">
                 <div className="flex items-center gap-1.5 text-muted-foreground">
                   <Clock className="h-4 w-4 shrink-0" aria-hidden />
-                  <span>
-                    Last synced:{" "}
-                    {status?.lastSyncAt ? new Date(status.lastSyncAt).toLocaleString() : "Never"}
-                  </span>
+                  <span>Last synced: {formatDateTime(status?.lastSyncAt ?? null)}</span>
                 </div>
               </div>
 
-              {/* Live progress */}
-              {isSyncing && liveJob && liveJob.status === "RUNNING" && (
+              <div className={cn("mb-4 rounded-md border px-3 py-3", summaryClasses)}>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <div className="text-sm font-semibold">{completionSummary.label}</div>
+                    <div className="mt-0.5 text-xs opacity-90">{completionSummary.detail}</div>
+                  </div>
+                  {durationMs !== null ? (
+                    <div className="rounded border border-current/20 px-2 py-1 text-[11px] font-semibold tabular-nums">
+                      Duration: {formatDurationMs(durationMs)}
+                    </div>
+                  ) : null}
+                </div>
+                {liveJob ? (
+                  <div className="mt-3 grid grid-cols-2 gap-2 text-[11px] sm:grid-cols-4">
+                    <div className="rounded border border-current/15 bg-background/30 px-2 py-1.5">
+                      <div className="opacity-70">Processed</div>
+                      <div className="mt-0.5 text-sm font-semibold tabular-nums">{liveJob.itemsProcessed}</div>
+                    </div>
+                    <div className="rounded border border-current/15 bg-background/30 px-2 py-1.5">
+                      <div className="opacity-70">Created</div>
+                      <div className="mt-0.5 text-sm font-semibold tabular-nums">{liveJob.itemsCreated}</div>
+                    </div>
+                    <div className="rounded border border-current/15 bg-background/30 px-2 py-1.5">
+                      <div className="opacity-70">Updated</div>
+                      <div className="mt-0.5 text-sm font-semibold tabular-nums">{liveJob.itemsUpdated}</div>
+                    </div>
+                    <div className="rounded border border-current/15 bg-background/30 px-2 py-1.5">
+                      <div className="opacity-70">{jobErrors.length > 0 ? "Issues" : "Errors"}</div>
+                      <div className="mt-0.5 text-sm font-semibold tabular-nums">{jobErrors.length}</div>
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+
+              {syncProfile ? (
+                <div className="mb-4 grid gap-3 rounded-md border border-border bg-muted/30 px-3 py-3 text-xs text-muted-foreground sm:grid-cols-2">
+                  <div>
+                    <div className="font-semibold text-foreground/90">Next pull</div>
+                    <div className="mt-1 text-sm font-semibold text-foreground tabular-nums">
+                      {connected && syncProfile.autoSyncEnabled && schedulerEnabled
+                        ? formatCountdown(nextPullAt, nowMs)
+                        : connected && syncProfile.autoSyncEnabled
+                          ? "Scheduler off"
+                          : "Not scheduled"}
+                    </div>
+                    <div className="mt-1">
+                      {connected && syncProfile.autoSyncEnabled && schedulerEnabled && nextPullAt
+                        ? `Due around ${nextPullAt.toLocaleString()}`
+                        : connected && syncProfile.autoSyncEnabled
+                          ? "Pull cadence is configured, but automatic pulls are not enabled yet."
+                        : "Auto-pull is not active for this store yet."}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="font-semibold text-foreground/90">Pull cadence</div>
+                    <div className="mt-1">{formatSchedule(syncProfile)}</div>
+                    <div className="mt-1">
+                      Preferred mode: {syncProfile.preferredMode}
+                      {syncState?.lastEffectiveMode ? ` | Last mode used: ${syncState.lastEffectiveMode}` : ""}
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+
+              {syncState?.lastFallbackReason && !isSyncing ? (
+                <div className="mb-4 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-400">
+                  Last fallback note: {syncState.lastFallbackReason}
+                </div>
+              ) : null}
+
+              {isSyncing && liveJob && liveJob.status === "RUNNING" ? (
                 <div className="mb-4 rounded-md border border-blue-500/30 bg-blue-500/10 px-3 py-2.5">
                   <div className="flex items-center gap-2">
                     <Loader2 className="h-3.5 w-3.5 animate-spin text-blue-400" />
-                    <span className="text-xs font-medium text-blue-400">Syncing…</span>
+                    <span className="text-xs font-medium text-blue-400">Syncing...</span>
                   </div>
                   <div className="mt-1.5 grid grid-cols-3 gap-2 text-xs tabular-nums">
                     <div>
@@ -351,40 +761,38 @@ export default function SyncPage() {
                       <div className="text-sm font-bold text-amber-400">{liveJob.itemsUpdated}</div>
                     </div>
                   </div>
-                  {jobErrors.length > 0 && (
+                  {jobErrors.length > 0 ? (
                     <div className="mt-2 flex items-center gap-1 text-xs text-red-400">
                       <AlertTriangle className="h-3 w-3" />
-                      <span>{jobErrors.length} error{jobErrors.length > 1 ? "s" : ""} so far</span>
+                      <span>{jobErrors.length} issue{jobErrors.length > 1 ? "s" : ""} so far</span>
                     </div>
-                  )}
+                  ) : null}
                 </div>
-              )}
+              ) : null}
 
-              {isSyncing && !liveJob && (
+              {isSyncing && !liveJob ? (
                 <div className="mb-4 rounded-md border border-blue-500/30 bg-blue-500/10 px-3 py-2">
                   <div className="flex items-center gap-2">
                     <Loader2 className="h-3.5 w-3.5 animate-spin text-blue-400" />
-                    <span className="text-xs font-medium text-blue-400">Starting sync…</span>
+                    <span className="text-xs font-medium text-blue-400">Starting sync...</span>
                   </div>
                 </div>
-              )}
+              ) : null}
 
-              {/* Result message */}
-              {result && !isSyncing && (
+              {result && !isSyncing ? (
                 <div
                   className={cn(
                     "mb-4 rounded-md px-3 py-2 text-xs",
                     storeSync === "error"
                       ? "bg-destructive/10 text-destructive"
-                      : "bg-emerald-500/10 text-emerald-400"
+                      : "bg-emerald-500/10 text-emerald-400",
                   )}
                 >
                   {result}
                 </div>
-              )}
+              ) : null}
 
-              {/* Error details */}
-              {!isSyncing && jobErrors.length > 0 && (
+              {!isSyncing && jobErrors.length > 0 ? (
                 <div className="mb-4">
                   <button
                     onClick={() =>
@@ -393,13 +801,11 @@ export default function SyncPage() {
                         [store.apiPlatform]: !prev[store.apiPlatform],
                       }))
                     }
-                    className="flex w-full items-center justify-between rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs font-medium text-red-400 transition-colors hover:bg-red-500/15 cursor-pointer"
+                    className="flex w-full cursor-pointer items-center justify-between rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs font-medium text-red-400 transition-colors hover:bg-red-500/15"
                   >
                     <div className="flex items-center gap-1.5">
                       <AlertTriangle className="h-3.5 w-3.5" />
-                      <span>
-                        {jobErrors.length} error{jobErrors.length > 1 ? "s" : ""}
-                      </span>
+                      <span>{jobErrors.length} issue{jobErrors.length > 1 ? "s" : ""}</span>
                     </div>
                     {showErrors ? (
                       <ChevronUp className="h-3.5 w-3.5" />
@@ -408,7 +814,7 @@ export default function SyncPage() {
                     )}
                   </button>
 
-                  {showErrors && (
+                  {showErrors ? (
                     <div className="mt-2 rounded-md border border-border bg-background p-3">
                       <div className="mb-2 flex items-center justify-between">
                         <span className="text-[10px] font-bold uppercase text-muted-foreground">
@@ -416,34 +822,29 @@ export default function SyncPage() {
                         </span>
                         <button
                           onClick={() => copyErrors(store.apiPlatform)}
-                          className="flex items-center gap-1 rounded border border-border bg-muted px-2 py-1 text-[10px] font-medium text-muted-foreground transition-colors hover:text-foreground cursor-pointer"
+                          className="flex cursor-pointer items-center gap-1 rounded border border-border bg-muted px-2 py-1 text-[10px] font-medium text-muted-foreground transition-colors hover:text-foreground"
                         >
                           <Copy className="h-3 w-3" />
                           {copied === store.apiPlatform ? "Copied!" : "Copy All Errors"}
                         </button>
                       </div>
                       <div className="max-h-60 overflow-auto space-y-1.5 text-[11px] font-mono">
-                        {jobErrors.map((err, idx) => (
+                        {jobErrors.map((error, index) => (
                           <div
-                            key={idx}
+                            key={index}
                             className="rounded border border-border/50 bg-card/50 px-2 py-1.5"
                           >
-                            <span className="font-bold text-red-400">
-                              {err.sku}
-                            </span>
-                            <span className="text-muted-foreground"> — </span>
-                            <span className="text-foreground/80 break-all">
-                              {err.message}
-                            </span>
+                            <span className="font-bold text-red-400">{error.sku}</span>
+                            <span className="text-muted-foreground"> - </span>
+                            <span className="text-foreground/80 break-all">{error.message}</span>
                           </div>
                         ))}
                       </div>
                     </div>
-                  )}
+                  ) : null}
                 </div>
-              )}
+              ) : null}
 
-              {/* Sync button */}
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <button
                   type="button"
@@ -452,7 +853,7 @@ export default function SyncPage() {
                   className={cn(
                     "inline-flex cursor-pointer items-center gap-2 rounded-md border border-border bg-background px-4 py-2 text-sm font-medium text-foreground",
                     "transition-colors hover:bg-muted hover:text-foreground",
-                    "disabled:cursor-not-allowed disabled:opacity-50"
+                    "disabled:cursor-not-allowed disabled:opacity-50",
                   )}
                   aria-label={`Sync ${store.name} now`}
                 >
@@ -461,7 +862,7 @@ export default function SyncPage() {
                   ) : (
                     <RefreshCw className="h-3.5 w-3.5" aria-hidden />
                   )}
-                  {isSyncing ? "Syncing…" : "Sync Now"}
+                  {isSyncing ? "Syncing..." : "Sync Now"}
                 </button>
                 <span className="text-xs text-muted-foreground">Pull-only</span>
               </div>
