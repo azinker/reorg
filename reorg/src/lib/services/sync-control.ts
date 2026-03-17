@@ -6,6 +6,7 @@ import {
   type SyncMode,
 } from "@/lib/integrations/runtime-config";
 import { runBigCommerceSync } from "@/lib/services/bigcommerce-sync";
+import { runEbayTtSync } from "@/lib/services/ebay-tt-sync";
 import { runShopifySync } from "@/lib/services/shopify-sync";
 import { runEbayTppSync } from "@/lib/services/ebay-tpp-sync";
 
@@ -155,6 +156,11 @@ export async function startIntegrationSync(
     case "TPP_EBAY":
       runEbayTppSync(nextOptions).catch((err) =>
         console.error("[sync-control] TPP_EBAY background error:", err),
+      );
+      break;
+    case "TT_EBAY":
+      runEbayTtSync(nextOptions).catch((err) =>
+        console.error("[sync-control] TT_EBAY background error:", err),
       );
       break;
     case "BIGCOMMERCE":

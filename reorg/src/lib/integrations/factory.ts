@@ -20,11 +20,14 @@ function getEnvConfig(platform: Platform) {
       };
     case "TT_EBAY":
       return {
-        appId: process.env.EBAY_TT_APP_ID,
-        certId: process.env.EBAY_TT_CERT_ID,
-        devId: process.env.EBAY_TT_DEV_ID,
+        appId: process.env.EBAY_TT_APP_ID ?? process.env.EBAY_TPP_APP_ID,
+        certId: process.env.EBAY_TT_CERT_ID ?? process.env.EBAY_TPP_CERT_ID,
+        devId: process.env.EBAY_TT_DEV_ID ?? process.env.EBAY_TPP_DEV_ID,
         refreshToken: process.env.EBAY_TT_REFRESH_TOKEN,
-        environment: process.env.EBAY_TT_ENVIRONMENT ?? "PRODUCTION",
+        environment:
+          process.env.EBAY_TT_ENVIRONMENT ??
+          process.env.EBAY_TPP_ENVIRONMENT ??
+          "PRODUCTION",
       };
     case "BIGCOMMERCE":
       return {

@@ -249,5 +249,5 @@ export function getIntegrationConfig(
 }
 
 export function isIncrementalReady(platform: Platform): boolean {
-  return platform === "TPP_EBAY";
+  return platform === "TPP_EBAY" || platform === "TT_EBAY";
 }

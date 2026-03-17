@@ -280,6 +280,7 @@ function IntegrationsContent() {
           const isTesting = testing[integration.id];
           const isShopify = integration.id === "shpfy";
           const isTppEbay = integration.id === "tpp";
+          const isTtEbay = integration.id === "tt";
 
           return (
             <article
@@ -409,6 +410,20 @@ function IntegrationsContent() {
                   >
                     <Link2 className="h-4 w-4" aria-hidden />
                     Connect eBay TPP
+                  </a>
+                )}
+                {isTtEbay && !isConnected && (
+                  <a
+                    href="/api/ebay/connect?store=tt"
+                    className={cn(
+                      "inline-flex cursor-pointer items-center gap-2 rounded-md border border-primary bg-primary px-4 py-2 text-sm font-medium text-primary-foreground",
+                      "transition-colors hover:bg-primary/90",
+                      "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+                    )}
+                    aria-label="Connect eBay TT"
+                  >
+                    <Link2 className="h-4 w-4" aria-hidden />
+                    Connect eBay TT
                   </a>
                 )}
                 {isShopify && !isConnected && (

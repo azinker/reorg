@@ -10,18 +10,23 @@ const SCOPES = [
 
 export async function GET(request: NextRequest) {
   const store = request.nextUrl.searchParams.get("store") || "tpp";
+  const isTt = store === "tt";
 
-  const clientId = store === "tt"
-    ? process.env.EBAY_TT_APP_ID
+  const clientId = isTt
+    ? process.env.EBAY_TT_APP_ID ?? process.env.EBAY_TPP_APP_ID
     : process.env.EBAY_TPP_APP_ID;
 
-  const ruName = store === "tt"
-    ? process.env.EBAY_TT_RUNAME
+  const ruName = isTt
+    ? process.env.EBAY_TT_RUNAME ?? process.env.EBAY_TPP_RUNAME
     : process.env.EBAY_TPP_RUNAME;
 
   if (!clientId || !ruName) {
     return NextResponse.json(
-      { error: `Missing EBAY_${store.toUpperCase()}_APP_ID or EBAY_${store.toUpperCase()}_RUNAME in environment` },
+      {
+        error: isTt
+          ? "Missing TT eBay app ID or RuName. Add TT-specific values or rely on the shared TPP eBay app fallback."
+          : "Missing TPP eBay app ID or RuName in environment",
+      },
       { status: 500 }
     );
   }

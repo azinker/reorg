@@ -23,11 +23,20 @@ export async function GET(request: NextRequest) {
   }
 
   const isTPP = state === "tpp";
-  const clientId = isTPP ? process.env.EBAY_TPP_APP_ID : process.env.EBAY_TT_APP_ID;
-  const clientSecret = isTPP ? process.env.EBAY_TPP_CERT_ID : process.env.EBAY_TT_CERT_ID;
-  const ruName = isTPP ? process.env.EBAY_TPP_RUNAME : process.env.EBAY_TT_RUNAME;
+  const clientId = isTPP
+    ? process.env.EBAY_TPP_APP_ID
+    : process.env.EBAY_TT_APP_ID ?? process.env.EBAY_TPP_APP_ID;
+  const clientSecret = isTPP
+    ? process.env.EBAY_TPP_CERT_ID
+    : process.env.EBAY_TT_CERT_ID ?? process.env.EBAY_TPP_CERT_ID;
+  const ruName = isTPP
+    ? process.env.EBAY_TPP_RUNAME
+    : process.env.EBAY_TT_RUNAME ?? process.env.EBAY_TPP_RUNAME;
   const platform = isTPP ? Platform.TPP_EBAY : Platform.TT_EBAY;
   const label = isTPP ? "tpp" : "tt";
+  const devId = isTPP
+    ? process.env.EBAY_TPP_DEV_ID
+    : process.env.EBAY_TT_DEV_ID ?? process.env.EBAY_TPP_DEV_ID;
 
   if (!clientId || !clientSecret || !ruName) {
     return NextResponse.redirect(
@@ -78,7 +87,7 @@ export async function GET(request: NextRequest) {
         config: {
           appId: clientId,
           certId: clientSecret,
-          devId: isTPP ? process.env.EBAY_TPP_DEV_ID : process.env.EBAY_TT_DEV_ID,
+          devId,
           accessToken,
           refreshToken,
           accessTokenExpiresAt: Date.now() + expiresIn * 1000,
