@@ -163,8 +163,7 @@
     background: var(--scrollbar-track);
   }
 
-  .app-grid-scroll,
-  .app-grid-scrollbar {
+  .app-grid-scroll {
     scrollbar-width: auto;
     scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
   }
@@ -178,10 +177,6 @@
   }
 
   .app-grid-scroll::-webkit-scrollbar:horizontal {
-    height: 0;
-  }
-
-  .app-grid-scrollbar::-webkit-scrollbar:horizontal {
     height: 18px;
   }
 
@@ -189,26 +184,26 @@
     min-height: 72px;
   }
 
-  .app-grid-scrollbar::-webkit-scrollbar-thumb:horizontal {
+  .app-grid-scroll::-webkit-scrollbar-thumb:horizontal {
     min-width: 72px;
     background:
       linear-gradient(90deg, color-mix(in oklab, var(--scrollbar-thumb) 84%, white 16%), var(--scrollbar-thumb-active));
     background-clip: padding-box;
   }
 
-  .app-grid-scrollbar::-webkit-scrollbar-thumb:horizontal:hover {
+  .app-grid-scroll::-webkit-scrollbar-thumb:horizontal:hover {
     background:
       linear-gradient(90deg, color-mix(in oklab, var(--scrollbar-thumb-hover) 86%, white 14%), var(--scrollbar-thumb-hover));
     background-clip: padding-box;
   }
 
-  .app-grid-scrollbar::-webkit-scrollbar-thumb:horizontal:active {
+  .app-grid-scroll::-webkit-scrollbar-thumb:horizontal:active {
     background:
       linear-gradient(90deg, color-mix(in oklab, var(--scrollbar-thumb-active) 86%, white 14%), var(--scrollbar-thumb-active));
     background-clip: padding-box;
   }
 
-  .app-grid-scrollbar::-webkit-scrollbar-track:horizontal {
+  .app-grid-scroll::-webkit-scrollbar-track:horizontal {
     background:
       linear-gradient(90deg, color-mix(in oklab, var(--scrollbar-track) 92%, white 8%), var(--scrollbar-track));
   }

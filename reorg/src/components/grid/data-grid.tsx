@@ -349,12 +349,6 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
     const [toast, setToast] = useState<string | null>(null);
     const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const parentRef = useRef<HTMLDivElement>(null);
-    const bottomScrollRef = useRef<HTMLDivElement>(null);
-    const syncSourceRef = useRef<"main" | "bottom" | null>(null);
-    const [horizontalOverflow, setHorizontalOverflow] = useState({
-      active: false,
-      scrollWidth: 0,
-    });
 
   function showToast(msg: string) {
     setToast(msg);
@@ -801,69 +795,8 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
 
   const rowFontStyle = { '--row-font-size': `${settings.rowTextSize}px` } as React.CSSProperties;
 
-  useEffect(() => {
-    const main = parentRef.current;
-    if (!main) return;
-
-    const updateOverflow = () => {
-      const overflowWidth = Math.max(0, totalMinWidth - main.clientWidth);
-      setHorizontalOverflow({
-        active: overflowWidth > 24,
-        scrollWidth: Math.max(totalMinWidth, main.clientWidth),
-      });
-    };
-
-    updateOverflow();
-
-    const observer = new ResizeObserver(updateOverflow);
-    observer.observe(main);
-    Array.from(main.children).forEach((child) => observer.observe(child));
-    window.addEventListener("resize", updateOverflow);
-
-    return () => {
-      observer.disconnect();
-      window.removeEventListener("resize", updateOverflow);
-    };
-  }, [totalMinWidth, flatRows.length, settings.density, columns]);
-
-  useEffect(() => {
-    const main = parentRef.current;
-    const bottom = bottomScrollRef.current;
-    if (!main || !bottom || !horizontalOverflow.active) return;
-
-    const releaseSync = () => {
-      requestAnimationFrame(() => {
-        syncSourceRef.current = null;
-      });
-    };
-
-    const syncFromMain = () => {
-      if (syncSourceRef.current === "bottom") return;
-      syncSourceRef.current = "main";
-      bottom.scrollLeft = main.scrollLeft;
-      releaseSync();
-    };
-
-    const syncFromBottom = () => {
-      if (syncSourceRef.current === "main") return;
-      syncSourceRef.current = "bottom";
-      main.scrollLeft = bottom.scrollLeft;
-      releaseSync();
-    };
-
-    bottom.scrollLeft = main.scrollLeft;
-
-    main.addEventListener("scroll", syncFromMain);
-    bottom.addEventListener("scroll", syncFromBottom);
-
-    return () => {
-      main.removeEventListener("scroll", syncFromMain);
-      bottom.removeEventListener("scroll", syncFromBottom);
-    };
-  }, [horizontalOverflow.active, horizontalOverflow.scrollWidth]);
-
   return (
-    <div className="grid h-full min-h-0 min-w-0 grid-rows-[auto_auto_auto_minmax(0,1fr)_auto]">
+    <div className="grid h-full min-h-0 min-w-0 grid-rows-[auto_auto_auto_minmax(0,1fr)]">
       {settings.searchBar && (
         <StickySearch
           rows={gridRows}
@@ -1319,17 +1252,6 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
       </div>
 
       {/* Photo overlay — only one at a time */}
-      {horizontalOverflow.active && (
-        <div className="sticky bottom-0 z-30 min-w-0 border-t border-border bg-gradient-to-r from-card/95 via-muted/85 to-card/95 px-2 py-1.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.04),0_-10px_24px_rgba(0,0,0,0.18)]">
-          <div
-            ref={bottomScrollRef}
-            className="app-grid-scrollbar h-10 min-w-0 overflow-x-auto overflow-y-hidden rounded-full border border-border/80 bg-gradient-to-b from-card/95 via-muted/85 to-card/95 p-1.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.05),0_8px_18px_rgba(0,0,0,0.18)]"
-          >
-            <div className="min-w-0" style={{ width: horizontalOverflow.scrollWidth, height: 2 }} />
-          </div>
-        </div>
-      )}
-
       {expandedPhoto && expandedPhoto.imageUrl && (
         <PhotoOverlay
           imageUrl={expandedPhoto.imageUrl}
