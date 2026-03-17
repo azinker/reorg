@@ -45,20 +45,26 @@ export function Sidebar() {
         collapsed ? "w-16" : "w-60"
       )}
     >
-      {/* Brand */}
-      <div className="flex h-16 items-center border-b border-sidebar-border px-4">
-        {!collapsed && (
+      {/* Brand Area */}
+      <div className={cn(
+        "flex flex-col border-b border-sidebar-border",
+        collapsed ? "items-center px-2 py-3" : "px-4 py-4"
+      )}>
+        {!collapsed ? (
           <div className="flex flex-col">
-            <span className="text-lg font-bold tracking-tight text-foreground">
-              reorG
+            <span className="text-2xl tracking-tight text-foreground">
+              <span className="font-light">reor</span>
+              <span className="font-bold" style={{ color: "#C43E3E" }}>G</span>
             </span>
             <span className="text-[10px] uppercase tracking-widest text-muted-foreground">
               by The Perfect Part
             </span>
           </div>
-        )}
-        {collapsed && (
-          <span className="mx-auto text-lg font-bold text-foreground">rG</span>
+        ) : (
+          <span className="text-lg text-foreground">
+            <span className="font-light">r</span>
+            <span className="font-bold" style={{ color: "#C43E3E" }}>G</span>
+          </span>
         )}
       </div>
 

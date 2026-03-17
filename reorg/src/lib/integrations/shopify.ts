@@ -55,11 +55,36 @@ export class ShopifyAdapter implements MarketplaceAdapter {
     return response;
   }
 
+  /** Safely parse JSON from a response; throw a clear error if body is HTML (e.g. login/error page). */
+  private async parseJsonOrThrow(response: Response, context: string): Promise<unknown> {
+    const contentType = response.headers.get("Content-Type") ?? "";
+    const isJson =
+      contentType.includes("application/json") ||
+      contentType.includes("application/javascript");
+    const text = await response.text();
+    if (!isJson || text.trimStart().startsWith("<")) {
+      const snippet = text.slice(0, 120).replace(/\s+/g, " ");
+      throw new Error(
+        `${context}: Shopify returned an HTML page instead of JSON (check store domain and access token). Response: ${snippet}`
+      );
+    }
+    try {
+      return JSON.parse(text);
+    } catch {
+      throw new Error(
+        `${context}: Invalid JSON from Shopify. Response: ${text.slice(0, 120)}`
+      );
+    }
+  }
+
   async testConnection(): Promise<{ ok: boolean; message: string }> {
     try {
       const response = await this.apiCall("/shop.json");
       if (response.ok) {
-        const data = await response.json();
+        const data = (await this.parseJsonOrThrow(
+          response,
+          "testConnection"
+        )) as { shop?: { name?: string } };
         return {
           ok: true,
           message: `Connected to ${data.shop?.name ?? "Shopify store"}`,
@@ -81,19 +106,27 @@ export class ShopifyAdapter implements MarketplaceAdapter {
     options?: FetchListingsOptions
   ): Promise<FetchListingsResult> {
     const limit = options?.pageSize ?? 50;
-    let url = `/products.json?limit=${limit}&status=active`;
 
+    let endpoint: string;
     if (options?.cursor) {
-      url += `&page_info=${options.cursor}`;
+      endpoint = `/products.json?limit=${limit}&page_info=${options.cursor}`;
+    } else {
+      endpoint = `/products.json?limit=${limit}&status=active`;
     }
 
-    const response = await this.apiCall(url);
+    const response = await this.apiCall(endpoint);
 
     if (!response.ok) {
-      throw new Error(`Shopify fetchListings failed: ${response.status}`);
+      const text = await response.text();
+      throw new Error(
+        `Shopify fetchListings failed: ${response.status} ${text.slice(0, 200)}`
+      );
     }
 
-    const data = await response.json();
+    const data = (await this.parseJsonOrThrow(
+      response,
+      "fetchListings"
+    )) as { products?: unknown[] };
     const products = data.products ?? [];
 
     const listings: RawListing[] = [];
@@ -106,9 +139,10 @@ export class ShopifyAdapter implements MarketplaceAdapter {
       }
     }
 
-    // Parse Link header for pagination
     const linkHeader = response.headers.get("Link") ?? "";
-    const nextMatch = linkHeader.match(/<[^>]*page_info=([^&>]+)[^>]*>;\s*rel="next"/);
+    const nextMatch = linkHeader.match(
+      /<[^>]*page_info=([^&>]+)[^>]*>;\s*rel="next"/
+    );
     const hasMore = !!nextMatch;
 
     return {
@@ -123,15 +157,14 @@ export class ShopifyAdapter implements MarketplaceAdapter {
     let hasMore = true;
 
     while (hasMore) {
-      const result = await this.fetchListings({ cursor, pageSize: 50 });
+      const result = await this.fetchListings({ cursor, pageSize: 250 });
       if (result.listings.length > 0) {
         yield result.listings;
       }
       cursor = result.nextCursor;
       hasMore = result.hasMore;
 
-      // Respect Shopify's 2 req/sec limit
-      await new Promise((resolve) => setTimeout(resolve, 600));
+      await new Promise((resolve) => setTimeout(resolve, 550));
     }
   }
 
@@ -144,7 +177,10 @@ export class ShopifyAdapter implements MarketplaceAdapter {
           `/products/${productId}/variants.json`
         );
         if (response.ok) {
-          const data = await response.json();
+          const data = (await this.parseJsonOrThrow(
+            response,
+            "fetchInventory"
+          )) as { variants?: Record<string, unknown>[] };
           const variants = data.variants ?? [];
           const totalQty = variants.reduce(
             (sum: number, v: Record<string, unknown>) =>

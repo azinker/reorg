@@ -108,3 +108,25 @@
     @apply bg-background text-foreground;
   }
 }
+
+@keyframes row-glow {
+  0%   { background-color: transparent; }
+  15%  { background-color: oklch(0.62 0.18 290 / 0.18); }
+  30%  { background-color: oklch(0.62 0.18 290 / 0.05); }
+  45%  { background-color: oklch(0.62 0.18 290 / 0.15); }
+  60%  { background-color: oklch(0.62 0.18 290 / 0.04); }
+  75%  { background-color: oklch(0.62 0.18 290 / 0.10); }
+  100% { background-color: transparent; }
+}
+
+.row-highlight,
+.row-highlight > div {
+  animation: row-glow 3s ease-in-out forwards;
+}
+
+.grid-row-data {
+  font-size: var(--row-font-size, 12px);
+}
+.grid-row-data .scalable-text {
+  font-size: var(--row-font-size, 12px);
+}

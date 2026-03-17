@@ -1,12 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef } from "react";
 import {
   Upload,
   FileDown,
   FileCheck,
   Settings2,
   CheckCircle,
+  Loader2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -28,6 +29,61 @@ const SUPPORTED_FIELDS = [
 
 export default function ImportPage() {
   const [currentStep, setCurrentStep] = useState(1);
+  const [file, setFile] = useState<File | null>(null);
+  const [preview, setPreview] = useState<{
+    validRows: number;
+    errorRows: number;
+    preview: Record<string, unknown>[];
+    errors: { row: number; errors: string[] }[];
+  } | null>(null);
+  const [importMode, setImportMode] = useState<"fill_blanks" | "overwrite">("fill_blanks");
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState<{ created: number; updated: number; applyErrors: { row: number; error: string }[] } | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  async function runPreview() {
+    if (!file) return;
+    setLoading(true);
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      form.append("mode", "preview");
+      const res = await fetch("/api/import", { method: "POST", body: form });
+      const json = await res.json();
+      if (res.ok && json.data) {
+        setPreview({
+          validRows: json.data.validRows ?? 0,
+          errorRows: json.data.errorRows ?? 0,
+          preview: json.data.preview ?? [],
+          errors: json.data.errors ?? [],
+        });
+      }
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function runImport() {
+    if (!file) return;
+    setLoading(true);
+    setResult(null);
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      form.append("mode", importMode);
+      const res = await fetch("/api/import", { method: "POST", body: form });
+      const json = await res.json();
+      if (res.ok && json.data) {
+        setResult({
+          created: json.data.created ?? 0,
+          updated: json.data.updated ?? 0,
+          applyErrors: json.data.applyErrors ?? [],
+        });
+      }
+    } finally {
+      setLoading(false);
+    }
+  }
 
   return (
     <div className="p-6">
@@ -164,10 +220,35 @@ export default function ImportPage() {
             <p className="text-sm text-muted-foreground">
               Select your workbook file to import.
             </p>
-            <div className="flex h-40 items-center justify-center rounded-lg border-2 border-dashed border-border bg-muted/20">
-              <span className="text-sm text-muted-foreground">
-                Drop file here or click to upload
-              </span>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".xlsx,.xls,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv"
+              className="hidden"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) setFile(f);
+              }}
+            />
+            <div
+              role="button"
+              tabIndex={0}
+              onClick={() => fileInputRef.current?.click()}
+              onKeyDown={(e) => e.key === "Enter" && fileInputRef.current?.click()}
+              className="flex h-40 cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed border-border bg-muted/20 hover:bg-muted/40"
+            >
+              {file ? (
+                <>
+                  <FileCheck className="h-8 w-8 text-green-500" />
+                  <span className="text-sm font-medium text-foreground">{file.name}</span>
+                  <span className="text-xs text-muted-foreground">{(file.size / 1024).toFixed(1)} KB</span>
+                </>
+              ) : (
+                <>
+                  <Upload className="h-8 w-8 text-muted-foreground" />
+                  <span className="text-sm text-muted-foreground">Click or drop file here</span>
+                </>
+              )}
             </div>
           </div>
         )}
@@ -180,6 +261,32 @@ export default function ImportPage() {
             <p className="text-sm text-muted-foreground">
               Review your data before importing.
             </p>
+            {file && (
+              <>
+                <button
+                  type="button"
+                  disabled={loading}
+                  onClick={runPreview}
+                  className="inline-flex items-center gap-2 rounded-lg border border-primary bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+                >
+                  {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileCheck className="h-4 w-4" />}
+                  {loading ? "Validating…" : "Validate file"}
+                </button>
+                {preview && (
+                  <div className="space-y-2 rounded-md border border-border bg-muted/20 p-4">
+                    <p className="text-sm font-medium">
+                      Valid rows: {preview.validRows} · Rows with errors: {preview.errorRows}
+                    </p>
+                    {preview.preview.length > 0 && (
+                      <p className="text-xs text-muted-foreground">
+                        First rows: {preview.preview.map((r) => (r as { sku?: string }).sku ?? "—").join(", ")}
+                      </p>
+                    )}
+                  </div>
+                )}
+              </>
+            )}
+            {!file && <p className="text-sm text-amber-600 dark:text-amber-400">Go back to step 2 and select a file.</p>}
           </div>
         )}
 
@@ -191,6 +298,28 @@ export default function ImportPage() {
             <p className="text-sm text-muted-foreground">
               Select full import or update mode.
             </p>
+            <div className="flex gap-4">
+              <label className="flex cursor-pointer items-center gap-2">
+                <input
+                  type="radio"
+                  name="importMode"
+                  checked={importMode === "fill_blanks"}
+                  onChange={() => setImportMode("fill_blanks")}
+                  className="rounded-full border-border"
+                />
+                <span className="text-sm">Fill blanks only (do not overwrite existing values)</span>
+              </label>
+              <label className="flex cursor-pointer items-center gap-2">
+                <input
+                  type="radio"
+                  name="importMode"
+                  checked={importMode === "overwrite"}
+                  onChange={() => setImportMode("overwrite")}
+                  className="rounded-full border-border"
+                />
+                <span className="text-sm">Overwrite (replace existing values)</span>
+              </label>
+            </div>
           </div>
         )}
 
@@ -200,8 +329,28 @@ export default function ImportPage() {
               Confirm
             </h2>
             <p className="text-sm text-muted-foreground">
-              Ready to run the import.
+              Ready to run the import. {preview && `${preview.validRows} valid rows will be applied in "${importMode}" mode.`}
             </p>
+            <button
+              type="button"
+              disabled={loading || !file || !preview || preview.validRows === 0}
+              onClick={runImport}
+              className="inline-flex items-center gap-2 rounded-lg border border-primary bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+            >
+              {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle className="h-4 w-4" />}
+              {loading ? "Importing…" : "Run import"}
+            </button>
+            {result && (
+              <div className="rounded-md border border-border bg-muted/20 p-4 text-sm">
+                <p className="font-medium">Import complete.</p>
+                <p className="text-muted-foreground">Created: {result.created} · Updated: {result.updated}</p>
+                {result.applyErrors.length > 0 && (
+                  <p className="mt-1 text-amber-600 dark:text-amber-400">
+                    {result.applyErrors.length} row(s) had errors.
+                  </p>
+                )}
+              </div>
+            )}
           </div>
         )}
       </div>

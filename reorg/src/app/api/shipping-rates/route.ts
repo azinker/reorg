@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
+import { db } from "@/lib/db";
 
 const updateRateSchema = z.object({
   rates: z.array(
@@ -11,25 +12,26 @@ const updateRateSchema = z.object({
 });
 
 export async function GET() {
-  // TODO: Wire to real DB when connected
-  // Returns all shipping rates from the ShippingRate table
+  try {
+    const rates = await db.shippingRate.findMany({
+      orderBy: { sortOrder: "asc" },
+    });
 
-  const defaultRates = [
-    ...Array.from({ length: 16 }, (_, i) => ({
-      weightKey: `${i + 1}oz`,
-      weightOz: i + 1,
-      cost: null,
-      sortOrder: i,
-    })),
-    ...Array.from({ length: 9 }, (_, i) => ({
-      weightKey: `${i + 2}LBS`,
-      weightOz: (i + 2) * 16,
-      cost: null,
-      sortOrder: 16 + i,
-    })),
-  ];
-
-  return NextResponse.json({ data: defaultRates });
+    return NextResponse.json({
+      data: rates.map((r) => ({
+        weightKey: r.weightKey,
+        weightOz: r.weightOz,
+        cost: r.cost,
+        sortOrder: r.sortOrder,
+      })),
+    });
+  } catch (error) {
+    console.error("[shipping-rates] Failed to fetch rates", error);
+    return NextResponse.json(
+      { error: "Failed to fetch shipping rates" },
+      { status: 500 }
+    );
+  }
 }
 
 export async function PUT(request: NextRequest) {
@@ -44,9 +46,26 @@ export async function PUT(request: NextRequest) {
       );
     }
 
-    // TODO: Wire to real DB when connected
+    const updates = parsed.data.rates;
+
+    for (const rate of updates) {
+      const normalized = rate.weightKey.trim().toUpperCase();
+      let weightOz: number;
+      if (normalized.endsWith("LBS")) {
+        weightOz = parseFloat(normalized.replace("LBS", "")) * 16;
+      } else {
+        weightOz = parseFloat(normalized) || 0;
+      }
+
+      await db.shippingRate.upsert({
+        where: { weightKey: rate.weightKey },
+        create: { weightKey: rate.weightKey, weightOz, cost: rate.cost },
+        update: { cost: rate.cost },
+      });
+    }
+
     return NextResponse.json({
-      data: { updated: parsed.data.rates.length },
+      data: { updated: updates.length },
     });
   } catch (error) {
     console.error("[shipping-rates] Failed to update rates", error);

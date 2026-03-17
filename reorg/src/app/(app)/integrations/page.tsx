@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, Suspense } from "react";
+import { useSearchParams } from "next/navigation";
 import {
   Plug,
   Crown,
@@ -10,8 +11,29 @@ import {
   XCircle,
   Settings2,
   Zap,
+  Link2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+
+const PLATFORM_TO_CARD: Record<string, string> = {
+  TPP_EBAY: "tpp",
+  TT_EBAY: "tt",
+  BIGCOMMERCE: "bc",
+  SHOPIFY: "shpfy",
+};
+
+const CARD_TO_PLATFORM: Record<string, string> = {
+  tpp: "TPP_EBAY",
+  tt: "TT_EBAY",
+  bc: "BIGCOMMERCE",
+  shpfy: "SHOPIFY",
+};
+
+const LOGO_MAP: Record<string, string> = {
+  eBay: "/logos/ebay.svg",
+  BigCommerce: "/logos/bigcommerce.svg",
+  Shopify: "/logos/shopify.svg",
+};
 
 const integrations = [
   {
@@ -71,18 +93,127 @@ const themeClasses = {
   },
 } as const;
 
-export default function IntegrationsPage() {
+function IntegrationsContent() {
+  const searchParams = useSearchParams();
   const [writeLocks, setWriteLocks] = useState<Record<string, boolean>>({
     tpp: true,
     tt: true,
     bc: true,
     shpfy: true,
   });
+  const [connected, setConnected] = useState<Record<string, boolean>>({
+    tpp: false,
+    tt: false,
+    bc: false,
+    shpfy: false,
+  });
+  const [banner, setBanner] = useState<{ type: "success" | "error"; message: string } | null>(null);
+  const [testing, setTesting] = useState<Record<string, boolean>>({
+    tpp: false,
+    tt: false,
+    bc: false,
+    shpfy: false,
+  });
 
-  const connectedCount = 0;
+  useEffect(() => {
+    fetch("/api/integrations")
+      .then((res) => res.ok ? res.json() : { data: [] })
+      .then((json) => {
+        const nextConnected: Record<string, boolean> = {};
+        const nextLocks: Record<string, boolean> = {};
+        for (const i of json.data ?? []) {
+          const id = PLATFORM_TO_CARD[i.platform];
+          if (id) {
+            nextConnected[id] = !!i.connected;
+            nextLocks[id] = !!i.writeLocked;
+          }
+        }
+        setConnected((prev) => ({ ...prev, ...nextConnected }));
+        setWriteLocks((prev) => ({ ...prev, ...nextLocks }));
+      })
+      .catch(() => {});
+  }, []);
 
-  const toggleWriteLock = (id: string) => {
-    setWriteLocks((prev) => ({ ...prev, [id]: !prev[id] }));
+  useEffect(() => {
+    const shopify = searchParams.get("shopify");
+    const ebay = searchParams.get("ebay");
+    const message = searchParams.get("message");
+    if (shopify === "connected") {
+      setBanner({ type: "success", message: "Shopify connected. You can sync products now." });
+      setConnected((prev) => ({ ...prev, shpfy: true }));
+      window.history.replaceState({}, "", "/integrations");
+    } else if (shopify === "error") {
+      setBanner({ type: "error", message: message ? decodeURIComponent(message) : "Shopify connection failed." });
+      window.history.replaceState({}, "", "/integrations");
+    } else if (ebay === "connected") {
+      const store = searchParams.get("store") || "tpp";
+      setBanner({ type: "success", message: store === "tt" ? "eBay TT connected." : "eBay TPP (master) connected. You can sync listings now." });
+      setConnected((prev) => ({ ...prev, [store === "tt" ? "tt" : "tpp"]: true }));
+      window.history.replaceState({}, "", "/integrations");
+    } else if (ebay === "error") {
+      setBanner({ type: "error", message: message ? decodeURIComponent(message) : "eBay connection failed." });
+      window.history.replaceState({}, "", "/integrations");
+    }
+  }, [searchParams]);
+
+  const connectedCount = Object.values(connected).filter(Boolean).length;
+
+  const toggleWriteLock = async (id: string) => {
+    const platform = CARD_TO_PLATFORM[id];
+    if (!platform) return;
+    const nextLocked = !writeLocks[id];
+    setWriteLocks((prev) => ({ ...prev, [id]: nextLocked }));
+    try {
+      const res = await fetch(`/api/integrations/${platform}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ writeLocked: nextLocked }),
+      });
+      if (!res.ok) {
+        setWriteLocks((prev) => ({ ...prev, [id]: !nextLocked }));
+        setBanner({ type: "error", message: "Failed to update write lock." });
+      }
+    } catch {
+      setWriteLocks((prev) => ({ ...prev, [id]: !nextLocked }));
+      setBanner({ type: "error", message: "Failed to update write lock." });
+    }
+  };
+
+  const testConnection = async (id: string) => {
+    const platform = CARD_TO_PLATFORM[id];
+    if (!platform) return;
+
+    setTesting((prev) => ({ ...prev, [id]: true }));
+    setBanner(null);
+
+    try {
+      const res = await fetch(`/api/integrations/${platform}/test`, {
+        method: "POST",
+      });
+      const json = await res.json();
+      const ok = !!json.data?.ok;
+      const message = typeof json.data?.message === "string"
+        ? json.data.message
+        : ok
+          ? "Connection successful."
+          : "Connection failed.";
+
+      setBanner({
+        type: ok ? "success" : "error",
+        message: `${integrations.find((item) => item.id === id)?.name ?? "Integration"}: ${message}`,
+      });
+
+      if (ok) {
+        setConnected((prev) => ({ ...prev, [id]: true }));
+      }
+    } catch {
+      setBanner({
+        type: "error",
+        message: `${integrations.find((item) => item.id === id)?.name ?? "Integration"}: Connection test failed.`,
+      });
+    } finally {
+      setTesting((prev) => ({ ...prev, [id]: false }));
+    }
   };
 
   return (
@@ -96,6 +227,20 @@ export default function IntegrationsPage() {
           Manage marketplace connections, API tokens, and write locks
         </p>
       </div>
+
+      {/* Shopify OAuth success/error banner */}
+      {banner && (
+        <div
+          className={cn(
+            "mb-6 rounded-lg border px-4 py-3",
+            banner.type === "success"
+              ? "border-green-500/40 bg-green-500/10 text-green-700 dark:text-green-400"
+              : "border-destructive/40 bg-destructive/10 text-destructive"
+          )}
+        >
+          {banner.message}
+        </div>
+      )}
 
       {/* Summary bar */}
       <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -121,7 +266,7 @@ export default function IntegrationsPage() {
         <div className="flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2">
           <Lock className="h-4 w-4 shrink-0 text-amber-500" aria-hidden />
           <p className="text-sm text-amber-700 dark:text-amber-400">
-            All integrations launch with write locks enabled
+            Per-integration write locks block writes only for that store. For a full block, use Global Write Lock in Settings.
           </p>
         </div>
       </div>
@@ -131,7 +276,10 @@ export default function IntegrationsPage() {
         {integrations.map((integration) => {
           const theme = themeClasses[integration.theme];
           const isLocked = writeLocks[integration.id];
-          const isConnected = false;
+          const isConnected = connected[integration.id];
+          const isTesting = testing[integration.id];
+          const isShopify = integration.id === "shpfy";
+          const isTppEbay = integration.id === "tpp";
 
           return (
             <article
@@ -141,8 +289,18 @@ export default function IntegrationsPage() {
                 "hover:border-border/80 hover:bg-card/95"
               )}
             >
-              {/* Card header: store name + badges */}
+              {/* Card header: logo + store name + badges */}
               <div className="mb-4 flex flex-wrap items-center gap-2">
+                {LOGO_MAP[integration.platform] && (
+                  <img
+                    src={LOGO_MAP[integration.platform]}
+                    alt={integration.platform}
+                    width={22}
+                    height={22}
+                    style={{ width: 22, height: 22, minWidth: 22 }}
+                    className="shrink-0"
+                  />
+                )}
                 <h3 className="truncate text-base font-semibold text-foreground">
                   {integration.name}
                   {integration.subtitle && (
@@ -239,6 +397,34 @@ export default function IntegrationsPage() {
 
               {/* Actions */}
               <div className="mt-auto flex flex-wrap gap-2">
+                {isTppEbay && !isConnected && (
+                  <a
+                    href="/api/ebay/connect?store=tpp"
+                    className={cn(
+                      "inline-flex cursor-pointer items-center gap-2 rounded-md border border-primary bg-primary px-4 py-2 text-sm font-medium text-primary-foreground",
+                      "transition-colors hover:bg-primary/90",
+                      "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+                    )}
+                    aria-label="Connect eBay TPP"
+                  >
+                    <Link2 className="h-4 w-4" aria-hidden />
+                    Connect eBay TPP
+                  </a>
+                )}
+                {isShopify && !isConnected && (
+                  <a
+                    href="/api/shopify/connect"
+                    className={cn(
+                      "inline-flex cursor-pointer items-center gap-2 rounded-md border border-primary bg-primary px-4 py-2 text-sm font-medium text-primary-foreground",
+                      "transition-colors hover:bg-primary/90",
+                      "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+                    )}
+                    aria-label="Connect Shopify"
+                  >
+                    <Link2 className="h-4 w-4" aria-hidden />
+                    Connect Shopify
+                  </a>
+                )}
                 <button
                   type="button"
                   className={cn(
@@ -253,18 +439,21 @@ export default function IntegrationsPage() {
                 </button>
                 <button
                   type="button"
-                  disabled={!isConnected}
+                  onClick={() => testConnection(integration.id)}
+                  disabled={isTesting}
                   aria-label={`Test connection for ${integration.name}`}
                   className={cn(
                     "inline-flex items-center gap-2 rounded-md border border-border px-4 py-2 text-sm font-medium transition-colors",
-                    isConnected
+                    isTesting
+                      ? "cursor-wait border-border bg-muted text-muted-foreground"
+                      : isConnected
                       ? "cursor-pointer bg-background text-foreground hover:bg-muted hover:text-foreground"
-                      : "cursor-not-allowed border-border/50 bg-muted/30 text-muted-foreground",
+                      : "cursor-pointer bg-background text-foreground hover:bg-muted hover:text-foreground",
                     "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:pointer-events-none"
                   )}
                 >
                   <Zap className="h-4 w-4" aria-hidden />
-                  Test Connection
+                  {isTesting ? "Testing..." : "Test Connection"}
                 </button>
               </div>
             </article>
@@ -272,5 +461,13 @@ export default function IntegrationsPage() {
         })}
       </div>
     </div>
+  );
+}
+
+export default function IntegrationsPage() {
+  return (
+    <Suspense fallback={<div className="p-6 text-muted-foreground">Loading…</div>}>
+      <IntegrationsContent />
+    </Suspense>
   );
 }

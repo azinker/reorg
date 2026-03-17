@@ -18,6 +18,7 @@ interface BigCommerceConfig {
 export class BigCommerceAdapter implements MarketplaceAdapter {
   platform: Platform = "BIGCOMMERCE";
   label = "BigCommerce";
+  private static readonly SYNC_PAGE_SIZE = 25;
   private config: BigCommerceConfig;
   private baseUrl: string;
 
@@ -119,7 +120,10 @@ export class BigCommerceAdapter implements MarketplaceAdapter {
     let hasMore = true;
 
     while (hasMore) {
-      const result = await this.fetchListings({ cursor, pageSize: 100 });
+      const result = await this.fetchListings({
+        cursor,
+        pageSize: BigCommerceAdapter.SYNC_PAGE_SIZE,
+      });
       if (result.listings.length > 0) {
         yield result.listings;
       }

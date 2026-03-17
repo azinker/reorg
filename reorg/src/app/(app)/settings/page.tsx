@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
 import { useTheme } from "@/components/providers/theme-provider";
+import { useSettings } from "@/lib/use-settings";
+import type { Density, RowHeight, SortColumn } from "@/lib/settings-store";
 import { cn } from "@/lib/utils";
 import {
   Sun,
@@ -13,8 +14,6 @@ import {
   Shield,
   Crown,
 } from "lucide-react";
-
-type Density = "compact" | "comfortable" | "spacious";
 
 const TIMEZONES = [
   { value: "America/New_York", label: "Eastern (America/New_York)" },
@@ -57,18 +56,15 @@ function ToggleSwitch({
 
 export default function SettingsPage() {
   const { theme, setTheme } = useTheme();
-  const [density, setDensity] = useState<Density>("comfortable");
-  const [timezone, setTimezone] = useState("America/New_York");
-  const [frozenColumns, setFrozenColumns] = useState(true);
-  const [searchBar, setSearchBar] = useState(true);
-  const [globalWriteLock, setGlobalWriteLock] = useState(false);
+  const { settings, update } = useSettings();
 
   return (
     <div className="p-6">
       <div className="mb-8">
         <h1 className="text-2xl font-bold tracking-tight">Settings</h1>
         <p className="text-sm text-muted-foreground">
-          Application preferences, display options, and safety controls
+          Application preferences, display options, and safety controls.
+          All changes are saved automatically.
         </p>
       </div>
 
@@ -84,45 +80,26 @@ export default function SettingsPage() {
             <div>
               <label className="mb-2 block text-sm font-medium">Theme</label>
               <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={() => setTheme("light")}
-                  className={cn(
-                    "flex items-center gap-2 rounded-md border px-3 py-2 text-sm font-medium transition-colors cursor-pointer",
-                    theme === "light"
-                      ? "border-primary bg-primary/10 text-primary"
-                      : "border-border bg-background text-muted-foreground hover:bg-accent hover:text-accent-foreground"
-                  )}
-                >
-                  <Sun className="h-4 w-4" />
-                  Light
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setTheme("dark")}
-                  className={cn(
-                    "flex items-center gap-2 rounded-md border px-3 py-2 text-sm font-medium transition-colors cursor-pointer",
-                    theme === "dark"
-                      ? "border-primary bg-primary/10 text-primary"
-                      : "border-border bg-background text-muted-foreground hover:bg-accent hover:text-accent-foreground"
-                  )}
-                >
-                  <Moon className="h-4 w-4" />
-                  Dark
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setTheme("system")}
-                  className={cn(
-                    "flex items-center gap-2 rounded-md border px-3 py-2 text-sm font-medium transition-colors cursor-pointer",
-                    theme === "system"
-                      ? "border-primary bg-primary/10 text-primary"
-                      : "border-border bg-background text-muted-foreground hover:bg-accent hover:text-accent-foreground"
-                  )}
-                >
-                  <Monitor className="h-4 w-4" />
-                  System
-                </button>
+                {([
+                  { value: "light", icon: Sun, label: "Light" },
+                  { value: "dark", icon: Moon, label: "Dark" },
+                  { value: "system", icon: Monitor, label: "System" },
+                ] as const).map(({ value, icon: Icon, label }) => (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => setTheme(value)}
+                    className={cn(
+                      "flex items-center gap-2 rounded-md border px-3 py-2 text-sm font-medium transition-colors cursor-pointer",
+                      theme === value
+                        ? "border-primary bg-primary/10 text-primary"
+                        : "border-border bg-background text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+                    )}
+                  >
+                    <Icon className="h-4 w-4" />
+                    {label}
+                  </button>
+                ))}
               </div>
             </div>
 
@@ -130,44 +107,37 @@ export default function SettingsPage() {
             <div>
               <label className="mb-2 block text-sm font-medium">Density</label>
               <div className="flex gap-2">
-                {(["compact", "comfortable", "spacious"] as const).map(
-                  (d) => (
-                    <button
-                      key={d}
-                      type="button"
-                      onClick={() => setDensity(d)}
-                      className={cn(
-                        "rounded-md border px-3 py-2 text-sm font-medium capitalize transition-colors cursor-pointer",
-                        density === d
-                          ? "border-primary bg-primary/10 text-primary"
-                          : "border-border bg-background text-muted-foreground hover:bg-accent hover:text-accent-foreground"
-                      )}
-                    >
-                      {d}
-                    </button>
-                  )
-                )}
+                {(["compact", "comfortable", "spacious"] as const).map((d) => (
+                  <button
+                    key={d}
+                    type="button"
+                    onClick={() => update({ density: d })}
+                    className={cn(
+                      "rounded-md border px-3 py-2 text-sm font-medium capitalize transition-colors cursor-pointer",
+                      settings.density === d
+                        ? "border-primary bg-primary/10 text-primary"
+                        : "border-border bg-background text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+                    )}
+                  >
+                    {d}
+                  </button>
+                ))}
               </div>
             </div>
 
             {/* Timezone */}
             <div>
-              <label
-                htmlFor="timezone-select"
-                className="mb-2 block text-sm font-medium"
-              >
+              <label htmlFor="timezone-select" className="mb-2 block text-sm font-medium">
                 Timezone
               </label>
               <select
                 id="timezone-select"
-                value={timezone}
-                onChange={(e) => setTimezone(e.target.value)}
+                value={settings.timezone}
+                onChange={(e) => update({ timezone: e.target.value })}
                 className="h-9 w-full max-w-xs cursor-pointer rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
               >
                 {TIMEZONES.map((tz) => (
-                  <option key={tz.value} value={tz.value}>
-                    {tz.label}
-                  </option>
+                  <option key={tz.value} value={tz.value}>{tz.label}</option>
                 ))}
               </select>
             </div>
@@ -181,8 +151,8 @@ export default function SettingsPage() {
                 </p>
               </div>
               <ToggleSwitch
-                checked={frozenColumns}
-                onCheckedChange={setFrozenColumns}
+                checked={settings.frozenColumns}
+                onCheckedChange={(v) => update({ frozenColumns: v })}
               />
             </div>
 
@@ -194,7 +164,114 @@ export default function SettingsPage() {
                   Search bar remains visible at the top of the data grid
                 </p>
               </div>
-              <ToggleSwitch checked={searchBar} onCheckedChange={setSearchBar} />
+              <ToggleSwitch
+                checked={settings.searchBar}
+                onCheckedChange={(v) => update({ searchBar: v })}
+              />
+            </div>
+
+            {/* Row Text Size */}
+            <div>
+              <div className="mb-2 flex items-center justify-between">
+                <label htmlFor="row-text-size" className="text-sm font-medium">Row Text Size</label>
+                <span
+                  className="rounded-md border border-border bg-muted px-2 py-0.5 font-mono text-xs font-medium tabular-nums"
+                  style={{ fontSize: `${settings.rowTextSize}px` }}
+                >
+                  {settings.rowTextSize}px
+                </span>
+              </div>
+              <div className="flex items-center gap-3">
+                <span className="text-xs text-muted-foreground">10</span>
+                <input
+                  id="row-text-size"
+                  type="range"
+                  min={10}
+                  max={18}
+                  step={1}
+                  value={settings.rowTextSize}
+                  onChange={(e) => update({ rowTextSize: Number(e.target.value) })}
+                  className="h-2 w-full max-w-xs cursor-pointer appearance-none rounded-full bg-muted accent-primary [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-primary [&::-webkit-slider-thumb]:shadow-md"
+                />
+                <span className="text-xs text-muted-foreground">18</span>
+              </div>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Adjusts the font size of text in grid rows
+              </p>
+            </div>
+
+            {/* Row Height */}
+            <div>
+              <label className="mb-2 block text-sm font-medium">Row Height</label>
+              <div className="flex gap-2">
+                {(["compact", "default", "expanded"] as const).map((h) => (
+                  <button
+                    key={h}
+                    type="button"
+                    onClick={() => update({ rowHeight: h })}
+                    className={cn(
+                      "rounded-md border px-3 py-2 text-sm font-medium capitalize transition-colors cursor-pointer",
+                      settings.rowHeight === h
+                        ? "border-primary bg-primary/10 text-primary"
+                        : "border-border bg-background text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+                    )}
+                  >
+                    {h}
+                  </button>
+                ))}
+              </div>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Controls vertical padding in grid rows
+              </p>
+            </div>
+
+            {/* Show Alternate Titles */}
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <p className="text-sm font-medium">Show Alternate Titles</p>
+                <p className="text-xs text-muted-foreground">
+                  Display warnings when duplicate item IDs have different titles
+                </p>
+              </div>
+              <ToggleSwitch
+                checked={settings.showAlternateTitles}
+                onCheckedChange={(v) => update({ showAlternateTitles: v })}
+              />
+            </div>
+
+            {/* Default Sort */}
+            <div>
+              <label htmlFor="default-sort" className="mb-2 block text-sm font-medium">
+                Default Sort
+              </label>
+              <select
+                id="default-sort"
+                value={settings.defaultSort}
+                onChange={(e) => update({ defaultSort: e.target.value as SortColumn })}
+                className="h-9 w-full max-w-xs cursor-pointer rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+              >
+                <option value="title">Title</option>
+                <option value="sku">SKU</option>
+                <option value="inventory">Inventory</option>
+                <option value="upc">UPC</option>
+              </select>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Column used to sort the data grid by default
+              </p>
+            </div>
+
+            {/* Auto-expand Variations */}
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <p className="text-sm font-medium">Auto-expand Variations</p>
+                <p className="text-xs text-muted-foreground">
+                  Automatically expand variation parent rows to show children
+                </p>
+              </div>
+              <ToggleSwitch
+                checked={settings.autoExpandVariations}
+                onCheckedChange={(v) => update({ autoExpandVariations: v })}
+              />
             </div>
           </div>
         </section>
@@ -203,7 +280,7 @@ export default function SettingsPage() {
         <section
           className={cn(
             "rounded-lg border p-6 shadow-sm",
-            globalWriteLock
+            settings.globalWriteLock
               ? "border-amber-500/60 bg-amber-500/5 dark:bg-amber-500/10"
               : "border-border bg-card"
           )}
@@ -216,7 +293,7 @@ export default function SettingsPage() {
             <div className="flex items-start justify-between gap-6">
               <div className="flex-1">
                 <div className="flex items-center gap-2">
-                  {globalWriteLock ? (
+                  {settings.globalWriteLock ? (
                     <Lock className="h-5 w-5 text-amber-500" />
                   ) : (
                     <Unlock className="h-5 w-5 text-muted-foreground" />
@@ -224,15 +301,13 @@ export default function SettingsPage() {
                   <span className="font-medium">Global Write Lock</span>
                 </div>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  When enabled, all marketplace writes are blocked across all integrations
+                  When enabled, all marketplace writes are blocked across all integrations. This overrides per-integration locks: if global lock is ON, no integration can write.
                 </p>
               </div>
               <ToggleSwitch
-                checked={globalWriteLock}
-                onCheckedChange={setGlobalWriteLock}
-                className={cn(
-                  globalWriteLock && "!bg-amber-500 hover:!bg-amber-600"
-                )}
+                checked={settings.globalWriteLock}
+                onCheckedChange={(v) => update({ globalWriteLock: v })}
+                className={cn(settings.globalWriteLock && "!bg-amber-500 hover:!bg-amber-600")}
               />
             </div>
             <div className="flex items-center gap-2">

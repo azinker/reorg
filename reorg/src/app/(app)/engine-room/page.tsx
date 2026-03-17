@@ -1,16 +1,19 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
-  Gauge,
   Activity,
-  GitPullRequest,
   FileText,
   Shield,
   RefreshCw,
   Send,
   ScrollText,
   Terminal,
+  CheckCircle,
+  XCircle,
+  Loader2,
+  Clock,
+  User,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -21,20 +24,263 @@ const TABS = [
   { id: "raw-events", label: "Raw Events", icon: Terminal },
 ] as const;
 
-const EMPTY_STATES: Record<(typeof TABS)[number]["id"], string> = {
-  "sync-jobs":
-    "No sync jobs recorded yet. Connect an integration and run your first sync.",
-  "push-queue":
-    "No pushes queued. Stage changes in the dashboard and push when ready.",
-  "change-log":
-    "No changes logged yet. Edits, pushes, and sync events will appear here.",
-  "raw-events": "Raw API events will appear here for debugging.",
+type TabId = (typeof TABS)[number]["id"];
+
+type SyncJobRow = {
+  id: string;
+  platform: string;
+  status: "pending" | "in_progress" | "completed" | "failed";
+  items: number;
+  started: string | null;
+  completedAt: string | null;
+  durationSeconds: number | null;
+  errors: string[];
 };
 
-export default function EngineRoomPage() {
-  const [activeTab, setActiveTab] = useState<(typeof TABS)[number]["id"]>(
-    "sync-jobs"
+type PushQueueRow = {
+  id: string;
+  sku: string;
+  field: string;
+  oldValue: string;
+  newValue: string;
+  platform: string;
+  status: "queued";
+  editedBy: string;
+};
+
+type ChangeLogRow = {
+  timestamp: string;
+  user: string;
+  action: string;
+  sku: string;
+  detail: string;
+};
+
+type RawEventRow = { time: string; entry: string };
+
+type EngineRoomData = {
+  syncJobs: SyncJobRow[];
+  pushQueue: PushQueueRow[];
+  changeLog: ChangeLogRow[];
+  rawEvents: RawEventRow[];
+  summary: {
+    activeSyncs: number;
+    queuedPushes: number;
+    recentErrors: number;
+    recentErrorDetail: string | null;
+    writeLockOn: boolean;
+  };
+};
+
+function formatDateTime(iso: string | null): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  return d.toLocaleString(undefined, {
+    month: "short",
+    day: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function formatDuration(seconds: number | null): string {
+  if (seconds == null) return "—";
+  if (seconds < 60) return `${seconds}s`;
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return s ? `${m}m ${s}s` : `${m}m`;
+}
+
+function StatusBadge({ status }: { status: string }) {
+  const config: Record<string, { icon: typeof CheckCircle; cls: string; label: string }> = {
+    completed: { icon: CheckCircle, cls: "bg-emerald-500/15 text-emerald-400 border-emerald-500/30", label: "Completed" },
+    in_progress: { icon: Loader2, cls: "bg-blue-500/15 text-blue-400 border-blue-500/30", label: "In Progress" },
+    failed: { icon: XCircle, cls: "bg-red-500/15 text-red-400 border-red-500/30", label: "Failed" },
+    queued: { icon: Clock, cls: "bg-amber-500/15 text-amber-400 border-amber-500/30", label: "Queued" },
+    pending_review: { icon: FileText, cls: "bg-purple-500/15 text-purple-400 border-purple-500/30", label: "Pending Review" },
+  };
+  const c = config[status] ?? config.completed;
+  const Icon = c.icon;
+  return (
+    <span className={cn("inline-flex items-center gap-1.5 rounded border px-2 py-0.5 text-xs font-medium", c.cls)}>
+      <Icon className={cn("h-3 w-3 shrink-0", status === "in_progress" && "animate-spin")} aria-hidden />
+      {c.label}
+    </span>
   );
+}
+
+function SyncJobsPanel({ jobs }: { jobs: SyncJobRow[] }) {
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="border-b border-border text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">
+            <th className="pb-3 pr-4">ID</th>
+            <th className="pb-3 pr-4">Platform</th>
+            <th className="pb-3 pr-4">Status</th>
+            <th className="pb-3 pr-4 text-right">Items Synced</th>
+            <th className="pb-3 pr-4">Started</th>
+            <th className="pb-3 pr-4 text-right">Duration</th>
+            <th className="pb-3">Error</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-border/50">
+          {jobs.map((job) => (
+            <tr key={job.id} className="text-foreground">
+              <td className="py-3 pr-4 font-mono text-xs text-muted-foreground">{job.id.slice(0, 8)}</td>
+              <td className="py-3 pr-4">{job.platform}</td>
+              <td className="py-3 pr-4"><StatusBadge status={job.status} /></td>
+              <td className="py-3 pr-4 text-right tabular-nums">{job.items.toLocaleString()}</td>
+              <td className="py-3 pr-4 text-muted-foreground">{formatDateTime(job.started)}</td>
+              <td className="py-3 pr-4 text-right tabular-nums text-muted-foreground">{formatDuration(job.durationSeconds)}</td>
+              <td className="py-3 max-w-[200px] truncate text-xs text-muted-foreground" title={job.errors?.[0] ?? ""}>
+                {job.status === "failed" && job.errors?.length ? job.errors[0] : "—"}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {jobs.length === 0 && (
+        <p className="py-6 text-center text-sm text-muted-foreground">No sync jobs yet.</p>
+      )}
+    </div>
+  );
+}
+
+function PushQueuePanel({ items }: { items: PushQueueRow[] }) {
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="border-b border-border text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">
+            <th className="pb-3 pr-4">ID</th>
+            <th className="pb-3 pr-4">SKU</th>
+            <th className="pb-3 pr-4">Field</th>
+            <th className="pb-3 pr-4">Old Value</th>
+            <th className="pb-3 pr-4">New Value</th>
+            <th className="pb-3 pr-4">Platform</th>
+            <th className="pb-3 pr-4">Edited By</th>
+            <th className="pb-3">Status</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-border/50">
+          {items.map((item) => (
+            <tr key={item.id} className="text-foreground">
+              <td className="py-3 pr-4 font-mono text-xs text-muted-foreground">{item.id.slice(0, 8)}</td>
+              <td className="py-3 pr-4 font-mono text-xs">{item.sku}</td>
+              <td className="py-3 pr-4">{item.field}</td>
+              <td className="py-3 pr-4 text-muted-foreground line-through">{item.oldValue}</td>
+              <td className="py-3 pr-4 font-medium text-emerald-400">{item.newValue}</td>
+              <td className="py-3 pr-4">{item.platform}</td>
+              <td className="py-3 pr-4 text-xs text-muted-foreground">{item.editedBy}</td>
+              <td className="py-3"><StatusBadge status={item.status} /></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {items.length === 0 && (
+        <p className="py-6 text-center text-sm text-muted-foreground">Push queue is empty.</p>
+      )}
+    </div>
+  );
+}
+
+function ChangeLogPanel({ entries }: { entries: ChangeLogRow[] }) {
+  return (
+    <div className="space-y-0 divide-y divide-border/50">
+      {entries.map((entry, i) => (
+        <div key={i} className="flex flex-wrap items-start gap-x-4 gap-y-1 py-3 text-sm">
+          <span className="shrink-0 text-xs tabular-nums text-muted-foreground">{formatDateTime(entry.timestamp)}</span>
+          <span className="inline-flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
+            <User className="h-3 w-3" aria-hidden />
+            {entry.user}
+          </span>
+          <span className="font-medium text-foreground">{entry.action}</span>
+          {entry.sku !== "—" && (
+            <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs text-muted-foreground">{entry.sku}</span>
+          )}
+          <span className="text-muted-foreground">{entry.detail}</span>
+        </div>
+      ))}
+      {entries.length === 0 && (
+        <p className="py-6 text-center text-sm text-muted-foreground">No audit entries yet.</p>
+      )}
+    </div>
+  );
+}
+
+function RawEventsPanel({ events }: { events: RawEventRow[] }) {
+  return (
+    <div className="rounded-md border border-border bg-zinc-950 p-4 font-mono text-xs leading-relaxed">
+      {events.map((event, i) => {
+        const isError = event.entry.includes("fail") || event.entry.includes("error") || event.entry.includes("429") || event.entry.includes("500") || event.entry.includes("503");
+        return (
+          <div key={i} className={cn("whitespace-pre", isError ? "text-red-400" : "text-emerald-400/80")}>
+            <span className="text-zinc-500">{event.time}</span>{"  "}{event.entry}
+          </div>
+        );
+      })}
+      {events.length === 0 && (
+        <p className="py-4 text-center text-zinc-500">No raw events.</p>
+      )}
+    </div>
+  );
+}
+
+export default function EngineRoomPage() {
+  const [activeTab, setActiveTab] = useState<TabId>("sync-jobs");
+  const [data, setData] = useState<EngineRoomData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetch("/api/engine-room")
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error("Failed to load"))))
+      .then((json) => {
+        setData(json.data ?? null);
+        setError(null);
+      })
+      .catch((e) => {
+        setError(e instanceof Error ? e.message : "Failed to load engine room data");
+      })
+      .finally(() => setLoading(false));
+  }, []);
+
+  const summary = data?.summary ?? {
+    activeSyncs: 0,
+    queuedPushes: 0,
+    recentErrors: 0,
+    recentErrorDetail: null as string | null,
+    writeLockOn: false,
+  };
+
+  function renderPanel() {
+    if (!data) {
+      return loading ? (
+        <div className="flex items-center justify-center gap-2 py-12 text-muted-foreground">
+          <Loader2 className="h-5 w-5 animate-spin" aria-hidden />
+          Loading…
+        </div>
+      ) : error ? (
+        <div className="py-12 text-center text-destructive">{error}</div>
+      ) : (
+        <div className="py-12 text-center text-muted-foreground">No data.</div>
+      );
+    }
+    switch (activeTab) {
+      case "sync-jobs":
+        return <SyncJobsPanel jobs={data.syncJobs} />;
+      case "push-queue":
+        return <PushQueuePanel items={data.pushQueue} />;
+      case "change-log":
+        return <ChangeLogPanel entries={data.changeLog} />;
+      case "raw-events":
+        return <RawEventsPanel events={data.rawEvents} />;
+      default:
+        return null;
+    }
+  }
 
   return (
     <div className="p-6">
@@ -61,14 +307,14 @@ export default function EngineRoomPage() {
             <div
               className={cn(
                 "flex h-10 w-10 shrink-0 items-center justify-center rounded-md",
-                "bg-muted/80 text-muted-foreground"
+                "bg-blue-500/15 text-blue-400"
               )}
             >
               <Activity className="h-5 w-5" aria-hidden />
             </div>
             <div>
               <p className="text-2xl font-semibold tabular-nums text-foreground">
-                0
+                {loading ? "—" : summary.activeSyncs}
               </p>
               <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
                 Active Syncs
@@ -88,14 +334,14 @@ export default function EngineRoomPage() {
             <div
               className={cn(
                 "flex h-10 w-10 shrink-0 items-center justify-center rounded-md",
-                "bg-muted/80 text-muted-foreground"
+                "bg-amber-500/15 text-amber-400"
               )}
             >
-              <GitPullRequest className="h-5 w-5" aria-hidden />
+              <Send className="h-5 w-5" aria-hidden />
             </div>
             <div>
               <p className="text-2xl font-semibold tabular-nums text-foreground">
-                0
+                {loading ? "—" : summary.queuedPushes}
               </p>
               <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
                 Queued Pushes
@@ -115,18 +361,23 @@ export default function EngineRoomPage() {
             <div
               className={cn(
                 "flex h-10 w-10 shrink-0 items-center justify-center rounded-md",
-                "bg-muted/80 text-muted-foreground"
+                "bg-red-500/15 text-red-400"
               )}
             >
               <FileText className="h-5 w-5" aria-hidden />
             </div>
             <div>
               <p className="text-2xl font-semibold tabular-nums text-foreground">
-                0
+                {loading ? "—" : summary.recentErrors}
               </p>
               <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
                 Recent Errors
               </p>
+              {!loading && summary.recentErrors > 0 && summary.recentErrorDetail && (
+                <p className="mt-1 max-w-full truncate text-xs text-red-400/90" title={summary.recentErrorDetail}>
+                  {summary.recentErrorDetail}
+                </p>
+              )}
             </div>
           </div>
         </article>
@@ -149,7 +400,7 @@ export default function EngineRoomPage() {
             </div>
             <div>
               <p className="text-2xl font-semibold tabular-nums text-amber-600 dark:text-amber-400">
-                ON
+                {loading ? "—" : summary.writeLockOn ? "ON" : "OFF"}
               </p>
               <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
                 Write Lock Status
@@ -200,24 +451,9 @@ export default function EngineRoomPage() {
           id={`panel-${activeTab}`}
           role="tabpanel"
           aria-labelledby={`tab-${activeTab}`}
-          className="min-h-[280px] p-8"
+          className="min-h-[280px] p-6"
         >
-          <div className="flex flex-col items-center justify-center gap-3 text-center">
-            <div
-              className={cn(
-                "flex h-14 w-14 shrink-0 items-center justify-center rounded-full",
-                "bg-muted/60 text-muted-foreground"
-              )}
-            >
-              {(() => {
-                const TabIcon = TABS.find((t) => t.id === activeTab)!.icon;
-                return <TabIcon className="h-7 w-7" aria-hidden />;
-              })()}
-            </div>
-            <p className="max-w-md text-sm text-muted-foreground">
-              {EMPTY_STATES[activeTab]}
-            </p>
-          </div>
+          {renderPanel()}
         </div>
       </div>
     </div>

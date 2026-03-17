@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 280 80" width="280" height="80">
+  <!-- reor text in charcoal -->
+  <text x="0" y="56" font-family="'Segoe UI', system-ui, -apple-system, sans-serif" font-size="54" font-weight="300" letter-spacing="-1" fill="#3D3D3D">
+    reor
+  </text>
+  <!-- G in bold crimson red -->
+  <text x="140" y="56" font-family="'Segoe UI', system-ui, -apple-system, sans-serif" font-size="54" font-weight="700" letter-spacing="-1" fill="#B5282D">
+    G
+  </text>
+  <!-- Geometric accent squares (matching TPP logo style) -->
+  <rect x="186" y="12" width="16" height="16" rx="1" fill="#3D3D3D"/>
+  <rect x="205" y="12" width="16" height="16" rx="1" fill="#B5282D"/>
+  <rect x="186" y="31" width="16" height="16" rx="1" fill="#3D3D3D"/>
+  <rect x="205" y="31" width="9" height="9" rx="1" fill="#B5282D" opacity="0.6"/>
+</svg>

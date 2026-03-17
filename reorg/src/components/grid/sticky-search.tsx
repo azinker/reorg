@@ -36,7 +36,9 @@ export function StickySearch({
   function flattenRows(rows: GridRow[]): GridRow[] {
     const flat: GridRow[] = [];
     for (const row of rows) {
-      flat.push(row);
+      if (!row.isParent) {
+        flat.push(row);
+      }
       if (row.childRows) flat.push(...row.childRows);
     }
     return flat;
@@ -127,7 +129,7 @@ export function StickySearch({
   }
 
   return (
-    <div className="sticky top-0 z-20 border-b border-border bg-card/95 px-4 py-3 backdrop-blur-sm">
+    <div className="sticky top-0 z-40 border-b border-border bg-card/95 px-4 py-3 backdrop-blur-sm">
       <div className="relative flex items-center gap-2">
         <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -162,7 +164,7 @@ export function StickySearch({
       {showResults && (
         <div
           ref={resultsRef}
-          className="absolute left-4 right-4 top-full z-30 mt-1 max-h-80 overflow-y-auto rounded-lg border border-border bg-popover shadow-xl"
+          className="absolute left-4 right-4 top-full z-50 mt-1 max-h-80 overflow-y-auto rounded-lg border border-border bg-popover shadow-xl"
         >
           {results.map((result, i) => (
             <button

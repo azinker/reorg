@@ -1,18 +1,15 @@
 import { NextResponse } from "next/server";
+import { getGridData } from "@/lib/grid-query";
 
 export async function GET() {
-  // TODO: Wire to real database queries when DB is connected
-  // This endpoint returns the main grid data:
-  // - MasterRows with linked MarketplaceListings
-  // - StagedChanges merged for display
-  // - Shipping costs calculated from weight/rate table
-  // - Profit calculations per store
-
-  return NextResponse.json({
-    data: {
-      rows: [],
-      total: 0,
-      message: "Connect a database to fetch real grid data. Using mock data on the client.",
-    },
-  });
+  try {
+    const rows = await getGridData();
+    return NextResponse.json({ data: { rows, total: rows.length } });
+  } catch (error) {
+    console.error("[grid] Failed to fetch grid data", error);
+    return NextResponse.json(
+      { error: "Failed to fetch grid data", details: String(error) },
+      { status: 500 }
+    );
+  }
 }

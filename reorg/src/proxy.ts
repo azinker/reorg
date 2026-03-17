@@ -7,29 +7,17 @@ export default function proxy(req: NextRequest) {
   const isPublicAsset =
     pathname.startsWith("/_next") ||
     pathname.startsWith("/favicon") ||
-    pathname === "/robots.txt";
+    pathname === "/robots.txt" ||
+    pathname.startsWith("/logos");
 
   if (isPublicAsset) {
     return NextResponse.next();
   }
 
-  // Local dev: skip auth when SKIP_AUTH=true so UI can be previewed without a DB
-  if (process.env.SKIP_AUTH === "true") {
-    if (pathname === "/login") {
-      return NextResponse.redirect(new URL("/dashboard", req.url));
-    }
-    return NextResponse.next();
+  if (process.env.SKIP_AUTH === "true" && pathname === "/login") {
+    return NextResponse.redirect(new URL("/dashboard", req.url));
   }
 
-  // Auth routes always pass through
-  if (pathname.startsWith("/api/auth")) {
-    return NextResponse.next();
-  }
-
-  // TODO: Re-enable auth() wrapper when DATABASE_URL is configured:
-  //   import { auth } from "@/lib/auth";
-  //   export default auth((req) => { ... });
-  // For now, allow all traffic through in local dev
   return NextResponse.next();
 }
 

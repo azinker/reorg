@@ -1,56 +1,100 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import JsBarcode from "jsbarcode";
+import { Copy, Check } from "lucide-react";
 
 interface UpcCellProps {
   upc: string | null;
 }
 
+function CopyNotice({ show }: { show: boolean }) {
+  if (!show) return null;
+  return (
+    <span className="absolute -top-6 left-1/2 z-50 -translate-x-1/2 whitespace-nowrap rounded bg-foreground px-2 py-0.5 text-[10px] font-medium text-background shadow-lg">
+      Copied!
+    </span>
+  );
+}
+
 export function UpcCell({ upc }: UpcCellProps) {
   const svgRef = useRef<SVGSVGElement>(null);
+  const [copied, setCopied] = useState(false);
 
   useEffect(() => {
-    if (!svgRef.current || !upc) return;
+    if (!svgRef.current) return;
+
+    if (!upc) {
+      const svg = svgRef.current;
+      svg.setAttribute("viewBox", "0 0 160 55");
+      svg.innerHTML = `
+        <rect width="160" height="55" fill="transparent"/>
+        <line x1="10" y1="28" x2="150" y2="28" stroke="currentColor" stroke-width="1.5" opacity="0.3"/>
+        <text x="80" y="22" text-anchor="middle" fill="currentColor" font-size="12" font-family="monospace" opacity="0.5">NO UPC</text>
+        <text x="80" y="42" text-anchor="middle" fill="currentColor" font-size="9" font-family="monospace" opacity="0.35">AVAILABLE</text>
+      `;
+      return;
+    }
+
+    const opts = {
+      width: 1.8,
+      height: 48,
+      displayValue: false,
+      margin: 4,
+      background: "transparent",
+      lineColor: "currentColor",
+    };
 
     let format = "CODE128";
     if (upc.length === 12) format = "UPC";
     else if (upc.length === 13) format = "EAN13";
 
     try {
-      JsBarcode(svgRef.current, upc, {
-        format,
-        width: 1.2,
-        height: 30,
-        displayValue: false,
-        margin: 2,
-        background: "transparent",
-        lineColor: "currentColor",
-      });
+      JsBarcode(svgRef.current, upc, { ...opts, format });
     } catch {
-      if (svgRef.current) svgRef.current.innerHTML = "";
+      try {
+        JsBarcode(svgRef.current!, upc, { ...opts, format: "CODE128" });
+      } catch {
+        if (svgRef.current) svgRef.current.innerHTML = "";
+      }
     }
   }, [upc]);
 
-  if (!upc) {
-    return (
-      <div className="flex h-full items-center">
-        <span className="text-[11px] text-muted-foreground/50 italic">No UPC</span>
-      </div>
-    );
+  function handleCopy() {
+    if (!upc) return;
+    navigator.clipboard.writeText(upc);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
   }
 
   return (
-    <div
-      className="flex flex-col items-center gap-0.5 text-foreground"
-      onContextMenu={(e) => {
-        e.preventDefault();
-        navigator.clipboard.writeText(upc);
-      }}
-      title={`Right-click to copy: ${upc}`}
-    >
-      <svg ref={svgRef} className="h-[30px] w-full max-w-[100px]" />
-      <span className="font-mono text-[10px] text-muted-foreground select-all">{upc}</span>
+    <div className="relative flex flex-col items-center gap-1 text-foreground">
+      <CopyNotice show={copied} />
+      <svg
+        ref={svgRef}
+        className="h-[48px] w-full max-w-[160px] cursor-pointer"
+        onClick={handleCopy}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          handleCopy();
+        }}
+        role="img"
+        aria-label={upc ? `UPC barcode: ${upc}` : "No UPC available"}
+      />
+      {upc ? (
+        <div className="flex items-center gap-1">
+          <span className="font-mono text-xs font-medium text-foreground select-all">{upc}</span>
+          <button
+            onClick={handleCopy}
+            className="rounded p-0.5 text-muted-foreground/40 transition-colors hover:text-foreground cursor-pointer"
+            title="Copy UPC"
+          >
+            {copied ? <Check className="h-3 w-3 text-emerald-400" /> : <Copy className="h-3 w-3" />}
+          </button>
+        </div>
+      ) : (
+        <span className="text-[10px] font-medium text-muted-foreground/40 italic">No UPC</span>
+      )}
     </div>
   );
 }

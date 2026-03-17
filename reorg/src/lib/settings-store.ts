@@ -1,0 +1,132 @@
+const STORAGE_KEY = "reorg_settings";
+const DB_KEY = "appSettings";
+
+export type Density = "compact" | "comfortable" | "spacious";
+export type RowHeight = "compact" | "default" | "expanded";
+export type SortColumn = "title" | "sku" | "inventory" | "upc";
+
+export interface AppSettings {
+  density: Density;
+  timezone: string;
+  frozenColumns: boolean;
+  searchBar: boolean;
+  rowTextSize: number;
+  rowHeight: RowHeight;
+  showAlternateTitles: boolean;
+  defaultSort: SortColumn;
+  autoExpandVariations: boolean;
+  globalWriteLock: boolean;
+}
+
+const DEFAULTS: AppSettings = {
+  density: "comfortable",
+  timezone: "America/New_York",
+  frozenColumns: true,
+  searchBar: true,
+  rowTextSize: 12,
+  rowHeight: "default",
+  showAlternateTitles: true,
+  defaultSort: "title",
+  autoExpandVariations: false,
+  globalWriteLock: false,
+};
+
+let cached: AppSettings | null = null;
+let hydrated = false;
+const listeners = new Set<() => void>();
+
+function load(): AppSettings {
+  if (cached) return cached;
+  if (typeof window === "undefined") return DEFAULTS;
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    cached = raw ? { ...DEFAULTS, ...JSON.parse(raw) } : { ...DEFAULTS };
+    return cached!;
+  } catch {
+    return DEFAULTS;
+  }
+}
+
+function persist(settings: AppSettings) {
+  cached = settings;
+  if (typeof window !== "undefined") {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
+    } catch { /* quota */ }
+  }
+  listeners.forEach((fn) => fn());
+
+  fetch("/api/settings", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ key: DB_KEY, value: settings }),
+  }).catch((err) => console.error("[settings] persist failed", err));
+
+  // Keep global_write_lock in sync for server-side safety checks (safety.ts)
+  fetch("/api/settings", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ key: "global_write_lock", value: settings.globalWriteLock }),
+  }).catch((err) => console.error("[settings] global_write_lock persist failed", err));
+}
+
+export function getSettings(): AppSettings {
+  return load();
+}
+
+export function updateSettings(partial: Partial<AppSettings>) {
+  const current = load();
+  persist({ ...current, ...partial });
+}
+
+export function subscribeSettings(fn: () => void): () => void {
+  listeners.add(fn);
+  return () => listeners.delete(fn);
+}
+
+export function getDensityPadding(density: Density): { px: string; py: string } {
+  switch (density) {
+    case "compact": return { px: "px-1.5", py: "py-0.5" };
+    case "spacious": return { px: "px-4", py: "py-3" };
+    default: return { px: "px-3", py: "py-2" };
+  }
+}
+
+export function getRowHeightEstimate(rowHeight: RowHeight): number {
+  switch (rowHeight) {
+    case "compact": return 80;
+    case "expanded": return 140;
+    default: return 110;
+  }
+}
+
+export async function hydrateSettings(): Promise<void> {
+  if (hydrated) return;
+  hydrated = true;
+  try {
+    const [resApp, resLock] = await Promise.all([
+      fetch(`/api/settings?key=${DB_KEY}`),
+      fetch(`/api/settings?key=global_write_lock`),
+    ]);
+    let merged: Partial<AppSettings> = { ...DEFAULTS };
+    if (resApp.ok) {
+      const json = await resApp.json();
+      if (json.data != null && typeof json.data === "object") {
+        merged = { ...DEFAULTS, ...(json.data as Partial<AppSettings>) };
+      }
+    }
+    if (resLock.ok) {
+      const json = await resLock.json();
+      if (typeof json.data === "boolean") {
+        merged.globalWriteLock = json.data;
+      }
+    }
+    cached = { ...DEFAULTS, ...merged };
+    if (typeof window !== "undefined") {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(cached));
+    }
+    listeners.forEach((fn) => fn());
+  } catch (err) {
+    console.error("[settings] hydrate failed", err);
+  }
+}
