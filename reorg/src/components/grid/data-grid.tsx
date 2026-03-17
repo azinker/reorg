@@ -38,6 +38,12 @@ interface DataGridProps {
   rows: GridRow[];
 }
 
+type RailState = {
+  visible: boolean;
+  thumbSize: number;
+  thumbOffset: number;
+};
+
 const DEFAULT_FILTERS: FilterState = {
   marketplace: "all",
   stockStatus: "all",
@@ -346,9 +352,18 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
     loadUserPref("columns", DEFAULT_COLUMNS)
   );
   const [highlightedRowId, setHighlightedRowId] = useState<string | null>(null);
-    const [toast, setToast] = useState<string | null>(null);
-    const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-    const parentRef = useRef<HTMLDivElement>(null);
+  const [toast, setToast] = useState<string | null>(null);
+  const [horizontalRail, setHorizontalRail] = useState<RailState>({ visible: false, thumbSize: 0, thumbOffset: 0 });
+  const [verticalRail, setVerticalRail] = useState<RailState>({ visible: false, thumbSize: 0, thumbOffset: 0 });
+  const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const parentRef = useRef<HTMLDivElement>(null);
+  const horizontalTrackRef = useRef<HTMLDivElement>(null);
+  const verticalTrackRef = useRef<HTMLDivElement>(null);
+  const dragStateRef = useRef<{
+    axis: "horizontal" | "vertical";
+    startMouse: number;
+    startScroll: number;
+  } | null>(null);
 
   function showToast(msg: string) {
     setToast(msg);
@@ -790,10 +805,149 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
   }, 0);
 
   const totalMinWidth = frozenWidth + scrollWidth;
+  const railSize = 14;
+  const railInset = 8;
+  const minThumbSize = 72;
 
   const cellPy = settings.density === "compact" ? "py-0.5" : settings.density === "spacious" ? "py-3" : "py-2";
 
   const rowFontStyle = { '--row-font-size': `${settings.rowTextSize}px` } as React.CSSProperties;
+
+  useEffect(() => {
+    const scroller = parentRef.current;
+    if (!scroller) return;
+
+    function updateRails() {
+      const currentScroller = parentRef.current;
+      if (!currentScroller) return;
+      const horizontalTrack = horizontalTrackRef.current;
+      const verticalTrack = verticalTrackRef.current;
+      const scrollWidthPx = Math.max(currentScroller.scrollWidth, totalMinWidth);
+      const scrollHeightPx = currentScroller.scrollHeight;
+      const clientWidthPx = currentScroller.clientWidth;
+      const clientHeightPx = currentScroller.clientHeight;
+      const canScrollX = scrollWidthPx - clientWidthPx > 2;
+      const canScrollY = scrollHeightPx - clientHeightPx > 2;
+
+      if (horizontalTrack && canScrollX) {
+        const trackWidth = horizontalTrack.clientWidth;
+        const thumbWidth = Math.max(minThumbSize, (clientWidthPx / scrollWidthPx) * trackWidth);
+        const maxOffset = Math.max(0, trackWidth - thumbWidth);
+        const thumbOffset =
+          maxOffset === 0
+            ? 0
+            : (currentScroller.scrollLeft / (scrollWidthPx - clientWidthPx)) * maxOffset;
+        setHorizontalRail({ visible: true, thumbSize: thumbWidth, thumbOffset });
+      } else {
+        setHorizontalRail({ visible: false, thumbSize: 0, thumbOffset: 0 });
+      }
+
+      if (verticalTrack && canScrollY) {
+        const trackHeight = verticalTrack.clientHeight;
+        const thumbHeight = Math.max(minThumbSize, (clientHeightPx / scrollHeightPx) * trackHeight);
+        const maxOffset = Math.max(0, trackHeight - thumbHeight);
+        const thumbOffset =
+          maxOffset === 0
+            ? 0
+            : (currentScroller.scrollTop / (scrollHeightPx - clientHeightPx)) * maxOffset;
+        setVerticalRail({ visible: true, thumbSize: thumbHeight, thumbOffset });
+      } else {
+        setVerticalRail({ visible: false, thumbSize: 0, thumbOffset: 0 });
+      }
+    }
+
+    const requestUpdate = () => requestAnimationFrame(updateRails);
+    const resizeObserver = new ResizeObserver(requestUpdate);
+    resizeObserver.observe(scroller);
+    if (scroller.firstElementChild) {
+      resizeObserver.observe(scroller.firstElementChild);
+    }
+
+    scroller.addEventListener("scroll", updateRails, { passive: true });
+    window.addEventListener("resize", requestUpdate);
+    updateRails();
+
+    return () => {
+      resizeObserver.disconnect();
+      scroller.removeEventListener("scroll", updateRails);
+      window.removeEventListener("resize", requestUpdate);
+    };
+  }, [flatRows.length, totalMinWidth]);
+
+  useEffect(() => {
+    function handlePointerMove(event: MouseEvent) {
+      const drag = dragStateRef.current;
+      const scroller = parentRef.current;
+      if (!drag || !scroller) return;
+
+      if (drag.axis === "horizontal" && horizontalTrackRef.current) {
+        const delta = event.clientX - drag.startMouse;
+        const trackWidth = horizontalTrackRef.current.clientWidth;
+        const maxThumbOffset = Math.max(0, trackWidth - horizontalRail.thumbSize);
+        if (maxThumbOffset <= 0) return;
+        const maxScroll = scroller.scrollWidth - scroller.clientWidth;
+        scroller.scrollLeft = drag.startScroll + (delta / maxThumbOffset) * maxScroll;
+      }
+
+      if (drag.axis === "vertical" && verticalTrackRef.current) {
+        const delta = event.clientY - drag.startMouse;
+        const trackHeight = verticalTrackRef.current.clientHeight;
+        const maxThumbOffset = Math.max(0, trackHeight - verticalRail.thumbSize);
+        if (maxThumbOffset <= 0) return;
+        const maxScroll = scroller.scrollHeight - scroller.clientHeight;
+        scroller.scrollTop = drag.startScroll + (delta / maxThumbOffset) * maxScroll;
+      }
+    }
+
+    function handlePointerUp() {
+      dragStateRef.current = null;
+      document.body.style.userSelect = "";
+      document.body.style.cursor = "";
+    }
+
+    window.addEventListener("mousemove", handlePointerMove);
+    window.addEventListener("mouseup", handlePointerUp);
+    return () => {
+      window.removeEventListener("mousemove", handlePointerMove);
+      window.removeEventListener("mouseup", handlePointerUp);
+    };
+  }, [horizontalRail.thumbSize, verticalRail.thumbSize]);
+
+  function startRailDrag(axis: "horizontal" | "vertical", event: React.MouseEvent) {
+    const scroller = parentRef.current;
+    if (!scroller) return;
+    dragStateRef.current = {
+      axis,
+      startMouse: axis === "horizontal" ? event.clientX : event.clientY,
+      startScroll: axis === "horizontal" ? scroller.scrollLeft : scroller.scrollTop,
+    };
+    document.body.style.userSelect = "none";
+    document.body.style.cursor = axis === "horizontal" ? "ew-resize" : "ns-resize";
+    event.preventDefault();
+    event.stopPropagation();
+  }
+
+  function jumpOnTrack(axis: "horizontal" | "vertical", event: React.MouseEvent<HTMLDivElement>) {
+    if (event.target !== event.currentTarget) return;
+    const scroller = parentRef.current;
+    if (!scroller) return;
+
+    if (axis === "horizontal" && horizontalTrackRef.current) {
+      const rect = horizontalTrackRef.current.getBoundingClientRect();
+      const desiredOffset = event.clientX - rect.left - horizontalRail.thumbSize / 2;
+      const maxThumbOffset = Math.max(0, rect.width - horizontalRail.thumbSize);
+      const ratio = maxThumbOffset === 0 ? 0 : Math.max(0, Math.min(desiredOffset, maxThumbOffset)) / maxThumbOffset;
+      scroller.scrollLeft = ratio * (scroller.scrollWidth - scroller.clientWidth);
+    }
+
+    if (axis === "vertical" && verticalTrackRef.current) {
+      const rect = verticalTrackRef.current.getBoundingClientRect();
+      const desiredOffset = event.clientY - rect.top - verticalRail.thumbSize / 2;
+      const maxThumbOffset = Math.max(0, rect.height - verticalRail.thumbSize);
+      const ratio = maxThumbOffset === 0 ? 0 : Math.max(0, Math.min(desiredOffset, maxThumbOffset)) / maxThumbOffset;
+      scroller.scrollTop = ratio * (scroller.scrollHeight - scroller.clientHeight);
+    }
+  }
 
   return (
     <div className="grid h-full min-h-0 min-w-0 grid-rows-[auto_auto_auto_minmax(0,1fr)]">
@@ -839,9 +993,8 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
           </button>
         </div>
       </div>
-
       <div className="relative h-full min-h-0 min-w-0">
-      <div ref={parentRef} className="app-grid-scroll h-full min-h-0 min-w-0 overflow-scroll">
+      <div ref={parentRef} className="app-grid-scroll h-full min-h-0 min-w-0 overflow-scroll pr-6 pb-6">
         {/* Header */}
         <div
           className="sticky top-0 z-20 flex border-b-2 border-border bg-card text-xs font-bold uppercase tracking-wide text-foreground/80"
@@ -1248,7 +1401,59 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
           })}
         </div>
       </div>
-
+      <div
+        ref={verticalTrackRef}
+        onMouseDown={(event) => jumpOnTrack("vertical", event)}
+        className={cn(
+          "absolute top-2 right-2 rounded-full border border-emerald-500/35 bg-background/75 shadow-[0_10px_22px_rgba(0,0,0,0.25)] backdrop-blur-sm transition-opacity",
+          verticalRail.visible ? "pointer-events-auto opacity-100" : "pointer-events-none opacity-0"
+        )}
+        style={{
+          width: railSize,
+          bottom: horizontalRail.visible ? railInset + railSize + 4 : railInset,
+          background:
+            "linear-gradient(180deg, color-mix(in oklab, var(--scrollbar-track) 92%, white 8%), var(--scrollbar-track))",
+        }}
+      >
+        <div
+          onMouseDown={(event) => startRailDrag("vertical", event)}
+          className="absolute left-[2px] right-[2px] cursor-ns-resize rounded-full"
+          style={{
+            height: verticalRail.thumbSize,
+            transform: `translateY(${verticalRail.thumbOffset}px)`,
+            background:
+              "linear-gradient(180deg, color-mix(in oklab, var(--scrollbar-thumb-hover) 78%, white 22%), var(--scrollbar-thumb-active))",
+            boxShadow:
+              "0 4px 14px color-mix(in oklab, var(--scrollbar-shadow) 72%, transparent), inset 0 1px 0 color-mix(in oklab, white 32%, transparent)",
+          }}
+        />
+      </div>
+      <div
+        ref={horizontalTrackRef}
+        onMouseDown={(event) => jumpOnTrack("horizontal", event)}
+        className={cn(
+          "absolute right-2 bottom-2 left-2 rounded-full border border-emerald-500/35 bg-background/75 shadow-[0_10px_22px_rgba(0,0,0,0.25)] backdrop-blur-sm transition-opacity",
+          horizontalRail.visible ? "pointer-events-auto opacity-100" : "pointer-events-none opacity-0"
+        )}
+        style={{
+          height: railSize,
+          background:
+            "linear-gradient(90deg, color-mix(in oklab, var(--scrollbar-track) 92%, white 8%), var(--scrollbar-track))",
+        }}
+      >
+        <div
+          onMouseDown={(event) => startRailDrag("horizontal", event)}
+          className="absolute top-[2px] bottom-[2px] cursor-ew-resize rounded-full"
+          style={{
+            width: horizontalRail.thumbSize,
+            transform: `translateX(${horizontalRail.thumbOffset}px)`,
+            background:
+              "linear-gradient(90deg, color-mix(in oklab, var(--scrollbar-thumb-hover) 78%, white 22%), var(--scrollbar-thumb-active))",
+            boxShadow:
+              "0 4px 14px color-mix(in oklab, var(--scrollbar-shadow) 72%, transparent), inset 0 1px 0 color-mix(in oklab, white 32%, transparent)",
+          }}
+        />
+      </div>
       </div>
 
       {/* Photo overlay — only one at a time */}
