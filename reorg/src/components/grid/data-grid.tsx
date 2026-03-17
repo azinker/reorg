@@ -348,10 +348,16 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
   const [highlightedRowId, setHighlightedRowId] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const parentRef = useRef<HTMLDivElement>(null);
-  const bottomScrollRef = useRef<HTMLDivElement>(null);
-  const syncSourceRef = useRef<"main" | "bottom" | null>(null);
-  const [hasHorizontalOverflow, setHasHorizontalOverflow] = useState(false);
+    const parentRef = useRef<HTMLDivElement>(null);
+    const bottomScrollRef = useRef<HTMLDivElement>(null);
+    const syncSourceRef = useRef<"main" | "bottom" | null>(null);
+    const [hasHorizontalOverflow, setHasHorizontalOverflow] = useState(false);
+    const [scrollHints, setScrollHints] = useState({
+      left: false,
+      right: false,
+      top: false,
+      bottom: false,
+    });
 
   function showToast(msg: string) {
     setToast(msg);
@@ -824,7 +830,17 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
     };
 
     const updateOverflow = () => {
-      setHasHorizontalOverflow(main.scrollWidth > main.clientWidth + 4);
+      const maxScrollLeft = Math.max(0, main.scrollWidth - main.clientWidth);
+      const maxScrollTop = Math.max(0, main.scrollHeight - main.clientHeight);
+
+      setHasHorizontalOverflow(maxScrollLeft > 4);
+      setScrollHints({
+        left: main.scrollLeft > 8,
+        right: main.scrollLeft < maxScrollLeft - 8,
+        top: main.scrollTop > 8,
+        bottom: main.scrollTop < maxScrollTop - 8,
+      });
+
       if (Math.abs(bottom.scrollLeft - main.scrollLeft) > 1) {
         bottom.scrollLeft = main.scrollLeft;
       }
@@ -892,7 +908,12 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
         </div>
       </div>
 
-      <div ref={parentRef} className="flex-1 overflow-auto">
+      <div className="relative flex-1">
+      <div
+        ref={parentRef}
+        className="app-grid-scroll relative h-full overflow-auto pr-1 pb-1"
+        style={{ scrollbarGutter: "stable both-edges" }}
+      >
         {/* Header */}
         <div
           className="sticky top-0 z-20 flex border-b-2 border-border bg-card text-xs font-bold uppercase tracking-wide text-foreground/80"
@@ -1300,17 +1321,32 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
         </div>
       </div>
 
+      {scrollHints.top && (
+        <div className="pointer-events-none absolute left-0 right-0 top-0 z-30 h-5 bg-gradient-to-b from-background/85 via-background/45 to-transparent" />
+      )}
+      {scrollHints.bottom && (
+        <div className="pointer-events-none absolute bottom-0 left-0 right-0 z-20 h-6 bg-gradient-to-t from-background/90 via-background/40 to-transparent" />
+      )}
+      {scrollHints.left && (
+        <div className="pointer-events-none absolute bottom-0 left-0 top-0 z-20 w-7 bg-gradient-to-r from-background/90 via-background/45 to-transparent" />
+      )}
+      {scrollHints.right && (
+        <div className="pointer-events-none absolute bottom-0 right-0 top-0 z-20 w-8 bg-gradient-to-l from-background/92 via-background/50 to-transparent" />
+      )}
+      </div>
+
       {/* Photo overlay — only one at a time */}
       {hasHorizontalOverflow && (
-          <div className="border-t border-border bg-gradient-to-r from-card via-muted/70 to-card px-3 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
-            <div className="mb-1 flex items-center justify-between text-[11px] text-muted-foreground">
-              <span>Scroll to view more columns</span>
-              <span className="font-medium text-emerald-400">Use the bar below</span>
-            </div>
-            <div
-              ref={bottomScrollRef}
-              className="h-6 overflow-x-auto overflow-y-hidden rounded-lg border border-border/80 bg-gradient-to-r from-background/95 via-card to-background/95 px-0.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.05),0_8px_18px_rgba(0,0,0,0.12)]"
-            >
+            <div className="border-t border-border bg-gradient-to-r from-card via-muted/70 to-card px-3 py-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
+              <div className="mb-1 flex items-center justify-between text-[11px] text-muted-foreground">
+              <span>More columns are available to the right</span>
+              <span className="font-medium text-emerald-400">Drag the bar below</span>
+              </div>
+              <div
+                ref={bottomScrollRef}
+              className="app-grid-scrollbar h-7 overflow-x-auto overflow-y-hidden rounded-xl border border-border bg-gradient-to-r from-background/95 via-card to-background/95 px-1 shadow-[inset_0_1px_0_rgba(255,255,255,0.06),0_10px_24px_rgba(0,0,0,0.14)]"
+              style={{ scrollbarGutter: "stable both-edges" }}
+              >
               <div style={{ width: totalMinWidth, height: 1 }} />
             </div>
         </div>
