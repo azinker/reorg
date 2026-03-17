@@ -121,14 +121,14 @@
     scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
   }
   html {
-    scrollbar-gutter: stable both-edges;
+    scrollbar-gutter: stable;
   }
   body {
     @apply bg-background text-foreground;
   }
   *::-webkit-scrollbar {
-    width: 18px;
-    height: 18px;
+    width: 16px;
+    height: 16px;
   }
   *::-webkit-scrollbar-track {
     border-radius: 999px;
@@ -139,8 +139,8 @@
       inset 0 10px 18px var(--scrollbar-shadow);
   }
   *::-webkit-scrollbar-thumb {
-    min-height: 72px;
-    border: 2px solid transparent;
+    min-height: 56px;
+    border: 3px solid transparent;
     border-radius: 999px;
     background:
       linear-gradient(180deg, color-mix(in oklab, var(--scrollbar-thumb) 84%, white 16%), var(--scrollbar-thumb-active));
@@ -161,36 +161,6 @@
   }
   *::-webkit-scrollbar-corner {
     background: var(--scrollbar-track);
-  }
-
-  .app-grid-scroll,
-  .app-grid-scrollbar {
-    overscroll-behavior: contain;
-    scrollbar-width: auto;
-    scrollbar-color: var(--scrollbar-thumb-hover) var(--scrollbar-track);
-  }
-
-  .app-grid-scroll::-webkit-scrollbar {
-    width: 20px;
-    height: 20px;
-  }
-
-  .app-grid-scrollbar::-webkit-scrollbar {
-    width: 20px;
-    height: 20px;
-  }
-
-  .app-grid-scroll::-webkit-scrollbar-thumb,
-  .app-grid-scrollbar::-webkit-scrollbar-thumb {
-    min-height: 88px;
-    border-width: 2px;
-  }
-
-  .app-grid-scroll::-webkit-scrollbar-track,
-  .app-grid-scrollbar::-webkit-scrollbar-track {
-    box-shadow:
-      inset 0 0 0 1px var(--scrollbar-track-edge),
-      inset 0 12px 22px var(--scrollbar-shadow);
   }
 }
 
