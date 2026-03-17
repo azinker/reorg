@@ -131,7 +131,7 @@ export default function DashboardPage() {
 
   if (!rows) {
     return (
-      <div className="flex h-[calc(100vh-3.5rem)] items-center justify-center">
+      <div className="flex h-full min-h-0 items-center justify-center overflow-hidden">
         <div className="flex flex-col items-center gap-3">
           <Loader2 className="h-8 w-8 animate-spin text-primary" />
           <span className="text-sm text-muted-foreground">Loading grid data...</span>
@@ -141,7 +141,7 @@ export default function DashboardPage() {
   }
 
   return (
-    <div className="flex h-[calc(100vh-3.5rem)] flex-col">
+    <div className="flex h-full min-h-0 flex-col overflow-hidden">
       {isRefreshing && source === "db" && (
         <div className="flex items-center gap-2 border-b border-blue-500/20 bg-blue-500/5 px-4 py-1.5">
           <RefreshCw className="h-3.5 w-3.5 animate-spin text-blue-400" />
