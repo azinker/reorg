@@ -165,15 +165,48 @@
   }
 
   .app-grid-scroll {
-    scrollbar-width: none;
-    -ms-overflow-style: none;
+    scrollbar-width: auto;
+    scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+  }
+
+  .app-grid-scroll {
     scrollbar-gutter: stable both-edges;
   }
 
-  .app-grid-scroll::-webkit-scrollbar {
-    display: none;
-    width: 0;
-    height: 0;
+  .app-grid-scroll::-webkit-scrollbar:vertical {
+    width: 20px;
+  }
+
+  .app-grid-scroll::-webkit-scrollbar:horizontal {
+    height: 20px;
+  }
+
+  .app-grid-scroll::-webkit-scrollbar-thumb:vertical {
+    min-height: 80px;
+  }
+
+  .app-grid-scroll::-webkit-scrollbar-thumb:horizontal {
+    min-width: 80px;
+    background:
+      linear-gradient(90deg, color-mix(in oklab, var(--scrollbar-thumb) 80%, white 20%), var(--scrollbar-thumb-active));
+    background-clip: padding-box;
+  }
+
+  .app-grid-scroll::-webkit-scrollbar-thumb:horizontal:hover {
+    background:
+      linear-gradient(90deg, color-mix(in oklab, var(--scrollbar-thumb-hover) 82%, white 18%), var(--scrollbar-thumb-hover));
+    background-clip: padding-box;
+  }
+
+  .app-grid-scroll::-webkit-scrollbar-thumb:horizontal:active {
+    background:
+      linear-gradient(90deg, color-mix(in oklab, var(--scrollbar-thumb-active) 82%, white 18%), var(--scrollbar-thumb-active));
+    background-clip: padding-box;
+  }
+
+  .app-grid-scroll::-webkit-scrollbar-track:horizontal {
+    background:
+      linear-gradient(90deg, color-mix(in oklab, var(--scrollbar-track) 92%, white 8%), var(--scrollbar-track));
   }
 }
 
