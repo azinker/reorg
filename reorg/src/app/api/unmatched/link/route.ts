@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { db } from "@/lib/db";
+import { Prisma } from "@prisma/client";
 
 const bodySchema = z.object({
   unmatchedId: z.string().min(1),
@@ -43,6 +44,10 @@ export async function POST(request: NextRequest) {
     }
 
     const raw = (unmatched.rawData as Record<string, unknown>) ?? {};
+    const rawData =
+      unmatched.rawData === null
+        ? Prisma.JsonNull
+        : (unmatched.rawData as Prisma.InputJsonValue);
     const salePrice = typeof raw.salePrice === "number" ? raw.salePrice : null;
     const adRate = typeof raw.adRate === "number" ? raw.adRate : null;
     const imageUrl = typeof raw.imageUrl === "string" ? raw.imageUrl : null;
@@ -68,7 +73,7 @@ export async function POST(request: NextRequest) {
         salePrice,
         adRate,
         inventory,
-        rawData: unmatched.rawData,
+        rawData,
         lastSyncedAt: new Date(),
       },
       update: {
@@ -79,7 +84,7 @@ export async function POST(request: NextRequest) {
         salePrice: salePrice ?? undefined,
         adRate: adRate ?? undefined,
         inventory: inventory ?? undefined,
-        rawData: unmatched.rawData,
+        rawData,
         lastSyncedAt: new Date(),
       },
     });

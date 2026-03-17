@@ -126,13 +126,13 @@ export class ShopifyAdapter implements MarketplaceAdapter {
     const data = (await this.parseJsonOrThrow(
       response,
       "fetchListings"
-    )) as { products?: unknown[] };
+    )) as { products?: Record<string, unknown>[] };
     const products = data.products ?? [];
 
     const listings: RawListing[] = [];
 
     for (const product of products) {
-      const variants = product.variants ?? [];
+      const variants = (product.variants as Record<string, unknown>[] | undefined) ?? [];
 
       for (const variant of variants) {
         listings.push(this.mapVariantToListing(product, variant));

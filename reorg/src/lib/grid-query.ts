@@ -1,32 +1,37 @@
 import { db } from "@/lib/db";
 import { calcProfit, calcFee } from "@/lib/grid-types";
 import type { GridRow, StoreValue, Platform } from "@/lib/grid-types";
+import { Prisma } from "@prisma/client";
 
-type DBMasterRow = Awaited<ReturnType<typeof fetchMasterRows>>[number];
+const masterRowWithRelations = Prisma.validator<Prisma.MasterRowDefaultArgs>()({
+  include: {
+    listings: {
+      include: {
+        integration: true,
+        childListings: {
+          include: { integration: true },
+        },
+        parentListing: true,
+      },
+    },
+    stagedChanges: {
+      where: { status: "STAGED" },
+    },
+  },
+});
+
+type DBMasterRow = Prisma.MasterRowGetPayload<typeof masterRowWithRelations>;
 type DBListing = DBMasterRow["listings"][number];
 
 async function fetchMasterRows() {
-  const rows: Awaited<ReturnType<typeof db.masterRow.findMany>> = [];
+  const rows: DBMasterRow[] = [];
   const batchSize = 100;
   let skip = 0;
 
   while (true) {
     const batch = await db.masterRow.findMany({
       where: { isActive: true },
-      include: {
-        listings: {
-          include: {
-            integration: true,
-            childListings: {
-              include: { integration: true },
-            },
-            parentListing: true,
-          },
-        },
-        stagedChanges: {
-          where: { status: "STAGED" },
-        },
-      },
+      ...masterRowWithRelations,
       orderBy: { title: "asc" },
       skip,
       take: batchSize,
@@ -201,9 +206,9 @@ async function buildGridRow(
   shippingRateMap: Map<string, number>,
   feeRate: number,
 ): Promise<GridRow> {
-  const parentListings = master.listings.filter((l) => !l.parentListingId);
-  const totalChildListings = parentListings.reduce((sum, l) => sum + (l.childListings?.length ?? 0), 0);
-  const isVariationParent = totalChildListings > 0 || parentListings.some((l) => l.isVariation && l.childListings.length > 0);
+  const parentListings = master.listings.filter((l: DBListing) => !l.parentListingId);
+  const totalChildListings = parentListings.reduce((sum: number, l: DBListing) => sum + (l.childListings?.length ?? 0), 0);
+  const isVariationParent = totalChildListings > 0 || parentListings.some((l: DBListing) => l.isVariation && l.childListings.length > 0);
 
   const shippingCost = master.shippingCostOverride ?? lookupShipping(master.weight, shippingRateMap);
 
@@ -251,11 +256,11 @@ async function buildGridRow(
 
   let inventory: number | null;
   if (isVariationParent) {
-    const childListings = parentListings.flatMap((p) => p.childListings ?? []);
+    const childListings = parentListings.flatMap((p: DBListing) => p.childListings ?? []);
     const childInvValues = childListings.map((cl) => cl.inventory).filter((v): v is number => v != null);
-    inventory = childInvValues.length > 0 ? childInvValues.reduce((a, b) => a + b, 0) : null;
+    inventory = childInvValues.length > 0 ? childInvValues.reduce((a: number, b: number) => a + b, 0) : null;
   } else {
-    const firstListing = parentListings.find((l) => l.inventory != null);
+    const firstListing = parentListings.find((l: DBListing) => l.inventory != null);
     inventory = firstListing?.inventory ?? null;
   }
 
@@ -312,7 +317,7 @@ export async function getGridData(): Promise<GridRow[]> {
   const parentRows = masterRows.filter((mr) => {
     // Exclude master rows that have ANY listing as a child of a variation parent;
     // these appear nested under their parent's variation group instead.
-    const hasAnyChildListing = mr.listings.some((l) => l.parentListingId);
+    const hasAnyChildListing = mr.listings.some((l: DBListing) => l.parentListingId);
     return !hasAnyChildListing;
   });
 
