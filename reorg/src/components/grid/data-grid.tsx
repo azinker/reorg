@@ -806,10 +806,10 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
     if (!main) return;
 
     const updateOverflow = () => {
-      const overflowWidth = Math.max(0, main.scrollWidth - main.clientWidth);
+      const overflowWidth = Math.max(0, totalMinWidth - main.clientWidth);
       setHorizontalOverflow({
         active: overflowWidth > 24,
-        scrollWidth: Math.max(main.scrollWidth, main.clientWidth),
+        scrollWidth: Math.max(totalMinWidth, main.clientWidth),
       });
     };
 
@@ -1325,7 +1325,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
             ref={bottomScrollRef}
             className="app-grid-scrollbar h-10 overflow-x-auto overflow-y-hidden rounded-full border border-border/80 bg-gradient-to-b from-card/95 via-muted/85 to-card/95 p-1.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.05),0_8px_18px_rgba(0,0,0,0.18)]"
           >
-            <div style={{ width: horizontalOverflow.scrollWidth, height: 1 }} />
+            <div className="min-w-0" style={{ width: horizontalOverflow.scrollWidth, height: 2 }} />
           </div>
         </div>
       )}
