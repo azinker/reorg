@@ -892,7 +892,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
         </div>
       </div>
 
-      <div ref={parentRef} className="flex-1 overflow-auto">
+      <div ref={parentRef} className="app-grid-scroll flex-1 overflow-auto">
         {/* Header */}
         <div
           className="sticky top-0 z-20 flex border-b-2 border-border bg-card text-xs font-bold uppercase tracking-wide text-foreground/80"
@@ -1302,14 +1302,14 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
 
       {/* Photo overlay — only one at a time */}
       {hasHorizontalOverflow && (
-          <div className="border-t border-border bg-gradient-to-r from-card via-muted/70 to-card px-3 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
+          <div className="sticky bottom-0 z-30 border-t border-border bg-gradient-to-r from-card/95 via-muted/85 to-card/95 px-3 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.04),0_-10px_24px_rgba(0,0,0,0.18)] backdrop-blur-sm">
             <div className="mb-1 flex items-center justify-between text-[11px] text-muted-foreground">
-              <span>Scroll to view more columns</span>
-              <span className="font-medium text-emerald-400">Use the bar below</span>
+              <span>Full table horizontal scroll</span>
+              <span className="font-medium text-emerald-400">Always available below</span>
             </div>
             <div
               ref={bottomScrollRef}
-              className="h-6 overflow-x-auto overflow-y-hidden rounded-lg border border-border/80 bg-gradient-to-r from-background/95 via-card to-background/95 px-0.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.05),0_8px_18px_rgba(0,0,0,0.12)]"
+              className="app-grid-scrollbar h-8 overflow-x-auto overflow-y-hidden rounded-lg border border-border/80 bg-gradient-to-r from-background/95 via-card to-background/95 px-0.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.05),0_8px_18px_rgba(0,0,0,0.12)]"
             >
               <div style={{ width: totalMinWidth, height: 1 }} />
             </div>
