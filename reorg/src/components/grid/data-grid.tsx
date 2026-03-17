@@ -346,12 +346,14 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
     loadUserPref("columns", DEFAULT_COLUMNS)
   );
   const [highlightedRowId, setHighlightedRowId] = useState<string | null>(null);
-  const [toast, setToast] = useState<string | null>(null);
-  const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const parentRef = useRef<HTMLDivElement>(null);
-  const bottomScrollRef = useRef<HTMLDivElement>(null);
-  const syncSourceRef = useRef<"main" | "bottom" | null>(null);
-  const [hasHorizontalOverflow, setHasHorizontalOverflow] = useState(false);
+    const [toast, setToast] = useState<string | null>(null);
+    const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const containerRef = useRef<HTMLDivElement>(null);
+    const parentRef = useRef<HTMLDivElement>(null);
+    const bottomScrollRef = useRef<HTMLDivElement>(null);
+    const syncSourceRef = useRef<"main" | "bottom" | null>(null);
+    const [hasHorizontalOverflow, setHasHorizontalOverflow] = useState(false);
+    const [stickyScrollbarBounds, setStickyScrollbarBounds] = useState({ left: 0, width: 0 });
 
   function showToast(msg: string) {
     setToast(msg);
@@ -847,8 +849,32 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
     };
   }, [totalMinWidth]);
 
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const updateBounds = () => {
+      const rect = container.getBoundingClientRect();
+      setStickyScrollbarBounds({
+        left: rect.left,
+        width: rect.width,
+      });
+    };
+
+    updateBounds();
+
+    const observer = new ResizeObserver(updateBounds);
+    observer.observe(container);
+    window.addEventListener("resize", updateBounds);
+
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", updateBounds);
+    };
+  }, []);
+
   return (
-    <div className="flex h-full flex-col">
+    <div ref={containerRef} className="relative flex h-full flex-col">
       {settings.searchBar && (
         <StickySearch
           rows={gridRows}
@@ -892,7 +918,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
         </div>
       </div>
 
-      <div ref={parentRef} className="app-grid-scroll flex-1 overflow-auto">
+      <div ref={parentRef} className="app-grid-scroll flex-1 overflow-auto pb-16">
         {/* Header */}
         <div
           className="sticky top-0 z-20 flex border-b-2 border-border bg-card text-xs font-bold uppercase tracking-wide text-foreground/80"
@@ -1302,14 +1328,20 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
 
       {/* Photo overlay — only one at a time */}
       {hasHorizontalOverflow && (
-          <div className="sticky bottom-0 z-30 border-t border-border bg-gradient-to-r from-card/95 via-muted/85 to-card/95 px-3 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.04),0_-10px_24px_rgba(0,0,0,0.18)] backdrop-blur-sm">
+          <div
+            className="fixed bottom-0 z-40 border-t border-border bg-gradient-to-r from-card/95 via-muted/85 to-card/95 px-3 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.04),0_-10px_24px_rgba(0,0,0,0.18)] backdrop-blur-sm"
+            style={{
+              left: stickyScrollbarBounds.left,
+              width: stickyScrollbarBounds.width,
+            }}
+          >
             <div className="mb-1 flex items-center justify-between text-[11px] text-muted-foreground">
               <span>Full table horizontal scroll</span>
               <span className="font-medium text-emerald-400">Always available below</span>
             </div>
             <div
               ref={bottomScrollRef}
-              className="app-grid-scrollbar h-8 overflow-x-auto overflow-y-hidden rounded-lg border border-border/80 bg-gradient-to-r from-background/95 via-card to-background/95 px-0.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.05),0_8px_18px_rgba(0,0,0,0.12)]"
+              className="app-grid-scrollbar h-10 overflow-x-auto overflow-y-hidden rounded-lg border border-border/80 bg-gradient-to-r from-background/95 via-card to-background/95 px-0.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.05),0_8px_18px_rgba(0,0,0,0.12)]"
             >
               <div style={{ width: totalMinWidth, height: 1 }} />
             </div>
