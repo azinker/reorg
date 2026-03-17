@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useRef, useEffect } from "react";
+import { useState, useMemo, useRef, useEffect, useCallback } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { cn } from "@/lib/utils";
 import type { GridRow, FilterState, ColumnConfig, StoreValue, Platform } from "@/lib/grid-types";
@@ -346,9 +346,12 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
     loadUserPref("columns", DEFAULT_COLUMNS)
   );
   const [highlightedRowId, setHighlightedRowId] = useState<string | null>(null);
-    const [toast, setToast] = useState<string | null>(null);
-    const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-    const parentRef = useRef<HTMLDivElement>(null);
+  const [toast, setToast] = useState<string | null>(null);
+  const [showBottomScrollbar, setShowBottomScrollbar] = useState(false);
+  const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const parentRef = useRef<HTMLDivElement>(null);
+  const bottomScrollbarRef = useRef<HTMLDivElement>(null);
+  const syncingScrollRef = useRef<"grid" | "bottom" | null>(null);
 
   function showToast(msg: string) {
     setToast(msg);
@@ -791,12 +794,76 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
 
   const totalMinWidth = frozenWidth + scrollWidth;
 
+  const syncHorizontalOverflow = useCallback(() => {
+    const parent = parentRef.current;
+    if (!parent) return;
+    setShowBottomScrollbar(totalMinWidth > parent.clientWidth + 1);
+  }, [totalMinWidth]);
+
+  useEffect(() => {
+    syncHorizontalOverflow();
+
+    const parent = parentRef.current;
+    if (!parent) return;
+
+    const resizeObserver = new ResizeObserver(() => {
+      syncHorizontalOverflow();
+    });
+
+    resizeObserver.observe(parent);
+    window.addEventListener("resize", syncHorizontalOverflow);
+
+    return () => {
+      resizeObserver.disconnect();
+      window.removeEventListener("resize", syncHorizontalOverflow);
+    };
+  }, [syncHorizontalOverflow]);
+
+  useEffect(() => {
+    const parent = parentRef.current;
+    const bottom = bottomScrollbarRef.current;
+
+    if (!parent || !bottom || !showBottomScrollbar) return;
+
+    bottom.scrollLeft = parent.scrollLeft;
+
+    function syncFromGrid() {
+      if (!bottom) return;
+      const parentEl = parent!;
+      if (syncingScrollRef.current === "bottom") {
+        syncingScrollRef.current = null;
+        return;
+      }
+      syncingScrollRef.current = "grid";
+      bottom.scrollLeft = parentEl.scrollLeft;
+    }
+
+    function syncFromBottom() {
+      if (!parent) return;
+      const bottomEl = bottom!;
+      if (syncingScrollRef.current === "grid") {
+        syncingScrollRef.current = null;
+        return;
+      }
+      syncingScrollRef.current = "bottom";
+      parent.scrollLeft = bottomEl.scrollLeft;
+    }
+
+    parent.addEventListener("scroll", syncFromGrid, { passive: true });
+    bottom.addEventListener("scroll", syncFromBottom, { passive: true });
+
+    return () => {
+      parent.removeEventListener("scroll", syncFromGrid);
+      bottom.removeEventListener("scroll", syncFromBottom);
+    };
+  }, [showBottomScrollbar]);
+
   const cellPy = settings.density === "compact" ? "py-0.5" : settings.density === "spacious" ? "py-3" : "py-2";
 
   const rowFontStyle = { '--row-font-size': `${settings.rowTextSize}px` } as React.CSSProperties;
 
   return (
-    <div className="grid h-full min-h-0 min-w-0 grid-rows-[auto_auto_auto_minmax(0,1fr)]">
+    <div className="grid h-full min-h-0 min-w-0 grid-rows-[auto_auto_auto_minmax(0,1fr)_auto]">
       {settings.searchBar && (
         <StickySearch
           rows={gridRows}
@@ -841,7 +908,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
       </div>
 
       <div className="relative h-full min-h-0 min-w-0">
-      <div ref={parentRef} className="app-grid-scroll h-full min-h-0 min-w-0 overflow-scroll">
+      <div ref={parentRef} className="app-grid-scroll h-full min-h-0 min-w-0 overflow-x-auto overflow-y-auto">
         {/* Header */}
         <div
           className="sticky top-0 z-20 flex border-b-2 border-border bg-card text-xs font-bold uppercase tracking-wide text-foreground/80"
@@ -1252,6 +1319,18 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
       </div>
 
       {/* Photo overlay — only one at a time */}
+      {showBottomScrollbar ? (
+        <div className="border-t border-border bg-card/90 px-2 py-1 backdrop-blur-sm">
+          <div
+            ref={bottomScrollbarRef}
+            className="app-grid-bottom-scroll min-w-0 overflow-x-auto overflow-y-hidden"
+          >
+            <div style={{ width: totalMinWidth, height: 1 }} />
+          </div>
+        </div>
+      ) : (
+        <div className="h-0" />
+      )}
       {expandedPhoto && expandedPhoto.imageUrl && (
         <PhotoOverlay
           imageUrl={expandedPhoto.imageUrl}
