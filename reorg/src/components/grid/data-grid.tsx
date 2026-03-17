@@ -310,6 +310,10 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
   const [gridRows, setGridRows] = useState<GridRow[]>(() => structuredClone(initialRows));
 
   useEffect(() => {
+    setGridRows(structuredClone(initialRows));
+  }, [initialRows]);
+
+  useEffect(() => {
     setGridRows((prev) =>
       prev.map((row) => applyShippingLookup(row, lookupShippingCost))
     );
@@ -345,19 +349,9 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
   const [toast, setToast] = useState<string | null>(null);
   const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const parentRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    const el = parentRef.current;
-    if (!el) return;
-    const onWheel = (e: WheelEvent) => {
-      if (e.deltaX !== 0 && el.scrollWidth > el.clientWidth) {
-        el.scrollLeft += e.deltaX;
-        e.preventDefault();
-      }
-    };
-    el.addEventListener("wheel", onWheel, { passive: false, capture: true });
-    return () => el.removeEventListener("wheel", onWheel, { capture: true });
-  }, []);
+  const bottomScrollRef = useRef<HTMLDivElement>(null);
+  const syncSourceRef = useRef<"main" | "bottom" | null>(null);
+  const [hasHorizontalOverflow, setHasHorizontalOverflow] = useState(false);
 
   function showToast(msg: string) {
     setToast(msg);
@@ -804,6 +798,55 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
 
   const rowFontStyle = { '--row-font-size': `${settings.rowTextSize}px` } as React.CSSProperties;
 
+  useEffect(() => {
+    const main = parentRef.current;
+    const bottom = bottomScrollRef.current;
+    if (!main || !bottom) return;
+
+    const releaseSync = () => {
+      requestAnimationFrame(() => {
+        syncSourceRef.current = null;
+      });
+    };
+
+    const syncFromMain = () => {
+      if (syncSourceRef.current === "bottom") return;
+      syncSourceRef.current = "main";
+      bottom.scrollLeft = main.scrollLeft;
+      releaseSync();
+    };
+
+    const syncFromBottom = () => {
+      if (syncSourceRef.current === "main") return;
+      syncSourceRef.current = "bottom";
+      main.scrollLeft = bottom.scrollLeft;
+      releaseSync();
+    };
+
+    const updateOverflow = () => {
+      setHasHorizontalOverflow(main.scrollWidth > main.clientWidth + 4);
+      if (Math.abs(bottom.scrollLeft - main.scrollLeft) > 1) {
+        bottom.scrollLeft = main.scrollLeft;
+      }
+    };
+
+    updateOverflow();
+
+    main.addEventListener("scroll", syncFromMain);
+    bottom.addEventListener("scroll", syncFromBottom);
+
+    const observer = new ResizeObserver(updateOverflow);
+    observer.observe(main);
+    window.addEventListener("resize", updateOverflow);
+
+    return () => {
+      main.removeEventListener("scroll", syncFromMain);
+      bottom.removeEventListener("scroll", syncFromBottom);
+      observer.disconnect();
+      window.removeEventListener("resize", updateOverflow);
+    };
+  }, [totalMinWidth]);
+
   return (
     <div className="flex h-full flex-col">
       {settings.searchBar && (
@@ -1002,13 +1045,15 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
                 }}
               >
                 {/* Frozen Columns — no extra padding on container so child row columns stay aligned with parent */}
-                <div className="sticky left-0 z-10 flex shrink-0 bg-inherit shadow-[2px_0_8px_-2px_rgba(0,0,0,0.1)]">
+                <div className={cn(
+                  "sticky left-0 z-10 flex shrink-0 bg-inherit shadow-[2px_0_8px_-2px_rgba(0,0,0,0.1)]",
+                  isChild && "pl-10 border-l-[3px] border-l-emerald-400/50"
+                )}>
                   {/* Expand / Collapse — indent and hierarchy bar only in this column for children */}
                   <div className={cn(
                     COL_WIDTHS.expand,
                     "flex items-center justify-center",
-                    cellPy,
-                    isChild && "pl-4 border-l-2 border-l-emerald-500/40"
+                    cellPy
                   )}>
                     {isParent && (
                       <button
@@ -1029,7 +1074,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
                       </button>
                     )}
                     {isChild && (
-                      <span className="text-emerald-500/60 text-sm font-medium">↳</span>
+                      <span className="text-base font-semibold text-emerald-400">↳</span>
                     )}
                   </div>
 
@@ -1050,7 +1095,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
                   {/* UPC */}
                   {isColVisible("upc") && (
                     <div className={cn(COL_WIDTHS.upc, "flex items-center px-2", cellPy)}>
-                      <div className="w-full min-w-0">
+                      <div className={cn("w-full min-w-0", isChild && "pl-4")}>
                         <UpcCell upc={row.upc} />
                       </div>
                     </div>
@@ -1059,7 +1104,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
                   {/* Item IDs */}
                   {isColVisible("itemIds") && (
                     <div className={cn(COL_WIDTHS.itemIds, "flex items-center px-2", cellPy)}>
-                      <div className="w-full min-w-0">
+                      <div className={cn("w-full min-w-0", isChild && "pl-4")}>
                         <ItemNumberCell items={row.itemNumbers} />
                       </div>
                     </div>
@@ -1088,7 +1133,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
                   {/* Title */}
                   {isColVisible("title") && (
                     <div className={cn(COL_WIDTHS.title, "flex items-center px-3", cellPy)}>
-                      <div className="min-w-0 w-full">
+                      <div className={cn("min-w-0 w-full", isChild && "pl-4")}>
                         <CopyValue value={row.title}>
                           <p className="scalable-text font-medium leading-snug break-words whitespace-normal">
                             {row.title}
@@ -1256,6 +1301,21 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
       </div>
 
       {/* Photo overlay — only one at a time */}
+      {hasHorizontalOverflow && (
+        <div className="border-t border-border bg-gradient-to-r from-card via-muted/70 to-card px-3 py-2">
+          <div className="mb-1 flex items-center justify-between text-[11px] text-muted-foreground">
+            <span>Scroll to view more columns</span>
+            <span className="font-medium text-emerald-400">Use the bar below</span>
+          </div>
+          <div
+            ref={bottomScrollRef}
+            className="h-5 overflow-x-auto overflow-y-hidden rounded-md border border-border/70 bg-background/80"
+          >
+            <div style={{ width: totalMinWidth, height: 1 }} />
+          </div>
+        </div>
+      )}
+
       {expandedPhoto && expandedPhoto.imageUrl && (
         <PhotoOverlay
           imageUrl={expandedPhoto.imageUrl}
