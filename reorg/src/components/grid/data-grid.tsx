@@ -810,13 +810,15 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
     const horizontalTrack = horizontalTrackRef.current;
     const verticalTrack = verticalTrackRef.current;
 
-    const nextHorizontalVisible = main.scrollWidth > main.clientWidth + 4;
-    const nextVerticalVisible = main.scrollHeight > main.clientHeight + 4;
+    const hasHorizontalOverflow = main.scrollWidth > main.clientWidth + 4;
+    const hasVerticalOverflow = main.scrollHeight > main.clientHeight + 4;
+    const nextHorizontalVisible = true;
+    const nextVerticalVisible = true;
 
     if (horizontalTrack) {
       const trackWidth = horizontalTrack.clientWidth;
       const scrollableWidth = Math.max(0, main.scrollWidth - main.clientWidth);
-      const thumbWidth = nextHorizontalVisible
+      const thumbWidth = hasHorizontalOverflow
         ? Math.max(120, (main.clientWidth / Math.max(main.scrollWidth, 1)) * trackWidth)
         : trackWidth;
       const maxOffset = Math.max(0, trackWidth - thumbWidth);
@@ -837,7 +839,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
     if (verticalTrack) {
       const trackHeight = verticalTrack.clientHeight;
       const scrollableHeight = Math.max(0, main.scrollHeight - main.clientHeight);
-      const thumbHeight = nextVerticalVisible
+      const thumbHeight = hasVerticalOverflow
         ? Math.max(120, (main.clientHeight / Math.max(main.scrollHeight, 1)) * trackHeight)
         : trackHeight;
       const maxOffset = Math.max(0, trackHeight - thumbHeight);
@@ -1426,7 +1428,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
         <div
           ref={horizontalTrackRef}
           onMouseDown={handleHorizontalTrackMouseDown}
-          className="pointer-events-auto h-10 cursor-pointer rounded-full border border-border/80 bg-gradient-to-r from-background/95 via-card to-background/95 p-1.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.05),0_8px_18px_rgba(0,0,0,0.12)]"
+          className="pointer-events-auto h-10 cursor-pointer rounded-full border border-border/80 bg-gradient-to-b from-card/95 via-muted/85 to-card/95 p-1.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.05),0_8px_18px_rgba(0,0,0,0.18)]"
         >
           <div
             role="scrollbar"
@@ -1436,7 +1438,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
               event.stopPropagation();
               beginDrag("x", event.clientX, parentRef.current?.scrollLeft ?? 0);
             }}
-            className="h-full min-w-[120px] rounded-full border border-emerald-300/20 bg-gradient-to-r from-emerald-300 via-emerald-400 to-cyan-400 shadow-[0_6px_18px_rgba(16,185,129,0.35),inset_0_1px_0_rgba(255,255,255,0.28)] transition-opacity"
+            className="h-full min-w-[120px] rounded-full border border-emerald-300/20 bg-gradient-to-b from-emerald-300 via-emerald-400 to-cyan-400 shadow-[0_6px_18px_rgba(16,185,129,0.35),inset_0_1px_0_rgba(255,255,255,0.28)] transition-opacity"
             style={{
               width: horizontalRail.thumbSize || 140,
               transform: `translateX(${horizontalRail.thumbOffset}px)`,
