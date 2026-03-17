@@ -353,8 +353,8 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
     const verticalTrackRef = useRef<HTMLDivElement>(null);
     const horizontalMetricsRef = useRef({ thumbSize: 0, maxOffset: 0 });
     const verticalMetricsRef = useRef({ thumbSize: 0, maxOffset: 0 });
-    const [horizontalRail, setHorizontalRail] = useState({ visible: false, thumbSize: 0, thumbOffset: 0 });
-    const [verticalRail, setVerticalRail] = useState({ visible: false, thumbSize: 0, thumbOffset: 0 });
+    const [horizontalRail, setHorizontalRail] = useState({ visible: true, thumbSize: 140, thumbOffset: 0 });
+    const [verticalRail, setVerticalRail] = useState({ visible: true, thumbSize: 140, thumbOffset: 0 });
 
   function showToast(msg: string) {
     setToast(msg);
@@ -1401,32 +1401,54 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
         </div>
       </div>
 
-      {verticalRail.visible && (
+      <div
+        ref={verticalTrackRef}
+        onMouseDown={handleVerticalTrackMouseDown}
+        className="absolute inset-y-2 right-1 z-30 w-10 cursor-pointer rounded-full border border-border/80 bg-gradient-to-b from-card/95 via-muted/85 to-card/95 p-1.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.05),0_8px_18px_rgba(0,0,0,0.18)]"
+      >
         <div
-          ref={verticalTrackRef}
-          onMouseDown={handleVerticalTrackMouseDown}
-          className="absolute inset-y-2 right-1 z-30 w-10 cursor-pointer rounded-full border border-border/80 bg-gradient-to-b from-card/95 via-muted/85 to-card/95 p-1.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.05),0_8px_18px_rgba(0,0,0,0.18)]"
+          role="scrollbar"
+          aria-orientation="vertical"
+          aria-label="Vertical table scroll"
+          onMouseDown={(event) => {
+            event.stopPropagation();
+            beginDrag("y", event.clientY, parentRef.current?.scrollTop ?? 0);
+          }}
+          className="min-h-[120px] w-full rounded-full border border-emerald-300/20 bg-gradient-to-b from-emerald-300 via-emerald-400 to-cyan-400 shadow-[0_6px_18px_rgba(16,185,129,0.35),inset_0_1px_0_rgba(255,255,255,0.28)] transition-opacity"
+          style={{
+            height: verticalRail.thumbSize || 140,
+            transform: `translateY(${verticalRail.thumbOffset}px)`,
+            opacity: verticalRail.visible ? 1 : 0.55,
+          }}
+        />
+      </div>
+      <div className="pointer-events-none absolute inset-x-2 bottom-2 z-30">
+        <div
+          ref={horizontalTrackRef}
+          onMouseDown={handleHorizontalTrackMouseDown}
+          className="pointer-events-auto h-10 cursor-pointer rounded-full border border-border/80 bg-gradient-to-r from-background/95 via-card to-background/95 p-1.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.05),0_8px_18px_rgba(0,0,0,0.12)]"
         >
           <div
             role="scrollbar"
-            aria-orientation="vertical"
-            aria-label="Vertical table scroll"
+            aria-orientation="horizontal"
+            aria-label="Horizontal table scroll"
             onMouseDown={(event) => {
               event.stopPropagation();
-              beginDrag("y", event.clientY, parentRef.current?.scrollTop ?? 0);
+              beginDrag("x", event.clientX, parentRef.current?.scrollLeft ?? 0);
             }}
-            className="min-h-[120px] w-full rounded-full border border-emerald-300/20 bg-gradient-to-b from-emerald-300 via-emerald-400 to-cyan-400 shadow-[0_6px_18px_rgba(16,185,129,0.35),inset_0_1px_0_rgba(255,255,255,0.28)]"
+            className="h-full min-w-[120px] rounded-full border border-emerald-300/20 bg-gradient-to-r from-emerald-300 via-emerald-400 to-cyan-400 shadow-[0_6px_18px_rgba(16,185,129,0.35),inset_0_1px_0_rgba(255,255,255,0.28)] transition-opacity"
             style={{
-              height: verticalRail.thumbSize,
-              transform: `translateY(${verticalRail.thumbOffset}px)`,
+              width: horizontalRail.thumbSize || 140,
+              transform: `translateX(${horizontalRail.thumbOffset}px)`,
+              opacity: horizontalRail.visible ? 1 : 0.55,
             }}
           />
         </div>
-      )}
+      </div>
       </div>
 
       {/* Photo overlay — only one at a time */}
-      {horizontalRail.visible && (
+      {false && horizontalRail.visible && (
           <div
             className="z-30 border-t border-border bg-gradient-to-r from-card/95 via-muted/85 to-card/95 px-3 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.04),0_-10px_24px_rgba(0,0,0,0.18)]"
           >
