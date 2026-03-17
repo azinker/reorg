@@ -171,13 +171,13 @@
 
   .app-grid-scroll::-webkit-scrollbar,
   .app-grid-scrollbar::-webkit-scrollbar {
-    width: 28px;
-    height: 28px;
+    width: 34px;
+    height: 34px;
   }
 
   .app-grid-scroll::-webkit-scrollbar-thumb,
   .app-grid-scrollbar::-webkit-scrollbar-thumb {
-    min-height: 120px;
+    min-height: 140px;
     border-width: 2px;
   }
 }
