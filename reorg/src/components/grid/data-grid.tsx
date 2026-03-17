@@ -901,7 +901,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
       </div>
 
       <div className="relative h-full min-h-0">
-      <div ref={parentRef} className="app-grid-scroll min-h-0 h-full overflow-auto">
+      <div ref={parentRef} className="app-grid-scroll min-h-0 h-full overflow-scroll">
         {/* Header */}
         <div
           className="sticky top-0 z-20 flex border-b-2 border-border bg-card text-xs font-bold uppercase tracking-wide text-foreground/80"
