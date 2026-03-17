@@ -1302,17 +1302,17 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
 
       {/* Photo overlay — only one at a time */}
       {hasHorizontalOverflow && (
-        <div className="border-t border-border bg-gradient-to-r from-card via-muted/70 to-card px-3 py-2">
-          <div className="mb-1 flex items-center justify-between text-[11px] text-muted-foreground">
-            <span>Scroll to view more columns</span>
-            <span className="font-medium text-emerald-400">Use the bar below</span>
-          </div>
-          <div
-            ref={bottomScrollRef}
-            className="h-5 overflow-x-auto overflow-y-hidden rounded-md border border-border/70 bg-background/80"
-          >
-            <div style={{ width: totalMinWidth, height: 1 }} />
-          </div>
+          <div className="border-t border-border bg-gradient-to-r from-card via-muted/70 to-card px-3 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
+            <div className="mb-1 flex items-center justify-between text-[11px] text-muted-foreground">
+              <span>Scroll to view more columns</span>
+              <span className="font-medium text-emerald-400">Use the bar below</span>
+            </div>
+            <div
+              ref={bottomScrollRef}
+              className="h-6 overflow-x-auto overflow-y-hidden rounded-lg border border-border/80 bg-gradient-to-r from-background/95 via-card to-background/95 px-0.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.05),0_8px_18px_rgba(0,0,0,0.12)]"
+            >
+              <div style={{ width: totalMinWidth, height: 1 }} />
+            </div>
         </div>
       )}
 
