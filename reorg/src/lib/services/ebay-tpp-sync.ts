@@ -1,10 +1,18 @@
 import { db } from "@/lib/db";
-import { Platform, type SyncStatus } from "@prisma/client";
+import { Platform, Prisma, type SyncStatus } from "@prisma/client";
 import { XMLParser } from "fast-xml-parser";
+import {
+  buildCompletedSyncConfig,
+  type SyncExecutionOptions,
+} from "@/lib/services/sync-control";
+import { getIntegrationConfig } from "@/lib/integrations/runtime-config";
 
 const TRADING_API = "https://api.ebay.com/ws/api.dll";
 const SITE_ID = "0";
 const COMPAT_LEVEL = "1199";
+const GETITEM_CONCURRENCY = 5;
+const MARKETING_API_BASE = "https://api.ebay.com/sell/marketing/v1";
+const ADS_PAGE_SIZE = 500;
 
 const parser = new XMLParser({
   ignoreAttributes: true,
@@ -39,7 +47,27 @@ interface SyncProgress {
   errors: Array<{ sku: string; message: string }>;
 }
 
-export async function runEbayTppSync(): Promise<SyncProgress> {
+interface IncrementalWindow {
+  itemIds: string[];
+  windowEndedAt: Date;
+}
+
+interface MarketingCampaign {
+  campaignId?: string;
+  campaignStatus?: string;
+  fundingStrategy?: { fundingModel?: string };
+}
+
+interface MarketingAd {
+  listingId?: string;
+  bidPercentage?: string;
+}
+
+type UpsertResult = "created" | "updated" | "variation_parent";
+
+export async function runEbayTppSync(
+  options: SyncExecutionOptions = {},
+): Promise<SyncProgress> {
   const integration = await db.integration.findUnique({
     where: { platform: Platform.TPP_EBAY },
   });
@@ -69,6 +97,7 @@ export async function runEbayTppSync(): Promise<SyncProgress> {
     data: {
       integrationId: integration.id,
       status: "RUNNING",
+      triggeredBy: options.triggeredBy ?? "system",
       startedAt: new Date(),
     },
   });
@@ -84,115 +113,76 @@ export async function runEbayTppSync(): Promise<SyncProgress> {
   };
 
   try {
-    let page = 1;
-    const perPage = 100;
-    let hasMore = true;
+    let effectiveMode = options.effectiveMode ?? options.requestedMode ?? "full";
+    let completionCursor = new Date().toISOString();
 
-    while (hasMore) {
-      const accessToken = await getAccessToken(integration.id, ebayConfig);
+    if (effectiveMode === "incremental") {
+      const integrationConfig = getIntegrationConfig(integration);
+      const lastCursorValue =
+        integrationConfig.syncState.lastCursor ??
+        integrationConfig.syncState.lastIncrementalSyncAt ??
+        integrationConfig.syncState.lastFullSyncAt ??
+        integration.lastSyncAt?.toISOString() ??
+        null;
 
-      const endTimeTo = new Date();
-      endTimeTo.setDate(endTimeTo.getDate() + 120);
-      const endTimeFrom = new Date();
-
-      const body = `<?xml version="1.0" encoding="utf-8"?>
-<GetSellerListRequest xmlns="urn:ebay:apis:eBLBaseComponents">
-  <EndTimeFrom>${endTimeFrom.toISOString()}</EndTimeFrom>
-  <EndTimeTo>${endTimeTo.toISOString()}</EndTimeTo>
-  <IncludeVariations>true</IncludeVariations>
-  <DetailLevel>ReturnAll</DetailLevel>
-  <Pagination>
-    <EntriesPerPage>${perPage}</EntriesPerPage>
-    <PageNumber>${page}</PageNumber>
-  </Pagination>
-</GetSellerListRequest>`;
-
-      const res = await fetch(TRADING_API, {
-        method: "POST",
-        headers: {
-          "X-EBAY-API-IAF-TOKEN": accessToken,
-          "X-EBAY-API-SITEID": SITE_ID,
-          "X-EBAY-API-COMPATIBILITY-LEVEL": COMPAT_LEVEL,
-          "X-EBAY-API-CALL-NAME": "GetSellerList",
-          "Content-Type": "text/xml",
-        },
-        body,
-      });
-
-      const xml = await res.text();
-
-      if (!res.ok) {
-        throw new Error(`GetSellerList HTTP ${res.status}: ${xml.slice(0, 500)}`);
-      }
-
-      const parsed = parser.parse(xml);
-      const resp = parsed?.GetSellerListResponse;
-
-      if (!resp) {
-        throw new Error(`Missing GetSellerListResponse. Keys: ${Object.keys(parsed ?? {}).join(", ")}`);
-      }
-
-      const ack = resp.Ack;
-      if (ack === "Failure") {
-        const errors = Array.isArray(resp.Errors) ? resp.Errors : resp.Errors ? [resp.Errors] : [];
-        const errMsg = errors.map((e: Record<string, unknown>) => e.LongMessage ?? e.ShortMessage).join("; ");
-        throw new Error(`eBay API: ${errMsg || "Unknown error"}`);
-      }
-
-      const itemArray = resp.ItemArray;
-      const items: unknown[] = Array.isArray(itemArray?.Item)
-        ? itemArray.Item
-        : itemArray?.Item
-          ? [itemArray.Item]
-          : [];
-
-      const totalPages = parseInt(String(resp.PaginationResult?.TotalNumberOfPages ?? "1"), 10);
-      const totalEntries = parseInt(String(resp.PaginationResult?.TotalNumberOfEntries ?? "0"), 10);
-
-      console.log(
-        `[ebay-sync] Page ${page}/${totalPages} — ${items.length} items on this page, ${totalEntries} total entries`
+      const incrementalWindow = await fetchIncrementalItemIds(
+        integration.id,
+        ebayConfig,
+        lastCursorValue,
       );
 
-      hasMore = page < totalPages;
-      page++;
+      if (!incrementalWindow) {
+        effectiveMode = "full";
+      } else {
+        completionCursor = incrementalWindow.windowEndedAt.toISOString();
 
-      for (const item of items) {
-        try {
-          const result = await upsertEbayItem(item, integration.id);
-          progress.itemsProcessed++;
-          if (result === "created") progress.itemsCreated++;
-          else if (result === "updated") progress.itemsUpdated++;
-          if (result === "variation_parent") progress.variationsFound++;
-        } catch (err) {
-          const iid = str(item, "ItemID") ?? "?";
-          const msg = err instanceof Error ? err.message : "Unknown error";
-          console.error(`[ebay-sync] Error on item ${iid}:`, msg);
-          progress.errors.push({ sku: String(iid), message: msg });
+        for (const itemId of incrementalWindow.itemIds) {
+          try {
+            const fullItem = await fetchFullItem(
+              integration.id,
+              ebayConfig,
+              itemId,
+            );
+
+            if (!fullItem) {
+              progress.errors.push({
+                sku: itemId,
+                message: "GetItem returned no payload for this changed listing.",
+              });
+              continue;
+            }
+
+            const result = await upsertEbayItem(fullItem, integration.id);
+            progress.itemsProcessed++;
+            if (result === "created") progress.itemsCreated++;
+            else if (result === "updated") progress.itemsUpdated++;
+            if (result === "variation_parent") progress.variationsFound++;
+          } catch (err) {
+            progress.errors.push({
+              sku: itemId,
+              message: err instanceof Error ? err.message : "Unknown error",
+            });
+          }
+
+          if (progress.itemsProcessed % 25 === 0) {
+            await updateSyncJobProgress(syncJob.id, progress);
+          }
         }
-      }
-
-      await db.syncJob.update({
-        where: { id: syncJob.id },
-        data: {
-          itemsProcessed: progress.itemsProcessed,
-          itemsCreated: progress.itemsCreated,
-          itemsUpdated: progress.itemsUpdated,
-          errors: JSON.parse(JSON.stringify(progress.errors)),
-        },
-      });
-
-      if (hasMore) {
-        await new Promise((r) => setTimeout(r, 250));
       }
     }
 
+    if (effectiveMode === "full") {
+      await runFullSync(integration.id, ebayConfig, syncJob.id, progress);
+    }
+
     progress.status = "COMPLETED";
+    const completedAt = new Date();
 
     await db.syncJob.update({
       where: { id: syncJob.id },
       data: {
         status: "COMPLETED",
-        completedAt: new Date(),
+        completedAt,
         itemsProcessed: progress.itemsProcessed,
         itemsCreated: progress.itemsCreated,
         itemsUpdated: progress.itemsUpdated,
@@ -202,35 +192,37 @@ export async function runEbayTppSync(): Promise<SyncProgress> {
 
     await db.integration.update({
       where: { id: integration.id },
-      data: { lastSyncAt: new Date() },
+      data: {
+        lastSyncAt: completedAt,
+        config: buildCompletedSyncConfig(
+          integration,
+          { ...options, effectiveMode },
+          completedAt,
+          { cursor: completionCursor },
+        ) as unknown as Prisma.InputJsonValue,
+      },
     });
 
-    console.log(
-      `[ebay-sync] COMPLETED — ${progress.itemsProcessed} processed, ${progress.itemsCreated} created, ${progress.itemsUpdated} updated, ${progress.variationsFound} variation parents, ${progress.errors.length} errors`
-    );
-
-    // Post-sync: fetch UPC for single-SKU items missing it via GetItem
-    try {
+    if (effectiveMode === "full") {
       const upcsFetched = await fetchMissingUpcs(integration.id, ebayConfig);
-      console.log(`[ebay-sync] UPC backfill: ${upcsFetched} items updated`);
-    } catch (upcErr) {
-      console.error("[ebay-sync] UPC backfill error (non-fatal):", upcErr);
-    }
-
-    // Post-sync: fetch live promoted listing ad rates from Marketing API and store in DB
-    try {
-      const adRatesUpdated = await fetchAndStorePromotedListingRates(integration.id, ebayConfig);
-      console.log(`[ebay-sync] Promoted listing ad rates: ${adRatesUpdated} listings updated`);
-    } catch (adErr) {
-      console.error("[ebay-sync] Promoted listing ad rate fetch error (non-fatal):", adErr);
+      const adRatesUpdated = await fetchAndStorePromotedListingRates(
+        integration.id,
+        ebayConfig,
+      );
+      console.log(
+        `[ebay-sync] Full reconcile complete - ${upcsFetched} UPCs updated, ${adRatesUpdated} ad rates refreshed`,
+      );
     }
   } catch (err) {
-    console.error("[ebay-sync] FATAL:", err);
     progress.status = "FAILED";
     const allErrors = [
       ...progress.errors,
-      { sku: "_global", message: err instanceof Error ? err.message : "Sync failed" },
+      {
+        sku: "_global",
+        message: err instanceof Error ? err.message : "Sync failed",
+      },
     ];
+
     await db.syncJob.update({
       where: { id: syncJob.id },
       data: {
@@ -244,19 +236,123 @@ export async function runEbayTppSync(): Promise<SyncProgress> {
   return progress;
 }
 
-// ---------------------------------------------------------------------------
-// Token management
-// ---------------------------------------------------------------------------
+async function runFullSync(
+  integrationId: string,
+  ebayConfig: EbayConfig,
+  syncJobId: string,
+  progress: SyncProgress,
+) {
+  let page = 1;
+  const perPage = 100;
+  let hasMore = true;
+
+  while (hasMore) {
+    const accessToken = await getAccessToken(integrationId, ebayConfig);
+    const endTimeTo = new Date();
+    endTimeTo.setDate(endTimeTo.getDate() + 120);
+    const endTimeFrom = new Date();
+
+    const body = `<?xml version="1.0" encoding="utf-8"?>
+<GetSellerListRequest xmlns="urn:ebay:apis:eBLBaseComponents">
+  <EndTimeFrom>${endTimeFrom.toISOString()}</EndTimeFrom>
+  <EndTimeTo>${endTimeTo.toISOString()}</EndTimeTo>
+  <IncludeVariations>true</IncludeVariations>
+  <DetailLevel>ReturnAll</DetailLevel>
+  <Pagination>
+    <EntriesPerPage>${perPage}</EntriesPerPage>
+    <PageNumber>${page}</PageNumber>
+  </Pagination>
+</GetSellerListRequest>`;
+
+    const res = await fetch(TRADING_API, {
+      method: "POST",
+      headers: {
+        "X-EBAY-API-IAF-TOKEN": accessToken,
+        "X-EBAY-API-SITEID": SITE_ID,
+        "X-EBAY-API-COMPATIBILITY-LEVEL": COMPAT_LEVEL,
+        "X-EBAY-API-CALL-NAME": "GetSellerList",
+        "Content-Type": "text/xml",
+      },
+      body,
+    });
+
+    const xml = await res.text();
+    if (!res.ok) {
+      throw new Error(`GetSellerList HTTP ${res.status}: ${xml.slice(0, 500)}`);
+    }
+
+    const parsed = parser.parse(xml);
+    const resp = parsed?.GetSellerListResponse;
+    if (!resp) {
+      throw new Error(
+        `Missing GetSellerListResponse. Keys: ${Object.keys(parsed ?? {}).join(", ")}`,
+      );
+    }
+
+    const ack = resp.Ack;
+    if (ack === "Failure") {
+      const errors = Array.isArray(resp.Errors)
+        ? resp.Errors
+        : resp.Errors
+          ? [resp.Errors]
+          : [];
+      const errMsg = errors
+        .map((error: Record<string, unknown>) => error.LongMessage ?? error.ShortMessage)
+        .join("; ");
+      throw new Error(`eBay API: ${errMsg || "Unknown error"}`);
+    }
+
+    const items = arr(obj(resp, "ItemArray"), "Item");
+    const totalPages = parseInt(
+      String(resp.PaginationResult?.TotalNumberOfPages ?? "1"),
+      10,
+    );
+    hasMore = page < totalPages;
+    page++;
+
+    for (const item of items) {
+      const result = await upsertEbayItem(item, integrationId);
+      progress.itemsProcessed++;
+      if (result === "created") progress.itemsCreated++;
+      else if (result === "updated") progress.itemsUpdated++;
+      if (result === "variation_parent") progress.variationsFound++;
+    }
+
+    await updateSyncJobProgress(syncJobId, progress);
+
+    if (hasMore) {
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+  }
+}
+
+async function updateSyncJobProgress(syncJobId: string, progress: SyncProgress) {
+  await db.syncJob.update({
+    where: { id: syncJobId },
+    data: {
+      itemsProcessed: progress.itemsProcessed,
+      itemsCreated: progress.itemsCreated,
+      itemsUpdated: progress.itemsUpdated,
+      errors: JSON.parse(JSON.stringify(progress.errors)),
+    },
+  });
+}
 
 async function getAccessToken(
   integrationId: string,
-  config: EbayConfig
+  config: EbayConfig,
 ): Promise<string> {
-  if (config.accessToken && config.accessTokenExpiresAt && config.accessTokenExpiresAt > Date.now() + 60_000) {
+  if (
+    config.accessToken &&
+    config.accessTokenExpiresAt &&
+    config.accessTokenExpiresAt > Date.now() + 60_000
+  ) {
     return config.accessToken;
   }
 
-  const credentials = Buffer.from(`${config.appId}:${config.certId}`).toString("base64");
+  const credentials = Buffer.from(
+    `${config.appId}:${config.certId}`,
+  ).toString("base64");
 
   const tokenRes = await fetch("https://api.ebay.com/identity/v1/oauth2/token", {
     method: "POST",
@@ -278,9 +374,10 @@ async function getAccessToken(
   const data = await tokenRes.json();
   const accessToken = data.access_token;
   const expiresIn = data.expires_in ?? 7200;
-  const refreshExpiresIn = data.refresh_token_expires_in ?? 18 * 30 * 24 * 60 * 60;
-
+  const refreshExpiresIn =
+    data.refresh_token_expires_in ?? 18 * 30 * 24 * 60 * 60;
   const expiresAt = Date.now() + expiresIn * 1000;
+
   await db.integration.update({
     where: { id: integrationId },
     data: {
@@ -289,7 +386,7 @@ async function getAccessToken(
         accessToken,
         accessTokenExpiresAt: expiresAt,
         refreshTokenExpiresAt: Date.now() + refreshExpiresIn * 1000,
-      },
+      } as unknown as Prisma.InputJsonValue,
     },
   });
 
@@ -298,36 +395,155 @@ async function getAccessToken(
   return accessToken;
 }
 
-// ---------------------------------------------------------------------------
-// XML value helpers — parser uses ignoreAttributes:true so values are always
-// strings/numbers, never objects with #text. These helpers are simple.
-// ---------------------------------------------------------------------------
+async function fetchIncrementalItemIds(
+  integrationId: string,
+  config: EbayConfig,
+  lastCursor: string | null,
+): Promise<IncrementalWindow | null> {
+  if (!lastCursor) return null;
+
+  const cursorDate = new Date(lastCursor);
+  if (Number.isNaN(cursorDate.getTime())) return null;
+
+  if (Date.now() - cursorDate.getTime() > 36 * 60 * 60 * 1000) {
+    return null;
+  }
+
+  const windowEndedAt = new Date();
+  const windowStartedAt = new Date(cursorDate.getTime() - 2 * 60 * 1000);
+  const itemIds = new Set<string>();
+  let page = 1;
+  let hasMore = true;
+
+  while (hasMore) {
+    const accessToken = await getAccessToken(integrationId, config);
+    const body = `<?xml version="1.0" encoding="utf-8"?>
+<GetSellerEventsRequest xmlns="urn:ebay:apis:eBLBaseComponents">
+  <ModTimeFrom>${windowStartedAt.toISOString()}</ModTimeFrom>
+  <ModTimeTo>${windowEndedAt.toISOString()}</ModTimeTo>
+  <Pagination>
+    <EntriesPerPage>200</EntriesPerPage>
+    <PageNumber>${page}</PageNumber>
+  </Pagination>
+</GetSellerEventsRequest>`;
+
+    const res = await fetch(TRADING_API, {
+      method: "POST",
+      headers: {
+        "X-EBAY-API-IAF-TOKEN": accessToken,
+        "X-EBAY-API-SITEID": SITE_ID,
+        "X-EBAY-API-COMPATIBILITY-LEVEL": COMPAT_LEVEL,
+        "X-EBAY-API-CALL-NAME": "GetSellerEvents",
+        "Content-Type": "text/xml",
+      },
+      body,
+    });
+
+    const xml = await res.text();
+    if (!res.ok) {
+      throw new Error(`GetSellerEvents HTTP ${res.status}: ${xml.slice(0, 500)}`);
+    }
+
+    const parsed = parser.parse(xml);
+    const resp = parsed?.GetSellerEventsResponse;
+    if (!resp) {
+      throw new Error(
+        `Missing GetSellerEventsResponse. Keys: ${Object.keys(parsed ?? {}).join(", ")}`,
+      );
+    }
+
+    const ack = resp.Ack;
+    if (ack === "Failure") {
+      const errors = Array.isArray(resp.Errors)
+        ? resp.Errors
+        : resp.Errors
+          ? [resp.Errors]
+          : [];
+      const errMsg = errors
+        .map((error: Record<string, unknown>) => error.LongMessage ?? error.ShortMessage)
+        .join("; ");
+      throw new Error(`GetSellerEvents failed: ${errMsg || "Unknown error"}`);
+    }
+
+    const items = arr(obj(resp, "ItemArray"), "Item");
+    for (const item of items) {
+      const itemId = str(item, "ItemID");
+      if (itemId) itemIds.add(itemId);
+    }
+
+    const totalPages = parseInt(
+      String(resp.PaginationResult?.TotalNumberOfPages ?? "1"),
+      10,
+    );
+    hasMore = page < totalPages;
+    page++;
+  }
+
+  return { itemIds: [...itemIds], windowEndedAt };
+}
+
+async function fetchFullItem(
+  integrationId: string,
+  config: EbayConfig,
+  itemId: string,
+): Promise<unknown | null> {
+  const accessToken = await getAccessToken(integrationId, config);
+  const body = `<?xml version="1.0" encoding="utf-8"?>
+<GetItemRequest xmlns="urn:ebay:apis:eBLBaseComponents">
+  <ItemID>${itemId}</ItemID>
+  <DetailLevel>ReturnAll</DetailLevel>
+</GetItemRequest>`;
+
+  const response = await fetch(TRADING_API, {
+    method: "POST",
+    headers: {
+      "X-EBAY-API-IAF-TOKEN": accessToken,
+      "X-EBAY-API-SITEID": SITE_ID,
+      "X-EBAY-API-COMPATIBILITY-LEVEL": COMPAT_LEVEL,
+      "X-EBAY-API-CALL-NAME": "GetItem",
+      "Content-Type": "text/xml",
+    },
+    body,
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`GetItem failed for ${itemId}: ${response.status} ${text.slice(0, 300)}`);
+  }
+
+  const xml = await response.text();
+  const parsed = parser.parse(xml);
+  const itemRaw = parsed?.GetItemResponse?.Item;
+  const item = Array.isArray(itemRaw) ? itemRaw[0] : itemRaw;
+  return item ?? null;
+}
 
 function str(obj: unknown, key: string): string | undefined {
   if (obj == null || typeof obj !== "object") return undefined;
-  const v = (obj as Record<string, unknown>)[key];
-  if (v == null) return undefined;
-  if (typeof v === "object") {
-    const text = (v as Record<string, unknown>)?.["#text"];
-    if (text != null) return String(text);
-    return undefined;
+  const value = (obj as Record<string, unknown>)[key];
+  if (value == null) return undefined;
+  if (typeof value === "object") {
+    const text = (value as Record<string, unknown>)["#text"];
+    return text != null ? String(text) : undefined;
   }
-  return String(v);
+  return String(value);
 }
 
 function num(obj: unknown, key: string): number | undefined {
-  const s = str(obj, key);
-  if (s == null) return undefined;
-  const cleaned = s.replace(/[^0-9.\-]/g, "");
-  const n = parseFloat(cleaned);
-  return isNaN(n) ? undefined : n;
+  const value = str(obj, key);
+  if (value == null) return undefined;
+  const cleaned = value.replace(/[^0-9.\-]/g, "");
+  const parsed = parseFloat(cleaned);
+  return Number.isNaN(parsed) ? undefined : parsed;
 }
 
 function obj(parent: unknown, key: string): Record<string, unknown> | undefined {
   if (parent == null || typeof parent !== "object") return undefined;
-  const v = (parent as Record<string, unknown>)[key];
-  if (v == null || typeof v !== "object" || Array.isArray(v)) return undefined;
-  return v as Record<string, unknown>;
+  const value = (parent as Record<string, unknown>)[key];
+  if (value == null || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  return value as Record<string, unknown>;
 }
 
 function arr(parent: unknown, key: string): unknown[] {
@@ -338,41 +554,47 @@ function arr(parent: unknown, key: string): unknown[] {
   return [];
 }
 
-// ---------------------------------------------------------------------------
-// Extract structured fields from parsed item
-// ---------------------------------------------------------------------------
-
 function extractImageUrl(item: unknown): string | null {
-  const pd = obj(item, "PictureDetails");
-  if (!pd) return null;
+  const pictureDetails = obj(item, "PictureDetails");
+  if (!pictureDetails) return null;
 
-  const urls = arr(pd, "PictureURL");
-  for (const u of urls) {
-    if (typeof u === "string" && u.startsWith("http")) return u;
+  const urls = arr(pictureDetails, "PictureURL");
+  for (const url of urls) {
+    if (typeof url === "string" && url.startsWith("http")) return url;
   }
 
-  const gallery = str(pd, "GalleryURL");
-  return gallery ?? null;
+  return str(pictureDetails, "GalleryURL") ?? null;
 }
 
 function extractUpc(item: unknown): string | null {
-  const pld = obj(item, "ProductListingDetails");
-  if (pld) {
-    const upc = str(pld, "UPC");
-    if (upc && upc !== "Does not apply" && upc !== "N/A" && upc.length > 3) return upc;
+  const listingDetails = obj(item, "ProductListingDetails");
+  if (listingDetails) {
+    const upc = str(listingDetails, "UPC");
+    if (upc && upc !== "Does not apply" && upc !== "N/A" && upc.length > 3) {
+      return upc;
+    }
 
-    const ean = str(pld, "EAN");
-    if (ean && ean !== "Does not apply" && ean !== "N/A" && ean.length > 3) return ean;
+    const ean = str(listingDetails, "EAN");
+    if (ean && ean !== "Does not apply" && ean !== "N/A" && ean.length > 3) {
+      return ean;
+    }
   }
 
   const specifics = obj(item, "ItemSpecifics");
   if (specifics) {
-    const nvList = arr(specifics, "NameValueList");
-    for (const nv of nvList) {
-      const name = str(nv, "Name");
+    const nameValueList = arr(specifics, "NameValueList");
+    for (const nameValue of nameValueList) {
+      const name = str(nameValue, "Name");
       if (name === "UPC" || name === "EAN" || name === "GTIN") {
-        const val = str(nv, "Value");
-        if (val && val !== "Does not apply" && val !== "N/A" && val.length > 3) return val;
+        const value = str(nameValue, "Value");
+        if (
+          value &&
+          value !== "Does not apply" &&
+          value !== "N/A" &&
+          value.length > 3
+        ) {
+          return value;
+        }
       }
     }
   }
@@ -380,51 +602,48 @@ function extractUpc(item: unknown): string | null {
   return null;
 }
 
-function extractVariationUpc(vari: unknown): string | null {
-  const vpld = obj(vari, "VariationProductListingDetails");
-  if (!vpld) return null;
+function extractVariationUpc(variation: unknown): string | null {
+  const listingDetails = obj(variation, "VariationProductListingDetails");
+  if (!listingDetails) return null;
   for (const key of ["UPC", "EAN", "ISBN"]) {
-    const val = str(vpld, key);
-    if (val && val !== "Does not apply" && val !== "N/A" && val.length > 3) return val;
+    const value = str(listingDetails, key);
+    if (value && value !== "Does not apply" && value !== "N/A" && value.length > 3) {
+      return value;
+    }
   }
   return null;
 }
 
 function extractVariationImageUrl(
-  vari: unknown,
+  variation: unknown,
   variationPictures: unknown,
-  parentImageUrl: string | null
+  parentImageUrl: string | null,
 ): string | null {
-  const specifics = obj(vari, "VariationSpecifics");
+  const specifics = obj(variation, "VariationSpecifics");
   if (specifics && variationPictures) {
-    const picSets = arr(variationPictures, "VariationSpecificPictureSet");
-    const nvList = arr(specifics, "NameValueList");
-    for (const nv of nvList) {
-      const val = str(nv, "Value");
-      if (!val) continue;
-      for (const picSet of picSets) {
-        const picVal = str(picSet, "VariationSpecificValue");
-        if (picVal === val) {
-          const urls = arr(picSet, "PictureURL");
-          for (const u of urls) {
-            if (typeof u === "string" && u.startsWith("http")) return u;
+    const pictureSets = arr(variationPictures, "VariationSpecificPictureSet");
+    const nameValueList = arr(specifics, "NameValueList");
+    for (const nameValue of nameValueList) {
+      const value = str(nameValue, "Value");
+      if (!value) continue;
+      for (const pictureSet of pictureSets) {
+        const pictureValue = str(pictureSet, "VariationSpecificValue");
+        if (pictureValue === value) {
+          const urls = arr(pictureSet, "PictureURL");
+          for (const url of urls) {
+            if (typeof url === "string" && url.startsWith("http")) return url;
           }
         }
       }
     }
   }
+
   return parentImageUrl;
 }
 
-// ---------------------------------------------------------------------------
-// Upsert a single eBay item into the database
-// ---------------------------------------------------------------------------
-
-type UpsertResult = "created" | "updated" | "variation_parent";
-
 async function upsertEbayItem(
   item: unknown,
-  integrationId: string
+  integrationId: string,
 ): Promise<UpsertResult> {
   const itemId = str(item, "ItemID");
   if (!itemId) throw new Error("Item has no ItemID");
@@ -433,20 +652,14 @@ async function upsertEbayItem(
   const imageUrl = extractImageUrl(item);
   const upc = extractUpc(item);
   const itemSku = str(item, "SKU");
-
   const variationsNode = obj(item, "Variations");
   const variationList = variationsNode ? arr(variationsNode, "Variation") : [];
-  const variationPictures = variationsNode ? obj(variationsNode, "Pictures") : undefined;
+  const variationPictures = variationsNode
+    ? obj(variationsNode, "Pictures")
+    : undefined;
 
-  const isVariationListing = variationList.length > 0;
-
-  if (isVariationListing) {
-    console.log(
-      `[ebay-sync] Item ${itemId} "${title?.slice(0, 60)}" → VARIATION with ${variationList.length} children`
-    );
-
+  if (variationList.length > 0) {
     const parentSku = `TPP-${itemId}`;
-
     let parentMaster = await db.masterRow.findUnique({ where: { sku: parentSku } });
     if (!parentMaster) {
       parentMaster = await db.masterRow.create({
@@ -458,34 +671,23 @@ async function upsertEbayItem(
           upc,
         },
       });
-    } else {
-      const updates: Record<string, unknown> = {};
-      if (title) updates.title = title;
-      if (imageUrl && !parentMaster.imageUrl) updates.imageUrl = imageUrl;
-      if (upc && !parentMaster.upc) updates.upc = upc;
-      if (Object.keys(updates).length > 0) {
-        parentMaster = await db.masterRow.update({
-          where: { id: parentMaster.id },
-          data: updates,
-        });
-      }
     }
 
     const existingParents = await db.marketplaceListing.findMany({
       where: { integrationId, platformItemId: itemId, platformVariantId: null },
       orderBy: { createdAt: "asc" },
     });
-
     let parentListing = existingParents[0] ?? null;
 
     if (existingParents.length > 1) {
-      const dupeIds = existingParents.slice(1).map((d) => d.id);
-      console.log(`[ebay-sync] Cleaning up ${dupeIds.length} duplicate parent listings for item ${itemId}`);
+      const duplicateIds = existingParents.slice(1).map((listing) => listing.id);
       await db.marketplaceListing.updateMany({
-        where: { parentListingId: { in: dupeIds } },
+        where: { parentListingId: { in: duplicateIds } },
         data: { parentListingId: existingParents[0].id },
       });
-      await db.marketplaceListing.deleteMany({ where: { id: { in: dupeIds } } });
+      await db.marketplaceListing.deleteMany({
+        where: { id: { in: duplicateIds } },
+      });
     }
 
     if (!parentListing) {
@@ -504,30 +706,18 @@ async function upsertEbayItem(
           lastSyncedAt: new Date(),
         },
       });
-    } else {
-      await db.marketplaceListing.update({
-        where: { id: parentListing.id },
-        data: {
-          masterRowId: parentMaster.id,
-          title: title ?? null,
-          imageUrl,
-          isVariation: true,
-          sku: parentSku,
-          rawData: JSON.parse(JSON.stringify(item)),
-          lastSyncedAt: new Date(),
-        },
-      });
     }
 
-    for (const vari of variationList) {
-      const sku = str(vari, "SKU");
-      if (!sku?.trim()) {
-        console.warn(`[ebay-sync] Item ${itemId} variation missing SKU, skipping`);
-        continue;
-      }
+    for (const variation of variationList) {
+      const sku = str(variation, "SKU");
+      if (!sku?.trim()) continue;
 
-      const variImageUrl = extractVariationImageUrl(vari, variationPictures, imageUrl);
-      const variUpc = extractVariationUpc(vari);
+      const variationImageUrl = extractVariationImageUrl(
+        variation,
+        variationPictures,
+        imageUrl,
+      );
+      const variationUpc = extractVariationUpc(variation);
 
       let childMaster = await db.masterRow.findUnique({ where: { sku } });
       if (!childMaster) {
@@ -535,34 +725,27 @@ async function upsertEbayItem(
           data: {
             sku,
             title: title ?? null,
-            imageUrl: variImageUrl,
+            imageUrl: variationImageUrl,
             imageSource: "TPP_EBAY",
-            upc: variUpc,
+            upc: variationUpc,
           },
         });
-      } else {
-        const updates: Record<string, unknown> = {};
-        if (!childMaster.title && title) updates.title = title;
-        if (!childMaster.imageUrl && variImageUrl) updates.imageUrl = variImageUrl;
-        if (!childMaster.upc && variUpc) updates.upc = variUpc;
-        if (Object.keys(updates).length > 0) {
-          childMaster = await db.masterRow.update({
-            where: { id: childMaster.id },
-            data: updates,
-          });
-        }
       }
 
-      const startPrice = num(vari, "StartPrice");
-      const sellingStatus = obj(vari, "SellingStatus");
-      const quantity = num(vari, "Quantity") ?? 0;
+      const startPrice = num(variation, "StartPrice");
+      const sellingStatus = obj(variation, "SellingStatus");
+      const quantity = num(variation, "Quantity") ?? 0;
       const quantitySold = sellingStatus
         ? (num(sellingStatus, "QuantitySold") ?? 0)
         : 0;
       const available = Math.max(0, quantity - quantitySold);
 
       const existingChild = await db.marketplaceListing.findFirst({
-        where: { integrationId, platformItemId: itemId, platformVariantId: sku },
+        where: {
+          integrationId,
+          platformItemId: itemId,
+          platformVariantId: sku,
+        },
       });
 
       const listingData = {
@@ -572,13 +755,13 @@ async function upsertEbayItem(
         platformVariantId: sku,
         sku,
         title: title ?? null,
-        imageUrl: variImageUrl,
+        imageUrl: variationImageUrl,
         salePrice: startPrice ?? null,
         inventory: available,
-        status: available > 0 ? "ACTIVE" as const : "OUT_OF_STOCK" as const,
+        status: available > 0 ? ("ACTIVE" as const) : ("OUT_OF_STOCK" as const),
         isVariation: true,
-        parentListingId: parentListing.id,
-        rawData: JSON.parse(JSON.stringify(vari)),
+        parentListingId: parentListing?.id ?? null,
+        rawData: JSON.parse(JSON.stringify(variation)),
         lastSyncedAt: new Date(),
       };
 
@@ -595,9 +778,7 @@ async function upsertEbayItem(
     return "variation_parent";
   }
 
-  // ---- Single-SKU listing ----
   const sku = itemSku?.trim() || `TPP-${itemId}`;
-
   let masterRow = await db.masterRow.findUnique({ where: { sku } });
   if (!masterRow) {
     masterRow = await db.masterRow.create({
@@ -609,23 +790,16 @@ async function upsertEbayItem(
         upc,
       },
     });
-  } else {
-    const updates: Record<string, unknown> = {};
-    if (title) updates.title = title;
-    if (imageUrl && !masterRow.imageUrl) updates.imageUrl = imageUrl;
-    if (upc && !masterRow.upc) updates.upc = upc;
-    if (Object.keys(updates).length > 0) {
-      masterRow = await db.masterRow.update({
-        where: { id: masterRow.id },
-        data: updates,
-      });
-    }
   }
 
   const sellingStatus = obj(item, "SellingStatus");
-  const currentPrice = sellingStatus ? num(sellingStatus, "CurrentPrice") : undefined;
+  const currentPrice = sellingStatus
+    ? num(sellingStatus, "CurrentPrice")
+    : undefined;
   const quantity = sellingStatus ? (num(sellingStatus, "Quantity") ?? 0) : 0;
-  const quantitySold = sellingStatus ? (num(sellingStatus, "QuantitySold") ?? 0) : 0;
+  const quantitySold = sellingStatus
+    ? (num(sellingStatus, "QuantitySold") ?? 0)
+    : 0;
   const available = Math.max(0, quantity - quantitySold);
 
   const existingSingles = await db.marketplaceListing.findMany({
@@ -634,12 +808,11 @@ async function upsertEbayItem(
   });
 
   if (existingSingles.length > 1) {
-    const dupeIds = existingSingles.slice(1).map((d) => d.id);
-    await db.marketplaceListing.deleteMany({ where: { id: { in: dupeIds } } });
+    const duplicateIds = existingSingles.slice(1).map((listing) => listing.id);
+    await db.marketplaceListing.deleteMany({ where: { id: { in: duplicateIds } } });
   }
 
   const existing = existingSingles[0] ?? null;
-
   const listingData = {
     masterRowId: masterRow.id,
     integrationId,
@@ -650,7 +823,7 @@ async function upsertEbayItem(
     imageUrl,
     salePrice: currentPrice ?? null,
     inventory: available,
-    status: available > 0 ? "ACTIVE" as const : "OUT_OF_STOCK" as const,
+    status: available > 0 ? ("ACTIVE" as const) : ("OUT_OF_STOCK" as const),
     isVariation: false,
     parentListingId: null,
     rawData: JSON.parse(JSON.stringify(item)),
@@ -669,17 +842,9 @@ async function upsertEbayItem(
   return "created";
 }
 
-// ---------------------------------------------------------------------------
-// Post-sync: backfill UPC for single-SKU items via GetItem
-// GetSellerList does not return ItemSpecifics/ProductListingDetails, so we
-// make individual GetItem calls for items missing UPC.
-// ---------------------------------------------------------------------------
-
-const GETITEM_CONCURRENCY = 5;
-
 async function fetchMissingUpcs(
   integrationId: string,
-  config: EbayConfig
+  config: EbayConfig,
 ): Promise<number> {
   const listings = await db.marketplaceListing.findMany({
     where: {
@@ -688,39 +853,33 @@ async function fetchMissingUpcs(
       parentListingId: null,
       masterRow: { upc: null },
     },
-    select: { id: true, platformItemId: true, masterRowId: true },
+    select: { platformItemId: true, masterRowId: true },
   });
 
   if (listings.length === 0) return 0;
-  console.log(`[ebay-sync] UPC backfill: ${listings.length} single-SKU items missing UPC`);
-
   let updated = 0;
 
-  for (let i = 0; i < listings.length; i += GETITEM_CONCURRENCY) {
-    const batch = listings.slice(i, i + GETITEM_CONCURRENCY);
+  for (let index = 0; index < listings.length; index += GETITEM_CONCURRENCY) {
+    const batch = listings.slice(index, index + GETITEM_CONCURRENCY);
     const results = await Promise.allSettled(
-      batch.map((l) => fetchItemUpc(integrationId, config, l.platformItemId))
+      batch.map((listing) =>
+        fetchItemUpc(integrationId, config, listing.platformItemId),
+      ),
     );
 
-    for (let j = 0; j < results.length; j++) {
-      const result = results[j];
+    for (let resultIndex = 0; resultIndex < results.length; resultIndex++) {
+      const result = results[resultIndex];
       if (result.status === "fulfilled" && result.value) {
         await db.masterRow.update({
-          where: { id: batch[j].masterRowId },
+          where: { id: batch[resultIndex].masterRowId },
           data: { upc: result.value },
         });
         updated++;
-      } else if (result.status === "rejected") {
-        console.warn(`[ebay-sync] UPC backfill failed for item ${batch[j].platformItemId}:`, result.reason);
       }
     }
 
-    if ((i + GETITEM_CONCURRENCY) % 50 === 0 || i + GETITEM_CONCURRENCY >= listings.length) {
-      console.log(`[ebay-sync] UPC backfill progress: ${Math.min(i + GETITEM_CONCURRENCY, listings.length)}/${listings.length} checked, ${updated} updated`);
-    }
-
-    if (i + GETITEM_CONCURRENCY < listings.length) {
-      await new Promise((r) => setTimeout(r, 200));
+    if (index + GETITEM_CONCURRENCY < listings.length) {
+      await new Promise((resolve) => setTimeout(resolve, 200));
     }
   }
 
@@ -730,67 +889,17 @@ async function fetchMissingUpcs(
 async function fetchItemUpc(
   integrationId: string,
   config: EbayConfig,
-  itemId: string
+  itemId: string,
 ): Promise<string | null> {
-  const accessToken = await getAccessToken(integrationId, config);
-
-  const body = `<?xml version="1.0" encoding="utf-8"?>
-<GetItemRequest xmlns="urn:ebay:apis:eBLBaseComponents">
-  <ItemID>${itemId}</ItemID>
-  <DetailLevel>ReturnAll</DetailLevel>
-  <OutputSelector>ItemSpecifics</OutputSelector>
-  <OutputSelector>ProductListingDetails</OutputSelector>
-</GetItemRequest>`;
-
-  const res = await fetch(TRADING_API, {
-    method: "POST",
-    headers: {
-      "X-EBAY-API-IAF-TOKEN": accessToken,
-      "X-EBAY-API-SITEID": SITE_ID,
-      "X-EBAY-API-COMPATIBILITY-LEVEL": COMPAT_LEVEL,
-      "X-EBAY-API-CALL-NAME": "GetItem",
-      "Content-Type": "text/xml",
-    },
-    body,
-  });
-
-  if (!res.ok) return null;
-
-  const xml = await res.text();
-  const parsed = parser.parse(xml);
-  const itemRaw = parsed?.GetItemResponse?.Item;
-  const item = Array.isArray(itemRaw) ? itemRaw[0] : itemRaw;
-  if (!item) return null;
-
-  return extractUpc(item);
-}
-
-// ---------------------------------------------------------------------------
-// Post-sync: fetch live promoted listing ad rates from Sell Marketing API
-// (Cost Per Sale campaigns only) and update marketplace_listings.adRate.
-// ---------------------------------------------------------------------------
-
-const MARKETING_API_BASE = "https://api.ebay.com/sell/marketing/v1";
-const ADS_PAGE_SIZE = 500;
-
-interface MarketingCampaign {
-  campaignId?: string;
-  campaignStatus?: string;
-  fundingStrategy?: { fundingModel?: string };
-}
-
-interface MarketingAd {
-  listingId?: string;
-  bidPercentage?: string;
+  const item = await fetchFullItem(integrationId, config, itemId);
+  return item ? extractUpc(item) : null;
 }
 
 async function fetchAndStorePromotedListingRates(
   integrationId: string,
-  config: EbayConfig
+  config: EbayConfig,
 ): Promise<number> {
   const accessToken = await getAccessToken(integrationId, config);
-
-  // Fetch all CPS campaigns (no status filter), then keep RUNNING or SCHEDULED only
   const campaignRes = await fetch(
     `${MARKETING_API_BASE}/ad_campaign?funding_strategy=COST_PER_SALE&limit=100`,
     {
@@ -798,36 +907,24 @@ async function fetchAndStorePromotedListingRates(
         Authorization: `Bearer ${accessToken}`,
         "Content-Type": "application/json",
       },
-    }
+    },
   );
 
-  if (!campaignRes.ok) {
-    const text = await campaignRes.text();
-    throw new Error(`Marketing API getCampaigns failed: ${campaignRes.status} ${text.slice(0, 300)}`);
-  }
+  if (!campaignRes.ok) return 0;
 
-  const campaignData = (await campaignRes.json()) as { campaigns?: MarketingCampaign[] };
+  const campaignData = (await campaignRes.json()) as {
+    campaigns?: MarketingCampaign[];
+  };
   const campaigns = campaignData.campaigns ?? [];
   const cpsCampaigns = campaigns.filter(
-    (c) =>
-      c.campaignId &&
-      c.fundingStrategy?.fundingModel === "COST_PER_SALE" &&
-      (c.campaignStatus === "RUNNING" || c.campaignStatus === "SCHEDULED")
+    (campaign) =>
+      campaign.campaignId &&
+      campaign.fundingStrategy?.fundingModel === "COST_PER_SALE" &&
+      (campaign.campaignStatus === "RUNNING" ||
+        campaign.campaignStatus === "SCHEDULED"),
   );
 
-  if (cpsCampaigns.length === 0) {
-    console.log(
-      "[ebay-sync] No RUNNING/SCHEDULED CPS campaigns found (CPS campaigns in response: " +
-        campaigns.length +
-        "). Ad rates will show N/A until you have an active Promoted Listings Standard campaign. If you use Promoted Listings, reconnect eBay in Integrations to ensure the sell.marketing scope is granted."
-    );
-    return 0;
-  }
-
-  console.log(`[ebay-sync] Found ${cpsCampaigns.length} RUNNING/SCHEDULED CPS campaign(s), fetching ads...`);
-
   const listingIdToBidPct = new Map<string, number>();
-
   for (const campaign of cpsCampaigns) {
     const campaignId = campaign.campaignId!;
     let offset = 0;
@@ -842,16 +939,11 @@ async function fetchAndStorePromotedListingRates(
         },
       });
 
-      if (!adsRes.ok) {
-        const text = await adsRes.text();
-        console.warn(`[ebay-sync] getAds failed for campaign ${campaignId}: ${adsRes.status} ${text.slice(0, 200)}`);
-        break;
-      }
+      if (!adsRes.ok) break;
 
       const adsData = (await adsRes.json()) as {
         ads?: MarketingAd[];
         total?: number;
-        limit?: number;
       };
       const ads = adsData.ads ?? [];
 
@@ -865,20 +957,12 @@ async function fetchAndStorePromotedListingRates(
       }
 
       offset += ads.length;
-      hasMore = ads.length === ADS_PAGE_SIZE && (adsData.total == null || offset < adsData.total);
-
-      if (hasMore) {
-        await new Promise((r) => setTimeout(r, 150));
-      }
+      hasMore =
+        ads.length === ADS_PAGE_SIZE &&
+        (adsData.total == null || offset < adsData.total);
     }
   }
 
-  if (listingIdToBidPct.size === 0) {
-    console.log("[ebay-sync] No ads returned from CPS campaigns; ad rates unchanged.");
-    return 0;
-  }
-
-  console.log(`[ebay-sync] Updating ad rates for ${listingIdToBidPct.size} listing(s)...`);
   let updated = 0;
   for (const [platformItemId, adRate] of listingIdToBidPct) {
     const result = await db.marketplaceListing.updateMany({

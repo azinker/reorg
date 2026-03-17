@@ -43,6 +43,8 @@ Use this reference when configuring reorG. Copy `.env.example` to `.env` and fil
 | `R2_SECRET_ACCESS_KEY` | R2 API secret | Created with the access key | Yes (for backups) | Long secret string |
 | `R2_BUCKET_NAME` | Name of the backup bucket | You create it in R2 | Yes (for backups) | `reorg-backups` |
 | `R2_ENDPOINT` | R2 endpoint URL | Cloudflare R2 bucket settings | Yes (for backups) | `https://<ACCOUNT_ID>.r2.cloudflarestorage.com` |
+| **Scheduler / Cron** |
+| `CRON_SECRET` | Shared secret that authorizes scheduled auto-sync ticks | You generate it | Yes (before auto-sync goes live) | Long random string |
 | **Write Safety** |
 | `GLOBAL_WRITE_LOCK` | When `true`, all marketplace writes are blocked | You set it | Yes | `true` (safer) or `false` |
 
@@ -53,3 +55,4 @@ Use this reference when configuring reorG. Copy `.env.example` to `.env` and fil
 - **Required (Yes)** = The app will fail or that feature won't work without it.
 - **Required (Yes – if using X)** = Only needed if you enable that integration.
 - Keep `GLOBAL_WRITE_LOCK=true` until you're ready to push changes. See `docs/write-safety-checklist.md`.
+- Keep `CRON_SECRET` private. Scheduled calls to `/api/scheduler/tick` must send it in `Authorization: Bearer ...` or `x-cron-secret`.

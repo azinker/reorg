@@ -1,5 +1,12 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
+import { auth } from "@/lib/auth";
+import { db } from "@/lib/db";
+import { executePush } from "@/lib/services/push";
+import { buildAdapter } from "@/lib/integrations/factory";
+import { getIntegrationConfig } from "@/lib/integrations/runtime-config";
+import { isLivePushEnabled } from "@/lib/automation-settings";
+import type { Platform } from "@prisma/client";
 
 const pushSchema = z.object({
   changes: z.array(
@@ -15,6 +22,7 @@ const pushSchema = z.object({
     })
   ),
   dryRun: z.boolean().default(true),
+  confirmedLivePush: z.boolean().default(false),
 });
 
 export async function POST(request: NextRequest) {
@@ -29,26 +37,69 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { changes, dryRun } = parsed.data;
+    const { changes, dryRun, confirmedLivePush } = parsed.data;
+    const session = await auth();
 
-    // TODO: Wire to real push service when DB is connected
-    // This endpoint goes through the full write safety chain:
-    // 1. Global write lock check
-    // 2. Per-integration write lock check
-    // 3. Environment check (staging blocked)
-    // 4. Dry run validation
-    // 5. Live push execution
-    // 6. Audit logging
+    if (!session?.user?.id) {
+      return NextResponse.json(
+        { error: "You must be signed in to run a push dry run." },
+        { status: 401 },
+      );
+    }
+
+    if (!dryRun && !confirmedLivePush) {
+      return NextResponse.json(
+        {
+          error:
+            "Live marketplace pushes require explicit confirmation. Run a dry run first, then confirm the live push.",
+        },
+        { status: 400 },
+      );
+    }
+
+    if (!dryRun) {
+      const livePushEnabled = await isLivePushEnabled();
+      if (!livePushEnabled) {
+        return NextResponse.json(
+          {
+            error:
+              "Live marketplace push is still disabled. The safe bulk push route is wired, but it remains blocked until the product owner approves go-live.",
+          },
+          { status: 403 },
+        );
+      }
+    }
+
+    const platforms = [...new Set(changes.map((change) => change.platform))];
+    const integrations = await db.integration.findMany({
+      where: { platform: { in: platforms as Platform[] } },
+    });
+
+    const adapters = new Map<Platform, ReturnType<typeof buildAdapter>>();
+    for (const integration of integrations) {
+      adapters.set(
+        integration.platform,
+        buildAdapter(integration.platform, getIntegrationConfig(integration)),
+      );
+    }
+
+    const result = await executePush(
+      {
+        userId: session.user.id,
+        changes,
+        dryRun,
+      },
+      adapters,
+    );
 
     return NextResponse.json({
       data: {
-        pushJobId: `mock-push-${Date.now()}`,
-        dryRun,
-        status: dryRun ? "dry_run_passed" : "pending",
+        ...result,
         changes: changes.length,
-        message: dryRun
-          ? "Dry run passed. All changes validated."
-          : "Connect a database and integration to execute real pushes.",
+        message:
+          dryRun
+            ? "Dry run passed. Review the results, then explicitly confirm if you want a live push later."
+            : "Live push executed through the full write safety chain.",
       },
     });
   } catch (error) {

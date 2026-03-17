@@ -108,6 +108,8 @@ async function main() {
   // ─── App Settings ────────────────────────────────────────────────────────
   const settings = [
     { key: "global_write_lock", value: true },
+    { key: "scheduler_enabled", value: false },
+    { key: "live_push_enabled", value: false },
     { key: "default_timezone", value: "America/New_York" },
     { key: "default_density", value: "comfortable" },
     { key: "master_store", value: "TPP_EBAY" },

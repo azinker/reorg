@@ -1,10 +1,15 @@
 import { db } from "@/lib/db";
+import { Prisma } from "@prisma/client";
 import type { MarketplaceAdapter } from "@/lib/integrations/types";
 import {
   matchListings,
   upsertMarketplaceListings,
   saveUnmatchedListings,
 } from "@/lib/services/matching";
+import {
+  buildCompletedSyncConfig,
+  type SyncExecutionOptions,
+} from "@/lib/services/sync-control";
 
 export interface SyncResult {
   syncJobId: string;
@@ -28,7 +33,7 @@ export interface SyncResult {
 export async function runSync(
   adapter: MarketplaceAdapter,
   integrationId: string,
-  triggeredBy?: string
+  options: SyncExecutionOptions = {}
 ): Promise<SyncResult> {
   const startTime = Date.now();
   const errors: string[] = [];
@@ -37,7 +42,7 @@ export async function runSync(
     data: {
       integrationId,
       status: "RUNNING",
-      triggeredBy: triggeredBy ?? "system",
+      triggeredBy: options.triggeredBy ?? "system",
       startedAt: new Date(),
     },
   });
@@ -78,6 +83,7 @@ export async function runSync(
       totalUnmatched += matchResult.stats.unmatched;
     }
 
+    const completedAt = new Date();
     await db.syncJob.update({
       where: { id: syncJob.id },
       data: {
@@ -85,14 +91,21 @@ export async function runSync(
         itemsProcessed: totalProcessed,
         itemsCreated: totalCreated,
         itemsUpdated: totalUpdated,
-        completedAt: new Date(),
+        completedAt,
         errors: errors,
       },
     });
 
     await db.integration.update({
       where: { id: integrationId },
-      data: { lastSyncAt: new Date() },
+      data: {
+        lastSyncAt: completedAt,
+        config: buildCompletedSyncConfig(
+          integration,
+          options,
+          completedAt,
+        ) as unknown as Prisma.InputJsonValue,
+      },
     });
 
     await db.auditLog.create({

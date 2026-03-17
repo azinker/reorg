@@ -1,12 +1,18 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { db } from "@/lib/db";
 import { Platform } from "@prisma/client";
-import { runShopifySync } from "@/lib/services/shopify-sync";
-import { runEbayTppSync } from "@/lib/services/ebay-tpp-sync";
-import { runBigCommerceSync } from "@/lib/services/bigcommerce-sync";
+import { z } from "zod";
+import { startIntegrationSync } from "@/lib/services/sync-control";
+import { getIntegrationConfig } from "@/lib/integrations/runtime-config";
+
+const postSchema = z
+  .object({
+    mode: z.enum(["full", "incremental"]).optional(),
+  })
+  .optional();
 
 export async function POST(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ integrationId: string }> }
 ) {
   const { integrationId } = await params;
@@ -35,99 +41,29 @@ export async function POST(
       );
     }
 
-    if (integration.platform === Platform.SHOPIFY) {
-      const job = await db.syncJob.findFirst({
-        where: { integrationId: integration.id, status: "RUNNING" },
-      });
-      if (job) {
-        return NextResponse.json({
-          data: { jobId: job.id, status: "ALREADY_RUNNING" },
-        });
-      }
-
-      runShopifySync().catch((err) =>
-        console.error("[sync] SHOPIFY background error:", err)
+    const body =
+      request.headers.get("content-length") &&
+      request.headers.get("content-length") !== "0"
+        ? await request.json()
+        : undefined;
+    const parsed = postSchema.safeParse(body);
+    if (!parsed.success) {
+      return NextResponse.json(
+        { error: "Invalid request", details: parsed.error.flatten() },
+        { status: 400 },
       );
-
-      await new Promise((r) => setTimeout(r, 500));
-
-      const newJob = await db.syncJob.findFirst({
-        where: { integrationId: integration.id },
-        orderBy: { createdAt: "desc" },
-      });
-
-      return NextResponse.json({
-        data: {
-          jobId: newJob?.id ?? null,
-          status: "STARTED",
-          message: "Shopify sync started in background. Poll GET for progress.",
-        },
-      });
     }
 
-    if (integration.platform === Platform.TPP_EBAY) {
-      const job = await db.syncJob.findFirst({
-        where: { integrationId: integration.id, status: "RUNNING" },
-      });
-      if (job) {
-        return NextResponse.json({
-          data: { jobId: job.id, status: "ALREADY_RUNNING" },
-        });
-      }
+    const result = await startIntegrationSync(integration, {
+      requestedMode: parsed.data?.mode,
+      triggerSource: "manual",
+    });
 
-      runEbayTppSync().catch((err) =>
-        console.error("[sync] TPP_EBAY background error:", err)
-      );
-
-      await new Promise((r) => setTimeout(r, 500));
-
-      const newJob = await db.syncJob.findFirst({
-        where: { integrationId: integration.id },
-        orderBy: { createdAt: "desc" },
-      });
-
-      return NextResponse.json({
-        data: {
-          jobId: newJob?.id ?? null,
-          status: "STARTED",
-          message: "eBay TPP sync started in background. Poll GET for progress.",
-        },
-      });
+    if (result.status === "UNSUPPORTED") {
+      return NextResponse.json({ error: result.message }, { status: 501 });
     }
 
-    if (integration.platform === Platform.BIGCOMMERCE) {
-      const job = await db.syncJob.findFirst({
-        where: { integrationId: integration.id, status: "RUNNING" },
-      });
-      if (job) {
-        return NextResponse.json({
-          data: { jobId: job.id, status: "ALREADY_RUNNING" },
-        });
-      }
-
-      const result = await runBigCommerceSync();
-
-      return NextResponse.json({
-        data: {
-          jobId: result.syncJobId,
-          status: result.status.toUpperCase(),
-          itemsProcessed: result.itemsProcessed,
-          itemsCreated: result.itemsCreated,
-          itemsUpdated: result.itemsUpdated,
-          unmatchedCount: result.unmatchedCount,
-          errors: result.errors,
-          durationMs: result.durationMs,
-          message: "BigCommerce sync completed.",
-        },
-      });
-    }
-
-    return NextResponse.json(
-      {
-        error: `Sync for ${integration.platform} is not yet implemented`,
-      },
-      { status: 501 }
-    );
+    return NextResponse.json({ data: result });
   } catch (error) {
     console.error(`[sync] ${integrationId} failed`, error);
     return NextResponse.json(
@@ -174,6 +110,8 @@ export async function GET(
         label: integration.label,
         enabled: integration.enabled,
         lastSyncAt: integration.lastSyncAt,
+        syncProfile: getIntegrationConfig(integration).syncProfile,
+        syncState: getIntegrationConfig(integration).syncState,
         lastJob: lastJob
           ? {
               id: lastJob.id,

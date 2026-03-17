@@ -1,7 +1,11 @@
 import { db } from "@/lib/db";
-import { Platform, type SyncStatus } from "@prisma/client";
+import { Platform, Prisma, type SyncStatus } from "@prisma/client";
 import { ShopifyAdapter } from "@/lib/integrations/shopify";
 import type { RawListing } from "@/lib/integrations/types";
+import {
+  buildCompletedSyncConfig,
+  type SyncExecutionOptions,
+} from "@/lib/services/sync-control";
 
 interface SyncProgress {
   jobId: string;
@@ -12,7 +16,9 @@ interface SyncProgress {
   errors: Array<{ sku: string; message: string }>;
 }
 
-export async function runShopifySync(): Promise<SyncProgress> {
+export async function runShopifySync(
+  options: SyncExecutionOptions = {},
+): Promise<SyncProgress> {
   const integration = await db.integration.findUnique({
     where: { platform: Platform.SHOPIFY },
   });
@@ -36,6 +42,7 @@ export async function runShopifySync(): Promise<SyncProgress> {
     data: {
       integrationId: integration.id,
       status: "RUNNING",
+      triggeredBy: options.triggeredBy ?? "system",
       startedAt: new Date(),
     },
   });
@@ -91,11 +98,12 @@ export async function runShopifySync(): Promise<SyncProgress> {
 
     progress.status = "COMPLETED";
 
+    const completedAt = new Date();
     await db.syncJob.update({
       where: { id: syncJob.id },
       data: {
         status: "COMPLETED",
-        completedAt: new Date(),
+        completedAt,
         itemsProcessed: progress.itemsProcessed,
         itemsCreated: progress.itemsCreated,
         itemsUpdated: progress.itemsUpdated,
@@ -105,7 +113,14 @@ export async function runShopifySync(): Promise<SyncProgress> {
 
     await db.integration.update({
       where: { id: integration.id },
-      data: { lastSyncAt: new Date() },
+      data: {
+        lastSyncAt: completedAt,
+        config: buildCompletedSyncConfig(
+          integration,
+          options,
+          completedAt,
+        ) as unknown as Prisma.InputJsonValue,
+      },
     });
   } catch (err) {
     progress.status = "FAILED";

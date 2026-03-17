@@ -2,6 +2,7 @@ import { Platform } from "@prisma/client";
 import { db } from "@/lib/db";
 import { BigCommerceAdapter } from "@/lib/integrations/bigcommerce";
 import { runSync, type SyncResult } from "@/lib/services/sync";
+import type { SyncExecutionOptions } from "@/lib/services/sync-control";
 
 function getStringConfig(
   config: Record<string, unknown>,
@@ -11,7 +12,9 @@ function getStringConfig(
   return typeof value === "string" && value.trim() ? value : undefined;
 }
 
-export async function runBigCommerceSync(): Promise<SyncResult> {
+export async function runBigCommerceSync(
+  options: SyncExecutionOptions = {},
+): Promise<SyncResult> {
   const integration = await db.integration.findUnique({
     where: { platform: Platform.BIGCOMMERCE },
   });
@@ -38,5 +41,5 @@ export async function runBigCommerceSync(): Promise<SyncResult> {
     accessToken,
   });
 
-  return runSync(adapter, integration.id);
+  return runSync(adapter, integration.id, options);
 }
