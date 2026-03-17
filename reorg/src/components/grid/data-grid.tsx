@@ -863,7 +863,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
   }, [horizontalOverflow.active, horizontalOverflow.scrollWidth]);
 
   return (
-    <div className="grid h-full min-h-0 grid-rows-[auto_auto_auto_minmax(0,1fr)_auto]">
+    <div className="grid h-full min-h-0 min-w-0 grid-rows-[auto_auto_auto_minmax(0,1fr)_auto]">
       {settings.searchBar && (
         <StickySearch
           rows={gridRows}
@@ -907,8 +907,8 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
         </div>
       </div>
 
-      <div className="relative h-full min-h-0">
-      <div ref={parentRef} className="app-grid-scroll min-h-0 h-full overflow-scroll">
+      <div className="relative h-full min-h-0 min-w-0">
+      <div ref={parentRef} className="app-grid-scroll h-full min-h-0 min-w-0 overflow-scroll">
         {/* Header */}
         <div
           className="sticky top-0 z-20 flex border-b-2 border-border bg-card text-xs font-bold uppercase tracking-wide text-foreground/80"
@@ -1320,10 +1320,10 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
 
       {/* Photo overlay — only one at a time */}
       {horizontalOverflow.active && (
-        <div className="sticky bottom-0 z-30 border-t border-border bg-gradient-to-r from-card/95 via-muted/85 to-card/95 px-2 py-1.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.04),0_-10px_24px_rgba(0,0,0,0.18)]">
+        <div className="sticky bottom-0 z-30 min-w-0 border-t border-border bg-gradient-to-r from-card/95 via-muted/85 to-card/95 px-2 py-1.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.04),0_-10px_24px_rgba(0,0,0,0.18)]">
           <div
             ref={bottomScrollRef}
-            className="app-grid-scrollbar h-10 overflow-x-auto overflow-y-hidden rounded-full border border-border/80 bg-gradient-to-b from-card/95 via-muted/85 to-card/95 p-1.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.05),0_8px_18px_rgba(0,0,0,0.18)]"
+            className="app-grid-scrollbar h-10 min-w-0 overflow-x-auto overflow-y-hidden rounded-full border border-border/80 bg-gradient-to-b from-card/95 via-muted/85 to-card/95 p-1.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.05),0_8px_18px_rgba(0,0,0,0.18)]"
           >
             <div className="min-w-0" style={{ width: horizontalOverflow.scrollWidth, height: 2 }} />
           </div>
