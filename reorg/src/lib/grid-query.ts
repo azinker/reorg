@@ -24,26 +24,29 @@ type DBMasterRow = Prisma.MasterRowGetPayload<typeof masterRowWithRelations>;
 type DBListing = DBMasterRow["listings"][number];
 
 async function fetchMasterRows() {
-  const rows: DBMasterRow[] = [];
   const batchSize = 100;
   let skip = 0;
 
-  while (true) {
-    const batch = await db.masterRow.findMany({
-      where: { isActive: true },
-      ...masterRowWithRelations,
-      orderBy: { title: "asc" },
-      skip,
-      take: batchSize,
-    });
+  return {
+    async *[Symbol.asyncIterator]() {
+      while (true) {
+        const batch = await db.masterRow.findMany({
+          where: { isActive: true },
+          ...masterRowWithRelations,
+          orderBy: { title: "asc" },
+          skip,
+          take: batchSize,
+        });
 
-    rows.push(...batch);
+        if (batch.length === 0) break;
 
-    if (batch.length < batchSize) break;
-    skip += batchSize;
-  }
+        yield batch;
 
-  return rows;
+        if (batch.length < batchSize) break;
+        skip += batchSize;
+      }
+    },
+  };
 }
 
 async function fetchShippingRates(): Promise<Map<string, number>> {
@@ -306,37 +309,38 @@ async function buildGridRow(
 
 
 export async function getGridData(): Promise<GridRow[]> {
-  const [masterRows, shippingRateMap, feeRateSetting] = await Promise.all([
+  const [masterRowBatches, shippingRateMap, feeRateSetting] = await Promise.all([
     fetchMasterRows(),
     fetchShippingRates(),
     db.appSetting.findUnique({ where: { key: "platformFeeRate" } }),
   ]);
 
   const feeRate = feeRateSetting?.value != null ? Number(feeRateSetting.value) : 0.136;
-
-  const parentRows = masterRows.filter((mr) => {
-    // Exclude master rows that have ANY listing as a child of a variation parent;
-    // these appear nested under their parent's variation group instead.
-    const hasAnyChildListing = mr.listings.some((l: DBListing) => l.parentListingId);
-    return !hasAnyChildListing;
-  });
-
   const rows: GridRow[] = [];
 
-  for (const master of parentRows) {
-    const stagedMap = new Map<string, { field: string; stagedValue: string; liveValue: string | null }>();
-    for (const sc of master.stagedChanges) {
-      if (sc.marketplaceListingId) {
-        stagedMap.set(`${sc.marketplaceListingId}-${sc.field}`, {
-          field: sc.field,
-          stagedValue: sc.stagedValue,
-          liveValue: sc.liveValue,
-        });
-      }
-    }
+  for await (const batch of masterRowBatches) {
+    const parentRows = batch.filter((mr) => {
+      // Exclude master rows that have ANY listing as a child of a variation parent;
+      // these appear nested under their parent's variation group instead.
+      const hasAnyChildListing = mr.listings.some((l: DBListing) => l.parentListingId);
+      return !hasAnyChildListing;
+    });
 
-    const gridRow = await buildGridRow(master, stagedMap, shippingRateMap, feeRate);
-    rows.push(gridRow);
+    for (const master of parentRows) {
+      const stagedMap = new Map<string, { field: string; stagedValue: string; liveValue: string | null }>();
+      for (const sc of master.stagedChanges) {
+        if (sc.marketplaceListingId) {
+          stagedMap.set(`${sc.marketplaceListingId}-${sc.field}`, {
+            field: sc.field,
+            stagedValue: sc.stagedValue,
+            liveValue: sc.liveValue,
+          });
+        }
+      }
+
+      const gridRow = await buildGridRow(master, stagedMap, shippingRateMap, feeRate);
+      rows.push(gridRow);
+    }
   }
 
   return rows;
