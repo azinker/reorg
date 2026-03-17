@@ -812,7 +812,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
 
     const hasHorizontalOverflow = main.scrollWidth > main.clientWidth + 4;
     const hasVerticalOverflow = main.scrollHeight > main.clientHeight + 4;
-    const nextHorizontalVisible = true;
+    const nextHorizontalVisible = hasHorizontalOverflow;
     const nextVerticalVisible = true;
 
     if (horizontalTrack) {
@@ -994,7 +994,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
         </div>
       </div>
 
-      <div className="relative min-h-0">
+      <div className="relative h-full min-h-0">
       <div ref={parentRef} className="app-grid-scroll min-h-0 h-full overflow-auto pr-8 pb-8">
         {/* Header */}
         <div
