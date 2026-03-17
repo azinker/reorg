@@ -346,6 +346,19 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
   const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const parentRef = useRef<HTMLDivElement>(null);
 
+  useEffect(() => {
+    const el = parentRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      if (e.deltaX !== 0 && el.scrollWidth > el.clientWidth) {
+        el.scrollLeft += e.deltaX;
+        e.preventDefault();
+      }
+    };
+    el.addEventListener("wheel", onWheel, { passive: false, capture: true });
+    return () => el.removeEventListener("wheel", onWheel, { capture: true });
+  }, []);
+
   function showToast(msg: string) {
     setToast(msg);
     setTimeout(() => setToast(null), 4000);
@@ -988,13 +1001,15 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
                   ...rowFontStyle,
                 }}
               >
-                {/* Frozen Columns */}
-                <div className={cn(
-                  "sticky left-0 z-10 flex shrink-0 bg-inherit shadow-[2px_0_8px_-2px_rgba(0,0,0,0.1)]",
-                  isChild && "pl-8 border-l-[3px] border-l-emerald-500/40"
-                )}>
-                  {/* Expand / Collapse toggle */}
-                  <div className={cn(COL_WIDTHS.expand, "flex items-center justify-center", cellPy)}>
+                {/* Frozen Columns — no extra padding on container so child row columns stay aligned with parent */}
+                <div className="sticky left-0 z-10 flex shrink-0 bg-inherit shadow-[2px_0_8px_-2px_rgba(0,0,0,0.1)]">
+                  {/* Expand / Collapse — indent and hierarchy bar only in this column for children */}
+                  <div className={cn(
+                    COL_WIDTHS.expand,
+                    "flex items-center justify-center",
+                    cellPy,
+                    isChild && "pl-4 border-l-2 border-l-emerald-500/40"
+                  )}>
                     {isParent && (
                       <button
                         onClick={() => toggleExpand(row.id)}
@@ -1035,7 +1050,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
                   {/* UPC */}
                   {isColVisible("upc") && (
                     <div className={cn(COL_WIDTHS.upc, "flex items-center px-2", cellPy)}>
-                      <div className={cn(isChild && "pl-4")}>
+                      <div className="w-full min-w-0">
                         <UpcCell upc={row.upc} />
                       </div>
                     </div>
@@ -1044,7 +1059,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
                   {/* Item IDs */}
                   {isColVisible("itemIds") && (
                     <div className={cn(COL_WIDTHS.itemIds, "flex items-center px-2", cellPy)}>
-                      <div className={cn("w-full", isChild && "pl-4")}>
+                      <div className="w-full min-w-0">
                         <ItemNumberCell items={row.itemNumbers} />
                       </div>
                     </div>
@@ -1073,7 +1088,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
                   {/* Title */}
                   {isColVisible("title") && (
                     <div className={cn(COL_WIDTHS.title, "flex items-center px-3", cellPy)}>
-                      <div className={cn("min-w-0", isChild && "pl-4")}>
+                      <div className="min-w-0 w-full">
                         <CopyValue value={row.title}>
                           <p className="scalable-text font-medium leading-snug break-words whitespace-normal">
                             {row.title}
