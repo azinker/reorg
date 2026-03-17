@@ -349,12 +349,12 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
     const [toast, setToast] = useState<string | null>(null);
     const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const parentRef = useRef<HTMLDivElement>(null);
-    const horizontalTrackRef = useRef<HTMLDivElement>(null);
-    const verticalTrackRef = useRef<HTMLDivElement>(null);
-    const horizontalMetricsRef = useRef({ thumbSize: 0, maxOffset: 0 });
-    const verticalMetricsRef = useRef({ thumbSize: 0, maxOffset: 0 });
-    const [horizontalRail, setHorizontalRail] = useState({ visible: true, thumbSize: 140, thumbOffset: 0 });
-    const [verticalRail, setVerticalRail] = useState({ visible: true, thumbSize: 140, thumbOffset: 0 });
+    const bottomScrollRef = useRef<HTMLDivElement>(null);
+    const syncSourceRef = useRef<"main" | "bottom" | null>(null);
+    const [horizontalOverflow, setHorizontalOverflow] = useState({
+      active: false,
+      scrollWidth: 0,
+    });
 
   function showToast(msg: string) {
     setToast(msg);
@@ -801,153 +801,59 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
 
   const rowFontStyle = { '--row-font-size': `${settings.rowTextSize}px` } as React.CSSProperties;
 
-  const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
-
-  const updateCustomRails = () => {
-    const main = parentRef.current;
-    if (!main) return;
-
-    const horizontalTrack = horizontalTrackRef.current;
-    const verticalTrack = verticalTrackRef.current;
-
-    const hasHorizontalOverflow = main.scrollWidth > main.clientWidth + 4;
-    const hasVerticalOverflow = main.scrollHeight > main.clientHeight + 4;
-    const nextHorizontalVisible = hasHorizontalOverflow;
-    const nextVerticalVisible = true;
-
-    if (horizontalTrack) {
-      const trackWidth = horizontalTrack.clientWidth;
-      const scrollableWidth = Math.max(0, main.scrollWidth - main.clientWidth);
-      const thumbWidth = hasHorizontalOverflow
-        ? Math.max(120, (main.clientWidth / Math.max(main.scrollWidth, 1)) * trackWidth)
-        : trackWidth;
-      const maxOffset = Math.max(0, trackWidth - thumbWidth);
-      const thumbOffset = scrollableWidth > 0
-        ? (main.scrollLeft / scrollableWidth) * maxOffset
-        : 0;
-
-      horizontalMetricsRef.current = { thumbSize: thumbWidth, maxOffset };
-      setHorizontalRail({
-        visible: nextHorizontalVisible,
-        thumbSize: thumbWidth,
-        thumbOffset,
-      });
-    } else {
-      setHorizontalRail((prev) => ({ ...prev, visible: nextHorizontalVisible }));
-    }
-
-    if (verticalTrack) {
-      const trackHeight = verticalTrack.clientHeight;
-      const scrollableHeight = Math.max(0, main.scrollHeight - main.clientHeight);
-      const thumbHeight = hasVerticalOverflow
-        ? Math.max(120, (main.clientHeight / Math.max(main.scrollHeight, 1)) * trackHeight)
-        : trackHeight;
-      const maxOffset = Math.max(0, trackHeight - thumbHeight);
-      const thumbOffset = scrollableHeight > 0
-        ? (main.scrollTop / scrollableHeight) * maxOffset
-        : 0;
-
-      verticalMetricsRef.current = { thumbSize: thumbHeight, maxOffset };
-      setVerticalRail({
-        visible: nextVerticalVisible,
-        thumbSize: thumbHeight,
-        thumbOffset,
-      });
-    } else {
-      setVerticalRail((prev) => ({ ...prev, visible: nextVerticalVisible }));
-    }
-  };
-
-  const beginDrag = (axis: "x" | "y", startClient: number, startScroll: number) => {
-    const main = parentRef.current;
-    if (!main) return;
-
-    const handleMove = (event: MouseEvent) => {
-      const currentClient = axis === "x" ? event.clientX : event.clientY;
-      const delta = currentClient - startClient;
-
-      if (axis === "x") {
-        const scrollableWidth = Math.max(0, main.scrollWidth - main.clientWidth);
-        const trackTravel = Math.max(1, horizontalMetricsRef.current.maxOffset);
-        main.scrollLeft = clamp(startScroll + (delta / trackTravel) * scrollableWidth, 0, scrollableWidth);
-      } else {
-        const scrollableHeight = Math.max(0, main.scrollHeight - main.clientHeight);
-        const trackTravel = Math.max(1, verticalMetricsRef.current.maxOffset);
-        main.scrollTop = clamp(startScroll + (delta / trackTravel) * scrollableHeight, 0, scrollableHeight);
-      }
-
-      updateCustomRails();
-    };
-
-    const handleUp = () => {
-      document.removeEventListener("mousemove", handleMove);
-      document.removeEventListener("mouseup", handleUp);
-    };
-
-    document.addEventListener("mousemove", handleMove);
-    document.addEventListener("mouseup", handleUp);
-  };
-
-  const handleHorizontalTrackMouseDown = (event: React.MouseEvent<HTMLDivElement>) => {
-    const main = parentRef.current;
-    const track = horizontalTrackRef.current;
-    if (!main || !track) return;
-
-    const rect = track.getBoundingClientRect();
-    const clickOffset = event.clientX - rect.left;
-    const thumbSize = horizontalMetricsRef.current.thumbSize;
-    const targetThumbOffset = clamp(clickOffset - thumbSize / 2, 0, horizontalMetricsRef.current.maxOffset);
-    const scrollableWidth = Math.max(0, main.scrollWidth - main.clientWidth);
-    const nextScrollLeft = horizontalMetricsRef.current.maxOffset > 0
-      ? (targetThumbOffset / horizontalMetricsRef.current.maxOffset) * scrollableWidth
-      : 0;
-
-    main.scrollLeft = nextScrollLeft;
-    updateCustomRails();
-  };
-
-  const handleVerticalTrackMouseDown = (event: React.MouseEvent<HTMLDivElement>) => {
-    const main = parentRef.current;
-    const track = verticalTrackRef.current;
-    if (!main || !track) return;
-
-    const rect = track.getBoundingClientRect();
-    const clickOffset = event.clientY - rect.top;
-    const thumbSize = verticalMetricsRef.current.thumbSize;
-    const targetThumbOffset = clamp(clickOffset - thumbSize / 2, 0, verticalMetricsRef.current.maxOffset);
-    const scrollableHeight = Math.max(0, main.scrollHeight - main.clientHeight);
-    const nextScrollTop = verticalMetricsRef.current.maxOffset > 0
-      ? (targetThumbOffset / verticalMetricsRef.current.maxOffset) * scrollableHeight
-      : 0;
-
-    main.scrollTop = nextScrollTop;
-    updateCustomRails();
-  };
-
   useEffect(() => {
     const main = parentRef.current;
-    if (!main) return;
+    const bottom = bottomScrollRef.current;
+    if (!main || !bottom) return;
 
-    updateCustomRails();
+    const releaseSync = () => {
+      requestAnimationFrame(() => {
+        syncSourceRef.current = null;
+      });
+    };
 
-    const handleScroll = () => updateCustomRails();
-    const observer = new ResizeObserver(() => updateCustomRails());
+    const syncFromMain = () => {
+      if (syncSourceRef.current === "bottom") return;
+      syncSourceRef.current = "main";
+      bottom.scrollLeft = main.scrollLeft;
+      releaseSync();
+    };
 
-    main.addEventListener("scroll", handleScroll);
+    const syncFromBottom = () => {
+      if (syncSourceRef.current === "main") return;
+      syncSourceRef.current = "bottom";
+      main.scrollLeft = bottom.scrollLeft;
+      releaseSync();
+    };
+
+    const updateOverflow = () => {
+      const overflowWidth = Math.max(0, main.scrollWidth - main.clientWidth);
+      setHorizontalOverflow({
+        active: overflowWidth > 24,
+        scrollWidth: Math.max(main.scrollWidth, main.clientWidth),
+      });
+      if (Math.abs(bottom.scrollLeft - main.scrollLeft) > 1) {
+        bottom.scrollLeft = main.scrollLeft;
+      }
+    };
+
+    updateOverflow();
+
+    main.addEventListener("scroll", syncFromMain);
+    bottom.addEventListener("scroll", syncFromBottom);
+
+    const observer = new ResizeObserver(updateOverflow);
     observer.observe(main);
     Array.from(main.children).forEach((child) => observer.observe(child));
-    window.addEventListener("resize", updateCustomRails);
+    window.addEventListener("resize", updateOverflow);
 
     return () => {
-      main.removeEventListener("scroll", handleScroll);
+      main.removeEventListener("scroll", syncFromMain);
+      bottom.removeEventListener("scroll", syncFromBottom);
       observer.disconnect();
-      window.removeEventListener("resize", updateCustomRails);
+      window.removeEventListener("resize", updateOverflow);
     };
   }, [totalMinWidth, flatRows.length, settings.density, columns]);
-
-  useEffect(() => {
-    updateCustomRails();
-  }, [horizontalRail.visible, verticalRail.visible]);
 
   return (
     <div className="grid h-full min-h-0 grid-rows-[auto_auto_auto_minmax(0,1fr)_auto]">
@@ -995,7 +901,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
       </div>
 
       <div className="relative h-full min-h-0">
-      <div ref={parentRef} className="app-grid-scroll min-h-0 h-full overflow-auto pr-8 pb-8">
+      <div ref={parentRef} className="app-grid-scroll min-h-0 h-full overflow-auto">
         {/* Header */}
         <div
           className="sticky top-0 z-20 flex border-b-2 border-border bg-card text-xs font-bold uppercase tracking-wide text-foreground/80"
@@ -1403,81 +1309,17 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
         </div>
       </div>
 
-      <div
-        ref={verticalTrackRef}
-        onMouseDown={handleVerticalTrackMouseDown}
-        className="absolute inset-y-2 right-1 z-30 w-10 cursor-pointer rounded-full border border-border/80 bg-gradient-to-b from-card/95 via-muted/85 to-card/95 p-1.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.05),0_8px_18px_rgba(0,0,0,0.18)]"
-      >
-        <div
-          role="scrollbar"
-          aria-orientation="vertical"
-          aria-label="Vertical table scroll"
-          onMouseDown={(event) => {
-            event.stopPropagation();
-            beginDrag("y", event.clientY, parentRef.current?.scrollTop ?? 0);
-          }}
-          className="min-h-[120px] w-full rounded-full border border-emerald-300/20 bg-gradient-to-b from-emerald-300 via-emerald-400 to-cyan-400 shadow-[0_6px_18px_rgba(16,185,129,0.35),inset_0_1px_0_rgba(255,255,255,0.28)] transition-opacity"
-          style={{
-            height: verticalRail.thumbSize || 140,
-            transform: `translateY(${verticalRail.thumbOffset}px)`,
-            opacity: verticalRail.visible ? 1 : 0.55,
-          }}
-        />
-      </div>
-      <div className="pointer-events-none absolute inset-x-2 bottom-2 z-30">
-        <div
-          ref={horizontalTrackRef}
-          onMouseDown={handleHorizontalTrackMouseDown}
-          className="pointer-events-auto h-10 cursor-pointer rounded-full border border-border/80 bg-gradient-to-b from-card/95 via-muted/85 to-card/95 p-1.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.05),0_8px_18px_rgba(0,0,0,0.18)]"
-        >
-          <div
-            role="scrollbar"
-            aria-orientation="horizontal"
-            aria-label="Horizontal table scroll"
-            onMouseDown={(event) => {
-              event.stopPropagation();
-              beginDrag("x", event.clientX, parentRef.current?.scrollLeft ?? 0);
-            }}
-            className="h-full min-w-[120px] rounded-full border border-emerald-300/20 bg-gradient-to-b from-emerald-300 via-emerald-400 to-cyan-400 shadow-[0_6px_18px_rgba(16,185,129,0.35),inset_0_1px_0_rgba(255,255,255,0.28)] transition-opacity"
-            style={{
-              width: horizontalRail.thumbSize || 140,
-              transform: `translateX(${horizontalRail.thumbOffset}px)`,
-              opacity: horizontalRail.visible ? 1 : 0.55,
-            }}
-          />
-        </div>
-      </div>
       </div>
 
       {/* Photo overlay — only one at a time */}
-      {false && horizontalRail.visible && (
+      {horizontalOverflow.active && (
+        <div className="sticky bottom-0 z-30 border-t border-border bg-gradient-to-r from-card/95 via-muted/85 to-card/95 px-2 py-1.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.04),0_-10px_24px_rgba(0,0,0,0.18)]">
           <div
-            className="z-30 border-t border-border bg-gradient-to-r from-card/95 via-muted/85 to-card/95 px-3 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.04),0_-10px_24px_rgba(0,0,0,0.18)]"
+            ref={bottomScrollRef}
+            className="app-grid-scrollbar h-10 overflow-x-auto overflow-y-hidden rounded-full border border-border/80 bg-gradient-to-b from-card/95 via-muted/85 to-card/95 p-1.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.05),0_8px_18px_rgba(0,0,0,0.18)]"
           >
-            <div className="mb-1 flex items-center justify-between text-[11px] text-muted-foreground">
-              <span>Full table horizontal scroll</span>
-              <span className="font-medium text-emerald-400">Always available below</span>
-            </div>
-            <div
-              ref={horizontalTrackRef}
-              onMouseDown={handleHorizontalTrackMouseDown}
-              className="h-10 cursor-pointer rounded-full border border-border/80 bg-gradient-to-r from-background/95 via-card to-background/95 p-1.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.05),0_8px_18px_rgba(0,0,0,0.12)]"
-            >
-              <div
-                role="scrollbar"
-                aria-orientation="horizontal"
-                aria-label="Horizontal table scroll"
-                onMouseDown={(event) => {
-                  event.stopPropagation();
-                  beginDrag("x", event.clientX, parentRef.current?.scrollLeft ?? 0);
-                }}
-                className="h-full min-w-[120px] rounded-full border border-emerald-300/20 bg-gradient-to-r from-emerald-300 via-emerald-400 to-cyan-400 shadow-[0_6px_18px_rgba(16,185,129,0.35),inset_0_1px_0_rgba(255,255,255,0.28)]"
-                style={{
-                  width: horizontalRail.thumbSize,
-                  transform: `translateX(${horizontalRail.thumbOffset}px)`,
-                }}
-              />
-            </div>
+            <div style={{ width: horizontalOverflow.scrollWidth, height: 1 }} />
+          </div>
         </div>
       )}
 

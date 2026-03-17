@@ -166,7 +166,9 @@ export default function DashboardPage() {
           </span>
         </div>
       )}
-      <DataGrid rows={rows} />
+      <div className="min-h-0 flex-1 overflow-hidden">
+        <DataGrid rows={rows} />
+      </div>
     </div>
   );
 }
