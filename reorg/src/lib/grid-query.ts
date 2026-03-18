@@ -24,6 +24,28 @@ type DBMasterRow = Prisma.MasterRowGetPayload<typeof masterRowWithRelations>;
 type DBListing = DBMasterRow["listings"][number];
 type DBListingRef = Pick<DBListing, "integration" | "platformItemId" | "platformVariantId">;
 
+function appendItemNumber(
+  map: Map<string, StoreValue>,
+  entry: DBListingRef | StoreValue,
+) {
+  const isStoreValue = "platform" in entry;
+  const platform = isStoreValue
+    ? entry.platform
+    : (entry.integration.platform as Platform);
+  const listingId = isStoreValue ? entry.listingId : entry.platformItemId;
+  const variantId = isStoreValue ? entry.variantId : entry.platformVariantId || undefined;
+  const key = `${platform}:${listingId}`;
+
+  if (!map.has(key)) {
+    map.set(key, {
+      platform,
+      listingId,
+      variantId,
+      value: listingId,
+    });
+  }
+}
+
 async function fetchMasterRows() {
   const batchSize = 100;
   let skip = 0;
@@ -232,27 +254,6 @@ async function buildGridRow(
     return sv;
   });
 
-  const itemNumberMap = new Map<string, StoreValue>();
-  for (const listing of parentListings) {
-    const addListing = (entry: DBListingRef) => {
-      const key = `${entry.integration.platform}:${entry.platformItemId}:${entry.platformVariantId ?? ""}`;
-      if (!itemNumberMap.has(key)) {
-        itemNumberMap.set(key, {
-          platform: entry.integration.platform as Platform,
-          listingId: entry.platformItemId,
-          variantId: entry.platformVariantId || undefined,
-          value: entry.platformItemId,
-        });
-      }
-    };
-
-    addListing(listing);
-    for (const childListing of listing.childListings ?? []) {
-      addListing(childListing);
-    }
-  }
-  const itemNumbers: StoreValue[] = [...itemNumberMap.values()];
-
   const platformFees: StoreValue[] = salePrices.map((sp) => {
     const sale = sp.stagedValue != null ? Number(sp.stagedValue) : sp.value != null ? Number(sp.value) : 0;
     const rate = sp.platform === "BIGCOMMERCE" || sp.platform === "SHOPIFY" ? 0 : feeRate;
@@ -299,6 +300,20 @@ async function buildGridRow(
   const childRows: GridRow[] | undefined = isVariationParent
     ? await buildChildRows(master, parentListings, stagedMap, shippingRateMap, feeRate)
     : undefined;
+
+  const itemNumberMap = new Map<string, StoreValue>();
+  for (const listing of parentListings) {
+    appendItemNumber(itemNumberMap, listing);
+    for (const childListing of listing.childListings ?? []) {
+      appendItemNumber(itemNumberMap, childListing);
+    }
+  }
+  for (const childRow of childRows ?? []) {
+    for (const item of childRow.itemNumbers) {
+      appendItemNumber(itemNumberMap, item);
+    }
+  }
+  const itemNumbers: StoreValue[] = [...itemNumberMap.values()];
 
   return {
     id: master.id,
