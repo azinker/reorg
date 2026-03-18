@@ -396,6 +396,7 @@ export async function GET() {
           automationHealthStatus: automationHealth.summary.status,
           automationHealthHeadline: automationHealth.summary.headline,
           automationHealthDetail: automationHealth.summary.detail,
+          automationHealthAction: automationHealth.summary.recommendedAction,
           delayedStores: automationHealth.summary.delayedCount,
           attentionStores: automationHealth.summary.attentionCount,
         },

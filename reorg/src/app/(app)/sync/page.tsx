@@ -125,6 +125,8 @@ type SchedulerStatus = {
     attentionCount: number;
     headline: string;
     detail: string;
+    recommendedAction: string;
+    affectedLabels: string[];
   };
   integrationHealth: Array<{
     integrationId: string;
@@ -145,6 +147,7 @@ type SchedulerStatus = {
     minutesSinceWebhook: number | null;
     webhookStatus: "ok" | "quiet" | "missing" | "n/a";
     webhookMessage: string;
+    recommendedAction: string;
   }>;
   recentJobs: Array<{
     id: string;
@@ -863,6 +866,9 @@ export default function SyncPage() {
               Store update health: {schedulerStatus.healthSummary.headline}
             </div>
             <div className="mt-1">{schedulerStatus.healthSummary.detail}</div>
+            <div className="mt-1">
+              Next step: {schedulerStatus.healthSummary.recommendedAction}
+            </div>
             <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px] uppercase tracking-wide">
               <span>Healthy {schedulerStatus.healthSummary.healthyCount}</span>
               <span>Delayed {schedulerStatus.healthSummary.delayedCount}</span>
@@ -899,6 +905,18 @@ export default function SyncPage() {
                   <div className="mt-1 text-muted-foreground">
                     Last completed pull: {formatDateTime(item.lastSyncAt)}
                   </div>
+                  {item.combinedStatus !== "healthy" ? (
+                    <div
+                      className={cn(
+                        "mt-2 rounded border px-2 py-1.5 text-[11px]",
+                        item.combinedStatus === "attention"
+                          ? "border-red-500/20 bg-red-500/5 text-red-300"
+                          : "border-amber-500/20 bg-amber-500/5 text-amber-300",
+                      )}
+                    >
+                      Next step: {item.recommendedAction}
+                    </div>
+                  ) : null}
                   <div className="mt-1 text-muted-foreground">
                     {item.running
                       ? "A pull is running now."

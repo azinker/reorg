@@ -107,6 +107,7 @@ type EngineRoomData = {
     nextDueAt: string | null;
     webhookExpected: boolean;
     webhookMessage: string;
+    recommendedAction: string;
   }>;
   summary: {
     activeSyncs: number;
@@ -126,6 +127,7 @@ type EngineRoomData = {
     automationHealthStatus: "healthy" | "delayed" | "attention";
     automationHealthHeadline: string;
     automationHealthDetail: string;
+    automationHealthAction: string;
     delayedStores: number;
     attentionStores: number;
   };
@@ -529,6 +531,7 @@ export default function EngineRoomPage() {
     automationHealthStatus: "healthy" as const,
     automationHealthHeadline: "Healthy",
     automationHealthDetail: "All connected stores are refreshing within their expected window.",
+    automationHealthAction: "No action needed.",
     delayedStores: 0,
     attentionStores: 0,
   };
@@ -699,9 +702,14 @@ export default function EngineRoomPage() {
                 Store Update Health
               </p>
               {!loading && (
-                <p className="mt-1 max-w-full text-xs text-muted-foreground">
-                  {summary.automationHealthDetail}
-                </p>
+                <>
+                  <p className="mt-1 max-w-full text-xs text-muted-foreground">
+                    {summary.automationHealthDetail}
+                  </p>
+                  <p className="mt-1 max-w-full text-xs text-muted-foreground">
+                    Next step: {summary.automationHealthAction}
+                  </p>
+                </>
               )}
             </div>
           </div>
@@ -838,6 +846,18 @@ export default function EngineRoomPage() {
                   <div className="mt-1 text-muted-foreground">
                     Last completed pull: {formatDateTime(item.lastSyncAt)}
                   </div>
+                  {item.combinedStatus !== "healthy" ? (
+                    <div
+                      className={cn(
+                        "mt-2 rounded border px-2 py-1 text-[11px]",
+                        item.combinedStatus === "attention"
+                          ? "border-red-500/20 bg-red-500/5 text-red-300"
+                          : "border-amber-500/20 bg-amber-500/5 text-amber-300",
+                      )}
+                    >
+                      Next step: {item.recommendedAction}
+                    </div>
+                  ) : null}
                   <div className="mt-1 text-muted-foreground">
                     {item.running
                       ? "A pull is running now."

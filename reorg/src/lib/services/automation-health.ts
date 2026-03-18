@@ -22,6 +22,7 @@ export interface IntegrationHealthSnapshot {
   minutesSinceWebhook: number | null;
   webhookStatus: WebhookMonitorStatus;
   webhookMessage: string;
+  recommendedAction: string;
   combinedStatus: MonitorHealthStatus;
 }
 
@@ -32,6 +33,8 @@ export interface AutomationHealthSummary {
   attentionCount: number;
   headline: string;
   detail: string;
+  recommendedAction: string;
+  affectedLabels: string[];
 }
 
 export interface AutomationHealthSnapshot {
@@ -55,6 +58,19 @@ function formatMinutesLabel(totalMinutes: number) {
 
 function getGraceMinutes(intervalMinutes: number) {
   return Math.max(15, Math.min(60, Math.round(intervalMinutes * 0.25)));
+}
+
+function formatLabelList(labels: string[]) {
+  if (labels.length <= 1) return labels.join("");
+  if (labels.length === 2) return `${labels[0]} and ${labels[1]}`;
+  return `${labels.slice(0, -1).join(", ")}, and ${labels[labels.length - 1]}`;
+}
+
+function getPlatformDisplayName(platform: string) {
+  if (platform === "SHOPIFY") return "Shopify";
+  if (platform === "BIGCOMMERCE") return "BigCommerce";
+  if (platform === "TPP_EBAY" || platform === "TT_EBAY") return "eBay";
+  return platform;
 }
 
 function getSyncHealthStatus(
@@ -159,6 +175,53 @@ function getWebhookHealthStatus(
   };
 }
 
+function getRecommendedAction(args: {
+  label: string;
+  platform: string;
+  due: boolean;
+  running: boolean;
+  syncStatus: IntegrationHealthSnapshot["syncStatus"];
+  syncMonitorStatus: MonitorHealthStatus;
+  webhookExpected: boolean;
+  webhookStatus: WebhookMonitorStatus;
+}) {
+  const platformLabel = getPlatformDisplayName(args.platform);
+
+  if (args.syncStatus === "never") {
+    return "Run a manual pull from Sync so this store records its first completed update.";
+  }
+
+  if (args.syncMonitorStatus === "attention") {
+    if (args.running) {
+      return "A pull is already running. Let it finish, then check Sync or Errors if this store still needs attention.";
+    }
+    if (args.due) {
+      return "Start a manual pull from Sync now. If it still fails, check Errors and the integration credentials.";
+    }
+    return "Open Sync and run a manual pull. If this store stays behind after that, check Errors and the integration credentials.";
+  }
+
+  if (args.syncMonitorStatus === "delayed") {
+    if (args.running) {
+      return "A pull is already running. Refresh Sync after it finishes to confirm this store recovers.";
+    }
+    if (args.due) {
+      return "This store is due now. Let the next automatic check start it, or run a manual pull from Sync if you need it refreshed immediately.";
+    }
+    return "Watch the next automatic check. If this store stays behind, run a manual pull from Sync.";
+  }
+
+  if (args.webhookExpected && args.webhookStatus === "missing") {
+    return `Scheduled pulls are still covering this store. Check ${platformLabel} webhook delivery so early refreshes can resume.`;
+  }
+
+  if (args.webhookExpected && args.webhookStatus === "quiet") {
+    return `No immediate action is needed unless you expected recent ${platformLabel} changes to wake an early refresh.`;
+  }
+
+  return "No action needed.";
+}
+
 export async function buildAutomationHealthSnapshot(
   plan: SchedulerPlanItem[],
   now = new Date(),
@@ -216,6 +279,16 @@ export async function buildAutomationHealthSnapshot(
         webhook.webhookStatus === "missing" && sync.status === "healthy"
           ? "delayed"
           : sync.status;
+      const recommendedAction = getRecommendedAction({
+        label: integration.label,
+        platform: integration.platform,
+        due: item.due,
+        running: item.running,
+        syncStatus: sync.syncStatus,
+        syncMonitorStatus: sync.status,
+        webhookExpected: webhook.webhookExpected,
+        webhookStatus: webhook.webhookStatus,
+      });
 
       return {
         integrationId: integration.id,
@@ -235,6 +308,7 @@ export async function buildAutomationHealthSnapshot(
         minutesSinceWebhook: webhook.minutesSinceWebhook,
         webhookStatus: webhook.webhookStatus,
         webhookMessage: webhook.webhookMessage,
+        recommendedAction,
         combinedStatus,
       } satisfies IntegrationHealthSnapshot;
     })
@@ -254,25 +328,46 @@ export async function buildAutomationHealthSnapshot(
   const delayedLabels = integrationHealth
     .filter((item) => item.combinedStatus === "delayed")
     .map((item) => item.label);
+  const delayedSyncLabels = integrationHealth
+    .filter((item) => item.status === "delayed")
+    .map((item) => item.label);
+  const missingWebhookLabels = integrationHealth
+    .filter((item) => item.webhookStatus === "missing")
+    .map((item) => item.label);
 
   let summary: AutomationHealthSummary;
   if (attentionCount > 0) {
+    const labels = formatLabelList(attentionLabels);
     summary = {
       status: "attention",
       healthyCount,
       delayedCount,
       attentionCount,
       headline: "Attention needed",
-      detail: `${attentionLabels.join(", ")} need fresher completed pulls.`,
+      detail: `${labels} need fresher completed pulls.`,
+      recommendedAction:
+        attentionLabels.length === 1
+          ? `Open Sync or Errors and run a manual pull for ${labels}. If it still falls behind, review credentials and webhook delivery.`
+          : `Open Sync or Errors and run manual pulls for ${labels}. If any store still falls behind, review credentials and webhook delivery.`,
+      affectedLabels: attentionLabels,
     };
   } else if (delayedCount > 0) {
+    const labels = formatLabelList(delayedLabels);
+    const onlyWebhookCoverageIssue =
+      delayedSyncLabels.length === 0 && missingWebhookLabels.length > 0;
     summary = {
       status: "delayed",
       healthyCount,
       delayedCount,
       attentionCount,
       headline: "Running behind",
-      detail: `${delayedLabels.join(", ")} are behind their usual pull window.`,
+      detail: onlyWebhookCoverageIssue
+        ? `${labels} are still refreshing on schedule, but their store change notices have gone quiet.`
+        : `${labels} are behind their usual pull window.`,
+      recommendedAction: onlyWebhookCoverageIssue
+        ? `Check Shopify or BigCommerce webhook delivery for ${labels} so early refreshes can resume.`
+        : `Watch the next automatic check for ${labels}. If they stay behind, run a manual pull from Sync.`,
+      affectedLabels: delayedLabels,
     };
   } else {
     summary = {
@@ -282,6 +377,8 @@ export async function buildAutomationHealthSnapshot(
       attentionCount,
       headline: "Healthy",
       detail: "All connected stores are refreshing within their expected window.",
+      recommendedAction: "No action needed.",
+      affectedLabels: [],
     };
   }
 

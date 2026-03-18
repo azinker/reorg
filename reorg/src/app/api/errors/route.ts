@@ -187,6 +187,7 @@ export async function GET() {
               : "Next automatic check: Not scheduled",
             item.running ? "A pull is running now." : "No pull is running right now.",
             item.webhookExpected ? `Webhook status: ${item.webhookMessage}` : "Webhook status: Not applicable",
+            `Recommended action: ${item.recommendedAction}`,
           ].join("\n"),
           store: item.label,
           storeAcronym:
@@ -210,6 +211,7 @@ export async function GET() {
               ? `Next automatic check: ${formatTimestamp(new Date(item.nextDueAt))}`
               : "Next automatic check: Not scheduled",
             item.running ? "A pull is running now." : "No pull is running right now.",
+            `Recommended action: ${item.recommendedAction}`,
           ].join("\n"),
           store: item.label,
           storeAcronym:
@@ -230,6 +232,7 @@ export async function GET() {
             `Webhook health: ${item.webhookMessage}`,
             `Last completed pull: ${item.lastSyncAt ? formatTimestamp(new Date(item.lastSyncAt)) : "Never"}`,
             "Scheduled pulls are still the safety net, but webhook-triggered refreshes will not be available until notices arrive.",
+            `Recommended action: ${item.recommendedAction}`,
           ].join("\n"),
           store: item.label,
           storeAcronym:
@@ -250,6 +253,7 @@ export async function GET() {
             `Webhook health: ${item.webhookMessage}`,
             `Last recorded notice: ${item.lastWebhookAt ? formatTimestamp(new Date(item.lastWebhookAt)) : "Never"}`,
             "This can be normal if the store was quiet, but it is worth checking if you expected recent changes to trigger early refreshes.",
+            `Recommended action: ${item.recommendedAction}`,
           ].join("\n"),
           store: item.label,
           storeAcronym:

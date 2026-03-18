@@ -20,6 +20,8 @@ interface SchedulerHealthPayload {
     status: "healthy" | "delayed" | "attention";
     headline: string;
     detail: string;
+    recommendedAction: string;
+    affectedLabels: string[];
   };
 }
 
@@ -262,19 +264,25 @@ export default function DashboardPage() {
         <div
           className={
             schedulerHealth.status === "attention"
-              ? "border-b border-red-500/20 bg-red-500/5 px-4 py-1.5"
-              : "border-b border-amber-500/20 bg-amber-500/5 px-4 py-1.5"
+              ? "border-b border-red-500/20 bg-red-500/5 px-4 py-2"
+              : "border-b border-amber-500/20 bg-amber-500/5 px-4 py-2"
           }
         >
-          <span
+          <div
             className={
               schedulerHealth.status === "attention"
                 ? "text-xs text-red-300"
                 : "text-xs text-amber-300"
             }
           >
-            Store update health: {schedulerHealth.headline}. {schedulerHealth.detail}
-          </span>
+            <div className="font-semibold">
+              Store update health: {schedulerHealth.headline}
+            </div>
+            <div className="mt-0.5">{schedulerHealth.detail}</div>
+            <div className="mt-1 opacity-90">
+              Next step: {schedulerHealth.recommendedAction}
+            </div>
+          </div>
         </div>
       )}
       {isRefreshing && source === "db" && (
