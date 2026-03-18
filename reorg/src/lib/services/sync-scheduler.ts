@@ -222,7 +222,7 @@ export async function executeScheduledSyncs(now = new Date()) {
     const result = await startIntegrationSync(integration, {
       requestedMode: item.requestedMode,
       triggerSource: "scheduler",
-    });
+    }, "inline");
 
     const config = getIntegrationConfig(integration);
     const nextConfig = {

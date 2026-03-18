@@ -27,13 +27,20 @@ export interface SyncDispatchResult {
   requestedMode: SyncMode;
   effectiveMode: SyncMode;
   fallbackReason: string | null;
-  status: "STARTED" | "ALREADY_RUNNING" | "UNSUPPORTED";
+  status: "STARTED" | "COMPLETED" | "FAILED" | "ALREADY_RUNNING" | "UNSUPPORTED";
   jobId: string | null;
   message: string;
 }
 
 export interface SyncCompletionOptions {
   cursor?: string | null;
+}
+
+type SyncDispatchMode = "background" | "inline";
+
+interface ExecutedSyncResult {
+  jobId: string | null;
+  status: "COMPLETED" | "FAILED";
 }
 
 function formatTriggeredBy(options: SyncExecutionOptions): string {
@@ -75,6 +82,44 @@ export function resolveIntegrationSyncModes(
   requestedMode?: SyncMode,
 ) {
   return resolveSyncModes(integration, requestedMode);
+}
+
+async function executeIntegrationSync(
+  integration: Pick<Integration, "platform" | "label">,
+  options: SyncExecutionOptions,
+): Promise<ExecutedSyncResult | null> {
+  switch (integration.platform) {
+    case "SHOPIFY": {
+      const result = await runShopifySync(options);
+      return {
+        jobId: result.jobId,
+        status: result.status === "COMPLETED" ? "COMPLETED" : "FAILED",
+      };
+    }
+    case "TPP_EBAY": {
+      const result = await runEbayTppSync(options);
+      return {
+        jobId: result.jobId,
+        status: result.status === "COMPLETED" ? "COMPLETED" : "FAILED",
+      };
+    }
+    case "TT_EBAY": {
+      const result = await runEbayTtSync(options);
+      return {
+        jobId: result.jobId,
+        status: result.status === "COMPLETED" ? "COMPLETED" : "FAILED",
+      };
+    }
+    case "BIGCOMMERCE": {
+      const result = await runBigCommerceSync(options);
+      return {
+        jobId: result.syncJobId,
+        status: result.status === "completed" ? "COMPLETED" : "FAILED",
+      };
+    }
+    default:
+      return null;
+  }
 }
 
 export function buildCompletedSyncConfig(
@@ -137,6 +182,7 @@ export async function buildCompletedSyncConfigFromLatest(
 export async function startIntegrationSync(
   integration: Integration,
   options: SyncExecutionOptions = {},
+  dispatchMode: SyncDispatchMode = "background",
 ): Promise<SyncDispatchResult> {
   const runningJob = await db.syncJob.findFirst({
     where: { integrationId: integration.id, status: "RUNNING" },
@@ -177,28 +223,9 @@ export async function startIntegrationSync(
     }),
   };
 
-  switch (integration.platform) {
-    case "SHOPIFY":
-      runShopifySync(nextOptions).catch((err) =>
-        console.error("[sync-control] SHOPIFY background error:", err),
-      );
-      break;
-    case "TPP_EBAY":
-      runEbayTppSync(nextOptions).catch((err) =>
-        console.error("[sync-control] TPP_EBAY background error:", err),
-      );
-      break;
-    case "TT_EBAY":
-      runEbayTtSync(nextOptions).catch((err) =>
-        console.error("[sync-control] TT_EBAY background error:", err),
-      );
-      break;
-    case "BIGCOMMERCE":
-      runBigCommerceSync(nextOptions).catch((err) =>
-        console.error("[sync-control] BIGCOMMERCE background error:", err),
-      );
-      break;
-    default:
+  if (dispatchMode === "inline") {
+    const result = await executeIntegrationSync(integration, nextOptions);
+    if (!result) {
       return {
         integrationId: integration.id,
         platform: integration.platform,
@@ -209,6 +236,53 @@ export async function startIntegrationSync(
         jobId: null,
         message: `Sync for ${integration.platform} is not implemented yet.`,
       };
+    }
+
+    return {
+      integrationId: integration.id,
+      platform: integration.platform,
+      requestedMode: modes.requestedMode,
+      effectiveMode: modes.effectiveMode,
+      fallbackReason: modes.fallbackReason,
+      status: result.status,
+      jobId: result.jobId,
+      message:
+        result.status === "COMPLETED"
+          ? `${integration.label} ${
+              modes.effectiveMode === "incremental" ? "incremental" : "full"
+            } sync completed.`
+          : `${integration.label} ${
+              modes.effectiveMode === "incremental" ? "incremental" : "full"
+            } sync failed.`,
+    };
+  }
+
+  const executor = executeIntegrationSync(integration, nextOptions);
+  executor.catch((err) => {
+    console.error(
+      `[sync-control] ${integration.platform} background error:`,
+      err,
+    );
+  });
+
+  const supportedPlatforms: Platform[] = [
+    "SHOPIFY",
+    "TPP_EBAY",
+    "TT_EBAY",
+    "BIGCOMMERCE",
+  ];
+
+  if (!supportedPlatforms.includes(integration.platform)) {
+    return {
+      integrationId: integration.id,
+      platform: integration.platform,
+      requestedMode: modes.requestedMode,
+      effectiveMode: modes.effectiveMode,
+      fallbackReason: modes.fallbackReason,
+      status: "UNSUPPORTED",
+      jobId: null,
+      message: `Sync for ${integration.platform} is not implemented yet.`,
+    };
   }
 
   await new Promise((resolve) => setTimeout(resolve, 500));
