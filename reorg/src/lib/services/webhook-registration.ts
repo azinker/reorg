@@ -1,5 +1,6 @@
 import { Prisma, type Integration, Platform } from "@prisma/client";
 import { db } from "@/lib/db";
+import { getAppEnv } from "@/lib/app-env";
 import { getIntegrationConfig } from "@/lib/integrations/runtime-config";
 
 const SHOPIFY_TOPICS = [
@@ -32,9 +33,19 @@ interface EnsureWebhookResult {
 }
 
 function getRequiredBaseUrl() {
+  const appEnv = getAppEnv();
+
+  if (appEnv === "production") {
+    return "https://reorg.theperfectpart.net";
+  }
+
+  if (appEnv === "staging") {
+    return "https://stage.reorg.theperfectpart.net";
+  }
+
   const baseUrl = process.env.AUTH_URL?.trim();
   if (!baseUrl) {
-    throw new Error("AUTH_URL must be set before registering marketplace webhooks.");
+    throw new Error("AUTH_URL must be set before registering marketplace webhooks in local mode.");
   }
 
   return baseUrl.replace(/\/$/, "");
