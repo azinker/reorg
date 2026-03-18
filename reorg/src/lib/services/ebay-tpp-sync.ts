@@ -154,6 +154,7 @@ export async function runEbayTppSync(
   try {
     let effectiveMode = options.effectiveMode ?? options.requestedMode ?? "full";
     let completionCursor = new Date().toISOString();
+    let fallbackReasonForCompletion = options.fallbackReason ?? null;
 
     if (effectiveMode === "incremental") {
       const integrationConfig = getIntegrationConfig(integration);
@@ -165,94 +166,107 @@ export async function runEbayTppSync(
         null;
       let shouldAdvanceCursor = true;
 
-      const incrementalWindow = await fetchIncrementalItemIds(
-        integration.id,
-        ebayConfig,
-        lastCursorValue,
-      );
+      try {
+        const incrementalWindow = await fetchIncrementalItemIds(
+          integration.id,
+          ebayConfig,
+          lastCursorValue,
+        );
 
-      if (!incrementalWindow) {
-        effectiveMode = "full";
-      } else {
-        completionCursor = incrementalWindow.windowEndedAt.toISOString();
-        let haltedIncrementalReason: string | null = null;
+        if (!incrementalWindow) {
+          effectiveMode = "full";
+        } else {
+          completionCursor = incrementalWindow.windowEndedAt.toISOString();
+          let haltedIncrementalReason: string | null = null;
 
-        for (
-          let index = 0;
-          index < incrementalWindow.itemIds.length;
-          index += GETITEM_CONCURRENCY
-        ) {
-          const batch = incrementalWindow.itemIds.slice(
-            index,
-            index + GETITEM_CONCURRENCY,
-          );
-          const fullItems = await Promise.allSettled(
-            batch.map((itemId) => fetchFullItem(integration.id, ebayConfig, itemId)),
-          );
+          for (
+            let index = 0;
+            index < incrementalWindow.itemIds.length;
+            index += GETITEM_CONCURRENCY
+          ) {
+            const batch = incrementalWindow.itemIds.slice(
+              index,
+              index + GETITEM_CONCURRENCY,
+            );
+            const fullItems = await Promise.allSettled(
+              batch.map((itemId) => fetchFullItem(integration.id, ebayConfig, itemId)),
+            );
 
-          for (let batchIndex = 0; batchIndex < batch.length; batchIndex += 1) {
-            const itemId = batch[batchIndex];
-            const fetched = fullItems[batchIndex];
+            for (let batchIndex = 0; batchIndex < batch.length; batchIndex += 1) {
+              const itemId = batch[batchIndex];
+              const fetched = fullItems[batchIndex];
 
-            try {
-              if (fetched.status === "rejected") {
-                throw fetched.reason;
-              }
+              try {
+                if (fetched.status === "rejected") {
+                  throw fetched.reason;
+                }
 
-              const fullItem = fetched.value;
-              if (!fullItem) {
+                const fullItem = fetched.value;
+                if (!fullItem) {
+                  progress.errors.push({
+                    sku: itemId,
+                    message: "GetItem returned no payload for this changed listing.",
+                  });
+                  continue;
+                }
+
+                const result = await upsertEbayItem(fullItem, integration.id);
+                progress.itemsProcessed++;
+                if (result === "created") progress.itemsCreated++;
+                else if (result === "updated") progress.itemsUpdated++;
+                if (result === "variation_parent") progress.variationsFound++;
+              } catch (err) {
+                if (isEbayGetItemUsageLimitError(err)) {
+                  haltedIncrementalReason =
+                    "eBay GetItem usage limit was reached during this incremental refresh. Processed listings were saved, and the remaining changed listings will retry on the next run.";
+                  shouldAdvanceCursor = false;
+                  progress.errors.push({
+                    sku: "_global",
+                    message: haltedIncrementalReason,
+                  });
+                  break;
+                }
+
                 progress.errors.push({
                   sku: itemId,
-                  message: "GetItem returned no payload for this changed listing.",
+                  message: err instanceof Error ? err.message : "Unknown error",
                 });
-                continue;
               }
+            }
 
-              const result = await upsertEbayItem(fullItem, integration.id);
-              progress.itemsProcessed++;
-              if (result === "created") progress.itemsCreated++;
-              else if (result === "updated") progress.itemsUpdated++;
-              if (result === "variation_parent") progress.variationsFound++;
-            } catch (err) {
-              if (isEbayGetItemUsageLimitError(err)) {
-                haltedIncrementalReason =
-                  "eBay GetItem usage limit was reached during this incremental refresh. Processed listings were saved, and the remaining changed listings will retry on the next run.";
-                shouldAdvanceCursor = false;
-                progress.errors.push({
-                  sku: "_global",
-                  message: haltedIncrementalReason,
-                });
-                break;
-              }
-
-              progress.errors.push({
-                sku: itemId,
-                message: err instanceof Error ? err.message : "Unknown error",
-              });
+            await updateSyncJobProgress(syncJob.id, progress);
+            if (haltedIncrementalReason) {
+              break;
+            }
+            if (index + GETITEM_CONCURRENCY < incrementalWindow.itemIds.length) {
+              await sleep(GETITEM_BATCH_DELAY_MS);
             }
           }
 
-          await updateSyncJobProgress(syncJob.id, progress);
-          if (haltedIncrementalReason) {
-            break;
+          if (
+            incrementalWindow.itemIds.length > 0 &&
+            progress.itemsProcessed === 0 &&
+            progress.errors.length > 0
+          ) {
+            throw new EbayTradingApiError(
+              "GetItem usage limit was reached before any changed eBay listings could be refreshed.",
+              EBAY_USAGE_LIMIT_ERROR_CODE,
+            );
           }
-          if (index + GETITEM_CONCURRENCY < incrementalWindow.itemIds.length) {
-            await sleep(GETITEM_BATCH_DELAY_MS);
+
+          if (!shouldAdvanceCursor) {
+            completionCursor = lastCursorValue ?? completionCursor;
           }
         }
-
-        if (
-          incrementalWindow.itemIds.length > 0 &&
-          progress.itemsProcessed === 0 &&
-          progress.errors.length > 0
-        ) {
-          throw new Error(
-            "Incremental refresh could not retrieve any changed eBay listings. Review the captured eBay error details and retry after the API limit cools down.",
-          );
-        }
-
-        if (!shouldAdvanceCursor) {
+      } catch (error) {
+        if (options.triggerSource === "manual" && isEbayGetItemUsageLimitError(error)) {
+          effectiveMode = "full";
           completionCursor = lastCursorValue ?? completionCursor;
+          fallbackReasonForCompletion =
+            "Incremental eBay refresh hit Trading API usage limits, so this manual sync fell back to a full pull.";
+          progress.errors = [];
+        } else {
+          throw error;
         }
       }
     }
@@ -282,7 +296,7 @@ export async function runEbayTppSync(
         lastSyncAt: completedAt,
         config: await buildCompletedSyncConfigFromLatest(
           integration,
-          { ...options, effectiveMode },
+          { ...options, effectiveMode, fallbackReason: fallbackReasonForCompletion },
           completedAt,
           { cursor: completionCursor },
         ) as unknown as Prisma.InputJsonValue,
@@ -333,7 +347,6 @@ async function runFullSync(
   let hasMore = true;
 
   while (hasMore) {
-    const accessToken = await getAccessToken(integrationId, ebayConfig);
     const endTimeTo = new Date();
     endTimeTo.setDate(endTimeTo.getDate() + 120);
     const endTimeFrom = new Date();
@@ -349,43 +362,70 @@ async function runFullSync(
     <PageNumber>${page}</PageNumber>
   </Pagination>
 </GetSellerListRequest>`;
+    let forceRefresh = false;
+    let retryAttempt = 0;
+    let resp: Record<string, unknown> | null = null;
 
-    const res = await fetch(TRADING_API, {
-      method: "POST",
-      headers: {
-        "X-EBAY-API-IAF-TOKEN": accessToken,
-        "X-EBAY-API-SITEID": SITE_ID,
-        "X-EBAY-API-COMPATIBILITY-LEVEL": COMPAT_LEVEL,
-        "X-EBAY-API-CALL-NAME": "GetSellerList",
-        "Content-Type": "text/xml",
-      },
-      body,
-    });
+    while (!resp) {
+      const accessToken = await getAccessToken(integrationId, ebayConfig, forceRefresh);
+      const res = await fetch(TRADING_API, {
+        method: "POST",
+        headers: {
+          "X-EBAY-API-IAF-TOKEN": accessToken,
+          "X-EBAY-API-SITEID": SITE_ID,
+          "X-EBAY-API-COMPATIBILITY-LEVEL": COMPAT_LEVEL,
+          "X-EBAY-API-CALL-NAME": "GetSellerList",
+          "Content-Type": "text/xml",
+        },
+        body,
+      });
 
-    const xml = await res.text();
-    if (!res.ok) {
-      throw new Error(`GetSellerList HTTP ${res.status}: ${xml.slice(0, 500)}`);
-    }
+      const xml = await res.text();
+      if (!res.ok) {
+        throw new Error(`GetSellerList HTTP ${res.status}: ${xml.slice(0, 500)}`);
+      }
 
-    const parsed = parser.parse(xml);
-    const resp = parsed?.GetSellerListResponse;
-    if (!resp) {
-      throw new Error(
-        `Missing GetSellerListResponse. Keys: ${Object.keys(parsed ?? {}).join(", ")}`,
-      );
-    }
+      const parsed = parser.parse(xml);
+      const nextResponse = parsed?.GetSellerListResponse;
+      if (!nextResponse) {
+        throw new Error(
+          `Missing GetSellerListResponse. Keys: ${Object.keys(parsed ?? {}).join(", ")}`,
+        );
+      }
 
-    const ack = resp.Ack;
-    if (ack === "Failure") {
-      const errors = Array.isArray(resp.Errors)
-        ? resp.Errors
-        : resp.Errors
-          ? [resp.Errors]
-          : [];
-      const errMsg = errors
-        .map((error: Record<string, unknown>) => error.LongMessage ?? error.ShortMessage)
-        .join("; ");
-      throw new Error(`eBay API: ${errMsg || "Unknown error"}`);
+      const ack = str(nextResponse, "Ack");
+      const errors = normalizeTradingErrors(nextResponse.Errors);
+      const errorCode = errors
+        .map((entry) => str(entry, "ErrorCode"))
+        .find(Boolean);
+      const errorMessage = errors
+        .map((entry) => str(entry, "LongMessage") ?? str(entry, "ShortMessage"))
+        .find(Boolean);
+
+      if (ack === "Failure") {
+        if (errorCode === EBAY_INVALID_TOKEN_ERROR_CODE && !forceRefresh) {
+          clearAccessTokenCache(ebayConfig);
+          forceRefresh = true;
+          continue;
+        }
+
+        if (
+          errorCode === EBAY_USAGE_LIMIT_ERROR_CODE &&
+          retryAttempt < GET_SELLER_EVENTS_RETRY_DELAYS_MS.length
+        ) {
+          const delayMs = GET_SELLER_EVENTS_RETRY_DELAYS_MS[retryAttempt];
+          retryAttempt += 1;
+          await sleep(delayMs);
+          continue;
+        }
+
+        throw new EbayTradingApiError(
+          `eBay API: ${errorMessage || "Unknown error"}`,
+          errorCode,
+        );
+      }
+
+      resp = nextResponse as Record<string, unknown>;
     }
 
     const items = arr(obj(resp, "ItemArray"), "Item");
