@@ -127,8 +127,13 @@ export async function GET() {
       const occurredAt = job.completedAt ?? job.startedAt ?? job.createdAt;
       const storeLabel = PLATFORM_FULL_LABELS[platform];
       const storeAcronym = PLATFORM_LABELS[platform];
+      const recoveredAfterFailure =
+        job.status === "FAILED" &&
+        !!job.integration.lastSyncAt &&
+        job.integration.lastSyncAt.getTime() > occurredAt.getTime();
 
       if (job.status === "FAILED") {
+        if (recoveredAfterFailure) continue;
         entries.push({
           id: `sync-${job.id}`,
           severity: "critical",
