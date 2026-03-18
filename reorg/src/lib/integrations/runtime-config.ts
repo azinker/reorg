@@ -66,7 +66,7 @@ const DEFAULT_SYNC_PROFILES: Record<Platform, SyncProfile> = {
     timezone: DEFAULT_TIMEZONE,
     dayStartHour: 7,
     dayEndHour: 21,
-    dayIntervalMinutes: 30,
+    dayIntervalMinutes: 60,
     overnightIntervalMinutes: 240,
     preferredMode: "incremental",
     fullReconcileIntervalHours: 24,

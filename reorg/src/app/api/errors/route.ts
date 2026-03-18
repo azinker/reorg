@@ -175,11 +175,22 @@ export async function GET() {
     const rateKeys = new Set(shippingRates.map((rate) => rate.weightKey.trim().toUpperCase()));
     const entries: ErrorEntry[] = [];
     const latestCleanCompletedByIntegration = new Map<string, Date>();
+    const latestUnrecoveredFailureByIntegration = new Map<string, Date>();
     for (const job of syncJobs) {
       const rawErrors = Array.isArray(job.errors) ? job.errors : [];
       if (job.status !== "COMPLETED" || rawErrors.length > 0 || !job.completedAt) continue;
       if (latestCleanCompletedByIntegration.has(job.integrationId)) continue;
       latestCleanCompletedByIntegration.set(job.integrationId, job.completedAt);
+    }
+    for (const job of syncJobs) {
+      if (job.status !== "FAILED") continue;
+      const occurredAt = job.completedAt ?? job.startedAt ?? job.createdAt;
+      const recoveredAfterFailure =
+        !!job.integration.lastSyncAt &&
+        job.integration.lastSyncAt.getTime() > occurredAt.getTime();
+      if (recoveredAfterFailure) continue;
+      if (latestUnrecoveredFailureByIntegration.has(job.integrationId)) continue;
+      latestUnrecoveredFailureByIntegration.set(job.integrationId, occurredAt);
     }
 
     for (const row of masterRows) {
@@ -265,7 +276,12 @@ export async function GET() {
           !!latestCleanCompletedByIntegration.get(job.integrationId) &&
           latestCleanCompletedByIntegration.get(job.integrationId)!.getTime() >
             job.completedAt.getTime();
-        if (recoveredByLaterCleanSync) continue;
+        const supersededByLaterFailure =
+          !!job.completedAt &&
+          !!latestUnrecoveredFailureByIntegration.get(job.integrationId) &&
+          latestUnrecoveredFailureByIntegration.get(job.integrationId)!.getTime() >
+            job.completedAt.getTime();
+        if (recoveredByLaterCleanSync || supersededByLaterFailure) continue;
 
         entries.push({
           id: `sync-warning-${job.id}`,
@@ -292,6 +308,10 @@ export async function GET() {
     }
 
     for (const item of automationHealth.integrationHealth) {
+      if (latestUnrecoveredFailureByIntegration.has(item.integrationId)) {
+        continue;
+      }
+
       const timestampSource = item.lastSyncAt ?? item.lastWebhookAt ?? new Date().toISOString();
       const timestampDate = new Date(timestampSource);
       const hasMissingWebhook = item.webhookExpected && item.webhookStatus === "missing";
