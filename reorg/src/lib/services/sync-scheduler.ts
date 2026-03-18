@@ -54,6 +54,7 @@ function getLastScheduledRunAt(config: ReturnType<typeof getIntegrationConfig>):
 function getRateLimitCooldownUntil(
   platform: string,
   config: ReturnType<typeof getIntegrationConfig>,
+  intervalMinutes: number,
   now: Date,
 ) {
   if ((platform !== "TPP_EBAY" && platform !== "TT_EBAY") || !config.syncState.lastRateLimitAt) {
@@ -63,11 +64,7 @@ function getRateLimitCooldownUntil(
   const rateLimitAt = new Date(config.syncState.lastRateLimitAt);
   if (Number.isNaN(rateLimitAt.getTime())) return null;
 
-  const cooldownMinutes = Math.max(
-    config.syncProfile.dayIntervalMinutes,
-    config.syncProfile.overnightIntervalMinutes,
-    90,
-  );
+  const cooldownMinutes = Math.max(intervalMinutes, 90);
   const cooldownUntil = new Date(rateLimitAt.getTime() + cooldownMinutes * 60 * 1000);
   if (cooldownUntil.getTime() <= now.getTime()) return null;
   return cooldownUntil;
@@ -190,6 +187,7 @@ export async function planScheduledSyncs(now = new Date()) {
     const rateLimitCooldownUntil = getRateLimitCooldownUntil(
       integration.platform,
       config,
+      intervalMinutes,
       now,
     );
     if (rateLimitCooldownUntil) {
