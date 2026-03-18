@@ -172,7 +172,7 @@ export async function GET() {
       const timestampSource = item.lastSyncAt ?? item.lastWebhookAt ?? new Date().toISOString();
       const timestampDate = new Date(timestampSource);
 
-      if (item.status === "attention") {
+      if (item.combinedStatus === "attention") {
         entries.push({
           id: `automation-attention-${item.integrationId}`,
           severity: "critical",
@@ -196,7 +196,7 @@ export async function GET() {
         });
       }
 
-      if (item.status === "delayed") {
+      if (item.combinedStatus === "delayed") {
         entries.push({
           id: `automation-delayed-${item.integrationId}`,
           severity: "warning",

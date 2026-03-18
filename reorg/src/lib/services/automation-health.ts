@@ -22,6 +22,7 @@ export interface IntegrationHealthSnapshot {
   minutesSinceWebhook: number | null;
   webhookStatus: WebhookMonitorStatus;
   webhookMessage: string;
+  combinedStatus: MonitorHealthStatus;
 }
 
 export interface AutomationHealthSummary {
@@ -130,6 +131,16 @@ function getWebhookHealthStatus(
 
   const minutesSinceWebhook = minutesBetween(now, lastWebhookAt) ?? 0;
   const quietThreshold = Math.max(intervalMinutes * 3, 12 * 60);
+  const missingThreshold = Math.max(intervalMinutes * 6, 24 * 60);
+
+  if (minutesSinceWebhook > missingThreshold) {
+    return {
+      webhookExpected: true,
+      webhookStatus: "missing" as const,
+      minutesSinceWebhook,
+      webhookMessage: `No change notice in ${formatMinutesLabel(minutesSinceWebhook)}. Check webhook delivery for this store.`,
+    };
+  }
 
   if (minutesSinceWebhook > quietThreshold) {
     return {
@@ -201,6 +212,10 @@ export async function buildAutomationHealthSnapshot(
         lastWebhookAt,
         now,
       );
+      const combinedStatus =
+        webhook.webhookStatus === "missing" && sync.status === "healthy"
+          ? "delayed"
+          : sync.status;
 
       return {
         integrationId: integration.id,
@@ -220,23 +235,24 @@ export async function buildAutomationHealthSnapshot(
         minutesSinceWebhook: webhook.minutesSinceWebhook,
         webhookStatus: webhook.webhookStatus,
         webhookMessage: webhook.webhookMessage,
+        combinedStatus,
       } satisfies IntegrationHealthSnapshot;
     })
     .sort((a, b) => {
-      if (statusRank[a.status] !== statusRank[b.status]) {
-        return statusRank[a.status] - statusRank[b.status];
+      if (statusRank[a.combinedStatus] !== statusRank[b.combinedStatus]) {
+        return statusRank[a.combinedStatus] - statusRank[b.combinedStatus];
       }
       return a.label.localeCompare(b.label);
     });
 
-  const healthyCount = integrationHealth.filter((item) => item.status === "healthy").length;
-  const delayedCount = integrationHealth.filter((item) => item.status === "delayed").length;
-  const attentionCount = integrationHealth.filter((item) => item.status === "attention").length;
+  const healthyCount = integrationHealth.filter((item) => item.combinedStatus === "healthy").length;
+  const delayedCount = integrationHealth.filter((item) => item.combinedStatus === "delayed").length;
+  const attentionCount = integrationHealth.filter((item) => item.combinedStatus === "attention").length;
   const attentionLabels = integrationHealth
-    .filter((item) => item.status === "attention")
+    .filter((item) => item.combinedStatus === "attention")
     .map((item) => item.label);
   const delayedLabels = integrationHealth
-    .filter((item) => item.status === "delayed")
+    .filter((item) => item.combinedStatus === "delayed")
     .map((item) => item.label);
 
   let summary: AutomationHealthSummary;

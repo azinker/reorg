@@ -99,6 +99,7 @@ type EngineRoomData = {
     label: string;
     platform: string;
     status: "healthy" | "delayed" | "attention";
+    combinedStatus: "healthy" | "delayed" | "attention";
     syncMessage: string;
     lastSyncAt: string | null;
     running: boolean;
@@ -827,10 +828,10 @@ export default function EngineRoomPage() {
                     <span
                       className={cn(
                         "inline-flex items-center rounded border px-2 py-0.5 text-[11px] font-medium uppercase",
-                        getHealthClasses(item.status),
+                        getHealthClasses(item.combinedStatus),
                       )}
                     >
-                      {item.status}
+                      {item.combinedStatus}
                     </span>
                   </div>
                   <div className="mt-2 text-muted-foreground">{item.syncMessage}</div>

@@ -131,6 +131,7 @@ type SchedulerStatus = {
     label: string;
     platform: string;
     status: "healthy" | "delayed" | "attention";
+    combinedStatus: "healthy" | "delayed" | "attention";
     syncStatus: "fresh" | "delayed" | "stale" | "never";
     syncMessage: string;
     lastSyncAt: string | null;
@@ -888,10 +889,10 @@ export default function SyncPage() {
                     <span
                       className={cn(
                         "rounded border px-1.5 py-0.5 text-[10px] font-medium uppercase",
-                        getHealthClasses(item.status),
+                        getHealthClasses(item.combinedStatus),
                       )}
                     >
-                      {item.status}
+                      {item.combinedStatus}
                     </span>
                   </div>
                   <div className="mt-2 text-foreground/90">{item.syncMessage}</div>

@@ -7,6 +7,7 @@ import {
 } from "lucide-react";
 import { db } from "@/lib/db";
 import { cn } from "@/lib/utils";
+import { getAutomationHealthSnapshot } from "@/lib/services/automation-health";
 import { getIntegrationConfig } from "@/lib/integrations/runtime-config";
 import { hasConnectedCredentials } from "@/lib/integrations/factory";
 import { isLivePushEnabled, isSchedulerEnabled } from "@/lib/automation-settings";
@@ -115,6 +116,7 @@ export default async function SetupPage() {
     globalWriteLockSetting,
     schedulerEnabled,
     livePushEnabled,
+    automationHealth,
   ] = await Promise.all([
     db.integration.findMany({ orderBy: { platform: "asc" } }),
     db.user.findMany({ select: { email: true, role: true } }),
@@ -141,6 +143,7 @@ export default async function SetupPage() {
     db.appSetting.findUnique({ where: { key: "global_write_lock" } }),
     isSchedulerEnabled(),
     isLivePushEnabled(),
+    getAutomationHealthSnapshot(),
   ]);
 
   const integrationMap = new Map(
@@ -270,6 +273,20 @@ export default async function SetupPage() {
     },
     {
       number: 11,
+      title: "Verify automation health",
+      status:
+        automationHealth.summary.status === "healthy"
+          ? "Complete"
+          : automationHealth.summary.status === "delayed"
+            ? "Needs Attention"
+            : "Needs Attention",
+      description:
+        automationHealth.summary.status === "healthy"
+          ? "Automatic pulls and webhook health are within the expected window."
+          : automationHealth.summary.detail,
+    },
+    {
+      number: 12,
       title: "Review errors",
       status:
         currentErrorCount === 0

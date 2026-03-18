@@ -20,7 +20,7 @@ import {
   ChevronRight,
   X,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 const navItems = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
@@ -45,7 +45,42 @@ interface SidebarProps {
 export function Sidebar({ mobile = false, onNavigate }: SidebarProps) {
   const pathname = usePathname();
   const [collapsed, setCollapsed] = useState(false);
+  const [healthSummary, setHealthSummary] = useState<{
+    status: "healthy" | "delayed" | "attention";
+    delayedCount: number;
+    attentionCount: number;
+    headline: string;
+  } | null>(null);
   const actuallyCollapsed = mobile ? false : collapsed;
+
+  useEffect(() => {
+    let active = true;
+
+    async function loadHealth() {
+      try {
+        const response = await fetch("/api/scheduler/status", { cache: "no-store" });
+        if (!response.ok) return;
+        const json = await response.json();
+        if (!active) return;
+        setHealthSummary(json.data?.healthSummary ?? null);
+      } catch {
+        if (active) setHealthSummary(null);
+      }
+    }
+
+    void loadHealth();
+    const timer = window.setInterval(() => {
+      void loadHealth();
+    }, 60_000);
+
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, []);
+
+  const attentionCount =
+    (healthSummary?.attentionCount ?? 0) + (healthSummary?.delayedCount ?? 0);
 
   return (
     <aside
@@ -85,6 +120,23 @@ export function Sidebar({ mobile = false, onNavigate }: SidebarProps) {
           </button>
         )}
       </div>
+      {healthSummary && healthSummary.status !== "healthy" && !actuallyCollapsed && (
+        <div className="border-b border-sidebar-border px-3 py-2">
+          <div
+            className={cn(
+              "rounded-md border px-3 py-2 text-xs",
+              healthSummary.status === "attention"
+                ? "border-red-500/30 bg-red-500/10 text-red-300"
+                : "border-amber-500/30 bg-amber-500/10 text-amber-300",
+            )}
+          >
+            <div className="font-semibold">{healthSummary.headline}</div>
+            <div className="mt-1">
+              {attentionCount} store{attentionCount === 1 ? "" : "s"} need attention.
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Nav Items */}
       <nav className="flex-1 overflow-y-auto p-2">
@@ -110,6 +162,32 @@ export function Sidebar({ mobile = false, onNavigate }: SidebarProps) {
                 >
                   <Icon className="h-4 w-4 shrink-0 text-[#C43E3E]" />
                   {!actuallyCollapsed && <span>{item.label}</span>}
+                  {!actuallyCollapsed &&
+                    item.href === "/errors" &&
+                    attentionCount > 0 && (
+                      <span
+                        className={cn(
+                          "ml-auto inline-flex min-w-5 items-center justify-center rounded-full px-1.5 py-0.5 text-[10px] font-semibold",
+                          healthSummary?.status === "attention"
+                            ? "bg-red-500/15 text-red-300"
+                            : "bg-amber-500/15 text-amber-300",
+                        )}
+                      >
+                        {attentionCount}
+                      </span>
+                    )}
+                  {actuallyCollapsed &&
+                    item.href === "/errors" &&
+                    attentionCount > 0 && (
+                      <span
+                        className={cn(
+                          "ml-auto h-2 w-2 rounded-full",
+                          healthSummary?.status === "attention"
+                            ? "bg-red-400"
+                            : "bg-amber-400",
+                        )}
+                      />
+                    )}
                 </Link>
               </li>
             );
