@@ -4,6 +4,7 @@ import { useState } from "react";
 import { cn } from "@/lib/utils";
 import { Sidebar } from "@/components/layout/sidebar";
 import { TopBar } from "@/components/layout/top-bar";
+import { DashboardConnectionProvider } from "@/contexts/dashboard-connection-context";
 
 interface AppShellProps {
   children: React.ReactNode;
@@ -38,10 +39,12 @@ export function AppShell({ children, user }: AppShellProps) {
       >
         <Sidebar mobile onNavigate={() => setMobileOpen(false)} />
       </div>
-      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-        <TopBar user={user} onOpenSidebar={() => setMobileOpen(true)} />
-        <main className="min-w-0 flex-1 overflow-auto">{children}</main>
-      </div>
+      <DashboardConnectionProvider>
+        <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+          <TopBar user={user} onOpenSidebar={() => setMobileOpen(true)} />
+          <main className="min-w-0 flex-1 overflow-auto">{children}</main>
+        </div>
+      </DashboardConnectionProvider>
     </div>
   );
 }

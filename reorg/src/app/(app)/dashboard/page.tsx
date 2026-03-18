@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { DataGrid } from "@/components/grid/data-grid";
+import { useDashboardConnection } from "@/contexts/dashboard-connection-context";
 import type { GridRow, Platform } from "@/lib/grid-types";
 import { MOCK_ROWS } from "@/lib/mock-data";
 import { Loader2, RefreshCw } from "lucide-react";
@@ -178,23 +179,20 @@ export default function DashboardPage() {
   }, []);
 
   const summary = useMemo(() => (rows ? summarizeGrid(rows) : null), [rows]);
-  const marketplaceSummary = useMemo(() => {
-    if (!summary) return "";
+  const { setConnectionInfo } = useDashboardConnection();
 
-    const parts: string[] = [];
-    for (const platform of ["TPP_EBAY", "TT_EBAY", "BIGCOMMERCE", "SHOPIFY"] as Platform[]) {
-      const count = summary.listingCounts.get(platform)?.size ?? 0;
-      if (count > 0) {
-        const label =
-          platform === "TPP_EBAY" ? "TPP" :
-          platform === "TT_EBAY" ? "TT" :
-          platform === "BIGCOMMERCE" ? "BC" :
-          "SHPFY";
-        parts.push(`${label} ${count}`);
-      }
+  useEffect(() => {
+    if (rows == null || source == null) {
+      setConnectionInfo(null);
+      return;
     }
-    return parts.join(" • ");
-  }, [summary]);
+    setConnectionInfo({
+      source,
+      error,
+      summary,
+    });
+    return () => setConnectionInfo(null);
+  }, [rows, source, error, summary, setConnectionInfo]);
 
   if (!rows) {
     return (
@@ -226,26 +224,6 @@ export default function DashboardPage() {
           <RefreshCw className="h-3.5 w-3.5 animate-spin text-blue-400" />
           <span className="text-xs text-blue-400">
             Refreshing live marketplace values in the background...
-          </span>
-        </div>
-      )}
-      {source === "mock" && (
-        <div className="flex items-center gap-2 border-b border-amber-500/20 bg-amber-500/5 px-4 py-1.5">
-          <span className="text-xs text-amber-400">
-            {error
-              ? "Database connection failed — showing mock data."
-              : "No products in database yet — showing mock data. Run seed to populate."}
-          </span>
-        </div>
-      )}
-      {source === "db" && (
-        <div className="flex items-center gap-2 border-b border-emerald-500/20 bg-emerald-500/5 px-4 py-1.5">
-          <span className="text-xs text-emerald-400">
-            Connected to database — {summary?.actualProducts ?? rows.length} actual products loaded from {summary?.masterGroups ?? rows.length} TPP master SKU groups
-            {summary && summary.variationParents > 0
-              ? ` (${summary.standaloneRows} single-SKU rows + ${summary.childRows} child SKUs inside ${summary.variationParents} parent containers)`
-              : ""}
-            {marketplaceSummary ? ` • Related listings: ${marketplaceSummary}` : ""}
           </span>
         </div>
       )}

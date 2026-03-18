@@ -4,8 +4,14 @@ import { useState, useEffect } from "react";
 import { signOut } from "next-auth/react";
 import { useTheme } from "@/components/providers/theme-provider";
 import { useSettings } from "@/lib/use-settings";
+import { useDashboardConnection } from "@/contexts/dashboard-connection-context";
+import { PlatformIcon } from "@/components/grid/platform-icon";
 import type { Density } from "@/lib/settings-store";
+import type { Platform } from "@/lib/grid-types";
+import { PLATFORM_SHORT } from "@/lib/grid-types";
 import { Moon, Sun, Monitor, Rows3, Rows4, AlignJustify, Menu, LogOut, ShieldCheck } from "lucide-react";
+
+const PLATFORM_ORDER: Platform[] = ["TPP_EBAY", "TT_EBAY", "BIGCOMMERCE", "SHOPIFY"];
 
 const DENSITY_OPTIONS: { value: Density; icon: typeof Rows3; label: string }[] = [
   { value: "compact", icon: Rows4, label: "Compact" },
@@ -26,7 +32,9 @@ interface TopBarProps {
 export function TopBar({ user, onOpenSidebar }: TopBarProps) {
   const { theme, setTheme } = useTheme();
   const { settings, update } = useSettings();
+  const { connectionInfo } = useDashboardConnection();
   const [mounted, setMounted] = useState(false);
+  const [tooltipOpen, setTooltipOpen] = useState(false);
 
   useEffect(() => {
     setMounted(true);
@@ -34,6 +42,18 @@ export function TopBar({ user, onOpenSidebar }: TopBarProps) {
 
   const density = mounted ? settings.density : "comfortable";
   const themeValue = mounted ? theme : "system";
+
+  const isConnected = connectionInfo?.source === "db";
+  const isNotConnected = connectionInfo?.source === "mock";
+  const summary = connectionInfo?.summary ?? null;
+  const hasTooltip = isConnected && summary != null;
+
+  const titleText =
+    connectionInfo == null
+      ? "Marketplace Operations"
+      : isConnected
+        ? "Marketplace Operations — Connected to Database"
+        : "Marketplace Operations — Not Connected";
 
   return (
     <header className="flex h-14 items-center justify-between border-b border-border bg-card px-4 sm:px-6">
@@ -45,9 +65,61 @@ export function TopBar({ user, onOpenSidebar }: TopBarProps) {
         >
           <Menu className="h-4 w-4" />
         </button>
-        <span className="text-sm font-medium text-muted-foreground">
-          Marketplace Operations
-        </span>
+        <div
+          className="relative inline-block"
+          onMouseEnter={() => hasTooltip && setTooltipOpen(true)}
+          onMouseLeave={() => setTooltipOpen(false)}
+          onFocus={() => hasTooltip && setTooltipOpen(true)}
+          onBlur={() => setTooltipOpen(false)}
+          role={hasTooltip ? "button" : undefined}
+          tabIndex={hasTooltip ? 0 : undefined}
+        >
+          <span
+            className={cn(
+              "text-sm font-medium",
+              connectionInfo == null && "text-muted-foreground",
+              isConnected && "text-emerald-500",
+              isNotConnected && "text-amber-500",
+              hasTooltip && "cursor-help"
+            )}
+          >
+            {titleText}
+          </span>
+          {tooltipOpen && hasTooltip && summary && (
+            <div
+              className="absolute left-0 top-full z-50 mt-1 w-[320px] rounded-lg border border-border bg-popover p-3 text-left text-popover-foreground shadow-xl"
+              role="tooltip"
+            >
+              <p className="text-xs text-muted-foreground leading-snug">
+                {summary.actualProducts} actual products loaded from {summary.masterGroups} TPP master SKU groups
+                {summary.variationParents > 0
+                  ? ` (${summary.standaloneRows} single-SKU rows + ${summary.childRows} child SKUs inside ${summary.variationParents} parent containers)`
+                  : ""}
+                .
+              </p>
+              <p className="mt-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                Related listings
+              </p>
+              <ul className="mt-1 flex flex-wrap gap-x-4 gap-y-1.5">
+                {PLATFORM_ORDER.map((platform) => {
+                  const count = summary.listingCounts.get(platform)?.size ?? 0;
+                  if (count === 0) return null;
+                  const label = PLATFORM_SHORT[platform];
+                  return (
+                    <li
+                      key={platform}
+                      className="flex items-center gap-1.5 text-xs font-medium text-foreground"
+                    >
+                      <PlatformIcon platform={platform} className="h-3.5 w-3.5 shrink-0" />
+                      <span>{label}</span>
+                      <span className="text-muted-foreground">{count}</span>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          )}
+        </div>
       </div>
       <div className="flex min-w-0 items-center gap-2 sm:gap-3">
         {user && (
