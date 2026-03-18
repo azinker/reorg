@@ -73,6 +73,18 @@ function getPlatformDisplayName(platform: string) {
   return platform;
 }
 
+function getWebhookTroubleshootingAction(platform: string) {
+  if (platform === "SHOPIFY") {
+    return "Check the Shopify webhook destination, signing secret, and recent delivery attempts in Integrations and the Shopify admin.";
+  }
+
+  if (platform === "BIGCOMMERCE") {
+    return "Check the BigCommerce webhook destination, webhook secret, and recent delivery attempts in Integrations and the BigCommerce control panel.";
+  }
+
+  return "Check the webhook destination, secret, and recent delivery attempts for this store.";
+}
+
 function getSyncHealthStatus(
   planItem: SchedulerPlanItem,
   lastSyncAt: Date | null,
@@ -212,11 +224,11 @@ function getRecommendedAction(args: {
   }
 
   if (args.webhookExpected && args.webhookStatus === "missing") {
-    return `Scheduled pulls are still covering this store. Check ${platformLabel} webhook delivery so early refreshes can resume.`;
+    return `Scheduled pulls are still covering this store. ${getWebhookTroubleshootingAction(args.platform)}`;
   }
 
   if (args.webhookExpected && args.webhookStatus === "quiet") {
-    return `No immediate action is needed unless you expected recent ${platformLabel} changes to wake an early refresh.`;
+    return `No immediate action is needed unless you expected recent ${platformLabel} changes to wake an early refresh. If you did, ${getWebhookTroubleshootingAction(args.platform).charAt(0).toLowerCase()}${getWebhookTroubleshootingAction(args.platform).slice(1)}`;
   }
 
   return "No action needed.";
@@ -365,7 +377,7 @@ export async function buildAutomationHealthSnapshot(
         ? `${labels} are still refreshing on schedule, but their store change notices have gone quiet.`
         : `${labels} are behind their usual pull window.`,
       recommendedAction: onlyWebhookCoverageIssue
-        ? `Check Shopify or BigCommerce webhook delivery for ${labels} so early refreshes can resume.`
+        ? `Check the webhook destination, signing secret, and recent delivery attempts for ${labels} so early refreshes can resume.`
         : `Watch the next automatic check for ${labels}. If they stay behind, run a manual pull from Sync.`,
       affectedLabels: delayedLabels,
     };

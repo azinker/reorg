@@ -89,8 +89,8 @@ export function TopBar({ user, onOpenSidebar }: TopBarProps) {
     connectionInfo == null
       ? "Marketplace Operations"
       : isConnected
-        ? "Marketplace Operations — Connected to Database"
-        : "Marketplace Operations — Not Connected";
+        ? "Marketplace Operations - Connected to Database"
+        : "Marketplace Operations - Not Connected";
 
   return (
     <header className="flex h-14 items-center justify-between border-b border-border bg-card px-4 sm:px-6">
@@ -186,7 +186,7 @@ export function TopBar({ user, onOpenSidebar }: TopBarProps) {
             <div className="min-w-0">
               <div className="truncate font-semibold text-foreground">{user.name}</div>
               <div className="truncate text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
-                {user.role} • {user.email}
+                {user.role} | {user.email}
               </div>
             </div>
           </div>

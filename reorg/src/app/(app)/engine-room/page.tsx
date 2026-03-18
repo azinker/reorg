@@ -134,7 +134,7 @@ type EngineRoomData = {
 };
 
 function formatDateTime(iso: string | null): string {
-  if (!iso) return "—";
+  if (!iso) return "-";
   const d = new Date(iso);
   return d.toLocaleString(undefined, {
     month: "short",
@@ -146,7 +146,7 @@ function formatDateTime(iso: string | null): string {
 }
 
 function formatDuration(seconds: number | null): string {
-  if (seconds == null) return "—";
+  if (seconds == null) return "-";
   if (seconds < 60) return `${seconds}s`;
   const m = Math.floor(seconds / 60);
   const s = seconds % 60;
@@ -259,7 +259,7 @@ function SyncJobsPanel({ jobs }: { jobs: SyncJobRow[] }) {
               <td className="py-3 pr-4 text-muted-foreground">{formatDateTime(job.started)}</td>
               <td className="py-3 pr-4 text-right tabular-nums text-muted-foreground">{formatDuration(job.durationSeconds)}</td>
               <td className="py-3 max-w-[200px] truncate text-xs text-muted-foreground" title={job.errors?.[0] ?? ""}>
-                {job.status === "failed" && job.errors?.length ? job.errors[0] : "—"}
+                {job.status === "failed" && job.errors?.length ? job.errors[0] : "-"}
               </td>
             </tr>
           ))}
@@ -321,7 +321,7 @@ function ChangeLogPanel({ entries }: { entries: ChangeLogRow[] }) {
             {entry.user}
           </span>
           <span className="font-medium text-foreground">{entry.action}</span>
-          {entry.sku !== "—" && (
+          {entry.sku !== "-" && (
             <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs text-muted-foreground">{entry.sku}</span>
           )}
           <span className="text-muted-foreground">{entry.detail}</span>
@@ -541,7 +541,7 @@ export default function EngineRoomPage() {
       return loading ? (
         <div className="flex items-center justify-center gap-2 py-12 text-muted-foreground">
           <Loader2 className="h-5 w-5 animate-spin" aria-hidden />
-          Loading…
+          Loading...
         </div>
       ) : error ? (
         <div className="py-12 text-center text-destructive">{error}</div>
@@ -578,7 +578,7 @@ export default function EngineRoomPage() {
           Engine Room
         </h1>
         <p className="text-sm text-muted-foreground">
-          Operations control center — sync jobs, push queue, audit trail
+          Operations control center - sync jobs, push queue, audit trail
         </p>
       </div>
 
@@ -602,7 +602,7 @@ export default function EngineRoomPage() {
             </div>
             <div>
               <p className="text-2xl font-semibold tabular-nums text-foreground">
-                {loading ? "—" : summary.activeSyncs}
+                {loading ? "-" : summary.activeSyncs}
               </p>
               <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
                 Active Syncs
@@ -629,7 +629,7 @@ export default function EngineRoomPage() {
             </div>
             <div>
               <p className="text-2xl font-semibold tabular-nums text-foreground">
-                {loading ? "—" : summary.queuedPushes}
+                {loading ? "-" : summary.queuedPushes}
               </p>
               <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
                 Queued Pushes
@@ -656,7 +656,7 @@ export default function EngineRoomPage() {
             </div>
             <div>
               <p className="text-2xl font-semibold tabular-nums text-foreground">
-                {loading ? "—" : summary.recentErrors}
+                {loading ? "-" : summary.recentErrors}
               </p>
               <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
                 Recent Errors
@@ -696,7 +696,7 @@ export default function EngineRoomPage() {
             </div>
             <div>
               <p className="text-2xl font-semibold text-foreground">
-                {loading ? "—" : summary.automationHealthHeadline}
+                {loading ? "-" : summary.automationHealthHeadline}
               </p>
               <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
                 Store Update Health
@@ -739,7 +739,7 @@ export default function EngineRoomPage() {
             </div>
             <div>
               <p className="text-2xl font-semibold tabular-nums text-amber-600 dark:text-amber-400">
-                {loading ? "—" : summary.writeLockOn ? "ON" : "OFF"}
+                {loading ? "-" : summary.writeLockOn ? "ON" : "OFF"}
               </p>
               <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
                 Write Lock Status
@@ -774,8 +774,8 @@ export default function EngineRoomPage() {
               </div>
               <p className="text-xs text-muted-foreground">
                 Last tick: {formatDateTime(summary.schedulerLastTickAt)}
-                {summary.schedulerLastOutcome ? ` • Result: ${summary.schedulerLastOutcome}` : ""}
-                {summary.schedulerActiveJobs > 0 ? ` • ${summary.schedulerActiveJobs} scheduled sync(s) running` : ""}
+                {summary.schedulerLastOutcome ? ` | Result: ${summary.schedulerLastOutcome}` : ""}
+                {summary.schedulerActiveJobs > 0 ? ` | ${summary.schedulerActiveJobs} scheduled sync(s) running` : ""}
               </p>
             </div>
             <div className="grid min-w-[320px] grid-cols-2 gap-2 text-xs sm:grid-cols-3 lg:grid-cols-6">
@@ -800,7 +800,7 @@ export default function EngineRoomPage() {
               <div className="rounded border border-border bg-muted/40 px-3 py-2">
                 <div className="text-muted-foreground">Mode</div>
                 <div className="mt-1 text-sm font-semibold text-foreground">
-                  {summary.schedulerLastOutcome ?? "—"}
+                  {summary.schedulerLastOutcome ?? "-"}
                 </div>
               </div>
             </div>

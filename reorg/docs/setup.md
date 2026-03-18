@@ -44,7 +44,7 @@ In the project root (`reorg` folder), run:
 npm install
 ```
 
-This installs all the packages reorG needs. It may take 1–2 minutes.
+This installs all the packages reorG needs. It may take 1-2 minutes.
 
 ---
 
@@ -57,9 +57,9 @@ This installs all the packages reorG needs. It may take 1–2 minutes.
    - On Mac/Linux: `cp .env.example .env`
 
 2. **Edit `.env`** with a text editor and fill in at least these values:
-   - `DATABASE_URL` — Your PostgreSQL connection string (see below)
-   - `AUTH_SECRET` — A random secret for authentication (see below)
-   - `AUTH_URL` — For local dev, use: `http://localhost:3000`
+   - `DATABASE_URL` - Your PostgreSQL connection string (see below)
+   - `AUTH_SECRET` - A random secret for authentication (see below)
+   - `AUTH_URL` - For local dev, use: `http://localhost:3000`
 
 **Database URL format:**
 ```
@@ -150,7 +150,7 @@ Then open http://localhost:3001
 
 ### "Can't connect to database" / "Connection refused"
 - Make sure PostgreSQL is running (check Services on Windows, or `brew services list` on Mac)
-- Verify `DATABASE_URL` in `.env` — username, password, and host (usually `localhost`) must be correct
+- Verify `DATABASE_URL` in `.env` - username, password, and host (usually `localhost`) must be correct
 - Confirm the `reorg` database exists
 
 ### "Prisma Client not generated"
@@ -171,7 +171,7 @@ If you get errors during migration:
 - On Windows, try running the terminal as Administrator if you get permission errors
 
 ### Blank page or errors after login
-- Check the browser console (F12 → Console tab) for errors
+- Check the browser console (`F12 -> Console`) for errors
 - Make sure you ran `db:seed` so admin users exist
 - Verify `AUTH_URL` in `.env` matches the URL you're using (e.g., `http://localhost:3000`)
 
@@ -180,6 +180,7 @@ If you get errors during migration:
 ## Next Steps
 
 - Log in with an admin account and change the default password
-- Configure integrations (eBay, BigCommerce, Shopify) — see `docs/api-tokens.md`
-- Populate shipping rates — see `docs/shipping-rates.md`
-- Run your first sync — see the Sync page in the app
+- Configure integrations (eBay, BigCommerce, Shopify) - see `docs/api-tokens.md`
+- Populate shipping rates - see `docs/shipping-rates.md`
+- Run your first sync - see the Sync page in the app
+- Review automation health expectations - see `docs/automation-health-runbook.md`
