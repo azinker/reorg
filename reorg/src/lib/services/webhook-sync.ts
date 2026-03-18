@@ -29,6 +29,31 @@ export interface HandleMarketplaceWebhookResult {
   jobId: string | null;
 }
 
+async function findDuplicateWebhookDelivery(
+  options: Pick<HandleMarketplaceWebhookOptions, "platform" | "externalId">,
+) {
+  if (!options.externalId) {
+    return null;
+  }
+
+  return db.auditLog.findFirst({
+    where: {
+      action: "webhook_received",
+      details: {
+        path: ["platform"],
+        equals: options.platform,
+      },
+      AND: {
+        details: {
+          path: ["externalId"],
+          equals: options.externalId,
+        },
+      },
+    },
+    orderBy: { createdAt: "desc" },
+  });
+}
+
 function buildTouchedWebhookConfig(
   integration: Pick<Integration, "platform" | "config">,
   receivedAt: Date,
@@ -174,6 +199,20 @@ export async function handleMarketplaceWebhook(
   options: HandleMarketplaceWebhookOptions,
 ): Promise<HandleMarketplaceWebhookResult> {
   const receivedAt = new Date();
+  const duplicateDelivery = await findDuplicateWebhookDelivery(options);
+
+  if (duplicateDelivery) {
+    const result: HandleMarketplaceWebhookResult = {
+      accepted: true,
+      triggered: false,
+      status: "ignored",
+      message: `${options.platform} duplicate webhook delivery was ignored because this event ID was already processed.`,
+      jobId: null,
+    };
+    await logWebhookEvent(duplicateDelivery.entityId, options, receivedAt, result);
+    return result;
+  }
+
   const integration = await db.integration.findUnique({
     where: { platform: options.platform as Platform },
   });
