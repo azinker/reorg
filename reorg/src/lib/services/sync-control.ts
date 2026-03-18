@@ -9,6 +9,7 @@ import { runBigCommerceSync } from "@/lib/services/bigcommerce-sync";
 import { runEbayTtSync } from "@/lib/services/ebay-tt-sync";
 import { runShopifySync } from "@/lib/services/shopify-sync";
 import { runEbayTppSync } from "@/lib/services/ebay-tpp-sync";
+import { failStaleRunningJob, isRunningJobStale } from "@/lib/services/sync-jobs";
 
 export type SyncTriggerSource = "manual" | "scheduler" | "webhook";
 
@@ -143,17 +144,24 @@ export async function startIntegrationSync(
   });
 
   if (runningJob) {
-    const modes = resolveSyncModes(integration, options.requestedMode);
-    return {
-      integrationId: integration.id,
-      platform: integration.platform,
-      requestedMode: modes.requestedMode,
-      effectiveMode: modes.effectiveMode,
-      fallbackReason: modes.fallbackReason,
-      status: "ALREADY_RUNNING",
-      jobId: runningJob.id,
-      message: `${integration.label} sync is already running.`,
-    };
+    if (isRunningJobStale(runningJob)) {
+      await failStaleRunningJob(
+        runningJob,
+        "Marked failed automatically because the sync job exceeded the stale running threshold.",
+      );
+    } else {
+      const modes = resolveSyncModes(integration, options.requestedMode);
+      return {
+        integrationId: integration.id,
+        platform: integration.platform,
+        requestedMode: modes.requestedMode,
+        effectiveMode: modes.effectiveMode,
+        fallbackReason: modes.fallbackReason,
+        status: "ALREADY_RUNNING",
+        jobId: runningJob.id,
+        message: `${integration.label} sync is already running.`,
+      };
+    }
   }
 
   const modes = resolveSyncModes(integration, options.requestedMode);

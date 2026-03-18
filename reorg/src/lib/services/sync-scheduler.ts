@@ -5,6 +5,7 @@ import {
   type SyncMode,
 } from "@/lib/integrations/runtime-config";
 import { startIntegrationSync, resolveIntegrationSyncModes } from "@/lib/services/sync-control";
+import { failStaleRunningJob, isRunningJobStale } from "@/lib/services/sync-jobs";
 
 interface SchedulerPlanItem {
   integrationId: string;
@@ -51,11 +52,24 @@ export async function planScheduledSyncs(now = new Date()) {
     db.integration.findMany({ orderBy: { platform: "asc" } }),
     db.syncJob.findMany({
       where: { status: "RUNNING" },
-      select: { integrationId: true },
+      select: { id: true, integrationId: true, createdAt: true, startedAt: true, errors: true },
     }),
   ]);
 
-  const runningIds = new Set(runningJobs.map((job) => job.integrationId));
+  const activeRunningJobs = [];
+  for (const job of runningJobs) {
+    if (isRunningJobStale(job, now)) {
+      await failStaleRunningJob(
+        job,
+        "Marked failed automatically because the sync job exceeded the stale running threshold.",
+      );
+      continue;
+    }
+
+    activeRunningJobs.push(job);
+  }
+
+  const runningIds = new Set(activeRunningJobs.map((job) => job.integrationId));
 
   const items: SchedulerPlanItem[] = integrations.map((integration) => {
     const config = getIntegrationConfig(integration);

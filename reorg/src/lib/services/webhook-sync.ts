@@ -4,6 +4,7 @@ import { getIntegrationConfig } from "@/lib/integrations/runtime-config";
 import { startIntegrationSync } from "@/lib/services/sync-control";
 import { runBigCommerceWebhookReconcile } from "@/lib/services/bigcommerce-sync";
 import { runShopifyWebhookReconcile } from "@/lib/services/shopify-sync";
+import { failStaleRunningJob, isRunningJobStale } from "@/lib/services/sync-jobs";
 
 const WEBHOOK_SYNC_COOLDOWN_MS = 5 * 60 * 1000;
 const FRESH_SYNC_GRACE_MS = 2 * 60 * 1000;
@@ -229,15 +230,22 @@ export async function handleMarketplaceWebhook(
   const recentJob = await findRecentRelevantJob(integration.id, recentJobCutoff);
 
   if (recentJob?.status === SyncStatus.RUNNING) {
-    const result: HandleMarketplaceWebhookResult = {
-      accepted: true,
-      triggered: false,
-      status: "running",
-      message: `${integration.label} already has a pull running, so this webhook will be covered by that job.`,
-      jobId: recentJob.id,
-    };
-    await logWebhookEvent(integration.id, options, receivedAt, result);
-    return result;
+    if (isRunningJobStale(recentJob, receivedAt)) {
+      await failStaleRunningJob(
+        recentJob,
+        "Marked failed automatically because the sync job exceeded the stale running threshold.",
+      );
+    } else {
+      const result: HandleMarketplaceWebhookResult = {
+        accepted: true,
+        triggered: false,
+        status: "running",
+        message: `${integration.label} already has a pull running, so this webhook will be covered by that job.`,
+        jobId: recentJob.id,
+      };
+      await logWebhookEvent(integration.id, options, receivedAt, result);
+      return result;
+    }
   }
 
   if (
