@@ -5,16 +5,28 @@ import { getAutomationHealthSnapshot } from "@/lib/services/automation-health";
 import type { Platform } from "@prisma/client";
 
 type Severity = "critical" | "warning" | "info";
+type ErrorCategory =
+  | "stale-pull"
+  | "dead-webhook"
+  | "sync-failure"
+  | "sync-warning"
+  | "missing-data"
+  | "system";
 
 interface ErrorEntry {
   id: string;
   severity: Severity;
+  category: ErrorCategory;
   summary: string;
   technicalDetails: string;
   store: string;
   storeAcronym: string;
   timestamp: string;
   occurredAt: string;
+  recommendedAction: string;
+  actionLabel: string | null;
+  actionHref: string | null;
+  priority: number;
 }
 
 function formatTimestamp(date: Date): string {
@@ -53,6 +65,12 @@ function stringifyError(error: unknown): string {
   } catch {
     return "Unknown error";
   }
+}
+
+function getSeverityRank(severity: Severity) {
+  if (severity === "critical") return 0;
+  if (severity === "warning") return 1;
+  return 2;
 }
 
 export async function GET() {
@@ -105,6 +123,7 @@ export async function GET() {
       entries.push({
         id: `data-${row.id}`,
         severity: "warning",
+        category: "missing-data",
         summary: `${row.sku} is missing internal data`,
         technicalDetails: [
           `SKU: ${row.sku}`,
@@ -116,6 +135,11 @@ export async function GET() {
         storeAcronym: "DATA",
         timestamp: formatTimestamp(row.updatedAt),
         occurredAt: row.updatedAt.toISOString(),
+        recommendedAction:
+          "Fill in the missing internal values from Dashboard, Import, or Shipping Rates before relying on profit calculations.",
+        actionLabel: "Fix Data",
+        actionHref: "/dashboard",
+        priority: missingShippingTier ? 50 : 55,
       });
     }
 
@@ -137,6 +161,7 @@ export async function GET() {
         entries.push({
           id: `sync-${job.id}`,
           severity: "critical",
+          category: "sync-failure",
           summary: `${storeLabel} sync failed`,
           technicalDetails: rawErrors.length
             ? rawErrors.map(stringifyError).join("\n")
@@ -145,6 +170,11 @@ export async function GET() {
           storeAcronym,
           timestamp: formatTimestamp(occurredAt),
           occurredAt: occurredAt.toISOString(),
+          recommendedAction:
+            "Open Sync and run a manual pull. If it fails again, review the integration credentials and recent job details.",
+          actionLabel: "Run Sync Now",
+          actionHref: "/sync",
+          priority: 20,
         });
         continue;
       }
@@ -153,6 +183,7 @@ export async function GET() {
         entries.push({
           id: `sync-warning-${job.id}`,
           severity: "info",
+          category: "sync-warning",
           summary: `${storeLabel} sync completed with skipped rows or warnings`,
           technicalDetails: [
             `Processed: ${job.itemsProcessed}`,
@@ -164,6 +195,11 @@ export async function GET() {
           storeAcronym,
           timestamp: formatTimestamp(occurredAt),
           occurredAt: occurredAt.toISOString(),
+          recommendedAction:
+            "Review the skipped rows in the job details and fix the affected data before the next pull.",
+          actionLabel: "Review Job",
+          actionHref: "/engine-room",
+          priority: 70,
         });
       }
     }
@@ -171,12 +207,18 @@ export async function GET() {
     for (const item of automationHealth.integrationHealth) {
       const timestampSource = item.lastSyncAt ?? item.lastWebhookAt ?? new Date().toISOString();
       const timestampDate = new Date(timestampSource);
+      const hasMissingWebhook = item.webhookExpected && item.webhookStatus === "missing";
+      const needsPullAttention = item.status === "attention";
+      const isDelayedPull = item.status === "delayed";
 
       if (item.combinedStatus === "attention") {
         entries.push({
           id: `automation-attention-${item.integrationId}`,
           severity: "critical",
-          summary: `${item.label} updates need attention`,
+          category: hasMissingWebhook ? "dead-webhook" : "stale-pull",
+          summary: hasMissingWebhook
+            ? `${item.label} is behind and webhook coverage is missing`
+            : `${item.label} updates need attention`,
           technicalDetails: [
             `Store: ${item.label}`,
             `Platform: ${item.platform}`,
@@ -194,13 +236,18 @@ export async function GET() {
             PLATFORM_LABELS[item.platform as Platform] ?? item.platform,
           timestamp: formatTimestamp(timestampDate),
           occurredAt: timestampDate.toISOString(),
+          recommendedAction: item.recommendedAction,
+          actionLabel: hasMissingWebhook ? "Check Webhooks" : "Run Sync Now",
+          actionHref: hasMissingWebhook ? "/integrations" : "/sync",
+          priority: hasMissingWebhook ? 10 : 15,
         });
       }
 
-      if (item.status === "delayed") {
+      if (isDelayedPull && !hasMissingWebhook) {
         entries.push({
           id: `automation-delayed-${item.integrationId}`,
           severity: "warning",
+          category: "stale-pull",
           summary: `${item.label} updates are behind schedule`,
           technicalDetails: [
             `Store: ${item.label}`,
@@ -218,14 +265,19 @@ export async function GET() {
             PLATFORM_LABELS[item.platform as Platform] ?? item.platform,
           timestamp: formatTimestamp(timestampDate),
           occurredAt: timestampDate.toISOString(),
+          recommendedAction: item.recommendedAction,
+          actionLabel: "Run Sync Now",
+          actionHref: "/sync",
+          priority: 30,
         });
       }
 
-      if (item.webhookExpected && item.webhookStatus === "missing") {
+      if (hasMissingWebhook && !needsPullAttention) {
         entries.push({
           id: `automation-webhook-missing-${item.integrationId}`,
           severity: "warning",
-          summary: `${item.label} has not recorded a store change notice yet`,
+          category: "dead-webhook",
+          summary: `${item.label} is missing store change notices`,
           technicalDetails: [
             `Store: ${item.label}`,
             `Platform: ${item.platform}`,
@@ -239,6 +291,10 @@ export async function GET() {
             PLATFORM_LABELS[item.platform as Platform] ?? item.platform,
           timestamp: formatTimestamp(timestampDate),
           occurredAt: timestampDate.toISOString(),
+          recommendedAction: item.recommendedAction,
+          actionLabel: "Check Webhooks",
+          actionHref: "/integrations",
+          priority: 40,
         });
       }
 
@@ -246,7 +302,8 @@ export async function GET() {
         entries.push({
           id: `automation-webhook-quiet-${item.integrationId}`,
           severity: "info",
-          summary: `${item.label} has been quiet on webhook traffic`,
+          category: "dead-webhook",
+          summary: `${item.label} webhook traffic has gone quiet`,
           technicalDetails: [
             `Store: ${item.label}`,
             `Platform: ${item.platform}`,
@@ -260,6 +317,10 @@ export async function GET() {
             PLATFORM_LABELS[item.platform as Platform] ?? item.platform,
           timestamp: formatTimestamp(timestampDate),
           occurredAt: timestampDate.toISOString(),
+          recommendedAction: item.recommendedAction,
+          actionLabel: "Check Webhooks",
+          actionHref: "/integrations",
+          priority: 80,
         });
       }
     }
@@ -270,6 +331,7 @@ export async function GET() {
       entries.push({
         id: "status-ok",
         severity: "info",
+        category: "system",
         summary: "No blocking data issues detected",
         technicalDetails:
           "All connected rows currently have the required internal data and there are no captured sync failures in the recent job history.",
@@ -277,12 +339,22 @@ export async function GET() {
         storeAcronym: "SYS",
         timestamp: formatTimestamp(fallbackTime),
         occurredAt: fallbackTime.toISOString(),
+        recommendedAction: "No action needed.",
+        actionLabel: null,
+        actionHref: null,
+        priority: 999,
       });
     }
 
     return NextResponse.json({
       data: entries.sort(
-        (a, b) => new Date(b.occurredAt).getTime() - new Date(a.occurredAt).getTime(),
+        (a, b) => {
+          if (a.priority !== b.priority) return a.priority - b.priority;
+          if (getSeverityRank(a.severity) !== getSeverityRank(b.severity)) {
+            return getSeverityRank(a.severity) - getSeverityRank(b.severity);
+          }
+          return new Date(b.occurredAt).getTime() - new Date(a.occurredAt).getTime();
+        },
       ),
     });
   } catch (error) {
