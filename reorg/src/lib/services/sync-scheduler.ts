@@ -7,16 +7,20 @@ import {
 import { startIntegrationSync, resolveIntegrationSyncModes } from "@/lib/services/sync-control";
 import { failStaleRunningJob, isRunningJobStale } from "@/lib/services/sync-jobs";
 
-interface SchedulerPlanItem {
+export interface SchedulerPlanItem {
   integrationId: string;
   platform: string;
   label: string;
   autoSyncEnabled: boolean;
   due: boolean;
+  running: boolean;
   intervalMinutes: number;
   requestedMode: SyncMode;
   effectiveMode: SyncMode;
   fallbackReason: string | null;
+  lastScheduledSyncAt: string | null;
+  nextDueAt: string | null;
+  minutesUntilDue: number | null;
   reason: string;
 }
 
@@ -45,6 +49,23 @@ function getLastScheduledRunAt(config: ReturnType<typeof getIntegrationConfig>):
   if (!config.syncState.lastScheduledSyncAt) return null;
   const parsed = new Date(config.syncState.lastScheduledSyncAt);
   return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function getNextDueAt(
+  now: Date,
+  lastRunAt: Date | null,
+  intervalMinutes: number,
+  due: boolean,
+) {
+  if (due) return now;
+  if (!lastRunAt) return null;
+
+  return new Date(lastRunAt.getTime() + intervalMinutes * 60 * 1000);
+}
+
+function getMinutesUntilDue(now: Date, nextDueAt: Date | null) {
+  if (!nextDueAt) return null;
+  return Math.max(0, Math.ceil((nextDueAt.getTime() - now.getTime()) / 60000));
 }
 
 export async function planScheduledSyncs(now = new Date()) {
@@ -85,75 +106,100 @@ export async function planScheduledSyncs(now = new Date()) {
     );
 
     if (!integration.enabled) {
+      const nextDueAt = getNextDueAt(now, lastRunAt, intervalMinutes, false);
       return {
         integrationId: integration.id,
         platform: integration.platform,
         label: integration.label,
         autoSyncEnabled: config.syncProfile.autoSyncEnabled,
         due: false,
+        running: false,
         intervalMinutes,
         requestedMode: modes.requestedMode,
         effectiveMode: modes.effectiveMode,
         fallbackReason: modes.fallbackReason,
+        lastScheduledSyncAt: config.syncState.lastScheduledSyncAt,
+        nextDueAt: nextDueAt?.toISOString() ?? null,
+        minutesUntilDue: getMinutesUntilDue(now, nextDueAt),
         reason: "Integration is not connected.",
       };
     }
 
     if (!config.syncProfile.autoSyncEnabled) {
+      const nextDueAt = getNextDueAt(now, lastRunAt, intervalMinutes, false);
       return {
         integrationId: integration.id,
         platform: integration.platform,
         label: integration.label,
         autoSyncEnabled: false,
         due: false,
+        running: false,
         intervalMinutes,
         requestedMode: modes.requestedMode,
         effectiveMode: modes.effectiveMode,
         fallbackReason: modes.fallbackReason,
+        lastScheduledSyncAt: config.syncState.lastScheduledSyncAt,
+        nextDueAt: nextDueAt?.toISOString() ?? null,
+        minutesUntilDue: getMinutesUntilDue(now, nextDueAt),
         reason: "Auto sync is disabled for this integration.",
       };
     }
 
     if (runningIds.has(integration.id)) {
+      const nextDueAt = getNextDueAt(now, lastRunAt, intervalMinutes, false);
       return {
         integrationId: integration.id,
         platform: integration.platform,
         label: integration.label,
         autoSyncEnabled: true,
         due: false,
+        running: true,
         intervalMinutes,
         requestedMode: modes.requestedMode,
         effectiveMode: modes.effectiveMode,
         fallbackReason: modes.fallbackReason,
+        lastScheduledSyncAt: config.syncState.lastScheduledSyncAt,
+        nextDueAt: nextDueAt?.toISOString() ?? null,
+        minutesUntilDue: getMinutesUntilDue(now, nextDueAt),
         reason: "A sync job is already running.",
       };
     }
 
     if (minutesSinceLastRun < intervalMinutes) {
+      const nextDueAt = getNextDueAt(now, lastRunAt, intervalMinutes, false);
       return {
         integrationId: integration.id,
         platform: integration.platform,
         label: integration.label,
         autoSyncEnabled: true,
         due: false,
+        running: false,
         intervalMinutes,
         requestedMode: modes.requestedMode,
         effectiveMode: modes.effectiveMode,
         fallbackReason: modes.fallbackReason,
+        lastScheduledSyncAt: config.syncState.lastScheduledSyncAt,
+        nextDueAt: nextDueAt?.toISOString() ?? null,
+        minutesUntilDue: getMinutesUntilDue(now, nextDueAt),
         reason: `Next run is not due yet (${Math.floor(minutesSinceLastRun)} / ${intervalMinutes} minutes).`,
       };
     }
 
+    const nextDueAt = getNextDueAt(now, lastRunAt, intervalMinutes, true);
     return {
       integrationId: integration.id,
       platform: integration.platform,
       label: integration.label,
       autoSyncEnabled: true,
       due: true,
+      running: false,
       intervalMinutes,
       requestedMode: modes.requestedMode,
       effectiveMode: modes.effectiveMode,
       fallbackReason: modes.fallbackReason,
+      lastScheduledSyncAt: config.syncState.lastScheduledSyncAt,
+      nextDueAt: nextDueAt?.toISOString() ?? null,
+      minutesUntilDue: getMinutesUntilDue(now, nextDueAt),
       reason: "Integration is due for a scheduled pull.",
     };
   });

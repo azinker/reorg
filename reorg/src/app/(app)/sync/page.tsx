@@ -111,6 +111,7 @@ type SchedulerStatus = {
   lastDispatchedCount: number;
   lastError: string | null;
   runningCount: number;
+  dueNowCount: number;
   recentJobs: Array<{
     id: string;
     platform: string;
@@ -131,6 +132,30 @@ type SchedulerStatus = {
     message: string;
     receivedAt: string;
   }>;
+  upcoming: Array<{
+    integrationId: string;
+    platform: string;
+    label: string;
+    due: boolean;
+    running: boolean;
+    requestedMode: string;
+    effectiveMode: string;
+    intervalMinutes: number;
+    lastScheduledSyncAt: string | null;
+    nextDueAt: string | null;
+    minutesUntilDue: number | null;
+    reason: string;
+    fallbackReason: string | null;
+  }>;
+  automationEvents: Array<{
+    id: string;
+    type: "scheduler_tick" | "stale_job" | "webhook";
+    title: string;
+    status: "completed" | "dry_run" | "failed" | "warning" | "ignored" | "debounced" | "running" | "started" | "unknown";
+    platform: string | null;
+    detail: string;
+    occurredAt: string;
+  }>;
 };
 
 function formatDateTime(value: string | null) {
@@ -147,6 +172,42 @@ function formatDurationMs(ms: number) {
   if (hours > 0) return `${hours}h ${minutes}m ${seconds}s`;
   if (minutes > 0) return `${minutes}m ${seconds}s`;
   return `${seconds}s`;
+}
+
+function formatModeLabel(mode: string | null) {
+  if (!mode) return "Unknown";
+  if (mode === "incremental") return "Incremental";
+  if (mode === "full") return "Full";
+  return mode
+    .split(":")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function formatDueCountdown(minutesUntilDue: number | null, due: boolean, running: boolean) {
+  if (running) return "Running now";
+  if (due) return "Due now";
+  if (minutesUntilDue == null) return "Not scheduled";
+  if (minutesUntilDue === 0) return "Due within 1m";
+  if (minutesUntilDue < 60) return `Due in ${minutesUntilDue}m`;
+  const hours = Math.floor(minutesUntilDue / 60);
+  const minutes = minutesUntilDue % 60;
+  return minutes > 0 ? `Due in ${hours}h ${minutes}m` : `Due in ${hours}h`;
+}
+
+function getAutomationBadgeClasses(
+  status: SchedulerStatus["automationEvents"][number]["status"],
+) {
+  if (status === "failed") return "border-red-500/30 bg-red-500/10 text-red-400";
+  if (status === "warning") return "border-amber-500/30 bg-amber-500/10 text-amber-400";
+  if (status === "dry_run") return "border-blue-500/30 bg-blue-500/10 text-blue-400";
+  if (status === "started" || status === "running") {
+    return "border-violet-500/30 bg-violet-500/10 text-violet-400";
+  }
+  if (status === "debounced" || status === "ignored") {
+    return "border-border bg-muted/50 text-muted-foreground";
+  }
+  return "border-emerald-500/30 bg-emerald-500/10 text-emerald-400";
 }
 
 function getJobDurationMs(job: SyncJobInfo | null, now: number) {
@@ -705,6 +766,20 @@ export default function SyncPage() {
             Last scheduler error: {schedulerStatus.lastError}
           </div>
         )}
+        <div className="mt-3 grid gap-2 text-xs sm:grid-cols-2">
+          <div className="rounded border border-border bg-muted/20 px-3 py-2">
+            <div className="text-muted-foreground">Stores due right now</div>
+            <div className="mt-1 text-sm font-semibold tabular-nums text-foreground">
+              {schedulerStatus?.dueNowCount ?? 0}
+            </div>
+          </div>
+          <div className="rounded border border-border bg-muted/20 px-3 py-2">
+            <div className="text-muted-foreground">Most recent scheduler mode</div>
+            <div className="mt-1 text-sm font-semibold text-foreground">
+              {schedulerStatus?.lastOutcome ?? "—"}
+            </div>
+          </div>
+        </div>
         {!!schedulerStatus?.recentJobs?.length && (
           <div className="mt-4 grid gap-2 md:grid-cols-2 xl:grid-cols-4">
             {schedulerStatus.recentJobs.slice(0, 4).map((job) => (
@@ -728,6 +803,46 @@ export default function SyncPage() {
                 </div>
               </div>
             ))}
+          </div>
+        )}
+        {!!schedulerStatus?.upcoming?.length && (
+          <div className="mt-4 rounded border border-border bg-muted/20 p-3">
+            <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              Pull Queue Snapshot
+            </div>
+            <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-4">
+              {schedulerStatus.upcoming.slice(0, 4).map((item) => (
+                <div
+                  key={item.integrationId}
+                  className="rounded border border-border bg-background/40 px-3 py-2 text-xs"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-semibold text-foreground">{item.label}</span>
+                    <span
+                      className={cn(
+                        "rounded border px-1.5 py-0.5 text-[10px] font-medium uppercase",
+                        item.running
+                          ? "border-blue-500/30 bg-blue-500/10 text-blue-400"
+                          : item.due
+                            ? "border-amber-500/30 bg-amber-500/10 text-amber-400"
+                            : "border-emerald-500/30 bg-emerald-500/10 text-emerald-400",
+                      )}
+                    >
+                      {item.running ? "running" : item.due ? "due" : "queued"}
+                    </span>
+                  </div>
+                  <div className="mt-1 text-muted-foreground">
+                    {formatModeLabel(item.effectiveMode)} • every {item.intervalMinutes}m
+                  </div>
+                  <div className="mt-1 text-foreground/80">
+                    {formatDueCountdown(item.minutesUntilDue, item.due, item.running)}
+                  </div>
+                  <div className="mt-1 text-muted-foreground">
+                    {item.nextDueAt ? `Target: ${formatDateTime(item.nextDueAt)}` : item.reason}
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         )}
         {!!schedulerStatus?.recentWebhooks?.length && (
@@ -754,6 +869,44 @@ export default function SyncPage() {
                   </div>
                   <div className="mt-1 text-foreground/80">
                     {webhook.message}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+        {!!schedulerStatus?.automationEvents?.length && (
+          <div className="mt-4 rounded border border-border bg-muted/20 p-3">
+            <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              Automation Decisions
+            </div>
+            <div className="grid gap-2 md:grid-cols-2">
+              {schedulerStatus.automationEvents.slice(0, 6).map((event) => (
+                <div
+                  key={event.id}
+                  className="rounded border border-border bg-background/40 px-3 py-2 text-xs"
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <div className="font-semibold text-foreground">
+                        {event.title}
+                        {event.platform ? (
+                          <span className="ml-1 text-muted-foreground">{event.platform}</span>
+                        ) : null}
+                      </div>
+                      <div className="mt-1 text-muted-foreground">{event.detail}</div>
+                    </div>
+                    <span
+                      className={cn(
+                        "rounded border px-1.5 py-0.5 text-[10px] font-medium uppercase",
+                        getAutomationBadgeClasses(event.status),
+                      )}
+                    >
+                      {event.status.replace("_", " ")}
+                    </span>
+                  </div>
+                  <div className="mt-2 text-muted-foreground">
+                    {formatDateTime(event.occurredAt)}
                   </div>
                 </div>
               ))}

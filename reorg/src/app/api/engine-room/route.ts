@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
+import { planScheduledSyncs } from "@/lib/services/sync-scheduler";
 
 const PLATFORM_LABEL: Record<string, string> = {
   TPP_EBAY: "eBay (TPP)",
@@ -25,7 +26,7 @@ function normalizeErrorMessage(error: unknown): string {
 
 export async function GET() {
   try {
-    const [syncJobs, stagedChanges, auditLogs, globalLock, schedulerSettings] = await Promise.all([
+    const [syncJobs, stagedChanges, auditLogs, globalLock, schedulerSettings, schedulerPlan] = await Promise.all([
       db.syncJob.findMany({
         orderBy: { createdAt: "desc" },
         take: 50,
@@ -64,10 +65,14 @@ export async function GET() {
           },
         },
       }),
+      planScheduledSyncs(),
     ]);
 
     const schedulerMap = Object.fromEntries(
       schedulerSettings.map((setting) => [setting.key, setting.value]),
+    );
+    const schedulerLabelMap = new Map(
+      schedulerPlan.map((item) => [item.integrationId, item.label]),
     );
 
     const syncJobsPayload = syncJobs.map((job) => {
@@ -98,6 +103,12 @@ export async function GET() {
         completedAt: job.completedAt?.toISOString() ?? null,
         durationSeconds: duration,
         errors,
+        mode:
+          typeof job.triggeredBy === "string" && job.triggeredBy.includes(":")
+            ? job.triggeredBy.split(":").slice(1).join(":")
+            : "unknown",
+        triggerKey:
+          typeof job.triggeredBy === "string" ? job.triggeredBy : null,
         source:
           typeof job.triggeredBy === "string" && job.triggeredBy.startsWith("scheduler:")
             ? "scheduler"
@@ -180,6 +191,94 @@ export async function GET() {
       entry: `${entry.action}  ${entry.entityType ?? ""}  ${entry.entityId ?? ""}  ${JSON.stringify(entry.details).slice(0, 100)}`,
     }));
 
+    const automationFeed = auditLogs
+      .filter((entry) =>
+        entry.action === "scheduler_tick" ||
+        entry.action === "webhook_received" ||
+        entry.action === "sync_stale_failed",
+      )
+      .slice(0, 25)
+      .map((entry) => {
+        const details = (entry.details as Record<string, unknown>) ?? {};
+
+        if (entry.action === "scheduler_tick") {
+          return {
+            id: entry.id,
+            type: "scheduler_tick",
+            status:
+              details.outcome === "failed"
+                ? "failed"
+                : details.outcome === "dry_run"
+                  ? "dry_run"
+                  : "completed",
+            title: "Scheduler tick",
+            platform: null,
+            detail: `Due ${typeof details.dueCount === "number" ? details.dueCount : 0}, dispatched ${typeof details.dispatchedCount === "number" ? details.dispatchedCount : 0}`,
+            time: entry.createdAt.toISOString(),
+          };
+        }
+
+        if (entry.action === "sync_stale_failed") {
+          return {
+            id: entry.id,
+            type: "stale_job",
+            status: "warning",
+            title: "Stale sync auto-failed",
+            platform:
+              typeof details.integrationId === "string"
+                ? schedulerLabelMap.get(details.integrationId) ?? String(details.integrationId)
+                : null,
+            detail:
+              typeof details.reason === "string"
+                ? details.reason
+                : "A stale running sync job was marked failed automatically.",
+            time: entry.createdAt.toISOString(),
+          };
+        }
+
+        return {
+          id: entry.id,
+          type: "webhook",
+          status:
+            typeof details.status === "string" ? details.status : "unknown",
+          title:
+            typeof details.topic === "string" ? details.topic : "Webhook received",
+          platform:
+            typeof details.platform === "string" ? details.platform : null,
+          detail:
+            typeof details.message === "string"
+              ? details.message
+              : "Webhook event recorded.",
+          time: entry.createdAt.toISOString(),
+        };
+      });
+
+    const dueQueue = [...schedulerPlan]
+      .sort((a, b) => {
+        if (a.due !== b.due) return a.due ? -1 : 1;
+        if (a.running !== b.running) return a.running ? -1 : 1;
+        if (a.nextDueAt && b.nextDueAt) {
+          return new Date(a.nextDueAt).getTime() - new Date(b.nextDueAt).getTime();
+        }
+        if (a.nextDueAt) return -1;
+        if (b.nextDueAt) return 1;
+        return a.label.localeCompare(b.label);
+      })
+      .map((item) => ({
+        integrationId: item.integrationId,
+        label: item.label,
+        platform: item.platform,
+        due: item.due,
+        running: item.running,
+        effectiveMode: item.effectiveMode,
+        intervalMinutes: item.intervalMinutes,
+        nextDueAt: item.nextDueAt,
+        lastScheduledSyncAt: item.lastScheduledSyncAt,
+        minutesUntilDue: item.minutesUntilDue,
+        reason: item.reason,
+        fallbackReason: item.fallbackReason,
+      }));
+
     const activeSyncs = syncJobs.filter((j) => j.status === "RUNNING").length;
     const queuedPushes = stagedChanges.length;
     const failedInLast7Days = syncJobs.filter(
@@ -222,6 +321,12 @@ export async function GET() {
         typeof job.triggeredBy === "string" &&
         job.triggeredBy.startsWith("scheduler:"),
     ).length;
+    const recentWebhookCount = auditLogs.filter(
+      (entry) =>
+        entry.action === "webhook_received" &&
+        Date.now() - entry.createdAt.getTime() < 24 * 60 * 60 * 1000,
+    ).length;
+    const schedulerDueNow = dueQueue.filter((item) => item.due).length;
 
     return NextResponse.json({
       data: {
@@ -229,6 +334,8 @@ export async function GET() {
         pushQueue: pushQueuePayload,
         changeLog: changeLogPayload,
         rawEvents: rawEventsPayload,
+        automationFeed,
+        dueQueue,
         summary: {
           activeSyncs,
           queuedPushes,
@@ -242,6 +349,8 @@ export async function GET() {
           schedulerLastDispatchedCount,
           schedulerLastError,
           schedulerActiveJobs,
+          schedulerDueNow,
+          recentWebhookCount,
         },
       },
     });

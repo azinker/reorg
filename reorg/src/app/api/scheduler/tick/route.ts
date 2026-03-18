@@ -71,6 +71,24 @@ async function saveSchedulerStatus(status: {
   ]);
 }
 
+async function logSchedulerTick(status: {
+  tickedAt: string;
+  outcome: "dry_run" | "completed" | "failed";
+  dueCount: number;
+  dispatchedCount: number;
+  error: string | null;
+  dryRun: boolean;
+}) {
+  await db.auditLog.create({
+    data: {
+      action: "scheduler_tick",
+      entityType: "scheduler",
+      entityId: "main",
+      details: status,
+    },
+  });
+}
+
 async function handleSchedulerTick(request: NextRequest, dryRun: boolean) {
   try {
     if (!process.env.CRON_SECRET) {
@@ -86,13 +104,15 @@ async function handleSchedulerTick(request: NextRequest, dryRun: boolean) {
 
     if (dryRun) {
       const plan = await planScheduledSyncs();
-      await saveSchedulerStatus({
+      const status: Parameters<typeof saveSchedulerStatus>[0] = {
         tickedAt: new Date().toISOString(),
         outcome: "dry_run",
         dueCount: plan.filter((item) => item.due).length,
         dispatchedCount: 0,
         error: null,
-      });
+      };
+      await saveSchedulerStatus(status);
+      await logSchedulerTick({ ...status, dryRun: true });
       return NextResponse.json({
         data: {
           dryRun: true,
@@ -114,13 +134,15 @@ async function handleSchedulerTick(request: NextRequest, dryRun: boolean) {
     }
 
     const result = await executeScheduledSyncs();
-    await saveSchedulerStatus({
+    const status: Parameters<typeof saveSchedulerStatus>[0] = {
       tickedAt: new Date().toISOString(),
       outcome: "completed",
       dueCount: result.plan.filter((item) => item.due).length,
       dispatchedCount: result.dispatched.length,
       error: null,
-    });
+    };
+    await saveSchedulerStatus(status);
+    await logSchedulerTick({ ...status, dryRun: false });
     return NextResponse.json({
       data: {
         dryRun: false,
@@ -131,14 +153,16 @@ async function handleSchedulerTick(request: NextRequest, dryRun: boolean) {
       },
     });
   } catch (error) {
-    await saveSchedulerStatus({
+    const status: Parameters<typeof saveSchedulerStatus>[0] = {
       tickedAt: new Date().toISOString(),
       outcome: "failed",
       dueCount: 0,
       dispatchedCount: 0,
       error:
         error instanceof Error ? error.message : "Failed to execute scheduler tick",
-    }).catch(() => {});
+    };
+    await saveSchedulerStatus(status).catch(() => {});
+    await logSchedulerTick({ ...status, dryRun: false }).catch(() => {});
     console.error("[scheduler/tick] POST failed", error);
     return NextResponse.json(
       {

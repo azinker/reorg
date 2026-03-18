@@ -16,6 +16,8 @@ export function isRunningJobStale(
 export async function failStaleRunningJob(
   job: {
     id: string;
+    integrationId?: string | null;
+    triggeredBy?: string | null;
     errors: unknown;
   },
   reason: string,
@@ -29,6 +31,19 @@ export async function failStaleRunningJob(
       status: "FAILED",
       completedAt: new Date(),
       errors: JSON.parse(JSON.stringify(nextErrors)),
+    },
+  });
+
+  await db.auditLog.create({
+    data: {
+      action: "sync_stale_failed",
+      entityType: "sync_job",
+      entityId: job.id,
+      details: {
+        integrationId: job.integrationId ?? null,
+        triggeredBy: job.triggeredBy ?? null,
+        reason,
+      },
     },
   });
 }
