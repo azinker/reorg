@@ -129,6 +129,8 @@ type SchedulerStatus = {
     itemsUpdated: number;
     startedAt: string | null;
     completedAt: string | null;
+    latestStoreSyncAt: string | null;
+    recoveredAfterScheduledFailure: boolean;
   }>;
   recentWebhooks: Array<{
     id: string;
@@ -831,6 +833,11 @@ export default function SyncPage() {
                 <div className="mt-1 text-muted-foreground">
                   {job.status === "RUNNING" ? "Started" : "Finished"}: {formatDateTime(job.status === "RUNNING" ? job.startedAt : job.completedAt)}
                 </div>
+                {job.recoveredAfterScheduledFailure ? (
+                  <div className="mt-1 text-emerald-400">
+                    Newer store updates succeeded after this scheduled issue.
+                  </div>
+                ) : null}
               </div>
             ))}
             </div>

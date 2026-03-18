@@ -41,6 +41,7 @@ export async function GET() {
               id: true,
               platform: true,
               label: true,
+              lastSyncAt: true,
             },
           },
         },
@@ -125,6 +126,12 @@ export async function GET() {
           itemsUpdated: job.itemsUpdated,
           startedAt: job.startedAt?.toISOString() ?? null,
           completedAt: job.completedAt?.toISOString() ?? null,
+          latestStoreSyncAt: job.integration?.lastSyncAt?.toISOString() ?? null,
+          recoveredAfterScheduledFailure:
+            job.status === "FAILED" &&
+            !!job.integration?.lastSyncAt &&
+            !!job.completedAt &&
+            job.integration.lastSyncAt.getTime() > job.completedAt.getTime(),
         })),
         recentWebhooks: recentWebhooks.map((entry) => {
           const details = (entry.details as Record<string, unknown>) ?? {};
