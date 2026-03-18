@@ -25,7 +25,7 @@ function normalizeErrorMessage(error: unknown): string {
 
 export async function GET() {
   try {
-    const [syncJobs, stagedChanges, auditLogs, globalLock] = await Promise.all([
+    const [syncJobs, stagedChanges, auditLogs, globalLock, schedulerSettings] = await Promise.all([
       db.syncJob.findMany({
         orderBy: { createdAt: "desc" },
         take: 50,
@@ -50,7 +50,25 @@ export async function GET() {
       db.appSetting.findUnique({
         where: { key: "global_write_lock" },
       }),
+      db.appSetting.findMany({
+        where: {
+          key: {
+            in: [
+              "scheduler_enabled",
+              "scheduler_last_tick_at",
+              "scheduler_last_outcome",
+              "scheduler_last_due_count",
+              "scheduler_last_dispatched_count",
+              "scheduler_last_error",
+            ],
+          },
+        },
+      }),
     ]);
+
+    const schedulerMap = Object.fromEntries(
+      schedulerSettings.map((setting) => [setting.key, setting.value]),
+    );
 
     const syncJobsPayload = syncJobs.map((job) => {
       const duration =
@@ -80,6 +98,10 @@ export async function GET() {
         completedAt: job.completedAt?.toISOString() ?? null,
         durationSeconds: duration,
         errors,
+        source:
+          typeof job.triggeredBy === "string" && job.triggeredBy.startsWith("scheduler:")
+            ? "scheduler"
+            : "manual",
       };
     });
 
@@ -169,6 +191,35 @@ export async function GET() {
           : "Sync failed (no message)"
         : null;
     const writeLockOn = globalLock?.value === true;
+    const schedulerEnabled = schedulerMap.scheduler_enabled === true;
+    const schedulerLastTickAt =
+      typeof schedulerMap.scheduler_last_tick_at === "string"
+        ? schedulerMap.scheduler_last_tick_at
+        : null;
+    const schedulerLastOutcome =
+      schedulerMap.scheduler_last_outcome === "dry_run" ||
+      schedulerMap.scheduler_last_outcome === "completed" ||
+      schedulerMap.scheduler_last_outcome === "failed"
+        ? schedulerMap.scheduler_last_outcome
+        : null;
+    const schedulerLastDueCount =
+      typeof schedulerMap.scheduler_last_due_count === "number"
+        ? schedulerMap.scheduler_last_due_count
+        : 0;
+    const schedulerLastDispatchedCount =
+      typeof schedulerMap.scheduler_last_dispatched_count === "number"
+        ? schedulerMap.scheduler_last_dispatched_count
+        : 0;
+    const schedulerLastError =
+      typeof schedulerMap.scheduler_last_error === "string"
+        ? schedulerMap.scheduler_last_error
+        : null;
+    const schedulerActiveJobs = syncJobs.filter(
+      (job) =>
+        job.status === "RUNNING" &&
+        typeof job.triggeredBy === "string" &&
+        job.triggeredBy.startsWith("scheduler:"),
+    ).length;
 
     return NextResponse.json({
       data: {
@@ -182,6 +233,13 @@ export async function GET() {
           recentErrors,
           recentErrorDetail,
           writeLockOn,
+          schedulerEnabled,
+          schedulerLastTickAt,
+          schedulerLastOutcome,
+          schedulerLastDueCount,
+          schedulerLastDispatchedCount,
+          schedulerLastError,
+          schedulerActiveJobs,
         },
       },
     });

@@ -11,6 +11,7 @@ function isPublicPath(pathname: string) {
     pathname.startsWith("/logos") ||
     pathname === "/login" ||
     pathname.startsWith("/api/auth") ||
+    pathname.startsWith("/api/scheduler/tick") ||
     pathname.startsWith("/api/ebay/callback") ||
     pathname.startsWith("/api/shopify/callback")
   );

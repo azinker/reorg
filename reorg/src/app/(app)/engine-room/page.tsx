@@ -30,6 +30,7 @@ type SyncJobRow = {
   id: string;
   platform: string;
   status: "pending" | "in_progress" | "completed" | "failed";
+  source: "manual" | "scheduler";
   items: number;
   started: string | null;
   completedAt: string | null;
@@ -69,6 +70,13 @@ type EngineRoomData = {
     recentErrors: number;
     recentErrorDetail: string | null;
     writeLockOn: boolean;
+    schedulerEnabled: boolean;
+    schedulerLastTickAt: string | null;
+    schedulerLastOutcome: "dry_run" | "completed" | "failed" | null;
+    schedulerLastDueCount: number;
+    schedulerLastDispatchedCount: number;
+    schedulerLastError: string | null;
+    schedulerActiveJobs: number;
   };
 };
 
@@ -118,6 +126,7 @@ function SyncJobsPanel({ jobs }: { jobs: SyncJobRow[] }) {
           <tr className="border-b border-border text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">
             <th className="pb-3 pr-4">ID</th>
             <th className="pb-3 pr-4">Platform</th>
+            <th className="pb-3 pr-4">Source</th>
             <th className="pb-3 pr-4">Status</th>
             <th className="pb-3 pr-4 text-right">Items Synced</th>
             <th className="pb-3 pr-4">Started</th>
@@ -130,6 +139,16 @@ function SyncJobsPanel({ jobs }: { jobs: SyncJobRow[] }) {
             <tr key={job.id} className="text-foreground">
               <td className="py-3 pr-4 font-mono text-xs text-muted-foreground">{job.id.slice(0, 8)}</td>
               <td className="py-3 pr-4">{job.platform}</td>
+              <td className="py-3 pr-4">
+                <span className={cn(
+                  "inline-flex items-center rounded border px-2 py-0.5 text-xs font-medium",
+                  job.source === "scheduler"
+                    ? "border-blue-500/30 bg-blue-500/10 text-blue-400"
+                    : "border-border bg-muted/50 text-muted-foreground"
+                )}>
+                  {job.source === "scheduler" ? "Scheduler" : "Manual"}
+                </span>
+              </td>
               <td className="py-3 pr-4"><StatusBadge status={job.status} /></td>
               <td className="py-3 pr-4 text-right tabular-nums">{job.items.toLocaleString()}</td>
               <td className="py-3 pr-4 text-muted-foreground">{formatDateTime(job.started)}</td>
@@ -253,6 +272,13 @@ export default function EngineRoomPage() {
     recentErrors: 0,
     recentErrorDetail: null as string | null,
     writeLockOn: false,
+    schedulerEnabled: false,
+    schedulerLastTickAt: null as string | null,
+    schedulerLastOutcome: null as "dry_run" | "completed" | "failed" | null,
+    schedulerLastDueCount: 0,
+    schedulerLastDispatchedCount: 0,
+    schedulerLastError: null as string | null,
+    schedulerActiveJobs: 0,
   };
 
   function renderPanel() {
@@ -407,6 +433,70 @@ export default function EngineRoomPage() {
               </p>
             </div>
           </div>
+        </article>
+
+        <article
+          className={cn(
+            "rounded-lg border border-border bg-card p-4 transition-colors duration-200 sm:col-span-2 lg:col-span-4",
+            "ring-1 ring-border/50",
+            "hover:border-border/80 hover:bg-card/95"
+          )}
+        >
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div className="space-y-1.5">
+              <div className="flex items-center gap-2">
+                <RefreshCw className={cn(
+                  "h-4 w-4",
+                  summary.schedulerActiveJobs > 0 && "animate-spin text-blue-400"
+                )} />
+                <span className="text-sm font-semibold text-foreground">Scheduler Health</span>
+                <span className={cn(
+                  "inline-flex items-center rounded border px-2 py-0.5 text-[11px] font-medium",
+                  summary.schedulerEnabled
+                    ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-400"
+                    : "border-amber-500/30 bg-amber-500/10 text-amber-400"
+                )}>
+                  {summary.schedulerEnabled ? "Enabled" : "Disabled"}
+                </span>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Last tick: {formatDateTime(summary.schedulerLastTickAt)}
+                {summary.schedulerLastOutcome ? ` • Result: ${summary.schedulerLastOutcome}` : ""}
+                {summary.schedulerActiveJobs > 0 ? ` • ${summary.schedulerActiveJobs} scheduled sync(s) running` : ""}
+              </p>
+            </div>
+            <div className="grid min-w-[260px] grid-cols-2 gap-2 text-xs sm:grid-cols-4">
+              <div className="rounded border border-border bg-muted/40 px-3 py-2">
+                <div className="text-muted-foreground">Due</div>
+                <div className="mt-1 text-sm font-semibold tabular-nums text-foreground">
+                  {summary.schedulerLastDueCount}
+                </div>
+              </div>
+              <div className="rounded border border-border bg-muted/40 px-3 py-2">
+                <div className="text-muted-foreground">Dispatched</div>
+                <div className="mt-1 text-sm font-semibold tabular-nums text-foreground">
+                  {summary.schedulerLastDispatchedCount}
+                </div>
+              </div>
+              <div className="rounded border border-border bg-muted/40 px-3 py-2">
+                <div className="text-muted-foreground">Active</div>
+                <div className="mt-1 text-sm font-semibold tabular-nums text-foreground">
+                  {summary.schedulerActiveJobs}
+                </div>
+              </div>
+              <div className="rounded border border-border bg-muted/40 px-3 py-2">
+                <div className="text-muted-foreground">Mode</div>
+                <div className="mt-1 text-sm font-semibold text-foreground">
+                  {summary.schedulerLastOutcome ?? "—"}
+                </div>
+              </div>
+            </div>
+          </div>
+          {summary.schedulerLastError && (
+            <div className="mt-3 rounded border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-400">
+              Last scheduler error: {summary.schedulerLastError}
+            </div>
+          )}
         </article>
       </div>
 

@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { isSchedulerEnabled } from "@/lib/automation-settings";
+import { db } from "@/lib/db";
 import {
   executeScheduledSyncs,
   planScheduledSyncs,
@@ -11,6 +12,12 @@ const bodySchema = z
     dryRun: z.boolean().default(false),
   })
   .optional();
+
+const querySchema = z.object({
+  dryRun: z
+    .union([z.literal("true"), z.literal("1"), z.literal("false"), z.literal("0")])
+    .optional(),
+});
 
 function isAuthorized(request: NextRequest): boolean {
   const secret = process.env.CRON_SECRET;
@@ -25,7 +32,46 @@ function isAuthorized(request: NextRequest): boolean {
   return headerSecret === secret || bearerSecret === secret;
 }
 
-export async function POST(request: NextRequest) {
+async function saveSchedulerStatus(status: {
+  tickedAt: string;
+  outcome: "dry_run" | "completed" | "failed";
+  dueCount: number;
+  dispatchedCount: number;
+  error: string | null;
+}) {
+  await Promise.all([
+    db.appSetting.upsert({
+      where: { key: "scheduler_last_tick_at" },
+      create: { key: "scheduler_last_tick_at", value: status.tickedAt as never },
+      update: { value: status.tickedAt as never },
+    }),
+    db.appSetting.upsert({
+      where: { key: "scheduler_last_outcome" },
+      create: { key: "scheduler_last_outcome", value: status.outcome as never },
+      update: { value: status.outcome as never },
+    }),
+    db.appSetting.upsert({
+      where: { key: "scheduler_last_due_count" },
+      create: { key: "scheduler_last_due_count", value: status.dueCount as never },
+      update: { value: status.dueCount as never },
+    }),
+    db.appSetting.upsert({
+      where: { key: "scheduler_last_dispatched_count" },
+      create: {
+        key: "scheduler_last_dispatched_count",
+        value: status.dispatchedCount as never,
+      },
+      update: { value: status.dispatchedCount as never },
+    }),
+    db.appSetting.upsert({
+      where: { key: "scheduler_last_error" },
+      create: { key: "scheduler_last_error", value: status.error as never },
+      update: { value: status.error as never },
+    }),
+  ]);
+}
+
+async function handleSchedulerTick(request: NextRequest, dryRun: boolean) {
   try {
     if (!process.env.CRON_SECRET) {
       return NextResponse.json(
@@ -38,24 +84,15 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const body =
-      request.headers.get("content-length") &&
-      request.headers.get("content-length") !== "0"
-        ? await request.json()
-        : undefined;
-    const parsed = bodySchema.safeParse(body);
-
-    if (!parsed.success) {
-      return NextResponse.json(
-        { error: "Invalid request", details: parsed.error.flatten() },
-        { status: 400 },
-      );
-    }
-
-    const dryRun = parsed.data?.dryRun ?? false;
-
     if (dryRun) {
       const plan = await planScheduledSyncs();
+      await saveSchedulerStatus({
+        tickedAt: new Date().toISOString(),
+        outcome: "dry_run",
+        dueCount: plan.filter((item) => item.due).length,
+        dispatchedCount: 0,
+        error: null,
+      });
       return NextResponse.json({
         data: {
           dryRun: true,
@@ -77,6 +114,13 @@ export async function POST(request: NextRequest) {
     }
 
     const result = await executeScheduledSyncs();
+    await saveSchedulerStatus({
+      tickedAt: new Date().toISOString(),
+      outcome: "completed",
+      dueCount: result.plan.filter((item) => item.due).length,
+      dispatchedCount: result.dispatched.length,
+      error: null,
+    });
     return NextResponse.json({
       data: {
         dryRun: false,
@@ -87,6 +131,14 @@ export async function POST(request: NextRequest) {
       },
     });
   } catch (error) {
+    await saveSchedulerStatus({
+      tickedAt: new Date().toISOString(),
+      outcome: "failed",
+      dueCount: 0,
+      dispatchedCount: 0,
+      error:
+        error instanceof Error ? error.message : "Failed to execute scheduler tick",
+    }).catch(() => {});
     console.error("[scheduler/tick] POST failed", error);
     return NextResponse.json(
       {
@@ -96,4 +148,40 @@ export async function POST(request: NextRequest) {
       { status: 500 },
     );
   }
+}
+
+export async function GET(request: NextRequest) {
+  const parsed = querySchema.safeParse({
+    dryRun: request.nextUrl.searchParams.get("dryRun") ?? undefined,
+  });
+
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: "Invalid request", details: parsed.error.flatten() },
+      { status: 400 },
+    );
+  }
+
+  const dryRun =
+    parsed.data.dryRun === "true" || parsed.data.dryRun === "1";
+
+  return handleSchedulerTick(request, dryRun);
+}
+
+export async function POST(request: NextRequest) {
+  const body =
+    request.headers.get("content-length") &&
+    request.headers.get("content-length") !== "0"
+      ? await request.json()
+      : undefined;
+  const parsed = bodySchema.safeParse(body);
+
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: "Invalid request", details: parsed.error.flatten() },
+      { status: 400 },
+    );
+  }
+
+  return handleSchedulerTick(request, parsed.data?.dryRun ?? false);
 }

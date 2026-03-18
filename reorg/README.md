@@ -43,8 +43,8 @@ Open [http://localhost:3000](http://localhost:3000).
 ### Default Login
 
 After seeding, two admin accounts exist:
-- Adam@theperfectpart.net
-- Cory@theperfectpart.net
+- adam@theperfectpart.net
+- coryzz@live.com
 
 Default password: `changeme-on-first-login` (change immediately).
 
@@ -56,7 +56,7 @@ Default password: `changeme-on-first-login` (change immediately).
 |-------|-----------|
 | Framework | Next.js 16 (App Router, TypeScript) |
 | Database | PostgreSQL + Prisma 6 |
-| Auth | Auth.js v5 (credentials + magic link) |
+| Auth | Auth.js v5 (credentials) |
 | UI | shadcn/ui + Tailwind CSS v4 |
 | Data Grid | TanStack Table + TanStack Virtual |
 | State | Zustand |

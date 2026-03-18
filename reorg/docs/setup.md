@@ -114,8 +114,8 @@ npm run db:seed
 ```
 
 **Important:** The seed creates two admin accounts:
-- Adam@theperfectpart.net
-- Cory@theperfectpart.net  
+- adam@theperfectpart.net
+- coryzz@live.com  
 
 Both start with the temporary password: `changeme-on-first-login`  
 **Change these passwords immediately** after your first login.

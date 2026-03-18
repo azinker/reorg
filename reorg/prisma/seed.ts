@@ -8,30 +8,53 @@ async function main() {
 
   // ─── Admin Users ─────────────────────────────────────────────────────────
   const passwordHash = await bcrypt.hash("changeme-on-first-login", 12);
-
-  await prisma.user.upsert({
-    where: { email: "Adam@theperfectpart.net" },
-    update: {},
-    create: {
-      email: "Adam@theperfectpart.net",
+  const adminUsers = [
+    {
+      email: "adam@theperfectpart.net",
       name: "Adam Zinker",
-      role: Role.ADMIN,
-      passwordHash,
-      emailVerified: new Date(),
+      lookupEmails: ["adam@theperfectpart.net"],
     },
-  });
-
-  await prisma.user.upsert({
-    where: { email: "Cory@theperfectpart.net" },
-    update: {},
-    create: {
-      email: "Cory@theperfectpart.net",
+    {
+      email: "coryzz@live.com",
       name: "Cory Zinker",
-      role: Role.ADMIN,
-      passwordHash,
-      emailVerified: new Date(),
+      lookupEmails: ["coryzz@live.com", "cory@theperfectpart.net"],
     },
-  });
+  ];
+
+  for (const adminUser of adminUsers) {
+    const existingUser = await prisma.user.findFirst({
+      where: {
+        OR: adminUser.lookupEmails.map((email) => ({
+          email: { equals: email, mode: "insensitive" },
+        })),
+      },
+      select: { id: true },
+    });
+
+    if (existingUser) {
+      await prisma.user.update({
+        where: { id: existingUser.id },
+        data: {
+          email: adminUser.email,
+          name: adminUser.name,
+          role: Role.ADMIN,
+          passwordHash,
+          emailVerified: new Date(),
+        },
+      });
+      continue;
+    }
+
+    await prisma.user.create({
+      data: {
+        email: adminUser.email,
+        name: adminUser.name,
+        role: Role.ADMIN,
+        passwordHash,
+        emailVerified: new Date(),
+      },
+    });
+  }
 
   console.log("  Created admin users");
 

@@ -1,7 +1,6 @@
 const ADMIN_EMAILS = [
   "adam@theperfectpart.net",
   "coryzz@live.com",
-  "cory@theperfectpart.net",
 ];
 
 export function getAppEnv() {

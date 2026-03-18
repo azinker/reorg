@@ -21,3 +21,4 @@ __pycache__/
 reorg/.env
 reorg/.env.local
 reorg/.env.*.local
+.vercel
