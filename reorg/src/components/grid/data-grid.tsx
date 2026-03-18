@@ -863,7 +863,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
   const rowFontStyle = { '--row-font-size': `${settings.rowTextSize}px` } as React.CSSProperties;
 
   return (
-    <div className="grid h-full min-h-0 min-w-0 grid-rows-[auto_auto_auto_minmax(0,1fr)_auto]">
+    <div className="grid h-full min-h-0 min-w-0 grid-rows-[auto_auto_auto_minmax(0,1fr)_32px]">
       {settings.searchBar && (
         <StickySearch
           rows={gridRows}
@@ -877,15 +877,15 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
         parentRef.current?.scrollTo({ top: 0 });
       }} />
 
-      <div className="flex items-center justify-between border-b border-border bg-card/30 px-4 py-1.5">
-        <span className="text-xs text-muted-foreground">
+      <div className="flex min-w-0 items-center justify-between gap-3 border-b border-border bg-card/30 px-4 py-1.5">
+        <span className="shrink-0 text-xs text-muted-foreground">
           {flatRows.length} rows
           {flatRows.length !== gridRows.length && ` (${gridRows.length} total)`}
         </span>
-        <div className="flex items-center gap-2">
+        <div className="flex min-w-0 max-w-full items-center gap-2 overflow-x-auto whitespace-nowrap pb-1">
           <button
             onClick={() => { setGpSource(null); setGpDest(new Set()); setGpMode(null); setGlobalPriceOpen(true); }}
-            className="flex items-center gap-1 rounded border border-primary/30 bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary transition-colors hover:bg-primary/20 cursor-pointer"
+            className="flex shrink-0 items-center gap-1 rounded border border-primary/30 bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary transition-colors hover:bg-primary/20 cursor-pointer"
           >
             <RefreshCw className="h-3 w-3" />
             Global Price Update
@@ -893,14 +893,16 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
           {stagedCount > 0 && (
             <button
               onClick={() => { setClearStagedInput(""); setClearStagedOpen(true); }}
-              className="flex items-center gap-1 rounded border border-amber-500/30 bg-amber-500/10 px-2.5 py-1 text-xs font-medium text-amber-400 transition-colors hover:bg-amber-500/20 cursor-pointer"
+              className="flex shrink-0 items-center gap-1 rounded border border-amber-500/30 bg-amber-500/10 px-2.5 py-1 text-xs font-medium text-amber-400 transition-colors hover:bg-amber-500/20 cursor-pointer"
             >
               <Trash2 className="h-3 w-3" />
               Clear Staged ({stagedCount})
             </button>
           )}
-          <ColumnManager columns={columns} onToggle={toggleColumn} />
-          <button className="flex items-center gap-1 rounded px-2 py-1 text-xs text-muted-foreground transition-colors hover:text-foreground cursor-pointer">
+          <div className="shrink-0">
+            <ColumnManager columns={columns} onToggle={toggleColumn} />
+          </div>
+          <button className="flex shrink-0 items-center gap-1 rounded px-2 py-1 text-xs text-muted-foreground transition-colors hover:text-foreground cursor-pointer">
             <Download className="h-3 w-3" />
             Export
           </button>
@@ -1319,18 +1321,19 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
       </div>
 
       {/* Photo overlay — only one at a time */}
-      {showBottomScrollbar ? (
-        <div className="border-t border-border bg-card/90 px-2 py-1 backdrop-blur-sm">
-          <div
-            ref={bottomScrollbarRef}
-            className="app-grid-bottom-scroll min-w-0 overflow-x-auto overflow-y-hidden"
-          >
-            <div style={{ width: totalMinWidth, height: 1 }} />
-          </div>
+      <div
+        className={cn(
+          "border-t bg-card/90 px-2 py-1 backdrop-blur-sm transition-opacity",
+          showBottomScrollbar ? "border-border opacity-100" : "border-transparent opacity-0 pointer-events-none"
+        )}
+      >
+        <div
+          ref={bottomScrollbarRef}
+          className="app-grid-bottom-scroll min-w-0 overflow-x-auto overflow-y-hidden"
+        >
+          <div style={{ width: showBottomScrollbar ? totalMinWidth : 1, height: 1 }} />
         </div>
-      ) : (
-        <div className="h-0" />
-      )}
+      </div>
       {expandedPhoto && expandedPhoto.imageUrl && (
         <PhotoOverlay
           imageUrl={expandedPhoto.imageUrl}
