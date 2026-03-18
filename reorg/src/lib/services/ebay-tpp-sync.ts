@@ -104,6 +104,32 @@ function normalizeTradingErrors(rawErrors: unknown): Array<Record<string, unknow
   return [];
 }
 
+async function recordRateLimitState(
+  integrationId: string,
+  message: string,
+) {
+  const integration = await db.integration.findUnique({
+    where: { id: integrationId },
+    select: { platform: true, config: true },
+  });
+  if (!integration) return;
+
+  const config = getIntegrationConfig(integration);
+  await db.integration.update({
+    where: { id: integrationId },
+    data: {
+      config: {
+        ...config,
+        syncState: {
+          ...config.syncState,
+          lastRateLimitAt: new Date().toISOString(),
+          lastRateLimitMessage: message,
+        },
+      } as unknown as Prisma.InputJsonValue,
+    },
+  });
+}
+
 export async function runEbayTppSync(
   options: SyncExecutionOptions = {},
 ): Promise<SyncProgress> {
@@ -315,6 +341,12 @@ export async function runEbayTppSync(
     }
   } catch (err) {
     progress.status = "FAILED";
+    if (isEbayGetItemUsageLimitError(err)) {
+      await recordRateLimitState(
+        integration.id,
+        err instanceof Error ? err.message : "eBay API usage limit reached.",
+      );
+    }
     const allErrors = [
       ...progress.errors,
       {

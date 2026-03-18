@@ -29,6 +29,8 @@ export interface SyncState {
   lastCursor: string | null;
   lastWebhookAt: string | null;
   lastFallbackReason: string | null;
+  lastRateLimitAt: string | null;
+  lastRateLimitMessage: string | null;
 }
 
 export interface WebhookState {
@@ -105,6 +107,8 @@ const EMPTY_SYNC_STATE: SyncState = {
   lastCursor: null,
   lastWebhookAt: null,
   lastFallbackReason: null,
+  lastRateLimitAt: null,
+  lastRateLimitMessage: null,
 };
 
 const EMPTY_WEBHOOK_STATE: WebhookState = {
@@ -223,6 +227,8 @@ export function normalizeSyncState(raw: unknown): SyncState {
     lastCursor: asNullableString(record.lastCursor),
     lastWebhookAt: asNullableString(record.lastWebhookAt),
     lastFallbackReason: asNullableString(record.lastFallbackReason),
+    lastRateLimitAt: asNullableString(record.lastRateLimitAt),
+    lastRateLimitMessage: asNullableString(record.lastRateLimitMessage),
   };
 }
 

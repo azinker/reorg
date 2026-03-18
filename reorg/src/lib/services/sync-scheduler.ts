@@ -51,6 +51,28 @@ function getLastScheduledRunAt(config: ReturnType<typeof getIntegrationConfig>):
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
+function getRateLimitCooldownUntil(
+  platform: string,
+  config: ReturnType<typeof getIntegrationConfig>,
+  now: Date,
+) {
+  if ((platform !== "TPP_EBAY" && platform !== "TT_EBAY") || !config.syncState.lastRateLimitAt) {
+    return null;
+  }
+
+  const rateLimitAt = new Date(config.syncState.lastRateLimitAt);
+  if (Number.isNaN(rateLimitAt.getTime())) return null;
+
+  const cooldownMinutes = Math.max(
+    config.syncProfile.dayIntervalMinutes,
+    config.syncProfile.overnightIntervalMinutes,
+    90,
+  );
+  const cooldownUntil = new Date(rateLimitAt.getTime() + cooldownMinutes * 60 * 1000);
+  if (cooldownUntil.getTime() <= now.getTime()) return null;
+  return cooldownUntil;
+}
+
 function getNextDueAt(
   now: Date,
   lastRunAt: Date | null,
@@ -162,6 +184,30 @@ export async function planScheduledSyncs(now = new Date()) {
         nextDueAt: nextDueAt?.toISOString() ?? null,
         minutesUntilDue: getMinutesUntilDue(now, nextDueAt),
         reason: "A sync job is already running.",
+      };
+    }
+
+    const rateLimitCooldownUntil = getRateLimitCooldownUntil(
+      integration.platform,
+      config,
+      now,
+    );
+    if (rateLimitCooldownUntil) {
+      return {
+        integrationId: integration.id,
+        platform: integration.platform,
+        label: integration.label,
+        autoSyncEnabled: true,
+        due: false,
+        running: false,
+        intervalMinutes,
+        requestedMode: modes.requestedMode,
+        effectiveMode: modes.effectiveMode,
+        fallbackReason: modes.fallbackReason,
+        lastScheduledSyncAt: config.syncState.lastScheduledSyncAt,
+        nextDueAt: rateLimitCooldownUntil.toISOString(),
+        minutesUntilDue: getMinutesUntilDue(now, rateLimitCooldownUntil),
+        reason: "Cooling down after an eBay API usage-limit response before the next retry.",
       };
     }
 

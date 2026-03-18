@@ -249,6 +249,11 @@ export async function GET() {
 
       if (job.status === "FAILED") {
         if (recoveredAfterFailure) continue;
+        const supersededByLaterFailure =
+          !!latestUnrecoveredFailureByIntegration.get(job.integrationId) &&
+          latestUnrecoveredFailureByIntegration.get(job.integrationId)!.getTime() >
+            occurredAt.getTime();
+        if (supersededByLaterFailure) continue;
         entries.push({
           id: `sync-${job.id}`,
           severity: "critical",

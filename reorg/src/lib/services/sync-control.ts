@@ -153,6 +153,8 @@ export function buildCompletedSyncConfig(
         options.fallbackReason === undefined
           ? config.syncState.lastFallbackReason
           : options.fallbackReason,
+      lastRateLimitAt: null,
+      lastRateLimitMessage: null,
     },
   };
 }
