@@ -11,7 +11,7 @@ function asOutcome(value: unknown): SchedulerOutcome | null {
 
 export async function GET() {
   try {
-    const [settings, recentJobs] = await Promise.all([
+    const [settings, recentJobs, recentWebhooks] = await Promise.all([
       db.appSetting.findMany({
         where: {
           key: {
@@ -42,6 +42,13 @@ export async function GET() {
             },
           },
         },
+      }),
+      db.auditLog.findMany({
+        where: {
+          action: "webhook_received",
+        },
+        orderBy: { createdAt: "desc" },
+        take: 8,
       }),
     ]);
 
@@ -83,6 +90,19 @@ export async function GET() {
           startedAt: job.startedAt?.toISOString() ?? null,
           completedAt: job.completedAt?.toISOString() ?? null,
         })),
+        recentWebhooks: recentWebhooks.map((entry) => {
+          const details = (entry.details as Record<string, unknown>) ?? {};
+          return {
+            id: entry.id,
+            platform:
+              typeof details.platform === "string" ? details.platform : "UNKNOWN",
+            topic: typeof details.topic === "string" ? details.topic : "unknown",
+            status: typeof details.status === "string" ? details.status : "unknown",
+            message:
+              typeof details.message === "string" ? details.message : "No message",
+            receivedAt: entry.createdAt.toISOString(),
+          };
+        }),
       },
     });
   } catch (error) {

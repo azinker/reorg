@@ -123,6 +123,14 @@ type SchedulerStatus = {
     startedAt: string | null;
     completedAt: string | null;
   }>;
+  recentWebhooks: Array<{
+    id: string;
+    platform: string;
+    topic: string;
+    status: string;
+    message: string;
+    receivedAt: string;
+  }>;
 };
 
 function formatDateTime(value: string | null) {
@@ -720,6 +728,36 @@ export default function SyncPage() {
                 </div>
               </div>
             ))}
+          </div>
+        )}
+        {!!schedulerStatus?.recentWebhooks?.length && (
+          <div className="mt-4 rounded border border-border bg-muted/20 p-3">
+            <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              Recent Webhook Activity
+            </div>
+            <div className="grid gap-2 md:grid-cols-2">
+              {schedulerStatus.recentWebhooks.slice(0, 4).map((webhook) => (
+                <div
+                  key={webhook.id}
+                  className="rounded border border-border bg-background/40 px-3 py-2 text-xs"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-semibold text-foreground">
+                      {webhook.platform}
+                    </span>
+                    <span className="text-muted-foreground">
+                      {formatDateTime(webhook.receivedAt)}
+                    </span>
+                  </div>
+                  <div className="mt-1 text-muted-foreground">
+                    {webhook.topic} | {webhook.status}
+                  </div>
+                  <div className="mt-1 text-foreground/80">
+                    {webhook.message}
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         )}
       </div>
