@@ -9,6 +9,10 @@ import {
   isEbayUsageLimitMessage,
 } from "@/lib/services/ebay-rate-limit";
 import { getIntegrationConfig } from "@/lib/integrations/runtime-config";
+import {
+  getEbayCooldownUntilFromSnapshot,
+  getEbayTradingRateLimitSnapshotForIntegration,
+} from "@/lib/services/ebay-analytics";
 
 type Severity = "critical" | "warning" | "info";
 type ErrorCategory =
@@ -180,6 +184,20 @@ export async function GET() {
 
     const rateKeys = new Set(shippingRates.map((rate) => rate.weightKey.trim().toUpperCase()));
     const entries: ErrorEntry[] = [];
+    const ebaySnapshotsByPlatform = new Map<string, Awaited<ReturnType<typeof getEbayTradingRateLimitSnapshotForIntegration>>>();
+    await Promise.all(
+      integrations.map(async (integration) => {
+        if (integration.platform !== "TPP_EBAY" && integration.platform !== "TT_EBAY") {
+          return;
+        }
+        try {
+          const snapshot = await getEbayTradingRateLimitSnapshotForIntegration(integration);
+          ebaySnapshotsByPlatform.set(integration.platform, snapshot);
+        } catch (error) {
+          console.error(`[errors] ${integration.platform} analytics lookup failed`, error);
+        }
+      }),
+    );
     const latestCleanCompletedByIntegration = new Map<string, Date>();
     const latestUnrecoveredFailureByIntegration = new Map<string, Date>();
     for (const job of syncJobs) {
@@ -265,11 +283,17 @@ export async function GET() {
           : ["The sync job failed without a captured error payload."];
         const primaryError = errorLines[0] ?? "The sync job failed without a captured error payload.";
         const config = getIntegrationConfig(job.integration);
-        const cooldownUntil = getEbayRateLimitCooldownUntil(
-          platform,
-          config,
-          new Date(),
-        );
+        const cooldownUntil =
+          getEbayCooldownUntilFromSnapshot(
+            ebaySnapshotsByPlatform.get(platform) ?? null,
+            primaryError,
+            new Date(),
+          ) ??
+          getEbayRateLimitCooldownUntil(
+            platform,
+            config,
+            new Date(),
+          );
         const isRateLimited = isEbayUsageLimitMessage(primaryError);
         const retryAtLabel = formatCooldownRetryAt(cooldownUntil);
         entries.push({

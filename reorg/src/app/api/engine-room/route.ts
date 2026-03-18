@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { buildAutomationHealthSnapshot } from "@/lib/services/automation-health";
 import { planScheduledSyncs } from "@/lib/services/sync-scheduler";
+import { getEbayTradingRateLimitSnapshotForIntegration } from "@/lib/services/ebay-analytics";
 
 const PLATFORM_LABEL: Record<string, string> = {
   TPP_EBAY: "eBay (TPP)",
@@ -35,7 +36,7 @@ function normalizeErrorMessage(error: unknown): string {
 
 export async function GET() {
   try {
-    const [syncJobs, stagedChanges, auditLogs, globalLock, schedulerSettings, schedulerPlan] = await Promise.all([
+    const [syncJobs, stagedChanges, auditLogs, globalLock, schedulerSettings, schedulerPlan, integrations] = await Promise.all([
       db.syncJob.findMany({
         orderBy: { createdAt: "desc" },
         take: 50,
@@ -75,12 +76,30 @@ export async function GET() {
         },
       }),
       planScheduledSyncs(),
+      db.integration.findMany({
+        where: {
+          platform: {
+            in: ["TPP_EBAY", "TT_EBAY"],
+          },
+        },
+      }),
     ]);
 
     const schedulerMap = Object.fromEntries(
       schedulerSettings.map((setting) => [setting.key, setting.value]),
     );
     const automationHealth = await buildAutomationHealthSnapshot(schedulerPlan);
+    const ebaySnapshotsByPlatform = new Map<string, Awaited<ReturnType<typeof getEbayTradingRateLimitSnapshotForIntegration>>>();
+    await Promise.all(
+      integrations.map(async (integration) => {
+        try {
+          const snapshot = await getEbayTradingRateLimitSnapshotForIntegration(integration);
+          ebaySnapshotsByPlatform.set(integration.platform, snapshot);
+        } catch (error) {
+          console.error(`[engine-room] ${integration.platform} analytics lookup failed`, error);
+        }
+      }),
+    );
     const schedulerLabelMap = new Map(
       schedulerPlan.map((item) => [item.integrationId, item.label]),
     );
@@ -408,7 +427,13 @@ export async function GET() {
           delayedStores: automationHealth.summary.delayedCount,
           attentionStores: automationHealth.summary.attentionCount,
         },
-        integrationHealth: automationHealth.integrationHealth,
+        integrationHealth: automationHealth.integrationHealth.map((item) => ({
+          ...item,
+          rateLimits:
+            item.platform === "TPP_EBAY" || item.platform === "TT_EBAY"
+              ? ebaySnapshotsByPlatform.get(item.platform) ?? null
+              : null,
+        })),
       },
     });
   } catch (error) {

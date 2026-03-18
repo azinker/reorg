@@ -108,6 +108,20 @@ type EngineRoomData = {
     webhookExpected: boolean;
     webhookMessage: string;
     recommendedAction: string;
+    rateLimits: {
+      fetchedAt: string;
+      methods: Array<{
+        name: string;
+        count: number;
+        limit: number;
+        remaining: number;
+        reset: string | null;
+        timeWindowSeconds: number | null;
+        status: "healthy" | "tight" | "exhausted";
+      }>;
+      exhaustedMethods: string[];
+      nextResetAt: string | null;
+    } | null;
   }>;
   summary: {
     activeSyncs: number;
@@ -870,6 +884,22 @@ export default function EngineRoomPage() {
                   {item.webhookExpected ? (
                     <div className="mt-2 rounded border border-border bg-muted/40 px-2 py-1 text-[11px] text-muted-foreground">
                       {item.webhookMessage}
+                    </div>
+                  ) : null}
+                  {item.rateLimits ? (
+                    <div className="mt-2 rounded border border-border bg-muted/40 px-2 py-1 text-[11px] text-muted-foreground">
+                      <div>eBay API checked {formatDateTime(item.rateLimits.fetchedAt)}</div>
+                      <div>
+                        {item.rateLimits.methods
+                          .map(
+                            (method) =>
+                              `${method.name}: ${method.remaining.toLocaleString()}/${method.limit.toLocaleString()} left`,
+                          )
+                          .join(" • ")}
+                      </div>
+                      {item.rateLimits.nextResetAt ? (
+                        <div>Reset: {formatDateTime(item.rateLimits.nextResetAt)}</div>
+                      ) : null}
                     </div>
                   ) : null}
                 </div>

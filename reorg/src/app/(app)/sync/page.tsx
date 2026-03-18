@@ -105,6 +105,20 @@ type SyncRouteData = {
     message: string | null;
     retryLabel: string | null;
   };
+  rateLimits: {
+    fetchedAt: string;
+    methods: Array<{
+      name: string;
+      count: number;
+      limit: number;
+      remaining: number;
+      reset: string | null;
+      timeWindowSeconds: number | null;
+      status: "healthy" | "tight" | "exhausted";
+    }>;
+    exhaustedMethods: string[];
+    nextResetAt: string | null;
+  } | null;
   webhookState: IntegrationWebhookState;
   webhookHealth: {
     status: "ok" | "warning" | "info";
@@ -448,6 +462,11 @@ function formatSchedule(profile: SyncProfile) {
       : `Every ${profile.dayIntervalMinutes}m`;
 
   return `${daytimeLabel} from ${profile.dayStartHour}:00-${profile.dayEndHour}:00, ${overnightLabel}`;
+}
+
+function formatRateLimitRemaining(remaining: number, limit: number) {
+  if (limit <= 0) return "Unknown";
+  return `${remaining.toLocaleString()} / ${limit.toLocaleString()}`;
 }
 
 function usesWebhookWakeup(profile: SyncProfile) {
@@ -1128,6 +1147,7 @@ export default function SyncPage() {
           const syncProfile = meta?.syncProfile ?? null;
           const syncState = meta?.syncState ?? null;
           const cooldown = meta?.cooldown ?? null;
+          const rateLimits = meta?.rateLimits ?? null;
           const webhookState = meta?.webhookState ?? null;
           const webhookHealth = meta?.webhookHealth ?? null;
           const isSyncing = storeSync === "syncing";
@@ -1345,6 +1365,48 @@ export default function SyncPage() {
                   {cooldown?.message ? (
                     <div className="mt-1 break-words text-[11px] text-amber-400/90">
                       Last eBay response: {cooldown.message}
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+
+              {rateLimits ? (
+                <div className="mb-4 rounded-md border border-border bg-muted/30 px-3 py-3 text-xs text-muted-foreground">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="font-semibold text-foreground/90">eBay API usage</div>
+                    <div>
+                      Checked {formatDateTime(rateLimits.fetchedAt)}
+                    </div>
+                  </div>
+                  <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                    {rateLimits.methods.map((method) => (
+                      <div
+                        key={method.name}
+                        className={cn(
+                          "rounded border px-2 py-2",
+                          method.status === "exhausted"
+                            ? "border-red-500/30 bg-red-500/10 text-red-300"
+                            : method.status === "tight"
+                              ? "border-amber-500/30 bg-amber-500/10 text-amber-300"
+                              : "border-emerald-500/30 bg-emerald-500/10 text-emerald-300",
+                        )}
+                      >
+                        <div className="font-semibold">{method.name}</div>
+                        <div className="mt-1 text-[11px]">
+                          Remaining: {formatRateLimitRemaining(method.remaining, method.limit)}
+                        </div>
+                        <div className="mt-1 text-[11px]">
+                          Used: {method.count.toLocaleString()}
+                        </div>
+                        <div className="mt-1 text-[11px]">
+                          Reset: {formatDateTime(method.reset)}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  {rateLimits.nextResetAt ? (
+                    <div className="mt-2 text-[11px]">
+                      Next known Trading API reset: {formatDateTime(rateLimits.nextResetAt)}
                     </div>
                   ) : null}
                 </div>

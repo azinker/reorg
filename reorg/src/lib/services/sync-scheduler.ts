@@ -10,6 +10,10 @@ import {
   getCurrentSyncIntervalMinutes,
   getEbayRateLimitCooldownUntil,
 } from "@/lib/services/ebay-rate-limit";
+import {
+  getEbayCooldownUntilFromSnapshot,
+  getEbayTradingRateLimitSnapshotForIntegration,
+} from "@/lib/services/ebay-analytics";
 
 export interface SchedulerPlanItem {
   integrationId: string;
@@ -74,6 +78,20 @@ export async function planScheduledSyncs(now = new Date()) {
   }
 
   const runningIds = new Set(activeRunningJobs.map((job) => job.integrationId));
+  const ebaySnapshots = new Map<string, Awaited<ReturnType<typeof getEbayTradingRateLimitSnapshotForIntegration>>>();
+  await Promise.all(
+    integrations.map(async (integration) => {
+      if (integration.platform !== "TPP_EBAY" && integration.platform !== "TT_EBAY") {
+        return;
+      }
+      try {
+        const snapshot = await getEbayTradingRateLimitSnapshotForIntegration(integration);
+        ebaySnapshots.set(integration.id, snapshot);
+      } catch (error) {
+        console.error(`[sync-scheduler] ${integration.platform} analytics lookup failed`, error);
+      }
+    }),
+  );
 
   const items: SchedulerPlanItem[] = integrations.map((integration) => {
     const config = getIntegrationConfig(integration);
@@ -148,7 +166,12 @@ export async function planScheduledSyncs(now = new Date()) {
       };
     }
 
-    const rateLimitCooldownUntil = getEbayRateLimitCooldownUntil(
+    const liveRateLimitCooldownUntil = getEbayCooldownUntilFromSnapshot(
+      ebaySnapshots.get(integration.id) ?? null,
+      config.syncState.lastRateLimitMessage,
+      now,
+    );
+    const rateLimitCooldownUntil = liveRateLimitCooldownUntil ?? getEbayRateLimitCooldownUntil(
       integration.platform,
       config,
       now,
@@ -168,7 +191,9 @@ export async function planScheduledSyncs(now = new Date()) {
         lastScheduledSyncAt: config.syncState.lastScheduledSyncAt,
         nextDueAt: rateLimitCooldownUntil.toISOString(),
         minutesUntilDue: getMinutesUntilDue(now, rateLimitCooldownUntil),
-        reason: "Cooling down after an eBay API usage-limit response before the next retry.",
+        reason: liveRateLimitCooldownUntil
+          ? "Waiting for the eBay Trading API reset window based on live Analytics API usage data."
+          : "Cooling down after an eBay API usage-limit response before the next retry.",
       };
     }
 

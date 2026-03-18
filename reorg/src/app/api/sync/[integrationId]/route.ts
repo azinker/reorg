@@ -10,6 +10,10 @@ import {
   getEbayRateLimitCooldownUntil,
   isEbayPlatform,
 } from "@/lib/services/ebay-rate-limit";
+import {
+  getEbayCooldownUntilFromSnapshot,
+  getEbayTradingRateLimitSnapshotForIntegration,
+} from "@/lib/services/ebay-analytics";
 
 const postSchema = z
   .object({
@@ -61,11 +65,20 @@ export async function POST(
     }
 
     const config = getIntegrationConfig(integration);
-    const cooldownUntil = getEbayRateLimitCooldownUntil(
+    const rateLimits = isEbayPlatform(integration.platform)
+      ? await getEbayTradingRateLimitSnapshotForIntegration(integration).catch(() => null)
+      : null;
+    const cooldownUntil =
+      getEbayCooldownUntilFromSnapshot(
+        rateLimits,
+        config.syncState.lastRateLimitMessage,
+        new Date(),
+      ) ??
+      getEbayRateLimitCooldownUntil(
       integration.platform,
       config,
       new Date(),
-    );
+      );
     if (cooldownUntil && isEbayPlatform(integration.platform)) {
       const retryAtLabel = formatCooldownRetryAt(cooldownUntil) ?? "the next retry window";
       const error =
@@ -83,6 +96,7 @@ export async function POST(
             status: "COOLDOWN",
             cooldownUntil: cooldownUntil.toISOString(),
             cooldownMessage: config.syncState.lastRateLimitMessage,
+            rateLimits,
           },
         },
         {
@@ -144,11 +158,20 @@ export async function GET(
     });
 
     const config = getIntegrationConfig(integration);
-    const cooldownUntil = getEbayRateLimitCooldownUntil(
+    const rateLimits = isEbayPlatform(integration.platform)
+      ? await getEbayTradingRateLimitSnapshotForIntegration(integration).catch(() => null)
+      : null;
+    const cooldownUntil =
+      getEbayCooldownUntilFromSnapshot(
+        rateLimits,
+        config.syncState.lastRateLimitMessage,
+        new Date(),
+      ) ??
+      getEbayRateLimitCooldownUntil(
       integration.platform,
       config,
       new Date(),
-    );
+      );
 
     return NextResponse.json({
       data: {
@@ -166,6 +189,7 @@ export async function GET(
           message: config.syncState.lastRateLimitMessage,
           retryLabel: formatCooldownRetryAt(cooldownUntil),
         },
+        rateLimits,
         webhookHealth: assessIntegrationWebhookHealth(integration),
         lastJob: lastJob
           ? {

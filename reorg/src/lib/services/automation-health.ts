@@ -341,11 +341,14 @@ export async function buildAutomationHealthSnapshot(
       const storedConfig = getIntegrationConfig(integration);
       const sync = getSyncHealthStatus(item, lastSyncAt, now);
       const recentFailure = latestFailedJobByIntegration.get(integration.id);
-      const rateLimitCooldownUntil = getEbayRateLimitCooldownUntil(
-        integration.platform,
-        storedConfig,
-        now,
-      );
+      const rateLimitCooldownUntil =
+        item.reason.toLowerCase().includes("ebay") && item.nextDueAt
+          ? new Date(item.nextDueAt)
+          : getEbayRateLimitCooldownUntil(
+              integration.platform,
+              storedConfig,
+              now,
+            );
       const failedAfterLastSuccess =
         recentFailure &&
         (!lastSyncAt || recentFailure.failedAt.getTime() > lastSyncAt.getTime());
