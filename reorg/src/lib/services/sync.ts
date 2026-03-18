@@ -81,6 +81,15 @@ export async function runSync(
       totalCreated += upsertResult.created;
       totalUpdated += upsertResult.updated;
       totalUnmatched += matchResult.stats.unmatched;
+
+      await db.syncJob.update({
+        where: { id: syncJob.id },
+        data: {
+          itemsProcessed: totalProcessed,
+          itemsCreated: totalCreated,
+          itemsUpdated: totalUpdated,
+        },
+      });
     }
 
     const completedAt = new Date();

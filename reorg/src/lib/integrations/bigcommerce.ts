@@ -19,6 +19,7 @@ export class BigCommerceAdapter implements MarketplaceAdapter {
   platform: Platform = "BIGCOMMERCE";
   label = "BigCommerce";
   private static readonly SYNC_PAGE_SIZE = 25;
+  private static readonly REQUEST_TIMEOUT_MS = 30_000;
   private config: BigCommerceConfig;
   private baseUrl: string;
 
@@ -32,16 +33,34 @@ export class BigCommerceAdapter implements MarketplaceAdapter {
     options: RequestInit = {}
   ): Promise<Response> {
     const url = `${this.baseUrl}${endpoint}`;
+    const controller = new AbortController();
+    const timeout = setTimeout(
+      () => controller.abort(),
+      BigCommerceAdapter.REQUEST_TIMEOUT_MS
+    );
 
-    const response = await fetch(url, {
-      ...options,
-      headers: {
-        "X-Auth-Token": this.config.accessToken,
-        "Content-Type": "application/json",
-        Accept: "application/json",
-        ...options.headers,
-      },
-    });
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        ...options,
+        signal: controller.signal,
+        headers: {
+          "X-Auth-Token": this.config.accessToken,
+          "Content-Type": "application/json",
+          Accept: "application/json",
+          ...options.headers,
+        },
+      });
+    } catch (error) {
+      if (error instanceof Error && error.name === "AbortError") {
+        throw new Error(
+          `BigCommerce request timed out after ${BigCommerceAdapter.REQUEST_TIMEOUT_MS}ms`
+        );
+      }
+      throw error;
+    } finally {
+      clearTimeout(timeout);
+    }
 
     if (response.status === 429) {
       const retryAfter = parseInt(
