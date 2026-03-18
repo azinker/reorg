@@ -18,6 +18,14 @@ function normalizeErrorMessage(error: unknown): string {
     const sku = typeof record.sku === "string" ? record.sku : null;
     const message = typeof record.message === "string" ? record.message : null;
 
+    if (message === "GetItem returned no payload for this changed listing.") {
+      return "eBay returned no usable GetItem payload for this changed listing.";
+    }
+    if (message === "GetItem returned no item payload for this changed listing.") {
+      return "eBay returned no usable GetItem payload for this changed listing.";
+    }
+
+    if (sku === "_global" && message) return message;
     if (sku && message) return `${sku}: ${message}`;
     if (message) return message;
   }

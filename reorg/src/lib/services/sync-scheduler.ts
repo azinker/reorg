@@ -204,6 +204,23 @@ export async function planScheduledSyncs(now = new Date()) {
     };
   });
 
+  const ebayDueIndexes = items
+    .map((item, index) => ({ item, index }))
+    .filter(({ item }) => item.due && (item.platform === "TPP_EBAY" || item.platform === "TT_EBAY"))
+    .sort((a, b) => a.item.label.localeCompare(b.item.label));
+
+  for (let i = 1; i < ebayDueIndexes.length; i += 1) {
+    const { index } = ebayDueIndexes[i];
+    const delayedUntil = new Date(now.getTime() + 15 * 60 * 1000);
+    items[index] = {
+      ...items[index],
+      due: false,
+      nextDueAt: delayedUntil.toISOString(),
+      minutesUntilDue: 15,
+      reason: "Delayed to the next scheduler tick to avoid eBay Trading API rate-limit spikes.",
+    };
+  }
+
   return items;
 }
 

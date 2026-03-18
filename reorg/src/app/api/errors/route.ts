@@ -117,11 +117,18 @@ function summarizeSyncErrors(rawErrors: unknown[]): string[] {
   }
 
   return [...grouped.entries()].map(([message, meta]) => {
+    const normalizedMessage =
+      message === "GetItem returned no payload for this changed listing."
+        ? "eBay returned no usable GetItem payload for these changed listings."
+        : message === "GetItem returned no item payload for this changed listing."
+          ? "eBay returned no usable GetItem payload for these changed listings."
+          : message;
+
     if (meta.count === 1) {
-      if (meta.skus.length === 1 && !message.includes(meta.skus[0])) {
-        return `${meta.skus[0]}: ${message}`;
+      if (meta.skus.length === 1 && !normalizedMessage.includes(meta.skus[0])) {
+        return `${meta.skus[0]}: ${normalizedMessage}`;
       }
-      return message;
+      return normalizedMessage;
     }
 
     const skuSuffix =
@@ -129,7 +136,7 @@ function summarizeSyncErrors(rawErrors: unknown[]): string[] {
         ? ` Example item IDs: ${meta.skus.join(", ")}${meta.count > meta.skus.length ? ", ..." : ""}.`
         : "";
 
-    return `${message} (${meta.count} listings).${skuSuffix}`;
+    return `${normalizedMessage} (${meta.count} listings).${skuSuffix}`;
   });
 }
 
@@ -167,6 +174,13 @@ export async function GET() {
 
     const rateKeys = new Set(shippingRates.map((rate) => rate.weightKey.trim().toUpperCase()));
     const entries: ErrorEntry[] = [];
+    const latestCleanCompletedByIntegration = new Map<string, Date>();
+    for (const job of syncJobs) {
+      const rawErrors = Array.isArray(job.errors) ? job.errors : [];
+      if (job.status !== "COMPLETED" || rawErrors.length > 0 || !job.completedAt) continue;
+      if (latestCleanCompletedByIntegration.has(job.integrationId)) continue;
+      latestCleanCompletedByIntegration.set(job.integrationId, job.completedAt);
+    }
 
     for (const row of masterRows) {
       const missing: string[] = [];
@@ -246,6 +260,13 @@ export async function GET() {
       }
 
       if (rawErrors.length > 0) {
+        const recoveredByLaterCleanSync =
+          !!job.completedAt &&
+          !!latestCleanCompletedByIntegration.get(job.integrationId) &&
+          latestCleanCompletedByIntegration.get(job.integrationId)!.getTime() >
+            job.completedAt.getTime();
+        if (recoveredByLaterCleanSync) continue;
+
         entries.push({
           id: `sync-warning-${job.id}`,
           severity: "info",

@@ -1,5 +1,6 @@
 import { db } from "@/lib/db";
 import { planScheduledSyncs, type SchedulerPlanItem } from "@/lib/services/sync-scheduler";
+import type { Prisma } from "@prisma/client";
 
 export type MonitorHealthStatus = "healthy" | "delayed" | "attention";
 export type WebhookMonitorStatus = "ok" | "quiet" | "missing" | "n/a";
@@ -72,6 +73,23 @@ function getPlatformDisplayName(platform: string) {
   if (platform === "BIGCOMMERCE") return "BigCommerce";
   if (platform === "TPP_EBAY" || platform === "TT_EBAY") return "eBay";
   return platform;
+}
+
+function summarizeSyncJobError(errors: Prisma.JsonValue | null): string | null {
+  if (!Array.isArray(errors) || errors.length === 0) return null;
+  const first = errors[0];
+  if (
+    first &&
+    typeof first === "object" &&
+    !Array.isArray(first) &&
+    "message" in first &&
+    typeof (first as { message?: unknown }).message === "string"
+  ) {
+    return (first as { message: string }).message;
+  }
+
+  if (typeof first === "string") return first;
+  return null;
 }
 
 function getWebhookTroubleshootingAction(platform: string) {
@@ -239,26 +257,39 @@ export async function buildAutomationHealthSnapshot(
   plan: SchedulerPlanItem[],
   now = new Date(),
 ): Promise<AutomationHealthSnapshot> {
-  const integrations = await db.integration.findMany({
-    where: { enabled: true },
-    orderBy: { platform: "asc" },
-    select: {
-      id: true,
-      label: true,
-      platform: true,
-      lastSyncAt: true,
-    },
-  });
-
-  const recentWebhookEntries = await db.auditLog.findMany({
-    where: { action: "webhook_received" },
-    orderBy: { createdAt: "desc" },
-    take: 5000,
-    select: {
-      createdAt: true,
-      details: true,
-    },
-  });
+  const [integrations, recentWebhookEntries, recentFailedJobs] = await Promise.all([
+    db.integration.findMany({
+      where: { enabled: true },
+      orderBy: { platform: "asc" },
+      select: {
+        id: true,
+        label: true,
+        platform: true,
+        lastSyncAt: true,
+      },
+    }),
+    db.auditLog.findMany({
+      where: { action: "webhook_received" },
+      orderBy: { createdAt: "desc" },
+      take: 5000,
+      select: {
+        createdAt: true,
+        details: true,
+      },
+    }),
+    db.syncJob.findMany({
+      where: { status: "FAILED" },
+      orderBy: { createdAt: "desc" },
+      take: 200,
+      select: {
+        integrationId: true,
+        completedAt: true,
+        startedAt: true,
+        createdAt: true,
+        errors: true,
+      },
+    }),
+  ]);
 
   const lastWebhookByPlatform = new Map<string, Date>();
   for (const entry of recentWebhookEntries) {
@@ -269,6 +300,17 @@ export async function buildAutomationHealthSnapshot(
   }
 
   const integrationMap = new Map(integrations.map((integration) => [integration.id, integration]));
+  const latestFailedJobByIntegration = new Map<
+    string,
+    { failedAt: Date; message: string | null }
+  >();
+  for (const job of recentFailedJobs) {
+    if (latestFailedJobByIntegration.has(job.integrationId)) continue;
+    latestFailedJobByIntegration.set(job.integrationId, {
+      failedAt: job.completedAt ?? job.startedAt ?? job.createdAt,
+      message: summarizeSyncJobError(job.errors),
+    });
+  }
   const statusRank: Record<MonitorHealthStatus, number> = {
     attention: 0,
     delayed: 1,
@@ -282,6 +324,20 @@ export async function buildAutomationHealthSnapshot(
       const lastSyncAt = integration.lastSyncAt;
       const lastWebhookAt = lastWebhookByPlatform.get(integration.platform) ?? null;
       const sync = getSyncHealthStatus(item, lastSyncAt, now);
+      const recentFailure = latestFailedJobByIntegration.get(integration.id);
+      const failedAfterLastSuccess =
+        recentFailure &&
+        (!lastSyncAt || recentFailure.failedAt.getTime() > lastSyncAt.getTime());
+      const syncMonitor = failedAfterLastSuccess
+        ? {
+            ...sync,
+            status: "attention" as const,
+            syncStatus: "stale" as const,
+            syncMessage: recentFailure.message
+              ? `Latest pull failed: ${recentFailure.message}`
+              : "Latest pull failed before this store recorded a newer successful update.",
+          }
+        : sync;
       const webhook = getWebhookHealthStatus(
         integration.platform,
         item.intervalMinutes,
@@ -290,17 +346,17 @@ export async function buildAutomationHealthSnapshot(
       );
       const combinedStatus =
         webhook.webhookStatus === "missing"
-          ? sync.status === "healthy"
+          ? syncMonitor.status === "healthy"
             ? "delayed"
             : "attention"
-          : sync.status;
+          : syncMonitor.status;
       const recommendedAction = getRecommendedAction({
         label: integration.label,
         platform: integration.platform,
         due: item.due,
         running: item.running,
-        syncStatus: sync.syncStatus,
-        syncMonitorStatus: sync.status,
+        syncStatus: syncMonitor.syncStatus,
+        syncMonitorStatus: syncMonitor.status,
         webhookExpected: webhook.webhookExpected,
         webhookStatus: webhook.webhookStatus,
       });
@@ -309,11 +365,11 @@ export async function buildAutomationHealthSnapshot(
         integrationId: integration.id,
         label: integration.label,
         platform: integration.platform,
-        status: sync.status,
-        syncStatus: sync.syncStatus,
-        syncMessage: sync.syncMessage,
+        status: syncMonitor.status,
+        syncStatus: syncMonitor.syncStatus,
+        syncMessage: syncMonitor.syncMessage,
         lastSyncAt: lastSyncAt?.toISOString() ?? null,
-        minutesSinceSync: sync.minutesSinceSync,
+        minutesSinceSync: syncMonitor.minutesSinceSync,
         intervalMinutes: item.intervalMinutes,
         due: item.due,
         running: item.running,

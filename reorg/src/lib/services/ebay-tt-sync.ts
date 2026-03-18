@@ -17,7 +17,12 @@ const MARKETING_API_BASE = "https://api.ebay.com/sell/marketing/v1";
 const SITE_ID = "0";
 const COMPAT_LEVEL = "1199";
 const ADS_PAGE_SIZE = 500;
-const GETITEM_CONCURRENCY = 5;
+const GETITEM_CONCURRENCY = 3;
+const GETITEM_BATCH_DELAY_MS = 250;
+const EBAY_USAGE_LIMIT_ERROR_CODE = "518";
+const EBAY_INVALID_TOKEN_ERROR_CODE = "21916984";
+const GET_SELLER_EVENTS_RETRY_DELAYS_MS = [3_000, 8_000];
+const GET_ITEM_RETRY_DELAYS_MS = [1_000, 3_000];
 
 const parser = new XMLParser({
   ignoreAttributes: true,
@@ -79,6 +84,30 @@ class EbayTradingApiError extends Error {
 
 function getString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value : undefined;
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function clearAccessTokenCache(config: EbayConfig) {
+  config.accessToken = undefined;
+  config.accessTokenExpiresAt = undefined;
+}
+
+function normalizeTradingErrors(rawErrors: unknown): Array<Record<string, unknown>> {
+  if (Array.isArray(rawErrors)) {
+    return rawErrors.filter(
+      (entry): entry is Record<string, unknown> =>
+        !!entry && typeof entry === "object" && !Array.isArray(entry),
+    );
+  }
+
+  if (rawErrors && typeof rawErrors === "object") {
+    return [rawErrors as Record<string, unknown>];
+  }
+
+  return [];
 }
 
 export async function runEbayTtSync(
@@ -149,6 +178,7 @@ export async function runEbayTtSync(
         integrationConfig.syncState.lastFullSyncAt ??
         integration.lastSyncAt?.toISOString() ??
         null;
+      let shouldAdvanceCursor = true;
 
       const incrementalWindow = await fetchIncrementalItemIds(
         integration.id,
@@ -198,6 +228,7 @@ export async function runEbayTtSync(
               if (isEbayGetItemUsageLimitError(error)) {
                 haltedIncrementalReason =
                   "eBay GetItem usage limit was reached during this incremental refresh. Processed listings were saved, and the remaining changed listings will retry on the next run.";
+                shouldAdvanceCursor = false;
                 progress.errors.push({
                   sku: "_global",
                   message: haltedIncrementalReason,
@@ -216,6 +247,23 @@ export async function runEbayTtSync(
           if (haltedIncrementalReason) {
             break;
           }
+          if (index + GETITEM_CONCURRENCY < incrementalWindow.itemIds.length) {
+            await sleep(GETITEM_BATCH_DELAY_MS);
+          }
+        }
+
+        if (
+          incrementalWindow.itemIds.length > 0 &&
+          progress.itemsProcessed === 0 &&
+          progress.errors.length > 0
+        ) {
+          throw new Error(
+            "Incremental refresh could not retrieve any changed eBay listings. Review the captured eBay error details and retry after the API limit cools down.",
+          );
+        }
+
+        if (!shouldAdvanceCursor) {
+          completionCursor = lastCursorValue ?? completionCursor;
         }
       }
     }
@@ -349,7 +397,7 @@ async function runFullSync(
 
     const items = arr(obj(resp, "ItemArray"), "Item");
     const totalPages = parseInt(
-      String(resp.PaginationResult?.TotalNumberOfPages ?? "1"),
+      str(obj(resp, "PaginationResult"), "TotalNumberOfPages") ?? "1",
       10,
     );
     hasMore = page < totalPages;
@@ -556,8 +604,10 @@ async function updateSyncJobProgress(syncJobId: string, progress: SyncProgress) 
 async function getAccessToken(
   integrationId: string,
   config: EbayConfig,
+  forceRefresh = false,
 ): Promise<string> {
   if (
+    !forceRefresh &&
     config.accessToken &&
     config.accessTokenExpiresAt &&
     config.accessTokenExpiresAt > Date.now() + 60_000
@@ -627,7 +677,6 @@ async function fetchIncrementalItemIds(
   let hasMore = true;
 
   while (hasMore) {
-    const accessToken = await getAccessToken(integrationId, config);
     const body = `<?xml version="1.0" encoding="utf-8"?>
 <GetSellerEventsRequest xmlns="urn:ebay:apis:eBLBaseComponents">
   <ModTimeFrom>${windowStartedAt.toISOString()}</ModTimeFrom>
@@ -637,43 +686,70 @@ async function fetchIncrementalItemIds(
     <PageNumber>${page}</PageNumber>
   </Pagination>
 </GetSellerEventsRequest>`;
+    let forceRefresh = false;
+    let retryAttempt = 0;
+    let resp: Record<string, unknown> | null = null;
 
-    const response = await fetch(TRADING_API, {
-      method: "POST",
-      headers: {
-        "X-EBAY-API-IAF-TOKEN": accessToken,
-        "X-EBAY-API-SITEID": SITE_ID,
-        "X-EBAY-API-COMPATIBILITY-LEVEL": COMPAT_LEVEL,
-        "X-EBAY-API-CALL-NAME": "GetSellerEvents",
-        "Content-Type": "text/xml",
-      },
-      body,
-    });
+    while (!resp) {
+      const accessToken = await getAccessToken(integrationId, config, forceRefresh);
+      const response = await fetch(TRADING_API, {
+        method: "POST",
+        headers: {
+          "X-EBAY-API-IAF-TOKEN": accessToken,
+          "X-EBAY-API-SITEID": SITE_ID,
+          "X-EBAY-API-COMPATIBILITY-LEVEL": COMPAT_LEVEL,
+          "X-EBAY-API-CALL-NAME": "GetSellerEvents",
+          "Content-Type": "text/xml",
+        },
+        body,
+      });
 
-    const xml = await response.text();
-    if (!response.ok) {
-      throw new Error(`GetSellerEvents HTTP ${response.status}: ${xml.slice(0, 500)}`);
-    }
+      const xml = await response.text();
+      if (!response.ok) {
+        throw new Error(`GetSellerEvents HTTP ${response.status}: ${xml.slice(0, 500)}`);
+      }
 
-    const parsed = parser.parse(xml);
-    const resp = parsed?.GetSellerEventsResponse;
-    if (!resp) {
-      throw new Error(
-        `Missing GetSellerEventsResponse. Keys: ${Object.keys(parsed ?? {}).join(", ")}`,
-      );
-    }
+      const parsed = parser.parse(xml);
+      const nextResponse = parsed?.GetSellerEventsResponse;
+      if (!nextResponse) {
+        throw new Error(
+          `Missing GetSellerEventsResponse. Keys: ${Object.keys(parsed ?? {}).join(", ")}`,
+        );
+      }
 
-    const ack = resp.Ack;
-    if (ack === "Failure") {
-      const errors = Array.isArray(resp.Errors)
-        ? resp.Errors
-        : resp.Errors
-          ? [resp.Errors]
-          : [];
+      const ack = str(nextResponse, "Ack");
+      const errors = normalizeTradingErrors(nextResponse.Errors);
+      const errorCode = errors
+        .map((entry) => str(entry, "ErrorCode"))
+        .find(Boolean);
       const errorMessage = errors
-        .map((entry: Record<string, unknown>) => entry.LongMessage ?? entry.ShortMessage)
-        .join("; ");
-      throw new Error(`GetSellerEvents failed: ${errorMessage || "Unknown error"}`);
+        .map((entry) => str(entry, "LongMessage") ?? str(entry, "ShortMessage"))
+        .find(Boolean);
+
+      if (ack === "Failure") {
+        if (errorCode === EBAY_INVALID_TOKEN_ERROR_CODE && !forceRefresh) {
+          clearAccessTokenCache(config);
+          forceRefresh = true;
+          continue;
+        }
+
+        if (
+          errorCode === EBAY_USAGE_LIMIT_ERROR_CODE &&
+          retryAttempt < GET_SELLER_EVENTS_RETRY_DELAYS_MS.length
+        ) {
+          const delayMs = GET_SELLER_EVENTS_RETRY_DELAYS_MS[retryAttempt];
+          retryAttempt += 1;
+          await sleep(delayMs);
+          continue;
+        }
+
+        throw new EbayTradingApiError(
+          `GetSellerEvents failed: ${errorMessage || "Unknown error"}`,
+          errorCode,
+        );
+      }
+
+      resp = nextResponse as Record<string, unknown>;
     }
 
     const items = arr(obj(resp, "ItemArray"), "Item");
@@ -685,7 +761,7 @@ async function fetchIncrementalItemIds(
     }
 
     const totalPages = parseInt(
-      String(resp.PaginationResult?.TotalNumberOfPages ?? "1"),
+      str(obj(resp, "PaginationResult"), "TotalNumberOfPages") ?? "1",
       10,
     );
     hasMore = page < totalPages;
@@ -700,68 +776,83 @@ async function fetchFullItem(
   config: EbayConfig,
   itemId: string,
 ): Promise<unknown | null> {
-  const accessToken = await getAccessToken(integrationId, config);
   const body = `<?xml version="1.0" encoding="utf-8"?>
 <GetItemRequest xmlns="urn:ebay:apis:eBLBaseComponents">
   <ItemID>${itemId}</ItemID>
   <DetailLevel>ReturnAll</DetailLevel>
 </GetItemRequest>`;
+  let forceRefresh = false;
+  let retryAttempt = 0;
 
-  const response = await fetch(TRADING_API, {
-    method: "POST",
-    headers: {
-      "X-EBAY-API-IAF-TOKEN": accessToken,
-      "X-EBAY-API-SITEID": SITE_ID,
-      "X-EBAY-API-COMPATIBILITY-LEVEL": COMPAT_LEVEL,
-      "X-EBAY-API-CALL-NAME": "GetItem",
-      "Content-Type": "text/xml",
-    },
-    body,
-  });
+  while (true) {
+    const accessToken = await getAccessToken(integrationId, config, forceRefresh);
+    const response = await fetch(TRADING_API, {
+      method: "POST",
+      headers: {
+        "X-EBAY-API-IAF-TOKEN": accessToken,
+        "X-EBAY-API-SITEID": SITE_ID,
+        "X-EBAY-API-COMPATIBILITY-LEVEL": COMPAT_LEVEL,
+        "X-EBAY-API-CALL-NAME": "GetItem",
+        "Content-Type": "text/xml",
+      },
+      body,
+    });
 
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`GetItem failed for ${itemId}: ${response.status} ${text.slice(0, 300)}`);
-  }
+    const xml = await response.text();
+    if (!response.ok) {
+      throw new Error(`GetItem failed for ${itemId}: ${response.status} ${xml.slice(0, 300)}`);
+    }
 
-  const xml = await response.text();
-  const parsed = parser.parse(xml);
-  const getItemResponse = parsed?.GetItemResponse;
-  const ack = getItemResponse?.Ack;
-  const errors = Array.isArray(getItemResponse?.Errors)
-    ? getItemResponse.Errors
-    : getItemResponse?.Errors
-      ? [getItemResponse.Errors]
-      : [];
-
-  if (ack === "Failure" || (ack === "Warning" && !getItemResponse?.Item)) {
+    const parsed = parser.parse(xml);
+    const getItemResponse = parsed?.GetItemResponse;
+    const ack = str(getItemResponse, "Ack");
+    const errors = normalizeTradingErrors(getItemResponse?.Errors);
     const errorCode = errors
-      .map((entry: Record<string, unknown>) => str(entry, "ErrorCode"))
+      .map((entry) => str(entry, "ErrorCode"))
       .find(Boolean);
     const errorMessage =
       errors
-        .map((entry: Record<string, unknown>) => {
-          return (
-            str(entry, "LongMessage") ??
-            str(entry, "ShortMessage")
-          );
-        })
+        .map((entry) => str(entry, "LongMessage") ?? str(entry, "ShortMessage"))
         .find(Boolean) ??
       `GetItem returned no item payload for ${itemId}.`;
 
-    throw new EbayTradingApiError(
-      `GetItem failed for ${itemId}: ${errorMessage}`,
-      errorCode,
-    );
-  }
+    if (errorCode === EBAY_INVALID_TOKEN_ERROR_CODE && !forceRefresh) {
+      clearAccessTokenCache(config);
+      forceRefresh = true;
+      continue;
+    }
 
-  const itemRaw = getItemResponse?.Item;
-  const item = Array.isArray(itemRaw) ? itemRaw[0] : itemRaw;
-  return item ?? null;
+    if (
+      errorCode === EBAY_USAGE_LIMIT_ERROR_CODE &&
+      retryAttempt < GET_ITEM_RETRY_DELAYS_MS.length
+    ) {
+      const delayMs = GET_ITEM_RETRY_DELAYS_MS[retryAttempt];
+      retryAttempt += 1;
+      await sleep(delayMs);
+      continue;
+    }
+
+    if (ack === "Failure" || (ack === "Warning" && !getItemResponse?.Item)) {
+      throw new EbayTradingApiError(
+        `GetItem failed for ${itemId}: ${errorMessage}`,
+        errorCode,
+      );
+    }
+
+    const itemRaw = getItemResponse?.Item;
+    const item = Array.isArray(itemRaw) ? itemRaw[0] : itemRaw;
+    if (!item) {
+      throw new EbayTradingApiError(
+        `GetItem failed for ${itemId}: GetItem returned no item payload for this changed listing.`,
+      );
+    }
+
+    return item;
+  }
 }
 
 function isEbayGetItemUsageLimitError(error: unknown) {
-  return error instanceof EbayTradingApiError && error.code === "518";
+  return error instanceof EbayTradingApiError && error.code === EBAY_USAGE_LIMIT_ERROR_CODE;
 }
 
 async function fetchAndStorePromotedListingRates(
