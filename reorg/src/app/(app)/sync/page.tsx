@@ -11,6 +11,7 @@ import {
   ChevronDown,
   ChevronUp,
   AlertTriangle,
+  TimerReset,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -92,6 +93,28 @@ type SyncRouteData = {
 };
 
 type CompletionTone = "success" | "warning" | "error" | "info";
+
+type SchedulerStatus = {
+  enabled: boolean;
+  lastTickAt: string | null;
+  lastOutcome: "dry_run" | "completed" | "failed" | null;
+  lastDueCount: number;
+  lastDispatchedCount: number;
+  lastError: string | null;
+  runningCount: number;
+  recentJobs: Array<{
+    id: string;
+    platform: string;
+    label: string;
+    mode: string;
+    status: string;
+    itemsProcessed: number;
+    itemsCreated: number;
+    itemsUpdated: number;
+    startedAt: string | null;
+    completedAt: string | null;
+  }>;
+};
 
 function formatDateTime(value: string | null) {
   if (!value) return "Never";
@@ -328,6 +351,7 @@ function getCompletionSummary(
 export default function SyncPage() {
   const [integrations, setIntegrations] = useState<IntegrationStatus[]>([]);
   const [schedulerEnabled, setSchedulerEnabled] = useState(false);
+  const [schedulerStatus, setSchedulerStatus] = useState<SchedulerStatus | null>(null);
   const [syncing, setSyncing] = useState<Record<string, SyncPageState>>({});
   const [results, setResults] = useState<Record<string, string>>({});
   const [liveJobs, setLiveJobs] = useState<Record<string, SyncJobInfo | null>>({});
@@ -361,13 +385,26 @@ export default function SyncPage() {
     }
   }, []);
 
+  const fetchSchedulerStatus = useCallback(async () => {
+    try {
+      const res = await fetch("/api/scheduler/status", { cache: "no-store" });
+      const json = await res.json();
+      setSchedulerStatus((json.data ?? null) as SchedulerStatus | null);
+    } catch {
+      setSchedulerStatus(null);
+    }
+  }, []);
+
   useEffect(() => {
     fetchIntegrations();
     fetchSchedulerSetting();
+    fetchSchedulerStatus();
+    const schedulerTimer = setInterval(fetchSchedulerStatus, 30_000);
     return () => {
       Object.values(pollTimers.current).forEach(clearInterval);
+      clearInterval(schedulerTimer);
     };
-  }, [fetchIntegrations, fetchSchedulerSetting]);
+  }, [fetchIntegrations, fetchSchedulerSetting, fetchSchedulerStatus]);
 
   useEffect(() => {
     const timer = setInterval(() => setNowMs(Date.now()), 1000);
@@ -437,6 +474,7 @@ export default function SyncPage() {
             }
 
             fetchIntegrations();
+            fetchSchedulerStatus();
           }
         } catch {
           // ignore
@@ -445,7 +483,7 @@ export default function SyncPage() {
 
       pollTimers.current[apiPlatform] = timer;
     },
-    [fetchIntegrations, loadStoreStatus],
+    [fetchIntegrations, fetchSchedulerStatus, loadStoreStatus],
   );
 
   useEffect(() => {
@@ -534,6 +572,7 @@ export default function SyncPage() {
         setSyncing((prev) => ({ ...prev, [apiPlatform]: "done" }));
         setResults((prev) => ({ ...prev, [apiPlatform]: message }));
         fetchIntegrations();
+        fetchSchedulerStatus();
         await loadStoreStatus(apiPlatform);
       } catch (error) {
         setSyncing((prev) => ({ ...prev, [apiPlatform]: "error" }));
@@ -543,7 +582,7 @@ export default function SyncPage() {
         }));
       }
     },
-    [fetchIntegrations, loadStoreStatus, pollSyncStatus],
+    [fetchIntegrations, fetchSchedulerStatus, loadStoreStatus, pollSyncStatus],
   );
 
   const syncAll = useCallback(async () => {
@@ -585,6 +624,88 @@ export default function SyncPage() {
           )}
           {syncAllRunning ? "Syncing All..." : "Sync All"}
         </button>
+      </div>
+
+      <div className="mb-8 rounded-lg border border-border bg-card p-4">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <div className="flex items-center gap-2">
+              <TimerReset className={cn(
+                "h-4 w-4",
+                schedulerStatus?.runningCount ? "animate-spin text-blue-400" : "text-muted-foreground"
+              )} />
+              <h2 className="text-sm font-semibold text-foreground">Auto Pull Monitor</h2>
+              <span className={cn(
+                "inline-flex items-center rounded border px-2 py-0.5 text-[11px] font-medium",
+                schedulerEnabled
+                  ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-400"
+                  : "border-amber-500/30 bg-amber-500/10 text-amber-400"
+              )}>
+                {schedulerEnabled ? "Scheduler On" : "Scheduler Off"}
+              </span>
+            </div>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Last scheduler tick: {formatDateTime(schedulerStatus?.lastTickAt ?? null)}
+              {schedulerStatus?.lastOutcome ? ` | Outcome: ${schedulerStatus.lastOutcome}` : ""}
+            </p>
+          </div>
+          <div className="grid min-w-[260px] grid-cols-2 gap-2 text-xs sm:grid-cols-4">
+            <div className="rounded border border-border bg-muted/40 px-3 py-2">
+              <div className="text-muted-foreground">Due</div>
+              <div className="mt-1 text-sm font-semibold tabular-nums text-foreground">
+                {schedulerStatus?.lastDueCount ?? 0}
+              </div>
+            </div>
+            <div className="rounded border border-border bg-muted/40 px-3 py-2">
+              <div className="text-muted-foreground">Dispatched</div>
+              <div className="mt-1 text-sm font-semibold tabular-nums text-foreground">
+                {schedulerStatus?.lastDispatchedCount ?? 0}
+              </div>
+            </div>
+            <div className="rounded border border-border bg-muted/40 px-3 py-2">
+              <div className="text-muted-foreground">Running</div>
+              <div className="mt-1 text-sm font-semibold tabular-nums text-foreground">
+                {schedulerStatus?.runningCount ?? 0}
+              </div>
+            </div>
+            <div className="rounded border border-border bg-muted/40 px-3 py-2">
+              <div className="text-muted-foreground">Mode</div>
+              <div className="mt-1 text-sm font-semibold text-foreground">
+                {schedulerStatus?.lastOutcome ?? "—"}
+              </div>
+            </div>
+          </div>
+        </div>
+        {schedulerStatus?.lastError && (
+          <div className="mt-3 rounded border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-400">
+            Last scheduler error: {schedulerStatus.lastError}
+          </div>
+        )}
+        {!!schedulerStatus?.recentJobs?.length && (
+          <div className="mt-4 grid gap-2 md:grid-cols-2 xl:grid-cols-4">
+            {schedulerStatus.recentJobs.slice(0, 4).map((job) => (
+              <div key={job.id} className="rounded border border-border bg-muted/30 px-3 py-2 text-xs">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-semibold text-foreground">{job.label}</span>
+                  <span className={cn(
+                    "rounded border px-1.5 py-0.5 text-[10px] font-medium uppercase",
+                    job.mode === "incremental"
+                      ? "border-blue-500/30 bg-blue-500/10 text-blue-400"
+                      : "border-amber-500/30 bg-amber-500/10 text-amber-400"
+                  )}>
+                    {job.mode}
+                  </span>
+                </div>
+                <div className="mt-1 text-muted-foreground">
+                  {job.status} • {job.itemsProcessed.toLocaleString()} processed
+                </div>
+                <div className="mt-1 text-muted-foreground">
+                  Completed: {formatDateTime(job.completedAt)}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2">
