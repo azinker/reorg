@@ -67,6 +67,16 @@ interface MarketingAd {
   bidPercentage?: string;
 }
 
+class EbayTradingApiError extends Error {
+  constructor(
+    message: string,
+    readonly code?: string,
+  ) {
+    super(message);
+    this.name = "EbayTradingApiError";
+  }
+}
+
 function getString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value : undefined;
 }
@@ -150,6 +160,7 @@ export async function runEbayTtSync(
         effectiveMode = "full";
       } else {
         completionCursor = incrementalWindow.windowEndedAt.toISOString();
+        let haltedIncrementalReason: string | null = null;
 
         for (
           let index = 0;
@@ -177,13 +188,23 @@ export async function runEbayTtSync(
               if (!fullItem) {
                 progress.errors.push({
                   sku: itemId,
-                  message: "GetItem returned no payload for this changed listing.",
+                  message: "GetItem returned no item payload for this changed listing.",
                 });
                 continue;
               }
 
               await applyTtItem(fullItem, integration.id, progress);
             } catch (error) {
+              if (isEbayGetItemUsageLimitError(error)) {
+                haltedIncrementalReason =
+                  "eBay GetItem usage limit was reached during this incremental refresh. Processed listings were saved, and the remaining changed listings will retry on the next run.";
+                progress.errors.push({
+                  sku: "_global",
+                  message: haltedIncrementalReason,
+                });
+                break;
+              }
+
               progress.errors.push({
                 sku: itemId,
                 message: error instanceof Error ? error.message : "Unknown error",
@@ -192,6 +213,9 @@ export async function runEbayTtSync(
           }
 
           await updateSyncJobProgress(syncJob.id, progress);
+          if (haltedIncrementalReason) {
+            break;
+          }
         }
       }
     }
@@ -702,9 +726,42 @@ async function fetchFullItem(
 
   const xml = await response.text();
   const parsed = parser.parse(xml);
-  const itemRaw = parsed?.GetItemResponse?.Item;
+  const getItemResponse = parsed?.GetItemResponse;
+  const ack = getItemResponse?.Ack;
+  const errors = Array.isArray(getItemResponse?.Errors)
+    ? getItemResponse.Errors
+    : getItemResponse?.Errors
+      ? [getItemResponse.Errors]
+      : [];
+
+  if (ack === "Failure" || (ack === "Warning" && !getItemResponse?.Item)) {
+    const errorCode = errors
+      .map((entry: Record<string, unknown>) => str(entry, "ErrorCode"))
+      .find(Boolean);
+    const errorMessage =
+      errors
+        .map((entry: Record<string, unknown>) => {
+          return (
+            str(entry, "LongMessage") ??
+            str(entry, "ShortMessage")
+          );
+        })
+        .find(Boolean) ??
+      `GetItem returned no item payload for ${itemId}.`;
+
+    throw new EbayTradingApiError(
+      `GetItem failed for ${itemId}: ${errorMessage}`,
+      errorCode,
+    );
+  }
+
+  const itemRaw = getItemResponse?.Item;
   const item = Array.isArray(itemRaw) ? itemRaw[0] : itemRaw;
   return item ?? null;
+}
+
+function isEbayGetItemUsageLimitError(error: unknown) {
+  return error instanceof EbayTradingApiError && error.code === "518";
 }
 
 async function fetchAndStorePromotedListingRates(

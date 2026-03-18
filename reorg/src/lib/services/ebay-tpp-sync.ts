@@ -63,6 +63,16 @@ interface MarketingAd {
   bidPercentage?: string;
 }
 
+class EbayTradingApiError extends Error {
+  constructor(
+    message: string,
+    readonly code?: string,
+  ) {
+    super(message);
+    this.name = "EbayTradingApiError";
+  }
+}
+
 type UpsertResult = "created" | "updated" | "variation_parent";
 
 export async function runEbayTppSync(
@@ -135,6 +145,7 @@ export async function runEbayTppSync(
         effectiveMode = "full";
       } else {
         completionCursor = incrementalWindow.windowEndedAt.toISOString();
+        let haltedIncrementalReason: string | null = null;
 
         for (
           let index = 0;
@@ -173,6 +184,16 @@ export async function runEbayTppSync(
               else if (result === "updated") progress.itemsUpdated++;
               if (result === "variation_parent") progress.variationsFound++;
             } catch (err) {
+              if (isEbayGetItemUsageLimitError(err)) {
+                haltedIncrementalReason =
+                  "eBay GetItem usage limit was reached during this incremental refresh. Processed listings were saved, and the remaining changed listings will retry on the next run.";
+                progress.errors.push({
+                  sku: "_global",
+                  message: haltedIncrementalReason,
+                });
+                break;
+              }
+
               progress.errors.push({
                 sku: itemId,
                 message: err instanceof Error ? err.message : "Unknown error",
@@ -181,6 +202,9 @@ export async function runEbayTppSync(
           }
 
           await updateSyncJobProgress(syncJob.id, progress);
+          if (haltedIncrementalReason) {
+            break;
+          }
         }
       }
     }
@@ -527,9 +551,42 @@ async function fetchFullItem(
 
   const xml = await response.text();
   const parsed = parser.parse(xml);
-  const itemRaw = parsed?.GetItemResponse?.Item;
+  const getItemResponse = parsed?.GetItemResponse;
+  const ack = getItemResponse?.Ack;
+  const errors = Array.isArray(getItemResponse?.Errors)
+    ? getItemResponse.Errors
+    : getItemResponse?.Errors
+      ? [getItemResponse.Errors]
+      : [];
+
+  if (ack === "Failure" || (ack === "Warning" && !getItemResponse?.Item)) {
+    const errorCode = errors
+      .map((entry: Record<string, unknown>) => str(entry, "ErrorCode"))
+      .find(Boolean);
+    const errorMessage =
+      errors
+        .map((entry: Record<string, unknown>) => {
+          return (
+            str(entry, "LongMessage") ??
+            str(entry, "ShortMessage")
+          );
+        })
+        .find(Boolean) ??
+      `GetItem returned no item payload for ${itemId}.`;
+
+    throw new EbayTradingApiError(
+      `GetItem failed for ${itemId}: ${errorMessage}`,
+      errorCode,
+    );
+  }
+
+  const itemRaw = getItemResponse?.Item;
   const item = Array.isArray(itemRaw) ? itemRaw[0] : itemRaw;
   return item ?? null;
+}
+
+function isEbayGetItemUsageLimitError(error: unknown) {
+  return error instanceof EbayTradingApiError && error.code === "518";
 }
 
 function str(obj: unknown, key: string): string | undefined {

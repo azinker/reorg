@@ -67,6 +67,72 @@ function stringifyError(error: unknown): string {
   }
 }
 
+function getErrorMessage(error: unknown): string {
+  if (typeof error === "string") return error;
+  if (
+    error &&
+    typeof error === "object" &&
+    "message" in error &&
+    typeof (error as { message?: unknown }).message === "string"
+  ) {
+    return (error as { message: string }).message;
+  }
+  return stringifyError(error);
+}
+
+function getErrorSku(error: unknown): string | null {
+  if (
+    error &&
+    typeof error === "object" &&
+    "sku" in error &&
+    typeof (error as { sku?: unknown }).sku === "string"
+  ) {
+    return (error as { sku: string }).sku;
+  }
+  return null;
+}
+
+function summarizeSyncErrors(rawErrors: unknown[]): string[] {
+  const grouped = new Map<
+    string,
+    { count: number; skus: string[] }
+  >();
+
+  for (const rawError of rawErrors) {
+    const message = getErrorMessage(rawError).trim() || "Unknown error";
+    const sku = getErrorSku(rawError);
+    const existing = grouped.get(message);
+    if (existing) {
+      existing.count += 1;
+      if (sku && sku !== "_global" && existing.skus.length < 3 && !existing.skus.includes(sku)) {
+        existing.skus.push(sku);
+      }
+      continue;
+    }
+
+    grouped.set(message, {
+      count: 1,
+      skus: sku && sku !== "_global" ? [sku] : [],
+    });
+  }
+
+  return [...grouped.entries()].map(([message, meta]) => {
+    if (meta.count === 1) {
+      if (meta.skus.length === 1 && !message.includes(meta.skus[0])) {
+        return `${meta.skus[0]}: ${message}`;
+      }
+      return message;
+    }
+
+    const skuSuffix =
+      meta.skus.length > 0
+        ? ` Example item IDs: ${meta.skus.join(", ")}${meta.count > meta.skus.length ? ", ..." : ""}.`
+        : "";
+
+    return `${message} (${meta.count} listings).${skuSuffix}`;
+  });
+}
+
 function getSeverityRank(severity: Severity) {
   if (severity === "critical") return 0;
   if (severity === "warning") return 1;
@@ -164,7 +230,7 @@ export async function GET() {
           category: "sync-failure",
           summary: `${storeLabel} sync failed`,
           technicalDetails: rawErrors.length
-            ? rawErrors.map(stringifyError).join("\n")
+            ? summarizeSyncErrors(rawErrors).join("\n")
             : "The sync job failed without a captured error payload.",
           store: storeLabel,
           storeAcronym,
@@ -189,7 +255,7 @@ export async function GET() {
             `Processed: ${job.itemsProcessed}`,
             `Created: ${job.itemsCreated}`,
             `Updated: ${job.itemsUpdated}`,
-            ...rawErrors.map(stringifyError),
+            ...summarizeSyncErrors(rawErrors),
           ].join("\n"),
           store: storeLabel,
           storeAcronym,
