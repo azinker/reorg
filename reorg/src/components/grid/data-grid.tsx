@@ -349,6 +349,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
   const [toast, setToast] = useState<string | null>(null);
   const [showBottomScrollbar, setShowBottomScrollbar] = useState(false);
   const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const viewportRef = useRef<HTMLDivElement>(null);
   const parentRef = useRef<HTMLDivElement>(null);
   const bottomScrollbarRef = useRef<HTMLDivElement>(null);
   const syncingScrollRef = useRef<"grid" | "bottom" | null>(null);
@@ -795,22 +796,22 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
   const totalMinWidth = frozenWidth + scrollWidth;
 
   const syncHorizontalOverflow = useCallback(() => {
-    const parent = parentRef.current;
-    if (!parent) return;
-    setShowBottomScrollbar(totalMinWidth > parent.clientWidth + 1);
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+    setShowBottomScrollbar(totalMinWidth > viewport.getBoundingClientRect().width + 1);
   }, [totalMinWidth]);
 
   useEffect(() => {
     syncHorizontalOverflow();
 
-    const parent = parentRef.current;
-    if (!parent) return;
+    const viewport = viewportRef.current;
+    if (!viewport) return;
 
     const resizeObserver = new ResizeObserver(() => {
       syncHorizontalOverflow();
     });
 
-    resizeObserver.observe(parent);
+    resizeObserver.observe(viewport);
     window.addEventListener("resize", syncHorizontalOverflow);
 
     return () => {
@@ -877,12 +878,12 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
         parentRef.current?.scrollTo({ top: 0 });
       }} />
 
-      <div className="flex min-w-0 items-center justify-between gap-3 border-b border-border bg-card/30 px-4 py-1.5">
+      <div className="flex min-w-0 flex-wrap items-center justify-between gap-2 border-b border-border bg-card/30 px-4 py-1.5">
         <span className="shrink-0 text-xs text-muted-foreground">
           {flatRows.length} rows
           {flatRows.length !== gridRows.length && ` (${gridRows.length} total)`}
         </span>
-        <div className="flex min-w-0 max-w-full items-center gap-2 overflow-x-auto whitespace-nowrap pb-1">
+        <div className="ml-auto flex min-w-0 flex-wrap items-center justify-end gap-2">
           <button
             onClick={() => { setGpSource(null); setGpDest(new Set()); setGpMode(null); setGlobalPriceOpen(true); }}
             className="flex shrink-0 items-center gap-1 rounded border border-primary/30 bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary transition-colors hover:bg-primary/20 cursor-pointer"
@@ -909,7 +910,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
         </div>
       </div>
 
-      <div className="relative h-full min-h-0 min-w-0">
+      <div ref={viewportRef} className="relative h-full min-h-0 min-w-0">
       <div ref={parentRef} className="app-grid-scroll h-full min-h-0 min-w-0 overflow-x-auto overflow-y-auto">
         {/* Header */}
         <div
@@ -1323,15 +1324,15 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
       {/* Photo overlay — only one at a time */}
       <div
         className={cn(
-          "border-t bg-card/90 px-2 py-1 backdrop-blur-sm transition-opacity",
-          showBottomScrollbar ? "border-border opacity-100" : "border-transparent opacity-0 pointer-events-none"
+          "border-t bg-card/90 px-2 py-1 backdrop-blur-sm",
+          showBottomScrollbar ? "border-border visible" : "border-transparent invisible"
         )}
       >
         <div
           ref={bottomScrollbarRef}
           className="app-grid-bottom-scroll min-w-0 overflow-x-auto overflow-y-hidden"
         >
-          <div style={{ width: showBottomScrollbar ? totalMinWidth : 1, height: 1 }} />
+          <div style={{ width: totalMinWidth, height: 1 }} />
         </div>
       </div>
       {expandedPhoto && expandedPhoto.imageUrl && (
