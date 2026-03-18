@@ -10,7 +10,7 @@ import { runEbayTtSync } from "@/lib/services/ebay-tt-sync";
 import { runShopifySync } from "@/lib/services/shopify-sync";
 import { runEbayTppSync } from "@/lib/services/ebay-tpp-sync";
 
-export type SyncTriggerSource = "manual" | "scheduler";
+export type SyncTriggerSource = "manual" | "scheduler" | "webhook";
 
 export interface SyncExecutionOptions {
   requestedMode?: SyncMode;

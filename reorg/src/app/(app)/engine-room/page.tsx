@@ -30,7 +30,7 @@ type SyncJobRow = {
   id: string;
   platform: string;
   status: "pending" | "in_progress" | "completed" | "failed";
-  source: "manual" | "scheduler";
+  source: "manual" | "scheduler" | "webhook";
   items: number;
   started: string | null;
   completedAt: string | null;
@@ -144,9 +144,15 @@ function SyncJobsPanel({ jobs }: { jobs: SyncJobRow[] }) {
                   "inline-flex items-center rounded border px-2 py-0.5 text-xs font-medium",
                   job.source === "scheduler"
                     ? "border-blue-500/30 bg-blue-500/10 text-blue-400"
+                    : job.source === "webhook"
+                      ? "border-violet-500/30 bg-violet-500/10 text-violet-400"
                     : "border-border bg-muted/50 text-muted-foreground"
                 )}>
-                  {job.source === "scheduler" ? "Scheduler" : "Manual"}
+                  {job.source === "scheduler"
+                    ? "Scheduler"
+                    : job.source === "webhook"
+                      ? "Webhook"
+                      : "Manual"}
                 </span>
               </td>
               <td className="py-3 pr-4"><StatusBadge status={job.status} /></td>

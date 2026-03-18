@@ -298,6 +298,13 @@ function formatSchedule(profile: SyncProfile) {
   return `${daytimeLabel} from ${profile.dayStartHour}:00-${profile.dayEndHour}:00, ${overnightLabel}`;
 }
 
+function usesWebhookWakeup(profile: SyncProfile) {
+  return (
+    profile.incrementalStrategy === "shopify_webhook_reconcile" ||
+    profile.incrementalStrategy === "bigcommerce_webhook_reconcile"
+  );
+}
+
 function getCompletionSummary(
   job: SyncJobInfo | null,
   fallbackReason: string | null,
@@ -827,7 +834,7 @@ export default function SyncPage() {
               </div>
 
               {syncProfile ? (
-                <div className="mb-4 grid gap-3 rounded-md border border-border bg-muted/30 px-3 py-3 text-xs text-muted-foreground sm:grid-cols-2">
+                <div className="mb-4 grid gap-3 rounded-md border border-border bg-muted/30 px-3 py-3 text-xs text-muted-foreground sm:grid-cols-3">
                   <div>
                     <div className="font-semibold text-foreground/90">Next pull</div>
                     <div className="mt-1 text-sm font-semibold text-foreground tabular-nums">
@@ -851,6 +858,23 @@ export default function SyncPage() {
                     <div className="mt-1">
                       Preferred mode: {syncProfile.preferredMode}
                       {syncState?.lastEffectiveMode ? ` | Last mode used: ${syncState.lastEffectiveMode}` : ""}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="font-semibold text-foreground/90">Change wake-up</div>
+                    <div className="mt-1 text-sm font-semibold text-foreground">
+                      {usesWebhookWakeup(syncProfile)
+                        ? syncState?.lastWebhookAt
+                          ? formatDateTime(syncState.lastWebhookAt)
+                          : "Waiting for first webhook"
+                        : syncState?.lastIncrementalSyncAt
+                          ? formatDateTime(syncState.lastIncrementalSyncAt)
+                          : "Scheduled pulls only"}
+                    </div>
+                    <div className="mt-1">
+                      {usesWebhookWakeup(syncProfile)
+                        ? "Marketplace webhooks can trigger an earlier pull-only refresh between scheduled runs."
+                        : "This store relies on its scheduled cadence unless you start a manual pull."}
                     </div>
                   </div>
                 </div>

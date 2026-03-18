@@ -48,6 +48,10 @@ After seeding, two admin accounts exist:
 
 Default password: `changeme-on-first-login` (change immediately).
 
+### Auto Pull Acceleration
+
+`reorG` supports secure webhook intake for Shopify and BigCommerce so those stores can wake up a pull-only refresh earlier than the long fallback schedule. Shopify uses signed webhooks. BigCommerce uses a shared secret header you provide when registering the webhook.
+
 ---
 
 ## Tech Stack

@@ -33,10 +33,12 @@ Use this reference when configuring reorG. Copy `.env.example` to `.env` and fil
 | **BigCommerce** |
 | `BIGCOMMERCE_STORE_HASH` | Your store's unique hash (from URL) | BigCommerce Admin → Store settings | Yes (if using BC) | e.g. `abc123` from `store-abc123.mybigcommerce.com` |
 | `BIGCOMMERCE_ACCESS_TOKEN` | API access token | BigCommerce Admin → API accounts | Yes (if using BC) | Long token string |
+| `BIGCOMMERCE_WEBHOOK_SECRET` | Shared secret header value for BigCommerce webhooks | You generate it | Yes (for early webhook-triggered pulls) | Long random string |
 | **Shopify** |
 | `SHOPIFY_STORE_DOMAIN` | Your store's myshopify domain | Shopify Admin URL | Yes (if using Shopify) | `your-store.myshopify.com` |
 | `SHOPIFY_ACCESS_TOKEN` | Admin API access token | Shopify Admin → Apps → Create app | Yes (if using Shopify) | Long token string |
 | `SHOPIFY_API_VERSION` | Shopify API version to use | [Shopify docs](https://shopify.dev/docs/api/usage/versioning) | Yes (if using Shopify) | `2025-01` |
+| `SHOPIFY_WEBHOOK_SECRET` | Secret used to validate Shopify webhook signatures | Shopify app webhook settings | Recommended | Reuse app client secret or set an explicit secret |
 | **Cloudflare R2 (Backups)** |
 | `R2_ACCOUNT_ID` | Cloudflare account ID | Cloudflare dashboard | Yes (for backups) | 32-character hex string |
 | `R2_ACCESS_KEY_ID` | R2 API access key | Cloudflare R2 → Manage R2 API Tokens | Yes (for backups) | Alphanumeric string |
@@ -56,3 +58,5 @@ Use this reference when configuring reorG. Copy `.env.example` to `.env` and fil
 - **Required (Yes – if using X)** = Only needed if you enable that integration.
 - Keep `GLOBAL_WRITE_LOCK=true` until you're ready to push changes. See `docs/write-safety-checklist.md`.
 - Keep `CRON_SECRET` private. Scheduled calls to `/api/scheduler/tick` must send it in `Authorization: Bearer ...` or `x-cron-secret`.
+- BigCommerce webhook callbacks should include `Authorization: Bearer <BIGCOMMERCE_WEBHOOK_SECRET>` or `x-reorg-webhook-secret: <BIGCOMMERCE_WEBHOOK_SECRET>`.
+- Shopify webhook callbacks post to `/api/webhooks/shopify` and are validated with Shopify's HMAC signature.

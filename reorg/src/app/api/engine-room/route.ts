@@ -101,6 +101,8 @@ export async function GET() {
         source:
           typeof job.triggeredBy === "string" && job.triggeredBy.startsWith("scheduler:")
             ? "scheduler"
+            : typeof job.triggeredBy === "string" && job.triggeredBy.startsWith("webhook:")
+              ? "webhook"
             : "manual",
       };
     });
