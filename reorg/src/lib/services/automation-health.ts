@@ -420,6 +420,7 @@ export async function buildAutomationHealthSnapshot(
   const healthyCount = integrationHealth.filter((item) => item.combinedStatus === "healthy").length;
   const delayedCount = integrationHealth.filter((item) => item.combinedStatus === "delayed").length;
   const attentionCount = integrationHealth.filter((item) => item.combinedStatus === "attention").length;
+  const attentionItems = integrationHealth.filter((item) => item.combinedStatus === "attention");
   const attentionLabels = integrationHealth
     .filter((item) => item.combinedStatus === "attention")
     .map((item) => item.label);
@@ -439,6 +440,11 @@ export async function buildAutomationHealthSnapshot(
   let summary: AutomationHealthSummary;
   if (attentionCount > 0) {
     const labels = formatLabelList(attentionLabels);
+    const allAttentionItemsCoolingDown =
+      attentionItems.length > 0 &&
+      attentionItems.every((item) =>
+        item.recommendedAction.startsWith("Wait for the eBay cooldown window"),
+      );
     summary = {
       status: "attention",
       healthyCount,
@@ -447,11 +453,16 @@ export async function buildAutomationHealthSnapshot(
       missingWebhookCount,
       headline: "Attention needed",
       detail:
-        missingWebhookCount > 0
+        allAttentionItemsCoolingDown
+          ? `${labels} are cooling down after eBay API call-limit responses.`
+          : missingWebhookCount > 0
           ? `${labels} need fresher completed pulls or webhook follow-up.`
           : `${labels} need fresher completed pulls.`,
-      recommendedAction:
-        attentionLabels.length === 1
+      recommendedAction: allAttentionItemsCoolingDown
+        ? attentionItems.length === 1
+          ? attentionItems[0]?.recommendedAction ?? "Wait for the cooldown window to end before retrying."
+          : `Wait for the eBay cooldown windows to end for ${labels}, then let the next automatic checks retry or run one manual pull per store afterward if needed.`
+        : attentionLabels.length === 1
           ? `Open Sync or Errors and run a manual pull for ${labels}. If it still falls behind, review credentials and webhook delivery.`
           : `Open Sync or Errors and run manual pulls for ${labels}. If any store still falls behind, review credentials and webhook delivery.`,
       affectedLabels: attentionLabels,
