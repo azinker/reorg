@@ -118,6 +118,33 @@ type SchedulerStatus = {
   lastError: string | null;
   runningCount: number;
   dueNowCount: number;
+  healthSummary: {
+    status: "healthy" | "delayed" | "attention";
+    healthyCount: number;
+    delayedCount: number;
+    attentionCount: number;
+    headline: string;
+    detail: string;
+  };
+  integrationHealth: Array<{
+    integrationId: string;
+    label: string;
+    platform: string;
+    status: "healthy" | "delayed" | "attention";
+    syncStatus: "fresh" | "delayed" | "stale" | "never";
+    syncMessage: string;
+    lastSyncAt: string | null;
+    minutesSinceSync: number | null;
+    intervalMinutes: number;
+    due: boolean;
+    running: boolean;
+    nextDueAt: string | null;
+    webhookExpected: boolean;
+    lastWebhookAt: string | null;
+    minutesSinceWebhook: number | null;
+    webhookStatus: "ok" | "quiet" | "missing" | "n/a";
+    webhookMessage: string;
+  }>;
   recentJobs: Array<{
     id: string;
     platform: string;
@@ -233,6 +260,16 @@ function getReadableWebhookStatus(status: string) {
   if (status === "completed") return "completed";
   if (status === "failed") return "failed";
   return status;
+}
+
+function getHealthClasses(status: "healthy" | "delayed" | "attention") {
+  if (status === "attention") {
+    return "border-red-500/30 bg-red-500/10 text-red-300";
+  }
+  if (status === "delayed") {
+    return "border-amber-500/30 bg-amber-500/10 text-amber-300";
+  }
+  return "border-emerald-500/30 bg-emerald-500/10 text-emerald-300";
 }
 
 function getJobDurationMs(job: SyncJobInfo | null, now: number) {
@@ -814,6 +851,81 @@ export default function SyncPage() {
               last automatic check. They will start on the next scheduler tick.
             </div>
           )}
+        {schedulerStatus?.healthSummary && (
+          <div
+            className={cn(
+              "mt-3 rounded border px-3 py-2 text-xs",
+              getHealthClasses(schedulerStatus.healthSummary.status),
+            )}
+          >
+            <div className="font-semibold">
+              Store update health: {schedulerStatus.healthSummary.headline}
+            </div>
+            <div className="mt-1">{schedulerStatus.healthSummary.detail}</div>
+            <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px] uppercase tracking-wide">
+              <span>Healthy {schedulerStatus.healthSummary.healthyCount}</span>
+              <span>Delayed {schedulerStatus.healthSummary.delayedCount}</span>
+              <span>Attention {schedulerStatus.healthSummary.attentionCount}</span>
+            </div>
+          </div>
+        )}
+        {!!schedulerStatus?.integrationHealth?.length && (
+          <div className="mt-4 rounded border border-border bg-muted/20 p-3">
+            <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              Store Freshness
+            </div>
+            <div className="mb-3 text-xs text-muted-foreground">
+              This shows whether each store is refreshing within its expected window, plus whether Shopify and BigCommerce are still sending change notices.
+            </div>
+            <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-4">
+              {schedulerStatus.integrationHealth.slice(0, 4).map((item) => (
+                <div
+                  key={item.integrationId}
+                  className="rounded border border-border bg-background/40 px-3 py-2 text-xs"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-semibold text-foreground">{item.label}</span>
+                    <span
+                      className={cn(
+                        "rounded border px-1.5 py-0.5 text-[10px] font-medium uppercase",
+                        getHealthClasses(item.status),
+                      )}
+                    >
+                      {item.status}
+                    </span>
+                  </div>
+                  <div className="mt-2 text-foreground/90">{item.syncMessage}</div>
+                  <div className="mt-1 text-muted-foreground">
+                    Last completed pull: {formatDateTime(item.lastSyncAt)}
+                  </div>
+                  <div className="mt-1 text-muted-foreground">
+                    {item.running
+                      ? "A pull is running now."
+                      : item.due
+                        ? "Another pull is due now."
+                        : item.nextDueAt
+                          ? `Next automatic check: ${formatDateTime(item.nextDueAt)}`
+                          : "No next automatic check scheduled."}
+                  </div>
+                  {item.webhookExpected ? (
+                    <div
+                      className={cn(
+                        "mt-2 rounded border px-2 py-1 text-[11px]",
+                        item.webhookStatus === "ok"
+                          ? "border-emerald-500/20 bg-emerald-500/5 text-emerald-300"
+                          : item.webhookStatus === "quiet"
+                            ? "border-amber-500/20 bg-amber-500/5 text-amber-300"
+                            : "border-border bg-muted/40 text-muted-foreground",
+                      )}
+                    >
+                      {item.webhookMessage}
+                    </div>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
         {!!schedulerStatus?.recentJobs?.length && (
           <div className="mt-4 rounded border border-border bg-muted/20 p-3">
             <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">

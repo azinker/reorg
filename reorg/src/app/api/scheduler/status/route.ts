@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
+import { buildAutomationHealthSnapshot } from "@/lib/services/automation-health";
 import { planScheduledSyncs } from "@/lib/services/sync-scheduler";
 
 type SchedulerOutcome = "dry_run" | "completed" | "failed";
@@ -90,6 +91,7 @@ export async function GET() {
       if (b.nextDueAt) return 1;
       return a.label.localeCompare(b.label);
     });
+    const automationHealth = await buildAutomationHealthSnapshot(plan);
 
     return NextResponse.json({
       data: {
@@ -147,6 +149,8 @@ export async function GET() {
           };
         }),
         dueNowCount: orderedPlan.filter((item) => item.due).length,
+        healthSummary: automationHealth.summary,
+        integrationHealth: automationHealth.integrationHealth,
         upcoming: orderedPlan.map((item) => ({
           integrationId: item.integrationId,
           platform: item.platform,

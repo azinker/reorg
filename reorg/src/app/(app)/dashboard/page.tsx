@@ -15,6 +15,14 @@ interface GridPayload {
   error: string | null;
 }
 
+interface SchedulerHealthPayload {
+  healthSummary?: {
+    status: "healthy" | "delayed" | "attention";
+    headline: string;
+    detail: string;
+  };
+}
+
 async function fetchGridData(): Promise<GridPayload> {
   try {
     const res = await fetch("/api/grid", { cache: "no-store" });
@@ -38,6 +46,15 @@ async function fetchGridVersion(): Promise<string | null> {
   }
   const json = await res.json();
   return typeof json.data?.version === "string" ? json.data.version : null;
+}
+
+async function fetchSchedulerHealth(): Promise<SchedulerHealthPayload["healthSummary"] | null> {
+  const res = await fetch("/api/scheduler/status", { cache: "no-store" });
+  if (!res.ok) {
+    throw new Error(`Scheduler status API returned ${res.status}`);
+  }
+  const json = await res.json();
+  return (json.data?.healthSummary ?? null) as SchedulerHealthPayload["healthSummary"] | null;
 }
 
 function summarizeGrid(rows: GridRow[]) {
@@ -81,6 +98,7 @@ export default function DashboardPage() {
   const [error, setError] = useState<string | null>(null);
   const [source, setSource] = useState<"db" | "mock" | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [schedulerHealth, setSchedulerHealth] = useState<SchedulerHealthPayload["healthSummary"] | null>(null);
   const [loadingProgress, setLoadingProgress] = useState(8);
   const versionRef = useRef<string | null>(null);
   const sourceRef = useRef<"db" | "mock" | null>(null);
@@ -95,6 +113,13 @@ export default function DashboardPage() {
         fetchGridData(),
         fetchGridVersion().catch(() => null),
       ]);
+      void fetchSchedulerHealth()
+        .then((health) => {
+          if (!cancelled) setSchedulerHealth(health);
+        })
+        .catch(() => {
+          if (!cancelled) setSchedulerHealth(null);
+        });
       if (cancelled) return;
 
       setLoadingProgress(100);
@@ -149,6 +174,13 @@ export default function DashboardPage() {
     function handleVisibilityOrFocus() {
       if (document.visibilityState === "visible") {
         void refreshGridIfChanged();
+        void fetchSchedulerHealth()
+          .then((health) => {
+            if (!cancelled) setSchedulerHealth(health);
+          })
+          .catch(() => {
+            if (!cancelled) setSchedulerHealth(null);
+          });
       }
     }
 
@@ -164,6 +196,13 @@ export default function DashboardPage() {
 
     const intervalId = window.setInterval(() => {
       void refreshGridIfChanged();
+      void fetchSchedulerHealth()
+        .then((health) => {
+          if (!cancelled) setSchedulerHealth(health);
+        })
+        .catch(() => {
+          if (!cancelled) setSchedulerHealth(null);
+        });
     }, GRID_VERSION_POLL_MS);
 
     window.addEventListener("focus", handleVisibilityOrFocus);
@@ -219,6 +258,25 @@ export default function DashboardPage() {
 
   return (
     <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
+      {schedulerHealth && schedulerHealth.status !== "healthy" && source === "db" && (
+        <div
+          className={
+            schedulerHealth.status === "attention"
+              ? "border-b border-red-500/20 bg-red-500/5 px-4 py-1.5"
+              : "border-b border-amber-500/20 bg-amber-500/5 px-4 py-1.5"
+          }
+        >
+          <span
+            className={
+              schedulerHealth.status === "attention"
+                ? "text-xs text-red-300"
+                : "text-xs text-amber-300"
+            }
+          >
+            Store update health: {schedulerHealth.headline}. {schedulerHealth.detail}
+          </span>
+        </div>
+      )}
       {isRefreshing && source === "db" && (
         <div className="flex items-center gap-2 border-b border-blue-500/20 bg-blue-500/5 px-4 py-1.5">
           <RefreshCw className="h-3.5 w-3.5 animate-spin text-blue-400" />

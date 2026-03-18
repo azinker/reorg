@@ -94,6 +94,19 @@ type EngineRoomData = {
   rawEvents: RawEventRow[];
   automationFeed: AutomationFeedRow[];
   dueQueue: DueQueueRow[];
+  integrationHealth: Array<{
+    integrationId: string;
+    label: string;
+    platform: string;
+    status: "healthy" | "delayed" | "attention";
+    syncMessage: string;
+    lastSyncAt: string | null;
+    running: boolean;
+    due: boolean;
+    nextDueAt: string | null;
+    webhookExpected: boolean;
+    webhookMessage: string;
+  }>;
   summary: {
     activeSyncs: number;
     queuedPushes: number;
@@ -109,6 +122,11 @@ type EngineRoomData = {
     schedulerActiveJobs: number;
     schedulerDueNow: number;
     recentWebhookCount: number;
+    automationHealthStatus: "healthy" | "delayed" | "attention";
+    automationHealthHeadline: string;
+    automationHealthDetail: string;
+    delayedStores: number;
+    attentionStores: number;
   };
 };
 
@@ -163,6 +181,12 @@ function getAutomationStatusClasses(status: AutomationFeedRow["status"]) {
   if (status === "debounced" || status === "ignored") {
     return "border-border bg-muted/50 text-muted-foreground";
   }
+  return "border-emerald-500/30 bg-emerald-500/10 text-emerald-400";
+}
+
+function getHealthClasses(status: "healthy" | "delayed" | "attention") {
+  if (status === "attention") return "border-red-500/30 bg-red-500/10 text-red-400";
+  if (status === "delayed") return "border-amber-500/30 bg-amber-500/10 text-amber-400";
   return "border-emerald-500/30 bg-emerald-500/10 text-emerald-400";
 }
 
@@ -501,6 +525,11 @@ export default function EngineRoomPage() {
     schedulerActiveJobs: 0,
     schedulerDueNow: 0,
     recentWebhookCount: 0,
+    automationHealthStatus: "healthy" as const,
+    automationHealthHeadline: "Healthy",
+    automationHealthDetail: "All connected stores are refreshing within their expected window.",
+    delayedStores: 0,
+    attentionStores: 0,
   };
 
   function renderPanel() {
@@ -639,6 +668,52 @@ export default function EngineRoomPage() {
 
         <article
           className={cn(
+            "rounded-lg border bg-card p-4 transition-colors duration-200",
+            "ring-1",
+            summary.automationHealthStatus === "attention"
+              ? "border-red-500/30 ring-red-500/20 hover:border-red-500/40"
+              : summary.automationHealthStatus === "delayed"
+                ? "border-amber-500/30 ring-amber-500/20 hover:border-amber-500/40"
+                : "border-emerald-500/30 ring-emerald-500/20 hover:border-emerald-500/40",
+          )}
+        >
+          <div className="flex items-center gap-3">
+            <div
+              className={cn(
+                "flex h-10 w-10 shrink-0 items-center justify-center rounded-md",
+                summary.automationHealthStatus === "attention"
+                  ? "bg-red-500/15 text-red-400"
+                  : summary.automationHealthStatus === "delayed"
+                    ? "bg-amber-500/15 text-amber-400"
+                    : "bg-emerald-500/15 text-emerald-400",
+              )}
+            >
+              <Activity className="h-5 w-5" aria-hidden />
+            </div>
+            <div>
+              <p className="text-2xl font-semibold text-foreground">
+                {loading ? "—" : summary.automationHealthHeadline}
+              </p>
+              <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                Store Update Health
+              </p>
+              {!loading && (
+                <p className="mt-1 max-w-full text-xs text-muted-foreground">
+                  {summary.automationHealthDetail}
+                </p>
+              )}
+            </div>
+          </div>
+          {!loading && (
+            <div className="mt-3 flex flex-wrap gap-2 text-[11px] uppercase tracking-wide text-muted-foreground">
+              <span>Delayed {summary.delayedStores}</span>
+              <span>Attention {summary.attentionStores}</span>
+            </div>
+          )}
+        </article>
+
+        <article
+          className={cn(
             "rounded-lg border border-amber-500/30 bg-card p-4 transition-colors duration-200",
             "ring-1 ring-amber-500/20",
             "hover:border-amber-500/40 hover:bg-card/95"
@@ -738,6 +813,46 @@ export default function EngineRoomPage() {
           {summary.schedulerLastError && (
             <div className="mt-3 rounded border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-400">
               Last scheduler error: {summary.schedulerLastError}
+            </div>
+          )}
+          {!!data?.integrationHealth?.length && (
+            <div className="mt-4 grid gap-2 md:grid-cols-2 xl:grid-cols-4">
+              {data.integrationHealth.slice(0, 4).map((item) => (
+                <div
+                  key={item.integrationId}
+                  className="rounded border border-border bg-background/40 px-3 py-2 text-xs"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-semibold text-foreground">{item.label}</span>
+                    <span
+                      className={cn(
+                        "inline-flex items-center rounded border px-2 py-0.5 text-[11px] font-medium uppercase",
+                        getHealthClasses(item.status),
+                      )}
+                    >
+                      {item.status}
+                    </span>
+                  </div>
+                  <div className="mt-2 text-muted-foreground">{item.syncMessage}</div>
+                  <div className="mt-1 text-muted-foreground">
+                    Last completed pull: {formatDateTime(item.lastSyncAt)}
+                  </div>
+                  <div className="mt-1 text-muted-foreground">
+                    {item.running
+                      ? "A pull is running now."
+                      : item.due
+                        ? "Another pull is due now."
+                        : item.nextDueAt
+                          ? `Next automatic check: ${formatDateTime(item.nextDueAt)}`
+                          : "No next automatic check scheduled."}
+                  </div>
+                  {item.webhookExpected ? (
+                    <div className="mt-2 rounded border border-border bg-muted/40 px-2 py-1 text-[11px] text-muted-foreground">
+                      {item.webhookMessage}
+                    </div>
+                  ) : null}
+                </div>
+              ))}
             </div>
           )}
         </article>

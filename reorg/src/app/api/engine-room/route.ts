@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
+import { buildAutomationHealthSnapshot } from "@/lib/services/automation-health";
 import { planScheduledSyncs } from "@/lib/services/sync-scheduler";
 
 const PLATFORM_LABEL: Record<string, string> = {
@@ -71,6 +72,7 @@ export async function GET() {
     const schedulerMap = Object.fromEntries(
       schedulerSettings.map((setting) => [setting.key, setting.value]),
     );
+    const automationHealth = await buildAutomationHealthSnapshot(schedulerPlan);
     const schedulerLabelMap = new Map(
       schedulerPlan.map((item) => [item.integrationId, item.label]),
     );
@@ -391,7 +393,13 @@ export async function GET() {
           schedulerActiveJobs,
           schedulerDueNow,
           recentWebhookCount,
+          automationHealthStatus: automationHealth.summary.status,
+          automationHealthHeadline: automationHealth.summary.headline,
+          automationHealthDetail: automationHealth.summary.detail,
+          delayedStores: automationHealth.summary.delayedCount,
+          attentionStores: automationHealth.summary.attentionCount,
         },
+        integrationHealth: automationHealth.integrationHealth,
       },
     });
   } catch (error) {
