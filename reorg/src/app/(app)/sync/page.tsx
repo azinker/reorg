@@ -760,7 +760,7 @@ export default function SyncPage() {
               </div>
             </div>
             <div className="rounded border border-border bg-muted/40 px-3 py-2">
-              <div className="text-muted-foreground">Mode</div>
+              <div className="text-muted-foreground">Outcome</div>
               <div className="mt-1 text-sm font-semibold text-foreground">
                 {schedulerStatus?.lastOutcome ?? "—"}
               </div>
@@ -780,14 +780,18 @@ export default function SyncPage() {
             </div>
           </div>
           <div className="rounded border border-border bg-muted/20 px-3 py-2">
-            <div className="text-muted-foreground">Most recent scheduler mode</div>
+            <div className="text-muted-foreground">Most recent scheduler outcome</div>
             <div className="mt-1 text-sm font-semibold text-foreground">
               {schedulerStatus?.lastOutcome ?? "—"}
             </div>
           </div>
         </div>
         {!!schedulerStatus?.recentJobs?.length && (
-          <div className="mt-4 grid gap-2 md:grid-cols-2 xl:grid-cols-4">
+          <div className="mt-4 rounded border border-border bg-muted/20 p-3">
+            <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              Latest Scheduler Jobs By Store
+            </div>
+            <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-4">
             {schedulerStatus.recentJobs.slice(0, 4).map((job) => (
               <div key={job.id} className="rounded border border-border bg-muted/30 px-3 py-2 text-xs">
                 <div className="flex items-center justify-between gap-2">
@@ -809,6 +813,7 @@ export default function SyncPage() {
                 </div>
               </div>
             ))}
+            </div>
           </div>
         )}
         {!!schedulerStatus?.upcoming?.length && (

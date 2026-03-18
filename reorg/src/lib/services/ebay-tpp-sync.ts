@@ -136,37 +136,51 @@ export async function runEbayTppSync(
       } else {
         completionCursor = incrementalWindow.windowEndedAt.toISOString();
 
-        for (const itemId of incrementalWindow.itemIds) {
-          try {
-            const fullItem = await fetchFullItem(
-              integration.id,
-              ebayConfig,
-              itemId,
-            );
+        for (
+          let index = 0;
+          index < incrementalWindow.itemIds.length;
+          index += GETITEM_CONCURRENCY
+        ) {
+          const batch = incrementalWindow.itemIds.slice(
+            index,
+            index + GETITEM_CONCURRENCY,
+          );
+          const fullItems = await Promise.allSettled(
+            batch.map((itemId) => fetchFullItem(integration.id, ebayConfig, itemId)),
+          );
 
-            if (!fullItem) {
+          for (let batchIndex = 0; batchIndex < batch.length; batchIndex += 1) {
+            const itemId = batch[batchIndex];
+            const fetched = fullItems[batchIndex];
+
+            try {
+              if (fetched.status === "rejected") {
+                throw fetched.reason;
+              }
+
+              const fullItem = fetched.value;
+              if (!fullItem) {
+                progress.errors.push({
+                  sku: itemId,
+                  message: "GetItem returned no payload for this changed listing.",
+                });
+                continue;
+              }
+
+              const result = await upsertEbayItem(fullItem, integration.id);
+              progress.itemsProcessed++;
+              if (result === "created") progress.itemsCreated++;
+              else if (result === "updated") progress.itemsUpdated++;
+              if (result === "variation_parent") progress.variationsFound++;
+            } catch (err) {
               progress.errors.push({
                 sku: itemId,
-                message: "GetItem returned no payload for this changed listing.",
+                message: err instanceof Error ? err.message : "Unknown error",
               });
-              continue;
             }
-
-            const result = await upsertEbayItem(fullItem, integration.id);
-            progress.itemsProcessed++;
-            if (result === "created") progress.itemsCreated++;
-            else if (result === "updated") progress.itemsUpdated++;
-            if (result === "variation_parent") progress.variationsFound++;
-          } catch (err) {
-            progress.errors.push({
-              sku: itemId,
-              message: err instanceof Error ? err.message : "Unknown error",
-            });
           }
 
-          if (progress.itemsProcessed % 25 === 0) {
-            await updateSyncJobProgress(syncJob.id, progress);
-          }
+          await updateSyncJobProgress(syncJob.id, progress);
         }
       }
     }

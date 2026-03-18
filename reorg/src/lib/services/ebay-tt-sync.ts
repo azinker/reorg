@@ -17,6 +17,7 @@ const MARKETING_API_BASE = "https://api.ebay.com/sell/marketing/v1";
 const SITE_ID = "0";
 const COMPAT_LEVEL = "1199";
 const ADS_PAGE_SIZE = 500;
+const GETITEM_CONCURRENCY = 5;
 
 const parser = new XMLParser({
   ignoreAttributes: true,
@@ -150,28 +151,47 @@ export async function runEbayTtSync(
       } else {
         completionCursor = incrementalWindow.windowEndedAt.toISOString();
 
-        for (const itemId of incrementalWindow.itemIds) {
-          try {
-            const fullItem = await fetchFullItem(integration.id, ebayConfig, itemId);
-            if (!fullItem) {
+        for (
+          let index = 0;
+          index < incrementalWindow.itemIds.length;
+          index += GETITEM_CONCURRENCY
+        ) {
+          const batch = incrementalWindow.itemIds.slice(
+            index,
+            index + GETITEM_CONCURRENCY,
+          );
+          const fullItems = await Promise.allSettled(
+            batch.map((itemId) => fetchFullItem(integration.id, ebayConfig, itemId)),
+          );
+
+          for (let batchIndex = 0; batchIndex < batch.length; batchIndex += 1) {
+            const itemId = batch[batchIndex];
+            const fetched = fullItems[batchIndex];
+
+            try {
+              if (fetched.status === "rejected") {
+                throw fetched.reason;
+              }
+
+              const fullItem = fetched.value;
+              if (!fullItem) {
+                progress.errors.push({
+                  sku: itemId,
+                  message: "GetItem returned no payload for this changed listing.",
+                });
+                continue;
+              }
+
+              await applyTtItem(fullItem, integration.id, progress);
+            } catch (error) {
               progress.errors.push({
                 sku: itemId,
-                message: "GetItem returned no payload for this changed listing.",
+                message: error instanceof Error ? error.message : "Unknown error",
               });
-              continue;
             }
-
-            await applyTtItem(fullItem, integration.id, progress);
-          } catch (error) {
-            progress.errors.push({
-              sku: itemId,
-              message: error instanceof Error ? error.message : "Unknown error",
-            });
           }
 
-          if (progress.itemsProcessed > 0 && progress.itemsProcessed % 25 === 0) {
-            await updateSyncJobProgress(syncJob.id, progress);
-          }
+          await updateSyncJobProgress(syncJob.id, progress);
         }
       }
     }

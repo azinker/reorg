@@ -12,7 +12,7 @@ function asOutcome(value: unknown): SchedulerOutcome | null {
 
 export async function GET() {
   try {
-    const [settings, recentJobs, recentWebhooks, automationEvents, plan] = await Promise.all([
+    const [settings, recentJobsRaw, recentWebhooks, automationEvents, plan] = await Promise.all([
       db.appSetting.findMany({
         where: {
           key: {
@@ -34,10 +34,11 @@ export async function GET() {
           },
         },
         orderBy: { createdAt: "desc" },
-        take: 8,
+        take: 20,
         include: {
           integration: {
             select: {
+              id: true,
               platform: true,
               label: true,
             },
@@ -71,6 +72,13 @@ export async function GET() {
 
     const map = Object.fromEntries(settings.map((setting) => [setting.key, setting.value]));
     const planLabelMap = new Map(plan.map((item) => [item.integrationId, item.label]));
+    const latestJobByIntegration = new Map<string, (typeof recentJobsRaw)[number]>();
+    for (const job of recentJobsRaw) {
+      const integrationId = job.integration?.id;
+      if (!integrationId || latestJobByIntegration.has(integrationId)) continue;
+      latestJobByIntegration.set(integrationId, job);
+    }
+    const recentJobs = [...latestJobByIntegration.values()];
     const orderedPlan = [...plan].sort((a, b) => {
       if (a.due !== b.due) return a.due ? -1 : 1;
       if (a.running !== b.running) return a.running ? -1 : 1;
