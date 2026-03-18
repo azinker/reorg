@@ -33,6 +33,32 @@ function extractShopifyProductIds(payload: unknown): string[] {
   )];
 }
 
+function extractShopifyVariantIds(payload: unknown): string[] {
+  if (!payload || typeof payload !== "object") return [];
+
+  const record = payload as Record<string, unknown>;
+  const variants = Array.isArray(record.variants)
+    ? (record.variants as Array<Record<string, unknown>>)
+    : [];
+  const candidates = [
+    record.variant_id,
+    typeof record.variant === "object" && record.variant
+      ? (record.variant as Record<string, unknown>).id
+      : null,
+    ...variants.map((variant) => variant.id),
+  ];
+
+  return [...new Set(
+    candidates
+      .map((value) =>
+        typeof value === "number" || typeof value === "string"
+          ? String(value)
+          : null,
+      )
+      .filter((value): value is string => !!value),
+  )];
+}
+
 function extractShopifyInventoryItemIds(payload: unknown): string[] {
   if (!payload || typeof payload !== "object") return [];
 
@@ -55,14 +81,26 @@ function extractShopifyInventoryItemIds(payload: unknown): string[] {
   )];
 }
 
-async function resolveShopifyProductIds(payload: unknown) {
+async function resolveShopifyTargets(payload: unknown) {
   const directIds = extractShopifyProductIds(payload);
-  if (directIds.length > 0) return directIds;
+  const directVariantIds = extractShopifyVariantIds(payload);
+  if (directIds.length > 0) {
+    return {
+      productIds: directIds,
+      variantIds: directVariantIds,
+    };
+  }
 
   const inventoryItemIds = extractShopifyInventoryItemIds(payload);
-  if (inventoryItemIds.length === 0) return [];
+  if (inventoryItemIds.length === 0) {
+    return {
+      productIds: [],
+      variantIds: directVariantIds,
+    };
+  }
 
   const platformItemIds = new Set<string>();
+  const platformVariantIds = new Set<string>();
 
   for (const inventoryItemId of inventoryItemIds) {
     const numericInventoryItemId = Number(inventoryItemId);
@@ -83,19 +121,25 @@ async function resolveShopifyProductIds(payload: unknown) {
       },
       select: {
         platformItemId: true,
+        platformVariantId: true,
       },
     });
 
     for (const listing of listings) {
       platformItemIds.add(listing.platformItemId);
+      if (listing.platformVariantId) {
+        platformVariantIds.add(listing.platformVariantId);
+      }
     }
   }
 
-  return [...platformItemIds];
+  return {
+    productIds: [...platformItemIds],
+    variantIds: [...new Set([...directVariantIds, ...platformVariantIds])],
+  };
 }
 
-function isShopifyDeleteTopic(topic: string | null) {
-  if (!topic) return false;
+function isShopifyProductDeleteTopic(topic: string | null) {
   return topic === "PRODUCTS_DELETE" || topic === "products/delete";
 }
 
@@ -131,7 +175,7 @@ export async function POST(request: NextRequest) {
 
   const topic = request.headers.get("x-shopify-topic");
   const payload = rawBody ? (JSON.parse(rawBody) as unknown) : null;
-  const productIds = await resolveShopifyProductIds(payload);
+  const targets = await resolveShopifyTargets(payload);
   const sourceLabel = request.headers.get("x-shopify-shop-domain");
   const externalId =
     request.headers.get("x-shopify-event-id") ||
@@ -142,8 +186,9 @@ export async function POST(request: NextRequest) {
     topic,
     externalId,
     sourceLabel,
-    changedIds: isShopifyDeleteTopic(topic) ? [] : productIds,
-    deletedIds: isShopifyDeleteTopic(topic) ? productIds : [],
+    changedIds: isShopifyProductDeleteTopic(topic) ? [] : targets.productIds,
+    deletedIds: isShopifyProductDeleteTopic(topic) ? targets.productIds : [],
+    changedVariantIds: targets.variantIds,
   });
 
   return NextResponse.json({ data: result }, { status: 202 });

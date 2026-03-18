@@ -18,6 +18,7 @@ export interface HandleMarketplaceWebhookOptions {
   sourceLabel: string | null;
   changedIds?: string[];
   deletedIds?: string[];
+  changedVariantIds?: string[];
 }
 
 export interface HandleMarketplaceWebhookResult {
@@ -117,6 +118,7 @@ async function startTargetedWebhookSync(
         {
           productIds: changedIds,
           deletedProductIds: deletedIds,
+          changedVariantIds: options.changedVariantIds,
         },
         {
           requestedMode: "incremental",
@@ -134,6 +136,7 @@ async function startTargetedWebhookSync(
         {
           productIds: changedIds,
           deletedProductIds: deletedIds,
+          changedVariantIds: options.changedVariantIds,
         },
         {
           requestedMode: "incremental",

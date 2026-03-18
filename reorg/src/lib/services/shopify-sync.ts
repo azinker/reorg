@@ -6,7 +6,10 @@ import {
   buildCompletedSyncConfigFromLatest,
   type SyncExecutionOptions,
 } from "@/lib/services/sync-control";
-import { removeMarketplaceListingsByPlatformItemIds } from "@/lib/services/listing-prune";
+import {
+  removeMarketplaceListingsByPlatformItemIds,
+  removeMarketplaceListingsMissingFromProductSet,
+} from "@/lib/services/listing-prune";
 
 interface SyncProgress {
   jobId: string;
@@ -167,12 +170,16 @@ export async function runShopifyWebhookReconcile(
   input: {
     productIds?: string[];
     deletedProductIds?: string[];
+    changedVariantIds?: string[];
   },
   options: SyncExecutionOptions = {},
 ): Promise<SyncProgress> {
   const { integration, adapter } = await getShopifySyncContext();
   const productIds = [...new Set((input.productIds ?? []).filter(Boolean))];
   const deletedProductIds = [...new Set((input.deletedProductIds ?? []).filter(Boolean))];
+  const changedVariantIds = new Set(
+    (input.changedVariantIds ?? []).filter(Boolean).map((variantId) => String(variantId)),
+  );
 
   const syncJob = await db.syncJob.create({
     data: {
@@ -188,8 +195,16 @@ export async function runShopifyWebhookReconcile(
   try {
     for (const productId of productIds) {
       const listings = await adapter.fetchListingsByProductId(productId);
+      const presentVariantIds = listings.map((listing) => listing.platformVariantId ?? "");
+      const targetedListings =
+        changedVariantIds.size > 0
+          ? listings.filter((listing) => {
+              const variantId = listing.platformVariantId ?? "";
+              return changedVariantIds.has(variantId);
+            })
+          : listings;
 
-      for (const listing of listings) {
+      for (const listing of targetedListings) {
         try {
           const result = await upsertListing(listing, integration.id);
           if (result?.status === "created") progress.itemsCreated++;
@@ -202,6 +217,13 @@ export async function runShopifyWebhookReconcile(
           });
         }
       }
+
+      const pruned = await removeMarketplaceListingsMissingFromProductSet(
+        integration.id,
+        productId,
+        presentVariantIds,
+      );
+      progress.itemsUpdated += pruned.deletedListings;
     }
 
     if (deletedProductIds.length > 0) {

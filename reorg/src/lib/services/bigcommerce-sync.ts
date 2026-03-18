@@ -9,7 +9,10 @@ import {
   saveUnmatchedListings,
   upsertMarketplaceListings,
 } from "@/lib/services/matching";
-import { removeMarketplaceListingsByPlatformItemIds } from "@/lib/services/listing-prune";
+import {
+  removeMarketplaceListingsByPlatformItemIds,
+  removeMarketplaceListingsMissingFromProductSet,
+} from "@/lib/services/listing-prune";
 
 function getStringConfig(
   config: Record<string, unknown>,
@@ -62,12 +65,16 @@ export async function runBigCommerceWebhookReconcile(
   input: {
     productIds?: string[];
     deletedProductIds?: string[];
+    changedVariantIds?: string[];
   },
   options: SyncExecutionOptions = {},
 ): Promise<SyncResult> {
   const { integration, adapter } = await getBigCommerceSyncContext();
   const productIds = [...new Set((input.productIds ?? []).filter(Boolean))];
   const deletedProductIds = [...new Set((input.deletedProductIds ?? []).filter(Boolean))];
+  const changedVariantIds = new Set(
+    (input.changedVariantIds ?? []).filter(Boolean).map((variantId) => String(variantId)),
+  );
   const startTime = Date.now();
   const errors: string[] = [];
 
@@ -88,8 +95,16 @@ export async function runBigCommerceWebhookReconcile(
   try {
     for (const productId of productIds) {
       const listings = await adapter.fetchListingsByProductId(productId);
+      const presentVariantIds = listings.map((listing) => listing.platformVariantId ?? "");
+      const targetedListings =
+        changedVariantIds.size > 0
+          ? listings.filter((listing) => {
+              const variantId = listing.platformVariantId ?? "";
+              return changedVariantIds.has(variantId);
+            })
+          : listings;
       const matchResult = await matchListings(
-        listings,
+        targetedListings,
         integration.id,
         integration.isMaster,
       );
@@ -103,10 +118,17 @@ export async function runBigCommerceWebhookReconcile(
         await saveUnmatchedListings(matchResult.unmatched, integration.id);
       }
 
-      totalProcessed += listings.length;
+      totalProcessed += targetedListings.length;
       totalCreated += upsertResult.created;
       totalUpdated += upsertResult.updated;
       totalUnmatched += matchResult.stats.unmatched;
+
+      const pruned = await removeMarketplaceListingsMissingFromProductSet(
+        integration.id,
+        productId,
+        presentVariantIds,
+      );
+      totalUpdated += pruned.deletedListings;
     }
 
     if (deletedProductIds.length > 0) {
