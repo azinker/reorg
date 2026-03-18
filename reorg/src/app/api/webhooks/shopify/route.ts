@@ -81,6 +81,41 @@ function extractShopifyInventoryItemIds(payload: unknown): string[] {
   )];
 }
 
+async function resolveShopifyProductIdsFromVariantIds(variantIds: string[]) {
+  if (variantIds.length === 0) {
+    return {
+      productIds: [],
+      variantIds: [],
+    };
+  }
+
+  const listings = await db.marketplaceListing.findMany({
+    where: {
+      integration: {
+        platform: "SHOPIFY",
+      },
+      platformVariantId: {
+        in: variantIds,
+      },
+    },
+    select: {
+      platformItemId: true,
+      platformVariantId: true,
+    },
+  });
+
+  return {
+    productIds: [...new Set(listings.map((listing) => listing.platformItemId))],
+    variantIds: [
+      ...new Set(
+        listings
+          .map((listing) => listing.platformVariantId)
+          .filter((value): value is string => Boolean(value)),
+      ),
+    ],
+  };
+}
+
 async function resolveShopifyTargets(payload: unknown) {
   const directIds = extractShopifyProductIds(payload);
   const directVariantIds = extractShopifyVariantIds(payload);
@@ -92,13 +127,6 @@ async function resolveShopifyTargets(payload: unknown) {
   }
 
   const inventoryItemIds = extractShopifyInventoryItemIds(payload);
-  if (inventoryItemIds.length === 0) {
-    return {
-      productIds: [],
-      variantIds: directVariantIds,
-    };
-  }
-
   const platformItemIds = new Set<string>();
   const platformVariantIds = new Set<string>();
 
@@ -130,6 +158,16 @@ async function resolveShopifyTargets(payload: unknown) {
       if (listing.platformVariantId) {
         platformVariantIds.add(listing.platformVariantId);
       }
+    }
+  }
+
+  if (platformItemIds.size === 0 && directVariantIds.length > 0) {
+    const resolved = await resolveShopifyProductIdsFromVariantIds(directVariantIds);
+    for (const productId of resolved.productIds) {
+      platformItemIds.add(productId);
+    }
+    for (const variantId of resolved.variantIds) {
+      platformVariantIds.add(variantId);
     }
   }
 

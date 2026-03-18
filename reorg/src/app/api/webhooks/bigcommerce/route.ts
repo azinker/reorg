@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { db } from "@/lib/db";
 import { safeCompareText } from "@/lib/security";
 import { handleMarketplaceWebhook } from "@/lib/services/webhook-sync";
 
@@ -68,6 +69,26 @@ function extractBigCommerceVariantIds(payload: unknown): string[] {
   )];
 }
 
+async function resolveBigCommerceProductIdsFromVariantIds(variantIds: string[]) {
+  if (variantIds.length === 0) return [];
+
+  const listings = await db.marketplaceListing.findMany({
+    where: {
+      integration: {
+        platform: "BIGCOMMERCE",
+      },
+      platformVariantId: {
+        in: variantIds,
+      },
+    },
+    select: {
+      platformItemId: true,
+    },
+  });
+
+  return [...new Set(listings.map((listing) => listing.platformItemId))];
+}
+
 export async function POST(request: NextRequest) {
   const secret = process.env.BIGCOMMERCE_WEBHOOK_SECRET;
   if (!secret) {
@@ -95,6 +116,10 @@ export async function POST(request: NextRequest) {
       : request.headers.get("x-bc-topic");
   const productIds = extractBigCommerceProductIds(payload);
   const variantIds = extractBigCommerceVariantIds(payload);
+  const resolvedProductIds =
+    productIds.length > 0
+      ? productIds
+      : await resolveBigCommerceProductIdsFromVariantIds(variantIds);
   const sourceLabel =
     typeof payload?.producer === "string"
       ? payload.producer
@@ -111,8 +136,8 @@ export async function POST(request: NextRequest) {
     topic,
     externalId,
     sourceLabel,
-    changedIds: topic === "store/product/deleted" ? [] : productIds,
-    deletedIds: topic === "store/product/deleted" ? productIds : [],
+    changedIds: topic === "store/product/deleted" ? [] : resolvedProductIds,
+    deletedIds: topic === "store/product/deleted" ? resolvedProductIds : [],
     changedVariantIds: variantIds,
   });
 
