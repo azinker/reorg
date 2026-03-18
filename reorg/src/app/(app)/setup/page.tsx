@@ -283,7 +283,7 @@ export default async function SetupPage() {
       description:
         automationHealth.summary.status === "healthy"
           ? "Automatic pulls and webhook health are within the expected window."
-          : automationHealth.summary.detail,
+          : `${automationHealth.summary.detail} ${automationHealth.summary.recommendedAction}`,
     },
     {
       number: 12,

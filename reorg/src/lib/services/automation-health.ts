@@ -31,6 +31,7 @@ export interface AutomationHealthSummary {
   healthyCount: number;
   delayedCount: number;
   attentionCount: number;
+  missingWebhookCount: number;
   headline: string;
   detail: string;
   recommendedAction: string;
@@ -288,8 +289,10 @@ export async function buildAutomationHealthSnapshot(
         now,
       );
       const combinedStatus =
-        webhook.webhookStatus === "missing" && sync.status === "healthy"
-          ? "delayed"
+        webhook.webhookStatus === "missing"
+          ? sync.status === "healthy"
+            ? "delayed"
+            : "attention"
           : sync.status;
       const recommendedAction = getRecommendedAction({
         label: integration.label,
@@ -340,6 +343,9 @@ export async function buildAutomationHealthSnapshot(
   const delayedLabels = integrationHealth
     .filter((item) => item.combinedStatus === "delayed")
     .map((item) => item.label);
+  const missingWebhookCount = integrationHealth.filter(
+    (item) => item.webhookStatus === "missing",
+  ).length;
   const delayedSyncLabels = integrationHealth
     .filter((item) => item.status === "delayed")
     .map((item) => item.label);
@@ -355,8 +361,12 @@ export async function buildAutomationHealthSnapshot(
       healthyCount,
       delayedCount,
       attentionCount,
+      missingWebhookCount,
       headline: "Attention needed",
-      detail: `${labels} need fresher completed pulls.`,
+      detail:
+        missingWebhookCount > 0
+          ? `${labels} need fresher completed pulls or webhook follow-up.`
+          : `${labels} need fresher completed pulls.`,
       recommendedAction:
         attentionLabels.length === 1
           ? `Open Sync or Errors and run a manual pull for ${labels}. If it still falls behind, review credentials and webhook delivery.`
@@ -372,6 +382,7 @@ export async function buildAutomationHealthSnapshot(
       healthyCount,
       delayedCount,
       attentionCount,
+      missingWebhookCount,
       headline: "Running behind",
       detail: onlyWebhookCoverageIssue
         ? `${labels} are still refreshing on schedule, but their store change notices have gone quiet.`
@@ -387,6 +398,7 @@ export async function buildAutomationHealthSnapshot(
       healthyCount,
       delayedCount,
       attentionCount,
+      missingWebhookCount,
       headline: "Healthy",
       detail: "All connected stores are refreshing within their expected window.",
       recommendedAction: "No action needed.",

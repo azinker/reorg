@@ -22,6 +22,7 @@ interface SchedulerHealthPayload {
     detail: string;
     recommendedAction: string;
     affectedLabels: string[];
+    missingWebhookCount: number;
   };
 }
 
@@ -278,6 +279,11 @@ export default function DashboardPage() {
             <div className="font-semibold">
               Store update health: {schedulerHealth.headline}
             </div>
+            {schedulerHealth.affectedLabels.length > 0 ? (
+              <div className="mt-0.5">
+                Affected stores: {schedulerHealth.affectedLabels.join(", ")}
+              </div>
+            ) : null}
             <div className="mt-0.5">{schedulerHealth.detail}</div>
             <div className="mt-1 opacity-90">
               Next step: {schedulerHealth.recommendedAction}

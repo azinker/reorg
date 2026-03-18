@@ -49,7 +49,11 @@ export function Sidebar({ mobile = false, onNavigate }: SidebarProps) {
     status: "healthy" | "delayed" | "attention";
     delayedCount: number;
     attentionCount: number;
+    missingWebhookCount: number;
     headline: string;
+    detail: string;
+    recommendedAction: string;
+    affectedLabels: string[];
   } | null>(null);
   const actuallyCollapsed = mobile ? false : collapsed;
 
@@ -133,6 +137,14 @@ export function Sidebar({ mobile = false, onNavigate }: SidebarProps) {
             <div className="font-semibold">{healthSummary.headline}</div>
             <div className="mt-1">
               {attentionCount} store{attentionCount === 1 ? "" : "s"} need attention.
+            </div>
+            {healthSummary.affectedLabels.length > 0 ? (
+              <div className="mt-1 text-[11px] opacity-90">
+                Stores: {healthSummary.affectedLabels.join(", ")}
+              </div>
+            ) : null}
+            <div className="mt-1 text-[11px] opacity-90">
+              {healthSummary.recommendedAction}
             </div>
           </div>
         </div>
