@@ -759,13 +759,13 @@ export default function SyncPage() {
           </div>
           <div className="grid min-w-[260px] grid-cols-2 gap-2 text-xs sm:grid-cols-4">
             <div className="rounded border border-border bg-muted/40 px-3 py-2">
-              <div className="text-muted-foreground">Ready Now</div>
+              <div className="text-muted-foreground">Ready At Last Check</div>
               <div className="mt-1 text-sm font-semibold tabular-nums text-foreground">
                 {schedulerStatus?.lastDueCount ?? 0}
               </div>
             </div>
             <div className="rounded border border-border bg-muted/40 px-3 py-2">
-              <div className="text-muted-foreground">Started</div>
+              <div className="text-muted-foreground">Started At Last Check</div>
               <div className="mt-1 text-sm font-semibold tabular-nums text-foreground">
                 {schedulerStatus?.lastDispatchedCount ?? 0}
               </div>
