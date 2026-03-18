@@ -10,7 +10,7 @@ import type { Density } from "@/lib/settings-store";
 import type { Platform } from "@/lib/grid-types";
 import { PLATFORM_SHORT } from "@/lib/grid-types";
 import { cn } from "@/lib/utils";
-import { Moon, Sun, Monitor, Rows3, Rows4, AlignJustify, Menu, LogOut, ShieldCheck } from "lucide-react";
+import { Moon, Sun, Monitor, Rows3, Rows4, AlignJustify, Menu, LogOut, ShieldCheck, AlertTriangle } from "lucide-react";
 
 const PLATFORM_ORDER: Platform[] = ["TPP_EBAY", "TT_EBAY", "BIGCOMMERCE", "SHOPIFY"];
 
@@ -36,9 +36,41 @@ export function TopBar({ user, onOpenSidebar }: TopBarProps) {
   const { connectionInfo } = useDashboardConnection();
   const [mounted, setMounted] = useState(false);
   const [tooltipOpen, setTooltipOpen] = useState(false);
+  const [automationHealth, setAutomationHealth] = useState<{
+    status: "healthy" | "delayed" | "attention";
+    delayedCount: number;
+    attentionCount: number;
+    headline: string;
+  } | null>(null);
 
   useEffect(() => {
     setMounted(true);
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+
+    async function loadAutomationHealth() {
+      try {
+        const response = await fetch("/api/scheduler/status", { cache: "no-store" });
+        if (!response.ok) return;
+        const json = await response.json();
+        if (!active) return;
+        setAutomationHealth(json.data?.healthSummary ?? null);
+      } catch {
+        if (active) setAutomationHealth(null);
+      }
+    }
+
+    void loadAutomationHealth();
+    const timer = window.setInterval(() => {
+      void loadAutomationHealth();
+    }, 60_000);
+
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
   }, []);
 
   const density = mounted ? settings.density : "comfortable";
@@ -48,6 +80,8 @@ export function TopBar({ user, onOpenSidebar }: TopBarProps) {
   const isNotConnected = connectionInfo?.source === "mock";
   const summary = connectionInfo?.summary ?? null;
   const hasTooltip = isConnected && summary != null;
+  const attentionCount =
+    (automationHealth?.attentionCount ?? 0) + (automationHealth?.delayedCount ?? 0);
 
   const titleText =
     connectionInfo == null
@@ -123,6 +157,27 @@ export function TopBar({ user, onOpenSidebar }: TopBarProps) {
         </div>
       </div>
       <div className="flex min-w-0 items-center gap-2 sm:gap-3">
+        {automationHealth && automationHealth.status !== "healthy" && (
+          <div
+            className={cn(
+              "hidden items-center gap-2 rounded-lg border px-3 py-1.5 text-xs sm:flex",
+              automationHealth.status === "attention"
+                ? "border-red-500/30 bg-red-500/10 text-red-300"
+                : "border-amber-500/30 bg-amber-500/10 text-amber-300",
+            )}
+            title={automationHealth.headline}
+          >
+            <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+            <div className="min-w-0">
+              <div className="truncate font-semibold">
+                {attentionCount} store{attentionCount === 1 ? "" : "s"} need attention
+              </div>
+              <div className="truncate text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+                {automationHealth.headline}
+              </div>
+            </div>
+          </div>
+        )}
         {user && (
           <div className="hidden items-center gap-2 rounded-lg border border-orange-500/30 bg-orange-500/10 px-3 py-1.5 text-xs text-orange-200 sm:flex">
             <ShieldCheck className="h-3.5 w-3.5 shrink-0 text-[#C43E3E]" />

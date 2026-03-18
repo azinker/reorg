@@ -196,7 +196,7 @@ export async function GET() {
         });
       }
 
-      if (item.combinedStatus === "delayed") {
+      if (item.status === "delayed") {
         entries.push({
           id: `automation-delayed-${item.integrationId}`,
           severity: "warning",
