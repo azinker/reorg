@@ -227,7 +227,7 @@ export default function ErrorsPage() {
           Errors
         </h1>
         <p className="text-sm text-muted-foreground">
-          Friendly error summaries with technical details and missing-data alerts
+          Friendly error summaries for missing data, failed syncs, and stores that are falling behind
         </p>
       </div>
 

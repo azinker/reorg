@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { PLATFORM_FULL_LABELS, PLATFORM_LABELS } from "@/lib/integrations/types";
+import { getAutomationHealthSnapshot } from "@/lib/services/automation-health";
 import type { Platform } from "@prisma/client";
 
 type Severity = "critical" | "warning" | "info";
@@ -56,7 +57,7 @@ function stringifyError(error: unknown): string {
 
 export async function GET() {
   try {
-    const [masterRows, syncJobs, shippingRates, integrations] = await Promise.all([
+    const [masterRows, syncJobs, shippingRates, integrations, automationHealth] = await Promise.all([
       db.masterRow.findMany({
         where: {
           OR: [
@@ -77,6 +78,7 @@ export async function GET() {
         where: { cost: { not: null } },
       }),
       db.integration.findMany(),
+      getAutomationHealthSnapshot(),
     ]);
 
     const rateKeys = new Set(shippingRates.map((rate) => rate.weightKey.trim().toUpperCase()));
@@ -157,6 +159,98 @@ export async function GET() {
           storeAcronym,
           timestamp: formatTimestamp(occurredAt),
           occurredAt: occurredAt.toISOString(),
+        });
+      }
+    }
+
+    for (const item of automationHealth.integrationHealth) {
+      const timestampSource = item.lastSyncAt ?? item.lastWebhookAt ?? new Date().toISOString();
+      const timestampDate = new Date(timestampSource);
+
+      if (item.status === "attention") {
+        entries.push({
+          id: `automation-attention-${item.integrationId}`,
+          severity: "critical",
+          summary: `${item.label} updates need attention`,
+          technicalDetails: [
+            `Store: ${item.label}`,
+            `Platform: ${item.platform}`,
+            `Update health: ${item.syncMessage}`,
+            `Last completed pull: ${item.lastSyncAt ? formatTimestamp(new Date(item.lastSyncAt)) : "Never"}`,
+            item.nextDueAt
+              ? `Next automatic check: ${formatTimestamp(new Date(item.nextDueAt))}`
+              : "Next automatic check: Not scheduled",
+            item.running ? "A pull is running now." : "No pull is running right now.",
+            item.webhookExpected ? `Webhook status: ${item.webhookMessage}` : "Webhook status: Not applicable",
+          ].join("\n"),
+          store: item.label,
+          storeAcronym:
+            PLATFORM_LABELS[item.platform as Platform] ?? item.platform,
+          timestamp: formatTimestamp(timestampDate),
+          occurredAt: timestampDate.toISOString(),
+        });
+      }
+
+      if (item.status === "delayed") {
+        entries.push({
+          id: `automation-delayed-${item.integrationId}`,
+          severity: "warning",
+          summary: `${item.label} updates are behind schedule`,
+          technicalDetails: [
+            `Store: ${item.label}`,
+            `Platform: ${item.platform}`,
+            `Update health: ${item.syncMessage}`,
+            `Last completed pull: ${item.lastSyncAt ? formatTimestamp(new Date(item.lastSyncAt)) : "Never"}`,
+            item.nextDueAt
+              ? `Next automatic check: ${formatTimestamp(new Date(item.nextDueAt))}`
+              : "Next automatic check: Not scheduled",
+            item.running ? "A pull is running now." : "No pull is running right now.",
+          ].join("\n"),
+          store: item.label,
+          storeAcronym:
+            PLATFORM_LABELS[item.platform as Platform] ?? item.platform,
+          timestamp: formatTimestamp(timestampDate),
+          occurredAt: timestampDate.toISOString(),
+        });
+      }
+
+      if (item.webhookExpected && item.webhookStatus === "missing") {
+        entries.push({
+          id: `automation-webhook-missing-${item.integrationId}`,
+          severity: "warning",
+          summary: `${item.label} has not recorded a store change notice yet`,
+          technicalDetails: [
+            `Store: ${item.label}`,
+            `Platform: ${item.platform}`,
+            `Webhook health: ${item.webhookMessage}`,
+            `Last completed pull: ${item.lastSyncAt ? formatTimestamp(new Date(item.lastSyncAt)) : "Never"}`,
+            "Scheduled pulls are still the safety net, but webhook-triggered refreshes will not be available until notices arrive.",
+          ].join("\n"),
+          store: item.label,
+          storeAcronym:
+            PLATFORM_LABELS[item.platform as Platform] ?? item.platform,
+          timestamp: formatTimestamp(timestampDate),
+          occurredAt: timestampDate.toISOString(),
+        });
+      }
+
+      if (item.webhookExpected && item.webhookStatus === "quiet") {
+        entries.push({
+          id: `automation-webhook-quiet-${item.integrationId}`,
+          severity: "info",
+          summary: `${item.label} has been quiet on webhook traffic`,
+          technicalDetails: [
+            `Store: ${item.label}`,
+            `Platform: ${item.platform}`,
+            `Webhook health: ${item.webhookMessage}`,
+            `Last recorded notice: ${item.lastWebhookAt ? formatTimestamp(new Date(item.lastWebhookAt)) : "Never"}`,
+            "This can be normal if the store was quiet, but it is worth checking if you expected recent changes to trigger early refreshes.",
+          ].join("\n"),
+          store: item.label,
+          storeAcronym:
+            PLATFORM_LABELS[item.platform as Platform] ?? item.platform,
+          timestamp: formatTimestamp(timestampDate),
+          occurredAt: timestampDate.toISOString(),
         });
       }
     }
