@@ -166,7 +166,7 @@ export async function buildAutomationHealthSnapshot(
   const recentWebhookEntries = await db.auditLog.findMany({
     where: { action: "webhook_received" },
     orderBy: { createdAt: "desc" },
-    take: 200,
+    take: 5000,
     select: {
       createdAt: true,
       details: true,
