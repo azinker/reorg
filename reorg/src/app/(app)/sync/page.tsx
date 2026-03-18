@@ -805,6 +805,15 @@ export default function SyncPage() {
             </div>
           </div>
         </div>
+        {schedulerStatus &&
+          schedulerStatus.dueNowCount > 0 &&
+          schedulerStatus.lastDueCount !== schedulerStatus.dueNowCount && (
+            <div className="mt-3 rounded border border-blue-500/30 bg-blue-500/10 px-3 py-2 text-xs text-blue-300">
+              {schedulerStatus.dueNowCount} store
+              {schedulerStatus.dueNowCount === 1 ? "" : "s"} became ready after the
+              last automatic check. They will start on the next scheduler tick.
+            </div>
+          )}
         {!!schedulerStatus?.recentJobs?.length && (
           <div className="mt-4 rounded border border-border bg-muted/20 p-3">
             <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
