@@ -112,6 +112,7 @@ export async function GET(
         lastSyncAt: integration.lastSyncAt,
         syncProfile: getIntegrationConfig(integration).syncProfile,
         syncState: getIntegrationConfig(integration).syncState,
+        webhookState: getIntegrationConfig(integration).webhookState,
         lastJob: lastJob
           ? {
               id: lastJob.id,

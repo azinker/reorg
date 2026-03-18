@@ -31,9 +31,18 @@ export interface SyncState {
   lastFallbackReason: string | null;
 }
 
+export interface WebhookState {
+  destination: string | null;
+  topics: string[];
+  providerIds: string[];
+  lastEnsuredAt: string | null;
+  lastEnsureError: string | null;
+}
+
 export type IntegrationConfigRecord = Record<string, unknown> & {
   syncProfile: SyncProfile;
   syncState: SyncState;
+  webhookState: WebhookState;
 };
 
 type UnknownRecord = Record<string, unknown>;
@@ -98,6 +107,14 @@ const EMPTY_SYNC_STATE: SyncState = {
   lastFallbackReason: null,
 };
 
+const EMPTY_WEBHOOK_STATE: WebhookState = {
+  destination: null,
+  topics: [],
+  providerIds: [],
+  lastEnsuredAt: null,
+  lastEnsureError: null,
+};
+
 function isRecord(value: unknown): value is UnknownRecord {
   return !!value && typeof value === "object" && !Array.isArray(value);
 }
@@ -116,6 +133,11 @@ function asString(value: unknown, fallback: string): string {
 
 function asNullableString(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value : null;
+}
+
+function asStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
 }
 
 function asSyncMode(value: unknown, fallback: SyncMode): SyncMode {
@@ -143,6 +165,10 @@ export function getDefaultSyncProfile(platform: Platform): SyncProfile {
 
 export function getEmptySyncState(): SyncState {
   return { ...EMPTY_SYNC_STATE };
+}
+
+export function getEmptyWebhookState(): WebhookState {
+  return { ...EMPTY_WEBHOOK_STATE };
 }
 
 export function normalizeSyncProfile(
@@ -200,6 +226,18 @@ export function normalizeSyncState(raw: unknown): SyncState {
   };
 }
 
+export function normalizeWebhookState(raw: unknown): WebhookState {
+  const record = isRecord(raw) ? raw : {};
+
+  return {
+    destination: asNullableString(record.destination),
+    topics: asStringArray(record.topics),
+    providerIds: asStringArray(record.providerIds),
+    lastEnsuredAt: asNullableString(record.lastEnsuredAt),
+    lastEnsureError: asNullableString(record.lastEnsureError),
+  };
+}
+
 export function normalizeIntegrationConfig(
   platform: Platform,
   rawConfig: unknown,
@@ -210,6 +248,7 @@ export function normalizeIntegrationConfig(
     ...record,
     syncProfile: normalizeSyncProfile(platform, record.syncProfile),
     syncState: normalizeSyncState(record.syncState),
+    webhookState: normalizeWebhookState(record.webhookState),
   };
 }
 
@@ -233,12 +272,20 @@ export function mergeIntegrationConfig(
           ...patch.syncState,
         })
       : current.syncState;
+  const nextWebhookState =
+    isRecord(patch.webhookState)
+      ? normalizeWebhookState({
+          ...current.webhookState,
+          ...patch.webhookState,
+        })
+      : current.webhookState;
 
   return {
     ...current,
     ...patch,
     syncProfile: nextProfile,
     syncState: nextState,
+    webhookState: nextWebhookState,
   };
 }
 

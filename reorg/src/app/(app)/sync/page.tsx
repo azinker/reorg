@@ -70,6 +70,14 @@ type IntegrationSyncState = {
   lastFallbackReason: string | null;
 };
 
+type IntegrationWebhookState = {
+  destination: string | null;
+  topics: string[];
+  providerIds: string[];
+  lastEnsuredAt: string | null;
+  lastEnsureError: string | null;
+};
+
 type SyncJobInfo = {
   id: string;
   status: string;
@@ -89,6 +97,7 @@ type SyncRouteData = {
   lastSyncAt: string | null;
   syncProfile: SyncProfile;
   syncState: IntegrationSyncState;
+  webhookState: IntegrationWebhookState;
   lastJob: SyncJobInfo | null;
 };
 
@@ -727,6 +736,7 @@ export default function SyncPage() {
           const meta = syncMeta[store.apiPlatform];
           const syncProfile = meta?.syncProfile ?? null;
           const syncState = meta?.syncState ?? null;
+          const webhookState = meta?.webhookState ?? null;
           const isSyncing = storeSync === "syncing";
           const jobErrors = (liveJob?.errors ?? []) as SyncError[];
           const showErrors = errorsExpanded[store.apiPlatform] && jobErrors.length > 0;
@@ -876,6 +886,21 @@ export default function SyncPage() {
                         ? "Marketplace webhooks can trigger an earlier pull-only refresh between scheduled runs."
                         : "This store relies on its scheduled cadence unless you start a manual pull."}
                     </div>
+                    {usesWebhookWakeup(syncProfile) && webhookState ? (
+                      <div className="mt-2 rounded border border-border/60 bg-background/40 px-2 py-1.5">
+                        <div>
+                          Registration: {webhookState.topics.length > 0 ? "Configured" : "Not registered yet"}
+                        </div>
+                        <div>
+                          Last ensured: {formatDateTime(webhookState.lastEnsuredAt)}
+                        </div>
+                        {webhookState.lastEnsureError ? (
+                          <div className="text-red-400">
+                            Ensure error: {webhookState.lastEnsureError}
+                          </div>
+                        ) : null}
+                      </div>
+                    ) : null}
                   </div>
                 </div>
               ) : null}
