@@ -1260,7 +1260,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
 
                   {/* Ad Rate: editable only on parent/standalone rows; child SKUs show rate read-only */}
                   {isColVisible("adRate") && (
-                    <div className={cn(COL_WIDTHS.adRate, "flex items-center px-3", cellPy)}>
+                    <div className={cn(COL_WIDTHS.adRate, "min-w-0 flex items-center px-3", cellPy)}>
                       {row.isVariation && !row.isParent ? (
                         <StoreBlockGroup items={row.adRates} format="percent" showStaged={false} />
                       ) : (

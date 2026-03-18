@@ -585,13 +585,15 @@ function EditableAdRateBlock({ item, rowId, onSave, onPush, onDiscard, showItemI
 
   if (editing) {
     return (
-      <div className={cn("w-full rounded border px-2.5 py-1.5 text-xs", colorClass, "ring-1 ring-ring")}>
-        <div className="flex items-center gap-1">
+      <div className={cn("w-full min-w-0 rounded border px-2.5 py-1.5 text-xs", colorClass, "ring-1 ring-ring")}>
+        <div className="flex items-center gap-1 mb-1">
           <PlatformIcon platform={item.platform} className="h-3.5 w-3.5 shrink-0" />
           <div className="shrink-0 flex flex-col items-start">
             <span className="w-10 text-[10px] font-extrabold uppercase text-foreground leading-none">{label}</span>
             {shortItemId && <span className="text-[8px] font-mono text-muted-foreground/60 leading-none mt-0.5">#{shortItemId}</span>}
           </div>
+        </div>
+        <div className="flex flex-wrap items-center gap-1">
           <input
             ref={inputRef}
             type="text"
@@ -601,20 +603,20 @@ function EditableAdRateBlock({ item, rowId, onSave, onPush, onDiscard, showItemI
               if (e.key === "Enter") setShowActions(true);
               if (e.key === "Escape") cancelEdit();
             }}
-            className="w-16 rounded border bg-background px-1.5 py-0.5 text-xs font-mono text-foreground outline-none focus:ring-1 focus:ring-ring"
+            className="w-14 shrink-0 rounded border bg-background px-1.5 py-0.5 text-xs font-mono text-foreground outline-none focus:ring-1 focus:ring-ring"
           />
-          <span className="text-[10px] text-muted-foreground">%</span>
+          <span className="shrink-0 text-[10px] text-muted-foreground">%</span>
           {!showActions ? (
             <>
-              <button onClick={() => setShowActions(true)} className="rounded p-0.5 text-emerald-400 hover:text-emerald-300 cursor-pointer" title="Save">
+              <button onClick={() => setShowActions(true)} className="shrink-0 rounded p-0.5 text-emerald-400 hover:text-emerald-300 cursor-pointer" title="Confirm">
                 <Check className="h-3 w-3" />
               </button>
-              <button onClick={cancelEdit} className="rounded p-0.5 text-muted-foreground hover:text-foreground cursor-pointer" title="Cancel">
+              <button onClick={cancelEdit} className="shrink-0 rounded p-0.5 text-muted-foreground hover:text-foreground cursor-pointer" title="Cancel">
                 <X className="h-3 w-3" />
               </button>
             </>
           ) : (
-            <div className="ml-1 flex items-center gap-1">
+            <div className="flex shrink-0 items-center gap-1">
               <button
                 onClick={() => handleSave("stage")}
                 className="rounded bg-[var(--staged)] px-1.5 py-0.5 text-[10px] font-bold text-[var(--staged-foreground)] hover:opacity-80 cursor-pointer"
@@ -717,7 +719,7 @@ export function EditableAdRateBlockGroup({ items, rowId, onSave, onPush, onDisca
   const hasDuplicatePlatforms = [...platformCounts.values()].some((c) => c > 1);
 
   return (
-    <div className="flex w-full flex-col gap-1">
+    <div className="flex min-w-0 w-full flex-col gap-1">
       {items.map((item, i) => (
         <EditableAdRateBlock
           key={`${item.platform}-${item.listingId}-${i}`}
