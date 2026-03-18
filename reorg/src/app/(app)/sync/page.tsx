@@ -98,6 +98,12 @@ type SyncRouteData = {
   syncProfile: SyncProfile;
   syncState: IntegrationSyncState;
   webhookState: IntegrationWebhookState;
+  webhookHealth: {
+    status: "ok" | "warning" | "info";
+    message: string;
+    expectedDestination: string | null;
+    currentDestination: string | null;
+  };
   lastJob: SyncJobInfo | null;
 };
 
@@ -928,6 +934,7 @@ export default function SyncPage() {
           const syncProfile = meta?.syncProfile ?? null;
           const syncState = meta?.syncState ?? null;
           const webhookState = meta?.webhookState ?? null;
+          const webhookHealth = meta?.webhookHealth ?? null;
           const isSyncing = storeSync === "syncing";
           const jobErrors = (liveJob?.errors ?? []) as SyncError[];
           const showErrors = errorsExpanded[store.apiPlatform] && jobErrors.length > 0;
@@ -1082,12 +1089,32 @@ export default function SyncPage() {
                         <div>
                           Registration: {webhookState.topics.length > 0 ? "Configured" : "Not registered yet"}
                         </div>
+                        <div className="break-all">
+                          Destination: {webhookState.destination ?? "Not set"}
+                        </div>
                         <div>
                           Last ensured: {formatDateTime(webhookState.lastEnsuredAt)}
                         </div>
                         {webhookState.lastEnsureError ? (
                           <div className="text-red-400">
                             Ensure error: {webhookState.lastEnsureError}
+                          </div>
+                        ) : null}
+                        {webhookHealth?.expectedDestination ? (
+                          <div
+                            className={cn(
+                              "mt-2 rounded border px-2 py-1.5",
+                              webhookHealth.status === "warning"
+                                ? "border-amber-500/30 bg-amber-500/10 text-amber-400"
+                                : "border-emerald-500/30 bg-emerald-500/10 text-emerald-400",
+                            )}
+                          >
+                            <div>{webhookHealth.message}</div>
+                            {webhookHealth.status === "warning" ? (
+                              <div className="mt-1 break-all text-[11px]">
+                                Expected: {webhookHealth.expectedDestination}
+                              </div>
+                            ) : null}
                           </div>
                         ) : null}
                       </div>

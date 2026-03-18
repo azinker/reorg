@@ -4,6 +4,7 @@ import { Platform } from "@prisma/client";
 import { z } from "zod";
 import { startIntegrationSync } from "@/lib/services/sync-control";
 import { getIntegrationConfig } from "@/lib/integrations/runtime-config";
+import { assessIntegrationWebhookHealth } from "@/lib/webhook-health";
 
 const postSchema = z
   .object({
@@ -113,6 +114,7 @@ export async function GET(
         syncProfile: getIntegrationConfig(integration).syncProfile,
         syncState: getIntegrationConfig(integration).syncState,
         webhookState: getIntegrationConfig(integration).webhookState,
+        webhookHealth: assessIntegrationWebhookHealth(integration),
         lastJob: lastJob
           ? {
               id: lastJob.id,

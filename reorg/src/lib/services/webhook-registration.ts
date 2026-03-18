@@ -1,7 +1,7 @@
 import { Prisma, type Integration, Platform } from "@prisma/client";
 import { db } from "@/lib/db";
-import { getAppEnv } from "@/lib/app-env";
 import { getIntegrationConfig } from "@/lib/integrations/runtime-config";
+import { getExpectedWebhookBaseUrl } from "@/lib/webhook-health";
 
 const SHOPIFY_TOPICS = [
   "PRODUCTS_CREATE",
@@ -30,25 +30,6 @@ interface EnsureWebhookResult {
   destination: string;
   topics: string[];
   providerIds: string[];
-}
-
-function getRequiredBaseUrl() {
-  const appEnv = getAppEnv();
-
-  if (appEnv === "production") {
-    return "https://reorg.theperfectpart.net";
-  }
-
-  if (appEnv === "staging") {
-    return "https://stage.reorg.theperfectpart.net";
-  }
-
-  const baseUrl = process.env.AUTH_URL?.trim();
-  if (!baseUrl) {
-    throw new Error("AUTH_URL must be set before registering marketplace webhooks in local mode.");
-  }
-
-  return baseUrl.replace(/\/$/, "");
 }
 
 function asStringConfig(
@@ -142,7 +123,7 @@ async function ensureShopifyWebhooks(
   const normalizedStore = storeDomain.includes(".")
     ? storeDomain
     : `${storeDomain}.myshopify.com`;
-  const destination = `${getRequiredBaseUrl()}/api/webhooks/shopify`;
+  const destination = `${getExpectedWebhookBaseUrl()}/api/webhooks/shopify`;
   const endpoint = `https://${normalizedStore}/admin/api/${apiVersion}/graphql.json`;
 
   const listData = await shopifyGraphQL<{
@@ -277,7 +258,7 @@ async function ensureBigCommerceWebhooks(
     );
   }
 
-  const destination = `${getRequiredBaseUrl()}/api/webhooks/bigcommerce`;
+  const destination = `${getExpectedWebhookBaseUrl()}/api/webhooks/bigcommerce`;
   const existingResponse = await bigCommerceRequest<{
     data?: Array<{
       id: number | string;
