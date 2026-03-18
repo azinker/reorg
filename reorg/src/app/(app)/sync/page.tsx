@@ -216,6 +216,23 @@ function getAutomationBadgeClasses(
   return "border-emerald-500/30 bg-emerald-500/10 text-emerald-400";
 }
 
+function getReadableJobStatus(status: string) {
+  if (status === "RUNNING") return "Updating now";
+  if (status === "COMPLETED") return "Last scheduled update finished";
+  if (status === "FAILED") return "Last scheduled update did not finish";
+  return status;
+}
+
+function getReadableWebhookStatus(status: string) {
+  if (status === "started") return "started a refresh";
+  if (status === "running") return "covered by a current refresh";
+  if (status === "debounced") return "already covered";
+  if (status === "ignored") return "recorded only";
+  if (status === "completed") return "completed";
+  if (status === "failed") return "failed";
+  return status;
+}
+
 function getJobDurationMs(job: SyncJobInfo | null, now: number) {
   if (!job?.startedAt) return null;
   const startedAt = new Date(job.startedAt).getTime();
@@ -725,42 +742,42 @@ export default function SyncPage() {
                 "h-4 w-4",
                 schedulerStatus?.runningCount ? "animate-spin text-blue-400" : "text-muted-foreground"
               )} />
-              <h2 className="text-sm font-semibold text-foreground">Auto Pull Monitor</h2>
+              <h2 className="text-sm font-semibold text-foreground">Automatic Background Updates</h2>
               <span className={cn(
                 "inline-flex items-center rounded border px-2 py-0.5 text-[11px] font-medium",
                 schedulerEnabled
                   ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-400"
                   : "border-amber-500/30 bg-amber-500/10 text-amber-400"
               )}>
-                {schedulerEnabled ? "Scheduler On" : "Scheduler Off"}
+                {schedulerEnabled ? "Auto updates on" : "Auto updates off"}
               </span>
             </div>
             <p className="mt-1 text-xs text-muted-foreground">
-              Last scheduler tick: {formatDateTime(schedulerStatus?.lastTickAt ?? null)}
-              {schedulerStatus?.lastOutcome ? ` | Outcome: ${schedulerStatus.lastOutcome}` : ""}
+              Last automatic check: {formatDateTime(schedulerStatus?.lastTickAt ?? null)}
+              {schedulerStatus?.lastOutcome ? ` | Result: ${schedulerStatus.lastOutcome}` : ""}
             </p>
           </div>
           <div className="grid min-w-[260px] grid-cols-2 gap-2 text-xs sm:grid-cols-4">
             <div className="rounded border border-border bg-muted/40 px-3 py-2">
-              <div className="text-muted-foreground">Due</div>
+              <div className="text-muted-foreground">Ready Now</div>
               <div className="mt-1 text-sm font-semibold tabular-nums text-foreground">
                 {schedulerStatus?.lastDueCount ?? 0}
               </div>
             </div>
             <div className="rounded border border-border bg-muted/40 px-3 py-2">
-              <div className="text-muted-foreground">Dispatched</div>
+              <div className="text-muted-foreground">Started</div>
               <div className="mt-1 text-sm font-semibold tabular-nums text-foreground">
                 {schedulerStatus?.lastDispatchedCount ?? 0}
               </div>
             </div>
             <div className="rounded border border-border bg-muted/40 px-3 py-2">
-              <div className="text-muted-foreground">Running</div>
+              <div className="text-muted-foreground">Updating Now</div>
               <div className="mt-1 text-sm font-semibold tabular-nums text-foreground">
                 {schedulerStatus?.runningCount ?? 0}
               </div>
             </div>
             <div className="rounded border border-border bg-muted/40 px-3 py-2">
-              <div className="text-muted-foreground">Outcome</div>
+              <div className="text-muted-foreground">Last Result</div>
               <div className="mt-1 text-sm font-semibold text-foreground">
                 {schedulerStatus?.lastOutcome ?? "—"}
               </div>
@@ -769,18 +786,18 @@ export default function SyncPage() {
         </div>
         {schedulerStatus?.lastError && (
           <div className="mt-3 rounded border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-400">
-            Last scheduler error: {schedulerStatus.lastError}
+            Last automatic update error: {schedulerStatus.lastError}
           </div>
         )}
         <div className="mt-3 grid gap-2 text-xs sm:grid-cols-2">
           <div className="rounded border border-border bg-muted/20 px-3 py-2">
-            <div className="text-muted-foreground">Stores due right now</div>
+            <div className="text-muted-foreground">Stores Ready To Update Right Now</div>
             <div className="mt-1 text-sm font-semibold tabular-nums text-foreground">
               {schedulerStatus?.dueNowCount ?? 0}
             </div>
           </div>
           <div className="rounded border border-border bg-muted/20 px-3 py-2">
-            <div className="text-muted-foreground">Most recent scheduler outcome</div>
+            <div className="text-muted-foreground">Most Recent Automatic Check Result</div>
             <div className="mt-1 text-sm font-semibold text-foreground">
               {schedulerStatus?.lastOutcome ?? "—"}
             </div>
@@ -789,7 +806,10 @@ export default function SyncPage() {
         {!!schedulerStatus?.recentJobs?.length && (
           <div className="mt-4 rounded border border-border bg-muted/20 p-3">
             <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-              Latest Scheduler Jobs By Store
+              Latest Scheduled Update Per Store
+            </div>
+            <div className="mb-3 text-xs text-muted-foreground">
+              This section only shows scheduled safety-check pulls. A store can still update successfully from webhooks even if its last scheduled pull did not finish.
             </div>
             <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-4">
             {schedulerStatus.recentJobs.slice(0, 4).map((job) => (
@@ -806,10 +826,10 @@ export default function SyncPage() {
                   </span>
                 </div>
                 <div className="mt-1 text-muted-foreground">
-                  {job.status} • {job.itemsProcessed.toLocaleString()} processed
+                  {getReadableJobStatus(job.status)} • {job.itemsProcessed.toLocaleString()} items checked
                 </div>
                 <div className="mt-1 text-muted-foreground">
-                  Completed: {formatDateTime(job.completedAt)}
+                  {job.status === "RUNNING" ? "Started" : "Finished"}: {formatDateTime(job.status === "RUNNING" ? job.startedAt : job.completedAt)}
                 </div>
               </div>
             ))}
@@ -819,7 +839,10 @@ export default function SyncPage() {
         {!!schedulerStatus?.upcoming?.length && (
           <div className="mt-4 rounded border border-border bg-muted/20 p-3">
             <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-              Pull Queue Snapshot
+              What Happens Next
+            </div>
+            <div className="mb-3 text-xs text-muted-foreground">
+              This shows which store is updating now and which stores are waiting for their next automatic check.
             </div>
             <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-4">
               {schedulerStatus.upcoming.slice(0, 4).map((item) => (
@@ -839,17 +862,17 @@ export default function SyncPage() {
                             : "border-emerald-500/30 bg-emerald-500/10 text-emerald-400",
                       )}
                     >
-                      {item.running ? "running" : item.due ? "due" : "queued"}
+                      {item.running ? "updating" : item.due ? "ready" : "waiting"}
                     </span>
                   </div>
                   <div className="mt-1 text-muted-foreground">
-                    {formatModeLabel(item.effectiveMode)} • every {item.intervalMinutes}m
+                    {formatModeLabel(item.effectiveMode)} update • every {item.intervalMinutes} minutes
                   </div>
                   <div className="mt-1 text-foreground/80">
                     {formatDueCountdown(item.minutesUntilDue, item.due, item.running)}
                   </div>
                   <div className="mt-1 text-muted-foreground">
-                    {item.nextDueAt ? `Target: ${formatDateTime(item.nextDueAt)}` : item.reason}
+                    {item.nextDueAt ? `Next check: ${formatDateTime(item.nextDueAt)}` : item.reason}
                   </div>
                 </div>
               ))}
@@ -859,7 +882,10 @@ export default function SyncPage() {
         {!!schedulerStatus?.recentWebhooks?.length && (
           <div className="mt-4 rounded border border-border bg-muted/20 p-3">
             <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-              Recent Webhook Activity
+              Recent Store Change Notices
+            </div>
+            <div className="mb-3 text-xs text-muted-foreground">
+              These are marketplace notices that tell reorG something changed and may need a refresh.
             </div>
             <div className="grid gap-2 md:grid-cols-2">
               {schedulerStatus.recentWebhooks.slice(0, 4).map((webhook) => (
@@ -876,7 +902,7 @@ export default function SyncPage() {
                     </span>
                   </div>
                   <div className="mt-1 text-muted-foreground">
-                    {webhook.topic} | {webhook.status}
+                    {webhook.topic} | {getReadableWebhookStatus(webhook.status)}
                   </div>
                   <div className="mt-1 text-foreground/80">
                     {webhook.message}
@@ -889,7 +915,10 @@ export default function SyncPage() {
         {!!schedulerStatus?.automationEvents?.length && (
           <div className="mt-4 rounded border border-border bg-muted/20 p-3">
             <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-              Automation Decisions
+              Why The System Did What It Did
+            </div>
+            <div className="mb-3 text-xs text-muted-foreground">
+              These are the recent automatic decisions reorG made, such as starting a refresh, skipping a duplicate notice, or finishing a targeted update.
             </div>
             <div className="grid gap-2 md:grid-cols-2">
               {schedulerStatus.automationEvents.slice(0, 6).map((event) => (
