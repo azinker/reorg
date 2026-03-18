@@ -242,7 +242,7 @@ export async function runEbayTppSync(
                 else if (result === "updated") progress.itemsUpdated++;
                 if (result === "variation_parent") progress.variationsFound++;
               } catch (err) {
-                if (isEbayGetItemUsageLimitError(err)) {
+              if (isEbayUsageLimitError(err)) {
                   haltedIncrementalReason =
                     "eBay GetItem usage limit was reached during this incremental refresh. Processed listings were saved, and the remaining changed listings will retry on the next run.";
                   shouldAdvanceCursor = false;
@@ -285,7 +285,7 @@ export async function runEbayTppSync(
           }
         }
       } catch (error) {
-        if (options.triggerSource === "manual" && isEbayGetItemUsageLimitError(error)) {
+        if (options.triggerSource === "manual" && isEbayUsageLimitError(error)) {
           effectiveMode = "full";
           completionCursor = lastCursorValue ?? completionCursor;
           fallbackReasonForCompletion =
@@ -341,7 +341,7 @@ export async function runEbayTppSync(
     }
   } catch (err) {
     progress.status = "FAILED";
-    if (isEbayGetItemUsageLimitError(err)) {
+    if (isEbayUsageLimitError(err)) {
       await recordRateLimitState(
         integration.id,
         err instanceof Error ? err.message : "eBay API usage limit reached.",
@@ -748,8 +748,19 @@ async function fetchFullItem(
   }
 }
 
-function isEbayGetItemUsageLimitError(error: unknown) {
-  return error instanceof EbayTradingApiError && error.code === EBAY_USAGE_LIMIT_ERROR_CODE;
+function isEbayUsageLimitError(error: unknown) {
+  if (error instanceof EbayTradingApiError && error.code === EBAY_USAGE_LIMIT_ERROR_CODE) {
+    return true;
+  }
+
+  const message =
+    error instanceof Error
+      ? error.message
+      : typeof error === "string"
+        ? error
+        : "";
+
+  return message.toLowerCase().includes("usage limit");
 }
 
 function str(obj: unknown, key: string): string | undefined {
