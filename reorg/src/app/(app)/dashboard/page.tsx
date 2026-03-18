@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { DataGrid } from "@/components/grid/data-grid";
-import type { GridRow } from "@/lib/grid-types";
+import type { GridRow, Platform } from "@/lib/grid-types";
 import { MOCK_ROWS } from "@/lib/mock-data";
 import { Loader2, RefreshCw } from "lucide-react";
 
@@ -39,11 +39,48 @@ async function fetchGridVersion(): Promise<string | null> {
   return typeof json.data?.version === "string" ? json.data.version : null;
 }
 
+function summarizeGrid(rows: GridRow[]) {
+  const variationParents = rows.filter((row) => row.isParent).length;
+  const standaloneRows = rows.filter((row) => !row.isParent).length;
+  const childRows = rows.reduce((sum, row) => sum + (row.childRows?.length ?? 0), 0);
+  const actualProducts = standaloneRows + childRows;
+  const listingCounts = new Map<Platform, Set<string>>();
+
+  function collectProductRow(productRow: GridRow) {
+    for (const item of productRow.itemNumbers) {
+      if (!listingCounts.has(item.platform)) {
+        listingCounts.set(item.platform, new Set());
+      }
+      listingCounts.get(item.platform)!.add(`${item.platform}:${item.listingId}:${item.variantId ?? ""}`);
+    }
+  }
+
+  for (const row of rows) {
+    if (row.isParent && row.childRows) {
+      for (const child of row.childRows) {
+        collectProductRow(child);
+      }
+      continue;
+    }
+    collectProductRow(row);
+  }
+
+  return {
+    masterGroups: rows.length,
+    variationParents,
+    standaloneRows,
+    childRows,
+    actualProducts,
+    listingCounts,
+  };
+}
+
 export default function DashboardPage() {
   const [rows, setRows] = useState<GridRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [source, setSource] = useState<"db" | "mock" | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [loadingProgress, setLoadingProgress] = useState(8);
   const versionRef = useRef<string | null>(null);
   const sourceRef = useRef<"db" | "mock" | null>(null);
   const refreshInFlightRef = useRef(false);
@@ -52,12 +89,14 @@ export default function DashboardPage() {
     let cancelled = false;
 
     async function loadInitial() {
+      setLoadingProgress(14);
       const [gridData, version] = await Promise.all([
         fetchGridData(),
         fetchGridVersion().catch(() => null),
       ]);
       if (cancelled) return;
 
+      setLoadingProgress(100);
       setRows(gridData.rows);
       setSource(gridData.source);
       setError(gridData.error);
@@ -114,6 +153,14 @@ export default function DashboardPage() {
 
     void loadInitial();
 
+    const progressTimer = window.setInterval(() => {
+      setLoadingProgress((current) => {
+        if (current >= 92) return current;
+        const next = current + Math.max(2, Math.round((100 - current) / 8));
+        return Math.min(next, 92);
+      });
+    }, 180);
+
     const intervalId = window.setInterval(() => {
       void refreshGridIfChanged();
     }, GRID_VERSION_POLL_MS);
@@ -123,18 +170,50 @@ export default function DashboardPage() {
 
     return () => {
       cancelled = true;
+      window.clearInterval(progressTimer);
       window.clearInterval(intervalId);
       window.removeEventListener("focus", handleVisibilityOrFocus);
       document.removeEventListener("visibilitychange", handleVisibilityOrFocus);
     };
   }, []);
 
+  const summary = useMemo(() => (rows ? summarizeGrid(rows) : null), [rows]);
+  const marketplaceSummary = useMemo(() => {
+    if (!summary) return "";
+
+    const parts: string[] = [];
+    for (const platform of ["TPP_EBAY", "TT_EBAY", "BIGCOMMERCE", "SHOPIFY"] as Platform[]) {
+      const count = summary.listingCounts.get(platform)?.size ?? 0;
+      if (count > 0) {
+        const label =
+          platform === "TPP_EBAY" ? "TPP" :
+          platform === "TT_EBAY" ? "TT" :
+          platform === "BIGCOMMERCE" ? "BC" :
+          "SHPFY";
+        parts.push(`${label} ${count}`);
+      }
+    }
+    return parts.join(" • ");
+  }, [summary]);
+
   if (!rows) {
     return (
       <div className="flex h-full min-h-0 min-w-0 items-center justify-center overflow-hidden">
-        <div className="flex flex-col items-center gap-3">
-          <Loader2 className="h-8 w-8 animate-spin text-primary" />
-          <span className="text-sm text-muted-foreground">Loading grid data...</span>
+        <div className="w-full max-w-md px-6">
+          <div className="flex flex-col items-center gap-3">
+            <Loader2 className="h-8 w-8 animate-spin text-primary" />
+            <span className="text-sm text-muted-foreground">Loading grid data...</span>
+          </div>
+          <div className="mt-5 overflow-hidden rounded-full border border-purple-500/30 bg-purple-500/10 p-1 shadow-[0_0_18px_rgba(168,85,247,0.14)]">
+            <div
+              className="h-3 rounded-full bg-gradient-to-r from-fuchsia-500 via-violet-500 to-purple-400 shadow-[0_0_20px_rgba(168,85,247,0.45)] transition-[width] duration-300 ease-out"
+              style={{ width: `${loadingProgress}%` }}
+            />
+          </div>
+          <div className="mt-2 flex items-center justify-between text-[11px] text-purple-300/80">
+            <span>Connecting to live grid data</span>
+            <span>{loadingProgress}%</span>
+          </div>
         </div>
       </div>
     );
@@ -162,7 +241,11 @@ export default function DashboardPage() {
       {source === "db" && (
         <div className="flex items-center gap-2 border-b border-emerald-500/20 bg-emerald-500/5 px-4 py-1.5">
           <span className="text-xs text-emerald-400">
-            Connected to database — {rows.length} products loaded.
+            Connected to database — {summary?.actualProducts ?? rows.length} actual products loaded from {summary?.masterGroups ?? rows.length} TPP master SKU groups
+            {summary && summary.variationParents > 0
+              ? ` (${summary.standaloneRows} single-SKU rows + ${summary.childRows} child SKUs inside ${summary.variationParents} parent containers)`
+              : ""}
+            {marketplaceSummary ? ` • Related listings: ${marketplaceSummary}` : ""}
           </span>
         </div>
       )}

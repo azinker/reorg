@@ -4,7 +4,7 @@ import { useState, useMemo, useRef, useEffect } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { cn } from "@/lib/utils";
 import type { GridRow, FilterState, ColumnConfig, StoreValue, Platform } from "@/lib/grid-types";
-import { HEADER_TOOLTIPS, DEFAULT_COLUMNS, PLATFORM_SHORT, PLATFORM_FULL, PLATFORM_COLORS, calcProfit, calcFee } from "@/lib/grid-types";
+import { DEFAULT_COLUMNS, PLATFORM_SHORT, PLATFORM_FULL, PLATFORM_COLORS, calcProfit, calcFee } from "@/lib/grid-types";
 import { StickySearch } from "@/components/grid/sticky-search";
 import { FilterBar } from "@/components/grid/filter-bar";
 import { UpcCell } from "@/components/grid/cells/upc-cell";
@@ -13,7 +13,6 @@ import { ItemNumberCell } from "@/components/grid/cells/item-number-cell";
 import { StoreBlockGroup, EditableStoreBlockGroup, EditableAdRateBlockGroup } from "@/components/grid/store-block";
 import { PlatformIcon } from "@/components/grid/platform-icon";
 import { CopyValue } from "@/components/grid/copy-value";
-import { HeaderTooltip } from "@/components/grid/header-tooltip";
 import { ColumnManager } from "@/components/grid/column-manager";
 import { EditableCurrencyCell } from "@/components/grid/cells/editable-currency-cell";
 import { EditableWeightCell } from "@/components/grid/cells/editable-weight-cell";
@@ -489,6 +488,50 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
     );
   }
 
+  function handlePushStagedAdRate(rowId: string, platform: string, listingId: string) {
+    const row = findRow(rowId);
+    const sku = row?.sku ?? rowId;
+    const platLabel = PLATFORM_SHORT[platform as keyof typeof PLATFORM_SHORT] ?? platform;
+    const adRate = row?.adRates.find((rate) => rate.platform === platform && rate.listingId === listingId);
+    const stagedVal = adRate?.stagedValue != null ? `${(Number(adRate.stagedValue) * 100).toFixed(1)}%` : "—";
+    const pushRate = adRate?.stagedValue != null ? Number(adRate.stagedValue) : undefined;
+
+    updateRowById(rowId, (r) => {
+      const newAdRates = r.adRates.map((rate) => {
+        if (rate.platform === platform && rate.listingId === listingId && rate.stagedValue != null) {
+          return { ...rate, value: rate.stagedValue, stagedValue: undefined };
+        }
+        return rate;
+      });
+      return recalcRow({ ...r, adRates: newAdRates });
+    });
+
+    if (pushRate != null) persistAdRateAction(sku, platform, listingId, "push", pushRate);
+    showToast(`Ad Rate Pushed Live — SKU ${sku} (${platLabel}) ${stagedVal} is now live`);
+  }
+
+  function handleDiscardStagedAdRate(rowId: string, platform: string, listingId: string) {
+    const row = findRow(rowId);
+    const sku = row?.sku ?? rowId;
+    const platLabel = PLATFORM_SHORT[platform as keyof typeof PLATFORM_SHORT] ?? platform;
+    const adRate = row?.adRates.find((rate) => rate.platform === platform && rate.listingId === listingId);
+    const stagedVal = adRate?.stagedValue != null ? `${(Number(adRate.stagedValue) * 100).toFixed(1)}%` : "—";
+    const liveVal = adRate?.value != null ? `${(Number(adRate.value) * 100).toFixed(1)}%` : "N/A";
+
+    updateRowById(rowId, (r) => {
+      const newAdRates = r.adRates.map((rate) => {
+        if (rate.platform === platform && rate.listingId === listingId) {
+          return { ...rate, stagedValue: undefined };
+        }
+        return rate;
+      });
+      return recalcRow({ ...r, adRates: newAdRates });
+    });
+
+    persistAdRateAction(sku, platform, listingId, "discard");
+    showToast(`Staged Ad Rate Discarded — SKU ${sku} (${platLabel}) reverted from ${stagedVal} to ${liveVal}`);
+  }
+
   function persistAdRateAction(sku: string, platform: string, listingId: string, action: string, newRate?: number) {
     fetch("/api/grid/stage", {
       method: "POST",
@@ -641,10 +684,16 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
       for (const sp of row.salePrices) {
         if (sp.stagedValue != null && sp.stagedValue !== sp.value) count++;
       }
+      for (const ar of row.adRates) {
+        if (ar.stagedValue != null && ar.stagedValue !== ar.value) count++;
+      }
       if (row.childRows) {
         for (const child of row.childRows) {
           for (const sp of child.salePrices) {
             if (sp.stagedValue != null && sp.stagedValue !== sp.value) count++;
+          }
+          for (const ar of child.adRates) {
+            if (ar.stagedValue != null && ar.stagedValue !== ar.value) count++;
           }
         }
       }
@@ -656,14 +705,16 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
     setGridRows((prev) =>
       prev.map((row) => {
         const newSalePrices = row.salePrices.map((sp) => ({ ...sp, stagedValue: undefined }));
+        const newAdRates = row.adRates.map((ar) => ({ ...ar, stagedValue: undefined }));
         let newChildren = row.childRows;
         if (newChildren) {
           newChildren = newChildren.map((child) => {
             const cPrices = child.salePrices.map((sp) => ({ ...sp, stagedValue: undefined }));
-            return recalcRowStatic({ ...child, salePrices: cPrices, hasStagedChanges: false }, globalFeeRate);
+            const cAdRates = child.adRates.map((ar) => ({ ...ar, stagedValue: undefined }));
+            return recalcRowStatic({ ...child, salePrices: cPrices, adRates: cAdRates, hasStagedChanges: false }, globalFeeRate);
           });
         }
-        return recalcRowStatic({ ...row, salePrices: newSalePrices, hasStagedChanges: false, childRows: newChildren ?? row.childRows }, globalFeeRate);
+        return recalcRowStatic({ ...row, salePrices: newSalePrices, adRates: newAdRates, hasStagedChanges: false, childRows: newChildren ?? row.childRows }, globalFeeRate);
       })
     );
     setClearStagedOpen(false);
@@ -854,19 +905,16 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
             {isColVisible("photo") && (
               <div className={cn(COL_WIDTHS.photo, "flex items-center gap-0.5 px-2 py-3")}>
                 <span>Photo</span>
-                <HeaderTooltip text={HEADER_TOOLTIPS.photo} />
               </div>
             )}
             {isColVisible("upc") && (
               <div className={cn(COL_WIDTHS.upc, "flex items-center gap-0.5 px-3 py-3")}>
                 <span>UPC</span>
-                <HeaderTooltip text={HEADER_TOOLTIPS.upc} />
               </div>
             )}
             {isColVisible("itemIds") && (
               <div className={cn(COL_WIDTHS.itemIds, "flex items-center gap-0.5 px-3 py-3")}>
                 <span>Item IDs</span>
-                <HeaderTooltip text={HEADER_TOOLTIPS.itemIds} />
               </div>
             )}
             {isColVisible("sku") && (
@@ -876,7 +924,6 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
               >
                 <span>SKU</span>
                 <SortIcon field="sku" />
-                <HeaderTooltip text={HEADER_TOOLTIPS.sku} />
               </button>
             )}
             {isColVisible("title") && (
@@ -886,7 +933,6 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
               >
                 <span>Title</span>
                 <SortIcon field="title" />
-                <HeaderTooltip text={HEADER_TOOLTIPS.title} />
               </button>
             )}
           </div>
@@ -900,37 +946,31 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
               >
                 <span>Live Quantity</span>
                 <SortIcon field="inventory" />
-                <HeaderTooltip text={HEADER_TOOLTIPS.qty} />
               </button>
             )}
             {isColVisible("salePrice") && (
               <div className={cn(COL_WIDTHS.salePrice, "flex items-center gap-0.5 px-3 py-3")}>
                 <span>Sale Price</span>
-                <HeaderTooltip text={HEADER_TOOLTIPS.salePrice} />
               </div>
             )}
             {isColVisible("weight") && (
               <div className={cn(COL_WIDTHS.weight, "flex items-center gap-0.5 px-3 py-3")}>
                 <span>Weight</span>
-                <HeaderTooltip text={HEADER_TOOLTIPS.weight} />
               </div>
             )}
             {isColVisible("supplierCost") && (
               <div className={cn(COL_WIDTHS.supplierCost, "flex items-center gap-0.5 px-3 py-3")}>
                 <span>Supplier Cost of Good</span>
-                <HeaderTooltip text={HEADER_TOOLTIPS.supplierCost} />
               </div>
             )}
             {isColVisible("suppShip") && (
               <div className={cn(COL_WIDTHS.suppShip, "flex items-center gap-0.5 px-3 py-3")}>
                 <span>Supplier Shipping Cost</span>
-                <HeaderTooltip text={HEADER_TOOLTIPS.suppShip} />
               </div>
             )}
             {isColVisible("shipCost") && (
               <div className={cn(COL_WIDTHS.shipCost, "flex items-center gap-0.5 px-3 py-3")}>
                 <span>Shipping Cost</span>
-                <HeaderTooltip text={HEADER_TOOLTIPS.shipCost} />
               </div>
             )}
             {isColVisible("platformFees") && (
@@ -943,19 +983,16 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
                     showToast(`Platform Fee Updated — from ${Math.round(oldRate * 1000) / 10}% to ${Math.round(rate * 1000) / 10}% (all eBay listings)`);
                   }}
                 />
-                <HeaderTooltip text={HEADER_TOOLTIPS.platformFees} />
               </div>
             )}
             {isColVisible("adRate") && (
               <div className={cn(COL_WIDTHS.adRate, "flex items-center gap-0.5 px-3 py-3")}>
                 <span>Promoted General Ad Rate</span>
-                <HeaderTooltip text={HEADER_TOOLTIPS.adRate} />
               </div>
             )}
             {isColVisible("profit") && (
               <div className={cn(COL_WIDTHS.profit, "flex items-center gap-0.5 px-3 py-3")}>
                 <span>Profit</span>
-                <HeaderTooltip text={HEADER_TOOLTIPS.profit} />
               </div>
             )}
           </div>
@@ -1231,6 +1268,8 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
                           items={row.adRates}
                           rowId={row.id}
                           onSave={handleAdRateEdit}
+                          onPush={handlePushStagedAdRate}
+                          onDiscard={handleDiscardStagedAdRate}
                         />
                       )}
                     </div>

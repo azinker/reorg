@@ -15,8 +15,10 @@ import {
   Database,
   ClipboardCheck,
   Settings,
+  Users,
   ChevronLeft,
   ChevronRight,
+  X,
 } from "lucide-react";
 import { useState } from "react";
 
@@ -31,26 +33,33 @@ const navItems = [
   { href: "/shipping-rates", label: "Shipping Rates", icon: Weight },
   { href: "/backups", label: "Backups", icon: Database },
   { href: "/setup", label: "Setup Checklist", icon: ClipboardCheck },
+  { href: "/users", label: "Users", icon: Users },
   { href: "/settings", label: "Settings", icon: Settings },
 ];
 
-export function Sidebar() {
+interface SidebarProps {
+  mobile?: boolean;
+  onNavigate?: () => void;
+}
+
+export function Sidebar({ mobile = false, onNavigate }: SidebarProps) {
   const pathname = usePathname();
   const [collapsed, setCollapsed] = useState(false);
+  const actuallyCollapsed = mobile ? false : collapsed;
 
   return (
     <aside
       className={cn(
         "flex h-screen flex-col border-r border-sidebar-border bg-sidebar transition-all duration-200",
-        collapsed ? "w-16" : "w-60"
+        actuallyCollapsed ? "w-16" : "w-60"
       )}
     >
       {/* Brand Area */}
       <div className={cn(
-        "flex flex-col border-b border-sidebar-border",
-        collapsed ? "items-center px-2 py-3" : "px-4 py-4"
+        "flex border-b border-sidebar-border",
+        actuallyCollapsed ? "items-center justify-center px-2 py-3" : "items-start justify-between px-4 py-4"
       )}>
-        {!collapsed ? (
+        {!actuallyCollapsed ? (
           <div className="flex flex-col">
             <span className="text-2xl tracking-tight text-foreground">
               <span className="font-light">reor</span>
@@ -65,6 +74,15 @@ export function Sidebar() {
             <span className="font-light">r</span>
             <span className="font-bold" style={{ color: "#C43E3E" }}>G</span>
           </span>
+        )}
+        {mobile && (
+          <button
+            onClick={onNavigate}
+            className="ml-2 flex h-8 w-8 items-center justify-center rounded-md border border-sidebar-border bg-background text-muted-foreground hover:text-foreground cursor-pointer"
+            title="Close navigation"
+          >
+            <X className="h-4 w-4" />
+          </button>
         )}
       </div>
 
@@ -81,16 +99,17 @@ export function Sidebar() {
               <li key={item.href}>
                 <Link
                   href={item.href}
+                  onClick={onNavigate}
                   className={cn(
                     "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors cursor-pointer",
                     isActive
                       ? "bg-sidebar-accent text-sidebar-accent-foreground"
                       : "text-sidebar-foreground hover:bg-sidebar-accent/50 hover:text-sidebar-accent-foreground"
                   )}
-                  title={collapsed ? item.label : undefined}
+                  title={actuallyCollapsed ? item.label : undefined}
                 >
-                  <Icon className="h-4 w-4 shrink-0" />
-                  {!collapsed && <span>{item.label}</span>}
+                  <Icon className="h-4 w-4 shrink-0 text-[#C43E3E]" />
+                  {!actuallyCollapsed && <span>{item.label}</span>}
                 </Link>
               </li>
             );
@@ -99,18 +118,20 @@ export function Sidebar() {
       </nav>
 
       {/* Collapse Toggle */}
-      <div className="border-t border-sidebar-border p-2">
-        <button
-          onClick={() => setCollapsed(!collapsed)}
-          className="flex w-full items-center justify-center rounded-md p-2 text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground cursor-pointer"
-        >
-          {collapsed ? (
-            <ChevronRight className="h-4 w-4" />
-          ) : (
-            <ChevronLeft className="h-4 w-4" />
-          )}
-        </button>
-      </div>
+      {!mobile && (
+        <div className="border-t border-sidebar-border p-2">
+          <button
+            onClick={() => setCollapsed(!collapsed)}
+            className="flex w-full items-center justify-center rounded-md p-2 text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground cursor-pointer"
+          >
+            {collapsed ? (
+              <ChevronRight className="h-4 w-4" />
+            ) : (
+              <ChevronLeft className="h-4 w-4" />
+            )}
+          </button>
+        </div>
+      )}
     </aside>
   );
 }

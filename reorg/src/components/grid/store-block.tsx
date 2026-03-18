@@ -525,10 +525,12 @@ interface EditableAdRateBlockProps {
   item: StoreValue;
   rowId: string;
   onSave: (rowId: string, platform: string, listingId: string, newRate: number, mode: "stage" | "push") => void;
+  onPush: (rowId: string, platform: string, listingId: string) => void;
+  onDiscard: (rowId: string, platform: string, listingId: string) => void;
   showItemId?: boolean;
 }
 
-function EditableAdRateBlock({ item, rowId, onSave, showItemId = false }: EditableAdRateBlockProps) {
+function EditableAdRateBlock({ item, rowId, onSave, onPush, onDiscard, showItemId = false }: EditableAdRateBlockProps) {
   const label = PLATFORM_SHORT[item.platform];
   const colorClass = PLATFORM_COLORS[item.platform];
   const isNonAdPlatform = NON_AD_RATE_PLATFORMS.includes(item.platform);
@@ -537,6 +539,7 @@ function EditableAdRateBlock({ item, rowId, onSave, showItemId = false }: Editab
 
   const [editing, setEditing] = useState(false);
   const [draftPercent, setDraftPercent] = useState("");
+  const [showActions, setShowActions] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   function fmtPercent(val: number | string | null): string {
@@ -549,16 +552,21 @@ function EditableAdRateBlock({ item, rowId, onSave, showItemId = false }: Editab
     const current = hasStaged ? Number(item.stagedValue) : (item.value != null ? Number(item.value) : 0);
     setDraftPercent((current * 100).toFixed(1));
     setEditing(true);
+    setShowActions(false);
   }
 
-  function cancelEdit() { setEditing(false); }
+  function cancelEdit() {
+    setEditing(false);
+    setShowActions(false);
+  }
 
-  function handleSave() {
+  function handleSave(mode: "stage" | "push") {
     const parsed = parseFloat(draftPercent);
     if (isNaN(parsed) || parsed < 0) { cancelEdit(); return; }
     const rate = parsed / 100;
-    onSave(rowId, item.platform, item.listingId, rate, "stage");
+    onSave(rowId, item.platform, item.listingId, rate, mode);
     setEditing(false);
+    setShowActions(false);
   }
 
   useEffect(() => {
@@ -589,16 +597,43 @@ function EditableAdRateBlock({ item, rowId, onSave, showItemId = false }: Editab
             type="text"
             value={draftPercent}
             onChange={(e) => setDraftPercent(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Enter") handleSave(); if (e.key === "Escape") cancelEdit(); }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") setShowActions(true);
+              if (e.key === "Escape") cancelEdit();
+            }}
             className="w-16 rounded border bg-background px-1.5 py-0.5 text-xs font-mono text-foreground outline-none focus:ring-1 focus:ring-ring"
           />
           <span className="text-[10px] text-muted-foreground">%</span>
-          <button onClick={handleSave} className="rounded p-0.5 text-emerald-400 hover:text-emerald-300 cursor-pointer" title="Save">
-            <Check className="h-3 w-3" />
-          </button>
-          <button onClick={cancelEdit} className="rounded p-0.5 text-muted-foreground hover:text-foreground cursor-pointer" title="Cancel">
-            <X className="h-3 w-3" />
-          </button>
+          {!showActions ? (
+            <>
+              <button onClick={() => setShowActions(true)} className="rounded p-0.5 text-emerald-400 hover:text-emerald-300 cursor-pointer" title="Save">
+                <Check className="h-3 w-3" />
+              </button>
+              <button onClick={cancelEdit} className="rounded p-0.5 text-muted-foreground hover:text-foreground cursor-pointer" title="Cancel">
+                <X className="h-3 w-3" />
+              </button>
+            </>
+          ) : (
+            <div className="ml-1 flex items-center gap-1">
+              <button
+                onClick={() => handleSave("stage")}
+                className="rounded bg-[var(--staged)] px-1.5 py-0.5 text-[10px] font-bold text-[var(--staged-foreground)] hover:opacity-80 cursor-pointer"
+                title="Stage ad rate to review before pushing"
+              >
+                Stage
+              </button>
+              <button
+                onClick={() => handleSave("push")}
+                className="rounded bg-emerald-500 px-1.5 py-0.5 text-[10px] font-bold text-white hover:bg-emerald-600 cursor-pointer"
+                title="Push ad rate live immediately"
+              >
+                Push
+              </button>
+              <button onClick={cancelEdit} className="rounded p-0.5 text-muted-foreground hover:text-foreground cursor-pointer" title="Cancel">
+                <X className="h-3 w-3" />
+              </button>
+            </div>
+          )}
         </div>
       </div>
     );
@@ -628,6 +663,24 @@ function EditableAdRateBlock({ item, rowId, onSave, showItemId = false }: Editab
               {fmtPercent(item.value)}
               <span className="inline-flex shrink-0 items-center rounded-sm bg-emerald-500 px-1 py-px text-[9px] font-bold text-white">LIVE</span>
             </span>
+            <div className="mt-1 flex items-center gap-1">
+              <button
+                onClick={() => onPush(rowId, item.platform, item.listingId)}
+                className="flex items-center gap-0.5 rounded bg-emerald-500 px-1.5 py-0.5 text-[10px] font-bold text-white hover:bg-emerald-600 cursor-pointer"
+                title="Push staged ad rate live to marketplace"
+              >
+                <Upload className="h-2.5 w-2.5" />
+                Push Live
+              </button>
+              <button
+                onClick={() => onDiscard(rowId, item.platform, item.listingId)}
+                className="flex items-center gap-0.5 rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground hover:text-foreground cursor-pointer"
+                title="Discard staged ad rate and revert to live"
+              >
+                <Undo2 className="h-2.5 w-2.5" />
+                Discard
+              </button>
+            </div>
           </>
         ) : (
           <span className="font-medium leading-tight text-emerald-400">{fmtPercent(item.value)}</span>
@@ -648,9 +701,11 @@ interface EditableAdRateBlockGroupProps {
   items: StoreValue[];
   rowId: string;
   onSave: (rowId: string, platform: string, listingId: string, newRate: number, mode: "stage" | "push") => void;
+  onPush: (rowId: string, platform: string, listingId: string) => void;
+  onDiscard: (rowId: string, platform: string, listingId: string) => void;
 }
 
-export function EditableAdRateBlockGroup({ items, rowId, onSave }: EditableAdRateBlockGroupProps) {
+export function EditableAdRateBlockGroup({ items, rowId, onSave, onPush, onDiscard }: EditableAdRateBlockGroupProps) {
   if (items.length === 0) {
     return <span className="text-xs text-muted-foreground">—</span>;
   }
@@ -669,6 +724,8 @@ export function EditableAdRateBlockGroup({ items, rowId, onSave }: EditableAdRat
           item={item}
           rowId={rowId}
           onSave={onSave}
+          onPush={onPush}
+          onDiscard={onDiscard}
           showItemId={hasDuplicatePlatforms && (platformCounts.get(item.platform) ?? 0) > 1}
         />
       ))}

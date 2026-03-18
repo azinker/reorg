@@ -39,7 +39,13 @@ export default function LoginPage() {
     setError("");
     setLoading(true);
 
-    await signIn("resend", { email, redirect: false });
+    const result = await signIn("resend", { email, redirect: false });
+    if (result?.error) {
+      setError("This email is not approved for access yet.");
+      setLoading(false);
+      return;
+    }
+
     setMagicLinkSent(true);
     setLoading(false);
   }

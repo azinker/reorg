@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import JsBarcode from "jsbarcode";
 import { Copy, Check } from "lucide-react";
+import { copySvgElementImage } from "@/lib/client-clipboard";
 
 interface UpcCellProps {
   upc: string | null;
@@ -20,6 +21,7 @@ function CopyNotice({ show }: { show: boolean }) {
 export function UpcCell({ upc }: UpcCellProps) {
   const svgRef = useRef<SVGSVGElement>(null);
   const [copied, setCopied] = useState(false);
+  const [imageCopied, setImageCopied] = useState(false);
 
   useEffect(() => {
     if (!svgRef.current) return;
@@ -67,16 +69,27 @@ export function UpcCell({ upc }: UpcCellProps) {
     setTimeout(() => setCopied(false), 1500);
   }
 
+  async function handleCopyImage() {
+    if (!upc || !svgRef.current) return;
+    try {
+      await copySvgElementImage(svgRef.current);
+      setImageCopied(true);
+      setTimeout(() => setImageCopied(false), 1500);
+    } catch (error) {
+      console.error("[upc-cell] failed to copy barcode image", error);
+    }
+  }
+
   return (
     <div className="relative flex flex-col items-center gap-1 text-foreground">
-      <CopyNotice show={copied} />
+      <CopyNotice show={copied || imageCopied} />
       <svg
         ref={svgRef}
         className="h-[48px] w-full max-w-[160px] cursor-pointer"
-        onClick={handleCopy}
+        onClick={() => {}}
         onContextMenu={(e) => {
           e.preventDefault();
-          handleCopy();
+          void handleCopyImage();
         }}
         role="img"
         aria-label={upc ? `UPC barcode: ${upc}` : "No UPC available"}

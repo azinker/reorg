@@ -11,6 +11,11 @@ const inter = Inter({
 export const metadata: Metadata = {
   title: "reorG | The Perfect Part",
   description: "Internal marketplace operations platform",
+  icons: {
+    icon: "/logos/reorg-icon.svg",
+    shortcut: "/logos/reorg-icon.svg",
+    apple: "/logos/reorg-icon-dark.svg",
+  },
 };
 
 export default function RootLayout({

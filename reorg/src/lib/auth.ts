@@ -4,6 +4,7 @@ import Credentials from "next-auth/providers/credentials";
 import Resend from "next-auth/providers/resend";
 import bcrypt from "bcryptjs";
 import { db } from "@/lib/db";
+import { isAdminEmail } from "@/lib/app-env";
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
   adapter: PrismaAdapter(db),
@@ -47,9 +48,52 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     }),
   ],
   callbacks: {
+    async signIn({ user }) {
+      const email = user.email?.trim().toLowerCase();
+      if (!email) return false;
+
+      const existingUser = await db.user.findUnique({
+        where: { email },
+      });
+
+      if (!existingUser && !isAdminEmail(email)) {
+        return false;
+      }
+
+      const ensuredUser = await db.user.upsert({
+        where: { email },
+        create: {
+          email,
+          name: user.name ?? email,
+          role: isAdminEmail(email) ? "ADMIN" : "OPERATOR",
+        },
+        update: {
+          ...(user.name ? { name: user.name } : {}),
+          ...(isAdminEmail(email) ? { role: "ADMIN" } : {}),
+        },
+      });
+
+      (user as { id?: string }).id = ensuredUser.id;
+
+      await db.auditLog.create({
+        data: {
+          userId: ensuredUser.id,
+          action: "sign_in",
+          entityType: "user",
+          entityId: ensuredUser.id,
+          details: {
+            email,
+          },
+        },
+      }).catch(() => {});
+
+      return true;
+    },
     async jwt({ token, user }) {
       if (user) {
-        token.role = (user as { role: string }).role;
+        token.role = isAdminEmail(user.email)
+          ? "ADMIN"
+          : (user as { role?: string }).role ?? "OPERATOR";
         token.id = user.id!;
       }
       return token;
@@ -60,6 +104,20 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         (session.user as { role: string }).role = token.role as string;
       }
       return session;
+    },
+  },
+  events: {
+    async signOut(message) {
+      const token = "token" in message ? message.token : null;
+      await db.auditLog.create({
+        data: {
+          userId: typeof token?.id === "string" ? token.id : undefined,
+          action: "sign_out",
+          entityType: "user",
+          entityId: typeof token?.id === "string" ? token.id : undefined,
+          details: {},
+        },
+      }).catch(() => {});
     },
   },
 });

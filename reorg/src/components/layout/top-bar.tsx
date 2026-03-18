@@ -1,10 +1,11 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { signOut } from "next-auth/react";
 import { useTheme } from "@/components/providers/theme-provider";
 import { useSettings } from "@/lib/use-settings";
 import type { Density } from "@/lib/settings-store";
-import { Moon, Sun, Monitor, Rows3, Rows4, AlignJustify } from "lucide-react";
+import { Moon, Sun, Monitor, Rows3, Rows4, AlignJustify, Menu, LogOut, ShieldCheck } from "lucide-react";
 
 const DENSITY_OPTIONS: { value: Density; icon: typeof Rows3; label: string }[] = [
   { value: "compact", icon: Rows4, label: "Compact" },
@@ -12,7 +13,17 @@ const DENSITY_OPTIONS: { value: Density; icon: typeof Rows3; label: string }[] =
   { value: "spacious", icon: AlignJustify, label: "Spacious" },
 ];
 
-export function TopBar() {
+interface TopBarProps {
+  user: {
+    id: string;
+    email: string;
+    name: string;
+    role: string;
+  } | null;
+  onOpenSidebar: () => void;
+}
+
+export function TopBar({ user, onOpenSidebar }: TopBarProps) {
   const { theme, setTheme } = useTheme();
   const { settings, update } = useSettings();
   const [mounted, setMounted] = useState(false);
@@ -25,16 +36,34 @@ export function TopBar() {
   const themeValue = mounted ? theme : "system";
 
   return (
-    <header className="flex h-14 items-center justify-between border-b border-border bg-card px-6">
-      <div className="flex items-center gap-2">
+    <header className="flex h-14 items-center justify-between border-b border-border bg-card px-4 sm:px-6">
+      <div className="flex min-w-0 items-center gap-2">
+        <button
+          onClick={onOpenSidebar}
+          className="flex h-9 w-9 items-center justify-center rounded-md border border-border bg-background text-muted-foreground transition-colors hover:text-foreground lg:hidden cursor-pointer"
+          title="Open navigation"
+        >
+          <Menu className="h-4 w-4" />
+        </button>
         <span className="text-sm font-medium text-muted-foreground">
           Marketplace Operations
         </span>
       </div>
-      <div className="flex items-center gap-3">
+      <div className="flex min-w-0 items-center gap-2 sm:gap-3">
+        {user && (
+          <div className="hidden items-center gap-2 rounded-lg border border-orange-500/30 bg-orange-500/10 px-3 py-1.5 text-xs text-orange-200 sm:flex">
+            <ShieldCheck className="h-3.5 w-3.5 shrink-0 text-[#C43E3E]" />
+            <div className="min-w-0">
+              <div className="truncate font-semibold text-foreground">{user.name}</div>
+              <div className="truncate text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+                {user.role} • {user.email}
+              </div>
+            </div>
+          </div>
+        )}
         {/* Density Toggle - use stable value until mounted to avoid hydration mismatch */}
         <div className="flex items-center gap-1.5">
-          <span className="text-[11px] font-medium text-muted-foreground">Density</span>
+          <span className="hidden text-[11px] font-medium text-muted-foreground sm:block">Density</span>
           <div className="flex items-center rounded-md border border-border bg-background p-0.5">
             {DENSITY_OPTIONS.map(({ value, icon: Icon, label }) => (
               <button
@@ -89,6 +118,17 @@ export function TopBar() {
             <Monitor className="h-3.5 w-3.5" />
           </button>
         </div>
+
+        {user && (
+          <button
+            onClick={() => signOut({ callbackUrl: "/login" })}
+            className="flex items-center gap-1 rounded-md border border-border bg-background px-2.5 py-2 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground cursor-pointer"
+            title="Log out"
+          >
+            <LogOut className="h-3.5 w-3.5" />
+            <span className="hidden sm:inline">Log out</span>
+          </button>
+        )}
       </div>
     </header>
   );

@@ -22,6 +22,7 @@ const masterRowWithRelations = Prisma.validator<Prisma.MasterRowDefaultArgs>()({
 
 type DBMasterRow = Prisma.MasterRowGetPayload<typeof masterRowWithRelations>;
 type DBListing = DBMasterRow["listings"][number];
+type DBListingRef = Pick<DBListing, "integration" | "platformItemId" | "platformVariantId">;
 
 async function fetchMasterRows() {
   const batchSize = 100;
@@ -191,7 +192,9 @@ async function buildChildRows(
       isVariation: true,
       isParent: false,
       alternateTitles: [],
-      hasStagedChanges: childSalePrices.some((sp) => sp.stagedValue != null && sp.stagedValue !== sp.value),
+      hasStagedChanges:
+        childSalePrices.some((sp) => sp.stagedValue != null && sp.stagedValue !== sp.value)
+        || childAdRates.some((ar) => ar.stagedValue != null && ar.stagedValue !== ar.value),
       itemNumbers: childItemNumbers,
       salePrices: childSalePrices,
       adRates: childAdRates,
@@ -229,12 +232,26 @@ async function buildGridRow(
     return sv;
   });
 
-  const itemNumbers: StoreValue[] = parentListings.map((l) => ({
-    platform: l.integration.platform as Platform,
-    listingId: l.platformItemId,
-    variantId: l.platformVariantId || undefined,
-    value: l.platformItemId,
-  }));
+  const itemNumberMap = new Map<string, StoreValue>();
+  for (const listing of parentListings) {
+    const addListing = (entry: DBListingRef) => {
+      const key = `${entry.integration.platform}:${entry.platformItemId}:${entry.platformVariantId ?? ""}`;
+      if (!itemNumberMap.has(key)) {
+        itemNumberMap.set(key, {
+          platform: entry.integration.platform as Platform,
+          listingId: entry.platformItemId,
+          variantId: entry.platformVariantId || undefined,
+          value: entry.platformItemId,
+        });
+      }
+    };
+
+    addListing(listing);
+    for (const childListing of listing.childListings ?? []) {
+      addListing(childListing);
+    }
+  }
+  const itemNumbers: StoreValue[] = [...itemNumberMap.values()];
 
   const platformFees: StoreValue[] = salePrices.map((sp) => {
     const sale = sp.stagedValue != null ? Number(sp.stagedValue) : sp.value != null ? Number(sp.value) : 0;
@@ -255,7 +272,8 @@ async function buildGridRow(
     };
   });
 
-  const hasStagedChanges = salePrices.some((sp) => sp.stagedValue != null && sp.stagedValue !== sp.value);
+  const hasStagedChanges = salePrices.some((sp) => sp.stagedValue != null && sp.stagedValue !== sp.value)
+    || adRates.some((ar) => ar.stagedValue != null && ar.stagedValue !== ar.value);
 
   let inventory: number | null;
   if (isVariationParent) {

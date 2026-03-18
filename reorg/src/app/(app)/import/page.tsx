@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef } from "react";
+import Link from "next/link";
 import {
   Upload,
   FileDown,
@@ -85,8 +86,12 @@ export default function ImportPage() {
     }
   }
 
+  function downloadTemplate() {
+    window.location.href = "/api/import/template";
+  }
+
   return (
-    <div className="p-6">
+    <div className="p-4 sm:p-6">
       {/* Header */}
       <div className="mb-8">
         <h1 className="text-2xl font-bold tracking-tight text-foreground">
@@ -171,6 +176,7 @@ export default function ImportPage() {
 
             <button
               type="button"
+              onClick={downloadTemplate}
               className={cn(
                 "inline-flex cursor-pointer items-center gap-2 rounded-lg border border-border bg-background px-4 py-2.5 text-sm font-medium text-foreground",
                 "transition-colors hover:bg-muted",
@@ -195,6 +201,24 @@ export default function ImportPage() {
                   </li>
                 ))}
               </ul>
+            </div>
+
+            <div className="rounded-lg border border-emerald-500/25 bg-emerald-500/5 px-4 py-3 text-sm text-muted-foreground">
+              <p>
+                The <span className="font-medium text-foreground">Shipping Rates</span> table is already
+                wired to the live database and ready to use after you import your internal product data.
+              </p>
+              <p className="mt-1">
+                After importing weights, supplier cost, and supplier shipping cost, review{" "}
+                <Link href="/shipping-rates" className="font-medium text-foreground underline-offset-4 hover:underline">
+                  Shipping Rates
+                </Link>{" "}
+                to make sure every tier has a cost, then check{" "}
+                <Link href="/errors" className="font-medium text-foreground underline-offset-4 hover:underline">
+                  Errors
+                </Link>{" "}
+                for any rows still missing required internal values.
+              </p>
             </div>
 
             <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 px-4 py-3">

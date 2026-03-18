@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
+import { isAuthBypassEnabled } from "@/lib/app-env";
 
 export default function proxy(req: NextRequest) {
   const { pathname } = req.nextUrl;
@@ -14,7 +15,7 @@ export default function proxy(req: NextRequest) {
     return NextResponse.next();
   }
 
-  if (process.env.SKIP_AUTH === "true" && pathname === "/login") {
+  if (isAuthBypassEnabled() && pathname === "/login") {
     return NextResponse.redirect(new URL("/dashboard", req.url));
   }
 
