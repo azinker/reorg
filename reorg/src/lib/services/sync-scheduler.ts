@@ -6,6 +6,10 @@ import {
 } from "@/lib/integrations/runtime-config";
 import { startIntegrationSync, resolveIntegrationSyncModes } from "@/lib/services/sync-control";
 import { failStaleRunningJob, isRunningJobStale } from "@/lib/services/sync-jobs";
+import {
+  getCurrentSyncIntervalMinutes,
+  getEbayRateLimitCooldownUntil,
+} from "@/lib/services/ebay-rate-limit";
 
 export interface SchedulerPlanItem {
   integrationId: string;
@@ -24,50 +28,10 @@ export interface SchedulerPlanItem {
   reason: string;
 }
 
-function getHourInTimeZone(date: Date, timeZone: string): number {
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone,
-    hour: "numeric",
-    hourCycle: "h23",
-  }).formatToParts(date);
-  const hour = parts.find((part) => part.type === "hour")?.value;
-  return hour ? parseInt(hour, 10) : date.getHours();
-}
-
-function getCurrentIntervalMinutes(date: Date, config: ReturnType<typeof getIntegrationConfig>): number {
-  const hour = getHourInTimeZone(date, config.syncProfile.timezone);
-  const isDaytime =
-    hour >= config.syncProfile.dayStartHour &&
-    hour < config.syncProfile.dayEndHour;
-
-  return isDaytime
-    ? config.syncProfile.dayIntervalMinutes
-    : config.syncProfile.overnightIntervalMinutes;
-}
-
 function getLastScheduledRunAt(config: ReturnType<typeof getIntegrationConfig>): Date | null {
   if (!config.syncState.lastScheduledSyncAt) return null;
   const parsed = new Date(config.syncState.lastScheduledSyncAt);
   return Number.isNaN(parsed.getTime()) ? null : parsed;
-}
-
-function getRateLimitCooldownUntil(
-  platform: string,
-  config: ReturnType<typeof getIntegrationConfig>,
-  intervalMinutes: number,
-  now: Date,
-) {
-  if ((platform !== "TPP_EBAY" && platform !== "TT_EBAY") || !config.syncState.lastRateLimitAt) {
-    return null;
-  }
-
-  const rateLimitAt = new Date(config.syncState.lastRateLimitAt);
-  if (Number.isNaN(rateLimitAt.getTime())) return null;
-
-  const cooldownMinutes = Math.max(intervalMinutes, 90);
-  const cooldownUntil = new Date(rateLimitAt.getTime() + cooldownMinutes * 60 * 1000);
-  if (cooldownUntil.getTime() <= now.getTime()) return null;
-  return cooldownUntil;
 }
 
 function getNextDueAt(
@@ -113,7 +77,7 @@ export async function planScheduledSyncs(now = new Date()) {
 
   const items: SchedulerPlanItem[] = integrations.map((integration) => {
     const config = getIntegrationConfig(integration);
-    const intervalMinutes = getCurrentIntervalMinutes(now, config);
+    const intervalMinutes = getCurrentSyncIntervalMinutes(now, config);
     const lastRunAt = getLastScheduledRunAt(config);
     const minutesSinceLastRun =
       lastRunAt == null
@@ -184,10 +148,9 @@ export async function planScheduledSyncs(now = new Date()) {
       };
     }
 
-    const rateLimitCooldownUntil = getRateLimitCooldownUntil(
+    const rateLimitCooldownUntil = getEbayRateLimitCooldownUntil(
       integration.platform,
       config,
-      intervalMinutes,
       now,
     );
     if (rateLimitCooldownUntil) {

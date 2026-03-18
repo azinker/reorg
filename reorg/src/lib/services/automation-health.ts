@@ -1,6 +1,12 @@
 import { db } from "@/lib/db";
 import { planScheduledSyncs, type SchedulerPlanItem } from "@/lib/services/sync-scheduler";
 import type { Prisma } from "@prisma/client";
+import {
+  formatCooldownRetryAt,
+  getEbayRateLimitCooldownUntil,
+  isEbayUsageLimitMessage,
+} from "@/lib/services/ebay-rate-limit";
+import { getIntegrationConfig } from "@/lib/integrations/runtime-config";
 
 export type MonitorHealthStatus = "healthy" | "delayed" | "attention";
 export type WebhookMonitorStatus = "ok" | "quiet" | "missing" | "n/a";
@@ -215,8 +221,16 @@ function getRecommendedAction(args: {
   syncMonitorStatus: MonitorHealthStatus;
   webhookExpected: boolean;
   webhookStatus: WebhookMonitorStatus;
+  rateLimitCooldownUntil?: Date | null;
 }) {
   const platformLabel = getPlatformDisplayName(args.platform);
+  const cooldownLabel = formatCooldownRetryAt(args.rateLimitCooldownUntil ?? null);
+
+  if (args.rateLimitCooldownUntil) {
+    return cooldownLabel
+      ? `Wait for the eBay cooldown window to end around ${cooldownLabel}. After that, let the next automatic check retry or run one manual pull from Sync.`
+      : "Wait for the eBay cooldown window to end, then let the next automatic check retry or run one manual pull from Sync.";
+  }
 
   if (args.syncStatus === "never") {
     return "Run a manual pull from Sync so this store records its first completed update.";
@@ -266,6 +280,7 @@ export async function buildAutomationHealthSnapshot(
         label: true,
         platform: true,
         lastSyncAt: true,
+        config: true,
       },
     }),
     db.auditLog.findMany({
@@ -323,8 +338,14 @@ export async function buildAutomationHealthSnapshot(
       const integration = integrationMap.get(item.integrationId)!;
       const lastSyncAt = integration.lastSyncAt;
       const lastWebhookAt = lastWebhookByPlatform.get(integration.platform) ?? null;
+      const storedConfig = getIntegrationConfig(integration);
       const sync = getSyncHealthStatus(item, lastSyncAt, now);
       const recentFailure = latestFailedJobByIntegration.get(integration.id);
+      const rateLimitCooldownUntil = getEbayRateLimitCooldownUntil(
+        integration.platform,
+        storedConfig,
+        now,
+      );
       const failedAfterLastSuccess =
         recentFailure &&
         (!lastSyncAt || recentFailure.failedAt.getTime() > lastSyncAt.getTime());
@@ -333,9 +354,14 @@ export async function buildAutomationHealthSnapshot(
             ...sync,
             status: "attention" as const,
             syncStatus: "stale" as const,
-            syncMessage: recentFailure.message
-              ? `Latest pull failed: ${recentFailure.message}`
-              : "Latest pull failed before this store recorded a newer successful update.",
+            syncMessage:
+              recentFailure.message && isEbayUsageLimitMessage(recentFailure.message)
+                ? rateLimitCooldownUntil
+                  ? `Latest pull hit eBay API usage limits. Next retry window opens around ${formatCooldownRetryAt(rateLimitCooldownUntil) ?? "the next automatic check"}.`
+                  : "Latest pull hit eBay API usage limits. The next retry should happen after the cooldown window."
+                : recentFailure.message
+                  ? `Latest pull failed: ${recentFailure.message}`
+                  : "Latest pull failed before this store recorded a newer successful update.",
           }
         : sync;
       const webhook = getWebhookHealthStatus(
@@ -359,6 +385,7 @@ export async function buildAutomationHealthSnapshot(
         syncMonitorStatus: syncMonitor.status,
         webhookExpected: webhook.webhookExpected,
         webhookStatus: webhook.webhookStatus,
+        rateLimitCooldownUntil,
       });
 
       return {

@@ -68,6 +68,8 @@ type IntegrationSyncState = {
   lastCursor: string | null;
   lastWebhookAt: string | null;
   lastFallbackReason: string | null;
+  lastRateLimitAt: string | null;
+  lastRateLimitMessage: string | null;
 };
 
 type IntegrationWebhookState = {
@@ -97,6 +99,12 @@ type SyncRouteData = {
   lastSyncAt: string | null;
   syncProfile: SyncProfile;
   syncState: IntegrationSyncState;
+  cooldown: {
+    active: boolean;
+    until: string | null;
+    message: string | null;
+    retryLabel: string | null;
+  };
   webhookState: IntegrationWebhookState;
   webhookHealth: {
     status: "ok" | "warning" | "info";
@@ -681,7 +689,10 @@ export default function SyncPage() {
       try {
         const res = await fetch(`/api/sync/${apiPlatform}`, { method: "POST" });
         const text = await res.text();
-        let json: { data?: Record<string, unknown>; error?: string };
+        let json: {
+          data?: Record<string, unknown>;
+          error?: string;
+        };
 
         try {
           json = text ? JSON.parse(text) : {};
@@ -702,6 +713,8 @@ export default function SyncPage() {
             ...prev,
             [apiPlatform]: json.error ?? "Sync failed",
           }));
+          await loadStoreStatus(apiPlatform);
+          fetchSchedulerStatus();
           return;
         }
 
@@ -1114,17 +1127,25 @@ export default function SyncPage() {
           const meta = syncMeta[store.apiPlatform];
           const syncProfile = meta?.syncProfile ?? null;
           const syncState = meta?.syncState ?? null;
+          const cooldown = meta?.cooldown ?? null;
           const webhookState = meta?.webhookState ?? null;
           const webhookHealth = meta?.webhookHealth ?? null;
           const isSyncing = storeSync === "syncing";
           const jobErrors = (liveJob?.errors ?? []) as SyncError[];
           const showErrors = errorsExpanded[store.apiPlatform] && jobErrors.length > 0;
           const durationMs = getJobDurationMs(liveJob, nowMs);
-          const nextPullAt = syncProfile ? getNextPullAt(syncProfile, new Date(nowMs)) : null;
+          const nextPullAt = cooldown?.active
+            ? cooldown.until
+              ? new Date(cooldown.until)
+              : null
+            : syncProfile
+              ? getNextPullAt(syncProfile, new Date(nowMs))
+              : null;
           const completionSummary = getCompletionSummary(
             liveJob,
             syncState?.lastFallbackReason ?? null,
           );
+          const cooldownActive = Boolean(cooldown?.active);
           const summaryClasses =
             completionSummary.tone === "success"
               ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-400"
@@ -1234,11 +1255,13 @@ export default function SyncPage() {
                           : "Not scheduled"}
                     </div>
                     <div className="mt-1">
-                      {connected && syncProfile.autoSyncEnabled && schedulerEnabled && nextPullAt
-                        ? `Due around ${nextPullAt.toLocaleString()}`
-                        : connected && syncProfile.autoSyncEnabled
-                          ? "Pull cadence is configured, but automatic pulls are not enabled yet."
-                        : "Auto-pull is not active for this store yet."}
+                      {cooldownActive && cooldown?.retryLabel
+                        ? `Manual eBay retries are paused until about ${cooldown.retryLabel}.`
+                        : connected && syncProfile.autoSyncEnabled && schedulerEnabled && nextPullAt
+                          ? `Due around ${nextPullAt.toLocaleString()}`
+                          : connected && syncProfile.autoSyncEnabled
+                            ? "Pull cadence is configured, but automatic pulls are not enabled yet."
+                            : "Auto-pull is not active for this store yet."}
                     </div>
                   </div>
                   <div>
@@ -1307,6 +1330,23 @@ export default function SyncPage() {
               {syncState?.lastFallbackReason && !isSyncing ? (
                 <div className="mb-4 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-400">
                   Last fallback note: {syncState.lastFallbackReason}
+                </div>
+              ) : null}
+
+              {cooldownActive ? (
+                <div className="mb-4 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
+                  <div className="font-medium text-amber-200">eBay API cooldown active</div>
+                  <div className="mt-1">
+                    eBay asked reorG to slow down after hitting its call-usage limit.
+                    {cooldown?.retryLabel
+                      ? ` Manual pulls will be available again around ${cooldown.retryLabel}.`
+                      : " Manual pulls will be available again after the cooldown window."}
+                  </div>
+                  {cooldown?.message ? (
+                    <div className="mt-1 break-words text-[11px] text-amber-400/90">
+                      Last eBay response: {cooldown.message}
+                    </div>
+                  ) : null}
                 </div>
               ) : null}
 
@@ -1417,7 +1457,7 @@ export default function SyncPage() {
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <button
                   type="button"
-                  disabled={!connected || isSyncing}
+                  disabled={!connected || isSyncing || cooldownActive}
                   onClick={() => syncStore(store.apiPlatform)}
                   className={cn(
                     "inline-flex cursor-pointer items-center gap-2 rounded-md border border-border bg-background px-4 py-2 text-sm font-medium text-foreground",
@@ -1428,10 +1468,12 @@ export default function SyncPage() {
                 >
                   {isSyncing ? (
                     <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+                  ) : cooldownActive ? (
+                    <TimerReset className="h-3.5 w-3.5" aria-hidden />
                   ) : (
                     <RefreshCw className="h-3.5 w-3.5" aria-hidden />
                   )}
-                  {isSyncing ? "Syncing..." : "Sync Now"}
+                  {isSyncing ? "Syncing..." : cooldownActive ? "Cooling down" : "Sync Now"}
                 </button>
                 <span className="text-xs text-muted-foreground">Pull-only</span>
               </div>

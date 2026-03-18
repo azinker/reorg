@@ -5,6 +5,11 @@ import { z } from "zod";
 import { startIntegrationSync } from "@/lib/services/sync-control";
 import { getIntegrationConfig } from "@/lib/integrations/runtime-config";
 import { assessIntegrationWebhookHealth } from "@/lib/webhook-health";
+import {
+  formatCooldownRetryAt,
+  getEbayRateLimitCooldownUntil,
+  isEbayPlatform,
+} from "@/lib/services/ebay-rate-limit";
 
 const postSchema = z
   .object({
@@ -52,6 +57,40 @@ export async function POST(
       return NextResponse.json(
         { error: "Invalid request", details: parsed.error.flatten() },
         { status: 400 },
+      );
+    }
+
+    const config = getIntegrationConfig(integration);
+    const cooldownUntil = getEbayRateLimitCooldownUntil(
+      integration.platform,
+      config,
+      new Date(),
+    );
+    if (cooldownUntil && isEbayPlatform(integration.platform)) {
+      const retryAtLabel = formatCooldownRetryAt(cooldownUntil) ?? "the next retry window";
+      const error =
+        `eBay asked reorG to slow down after hitting its call-usage limit. ` +
+        `Manual pulls are paused until ${retryAtLabel}.`;
+      const retryAfterSeconds = Math.max(
+        1,
+        Math.ceil((cooldownUntil.getTime() - Date.now()) / 1000),
+      );
+
+      return NextResponse.json(
+        {
+          error,
+          data: {
+            status: "COOLDOWN",
+            cooldownUntil: cooldownUntil.toISOString(),
+            cooldownMessage: config.syncState.lastRateLimitMessage,
+          },
+        },
+        {
+          status: 429,
+          headers: {
+            "Retry-After": String(retryAfterSeconds),
+          },
+        },
       );
     }
 
@@ -104,6 +143,13 @@ export async function GET(
       orderBy: { createdAt: "desc" },
     });
 
+    const config = getIntegrationConfig(integration);
+    const cooldownUntil = getEbayRateLimitCooldownUntil(
+      integration.platform,
+      config,
+      new Date(),
+    );
+
     return NextResponse.json({
       data: {
         integrationId: integration.id,
@@ -111,9 +157,15 @@ export async function GET(
         label: integration.label,
         enabled: integration.enabled,
         lastSyncAt: integration.lastSyncAt,
-        syncProfile: getIntegrationConfig(integration).syncProfile,
-        syncState: getIntegrationConfig(integration).syncState,
-        webhookState: getIntegrationConfig(integration).webhookState,
+        syncProfile: config.syncProfile,
+        syncState: config.syncState,
+        webhookState: config.webhookState,
+        cooldown: {
+          active: Boolean(cooldownUntil),
+          until: cooldownUntil?.toISOString() ?? null,
+          message: config.syncState.lastRateLimitMessage,
+          retryLabel: formatCooldownRetryAt(cooldownUntil),
+        },
         webhookHealth: assessIntegrationWebhookHealth(integration),
         lastJob: lastJob
           ? {

@@ -3,6 +3,12 @@ import { db } from "@/lib/db";
 import { PLATFORM_FULL_LABELS, PLATFORM_LABELS } from "@/lib/integrations/types";
 import { getAutomationHealthSnapshot } from "@/lib/services/automation-health";
 import type { Platform } from "@prisma/client";
+import {
+  formatCooldownRetryAt,
+  getEbayRateLimitCooldownUntil,
+  isEbayUsageLimitMessage,
+} from "@/lib/services/ebay-rate-limit";
+import { getIntegrationConfig } from "@/lib/integrations/runtime-config";
 
 type Severity = "critical" | "warning" | "info";
 type ErrorCategory =
@@ -254,21 +260,41 @@ export async function GET() {
           latestUnrecoveredFailureByIntegration.get(job.integrationId)!.getTime() >
             occurredAt.getTime();
         if (supersededByLaterFailure) continue;
+        const errorLines = rawErrors.length
+          ? summarizeSyncErrors(rawErrors)
+          : ["The sync job failed without a captured error payload."];
+        const primaryError = errorLines[0] ?? "The sync job failed without a captured error payload.";
+        const config = getIntegrationConfig(job.integration);
+        const cooldownUntil = getEbayRateLimitCooldownUntil(
+          platform,
+          config,
+          new Date(),
+        );
+        const isRateLimited = isEbayUsageLimitMessage(primaryError);
+        const retryAtLabel = formatCooldownRetryAt(cooldownUntil);
         entries.push({
           id: `sync-${job.id}`,
           severity: "critical",
           category: "sync-failure",
-          summary: `${storeLabel} sync failed`,
-          technicalDetails: rawErrors.length
-            ? summarizeSyncErrors(rawErrors).join("\n")
-            : "The sync job failed without a captured error payload.",
+          summary: isRateLimited
+            ? `${storeLabel} hit an eBay API call limit`
+            : `${storeLabel} sync failed`,
+          technicalDetails: [
+            ...errorLines,
+            ...(isRateLimited && retryAtLabel
+              ? [`Next safe retry window: ${retryAtLabel}`]
+              : []),
+          ].join("\n"),
           store: storeLabel,
           storeAcronym,
           timestamp: formatTimestamp(occurredAt),
           occurredAt: occurredAt.toISOString(),
-          recommendedAction:
-            "Open Sync and run a manual pull. If it fails again, review the integration credentials and recent job details.",
-          actionLabel: "Run Sync Now",
+          recommendedAction: isRateLimited
+            ? retryAtLabel
+              ? `Wait until about ${retryAtLabel} before retrying this eBay pull. reorG is cooling down after eBay asked for fewer calls.`
+              : "Wait for the eBay cooldown window to end before retrying this pull."
+            : "Open Sync and run a manual pull. If it fails again, review the integration credentials and recent job details.",
+          actionLabel: isRateLimited ? "Watch Sync" : "Run Sync Now",
           actionHref: "/sync",
           priority: 20,
         });
