@@ -7,7 +7,7 @@ import {
   saveUnmatchedListings,
 } from "@/lib/services/matching";
 import {
-  buildCompletedSyncConfig,
+  buildCompletedSyncConfigFromLatest,
   type SyncExecutionOptions,
 } from "@/lib/services/sync-control";
 
@@ -100,7 +100,7 @@ export async function runSync(
       where: { id: integrationId },
       data: {
         lastSyncAt: completedAt,
-        config: buildCompletedSyncConfig(
+        config: await buildCompletedSyncConfigFromLatest(
           integration,
           options,
           completedAt,

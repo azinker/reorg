@@ -3,9 +3,10 @@ import { Platform, Prisma, type SyncStatus } from "@prisma/client";
 import { ShopifyAdapter } from "@/lib/integrations/shopify";
 import type { RawListing } from "@/lib/integrations/types";
 import {
-  buildCompletedSyncConfig,
+  buildCompletedSyncConfigFromLatest,
   type SyncExecutionOptions,
 } from "@/lib/services/sync-control";
+import { removeMarketplaceListingsByPlatformItemIds } from "@/lib/services/listing-prune";
 
 interface SyncProgress {
   jobId: string;
@@ -16,9 +17,12 @@ interface SyncProgress {
   errors: Array<{ sku: string; message: string }>;
 }
 
-export async function runShopifySync(
-  options: SyncExecutionOptions = {},
-): Promise<SyncProgress> {
+interface ShopifySyncContext {
+  integration: NonNullable<Awaited<ReturnType<typeof db.integration.findUnique>>>;
+  adapter: ShopifyAdapter;
+}
+
+async function getShopifySyncContext(): Promise<ShopifySyncContext> {
   const integration = await db.integration.findUnique({
     where: { platform: Platform.SHOPIFY },
   });
@@ -38,6 +42,25 @@ export async function runShopifySync(
     apiVersion: config.apiVersion || "2026-01",
   });
 
+  return { integration, adapter };
+}
+
+function createSyncProgress(jobId: string): SyncProgress {
+  return {
+    jobId,
+    status: "RUNNING",
+    itemsProcessed: 0,
+    itemsCreated: 0,
+    itemsUpdated: 0,
+    errors: [],
+  };
+}
+
+export async function runShopifySync(
+  options: SyncExecutionOptions = {},
+): Promise<SyncProgress> {
+  const { integration, adapter } = await getShopifySyncContext();
+
   const syncJob = await db.syncJob.create({
     data: {
       integrationId: integration.id,
@@ -47,14 +70,7 @@ export async function runShopifySync(
     },
   });
 
-  const progress: SyncProgress = {
-    jobId: syncJob.id,
-    status: "RUNNING",
-    itemsProcessed: 0,
-    itemsCreated: 0,
-    itemsUpdated: 0,
-    errors: [],
-  };
+  const progress = createSyncProgress(syncJob.id);
 
   try {
     const seenListingIds = new Set<string>();
@@ -62,8 +78,12 @@ export async function runShopifySync(
     for await (const batch of adapter.fetchAllListings()) {
       for (const listing of batch) {
         try {
-          const listingId = await upsertListing(listing, integration.id);
-          if (listingId) seenListingIds.add(listingId);
+          const result = await upsertListing(listing, integration.id);
+          if (result) {
+            seenListingIds.add(result.id);
+            if (result.status === "created") progress.itemsCreated++;
+            if (result.status === "updated") progress.itemsUpdated++;
+          }
           progress.itemsProcessed++;
         } catch (err) {
           progress.errors.push({
@@ -115,7 +135,7 @@ export async function runShopifySync(
       where: { id: integration.id },
       data: {
         lastSyncAt: completedAt,
-        config: buildCompletedSyncConfig(
+        config: await buildCompletedSyncConfigFromLatest(
           integration,
           options,
           completedAt,
@@ -143,7 +163,115 @@ export async function runShopifySync(
   return progress;
 }
 
-async function upsertListing(listing: RawListing, integrationId: string): Promise<string | null> {
+export async function runShopifyWebhookReconcile(
+  input: {
+    productIds?: string[];
+    deletedProductIds?: string[];
+  },
+  options: SyncExecutionOptions = {},
+): Promise<SyncProgress> {
+  const { integration, adapter } = await getShopifySyncContext();
+  const productIds = [...new Set((input.productIds ?? []).filter(Boolean))];
+  const deletedProductIds = [...new Set((input.deletedProductIds ?? []).filter(Boolean))];
+
+  const syncJob = await db.syncJob.create({
+    data: {
+      integrationId: integration.id,
+      status: "RUNNING",
+      triggeredBy: options.triggeredBy ?? "webhook:incremental",
+      startedAt: new Date(),
+    },
+  });
+
+  const progress = createSyncProgress(syncJob.id);
+
+  try {
+    for (const productId of productIds) {
+      const listings = await adapter.fetchListingsByProductId(productId);
+
+      for (const listing of listings) {
+        try {
+          const result = await upsertListing(listing, integration.id);
+          if (result?.status === "created") progress.itemsCreated++;
+          if (result?.status === "updated") progress.itemsUpdated++;
+          progress.itemsProcessed++;
+        } catch (err) {
+          progress.errors.push({
+            sku: listing.sku || listing.platformItemId,
+            message: err instanceof Error ? err.message : "Unknown error",
+          });
+        }
+      }
+    }
+
+    if (deletedProductIds.length > 0) {
+      const deleted = await removeMarketplaceListingsByPlatformItemIds(
+        integration.id,
+        deletedProductIds,
+      );
+      progress.itemsProcessed += deleted.deletedListings;
+      progress.itemsUpdated += deleted.deletedListings;
+    }
+
+    progress.status = "COMPLETED";
+
+    const completedAt = new Date();
+    await db.syncJob.update({
+      where: { id: syncJob.id },
+      data: {
+        status: "COMPLETED",
+        completedAt,
+        itemsProcessed: progress.itemsProcessed,
+        itemsCreated: progress.itemsCreated,
+        itemsUpdated: progress.itemsUpdated,
+        errors: JSON.parse(JSON.stringify(progress.errors)),
+      },
+    });
+
+    await db.integration.update({
+      where: { id: integration.id },
+      data: {
+        lastSyncAt: completedAt,
+        config: await buildCompletedSyncConfigFromLatest(
+          integration,
+          {
+            ...options,
+            requestedMode: "incremental",
+            effectiveMode: "incremental",
+            fallbackReason: null,
+          },
+          completedAt,
+        ) as unknown as Prisma.InputJsonValue,
+      },
+    });
+  } catch (err) {
+    progress.status = "FAILED";
+
+    const allErrors = [
+      ...progress.errors,
+      { sku: "_global", message: err instanceof Error ? err.message : "Sync failed" },
+    ];
+
+    await db.syncJob.update({
+      where: { id: syncJob.id },
+      data: {
+        status: "FAILED",
+        completedAt: new Date(),
+        itemsProcessed: progress.itemsProcessed,
+        itemsCreated: progress.itemsCreated,
+        itemsUpdated: progress.itemsUpdated,
+        errors: JSON.parse(JSON.stringify(allErrors)),
+      },
+    });
+  }
+
+  return progress;
+}
+
+async function upsertListing(
+  listing: RawListing,
+  integrationId: string,
+): Promise<{ id: string; status: "created" | "updated" } | null> {
   const sku = listing.sku?.trim();
   if (!sku) return null;
 
@@ -209,12 +337,12 @@ async function upsertListing(listing: RawListing, integrationId: string): Promis
       where: { id: existing.id },
       data: listingData,
     });
-    return existing.id;
+    return { id: existing.id, status: "updated" };
   } else {
     const created = await db.marketplaceListing.create({
       data: listingData,
     });
-    return created.id;
+    return { id: created.id, status: "created" };
   }
 }
 

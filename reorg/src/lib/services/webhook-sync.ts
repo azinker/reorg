@@ -2,6 +2,8 @@ import { Prisma, type Integration, Platform, SyncStatus } from "@prisma/client";
 import { db } from "@/lib/db";
 import { getIntegrationConfig } from "@/lib/integrations/runtime-config";
 import { startIntegrationSync } from "@/lib/services/sync-control";
+import { runBigCommerceWebhookReconcile } from "@/lib/services/bigcommerce-sync";
+import { runShopifyWebhookReconcile } from "@/lib/services/shopify-sync";
 
 const WEBHOOK_SYNC_COOLDOWN_MS = 5 * 60 * 1000;
 const FRESH_SYNC_GRACE_MS = 2 * 60 * 1000;
@@ -13,6 +15,8 @@ export interface HandleMarketplaceWebhookOptions {
   topic: string | null;
   externalId: string | null;
   sourceLabel: string | null;
+  changedIds?: string[];
+  deletedIds?: string[];
 }
 
 export interface HandleMarketplaceWebhookResult {
@@ -91,6 +95,71 @@ async function findRecentRelevantJob(integrationId: string, since: Date) {
     },
     orderBy: { createdAt: "desc" },
   });
+}
+
+async function startTargetedWebhookSync(
+  integration: Integration,
+  options: HandleMarketplaceWebhookOptions,
+) {
+  const changedIds = [...new Set((options.changedIds ?? []).filter(Boolean))];
+  const deletedIds = [...new Set((options.deletedIds ?? []).filter(Boolean))];
+
+  if (changedIds.length === 0 && deletedIds.length === 0) {
+    return null;
+  }
+
+  const triggeredBy = "webhook:incremental";
+
+  switch (integration.platform) {
+    case "SHOPIFY":
+      runShopifyWebhookReconcile(
+        {
+          productIds: changedIds,
+          deletedProductIds: deletedIds,
+        },
+        {
+          requestedMode: "incremental",
+          effectiveMode: "incremental",
+          triggerSource: "webhook",
+          triggeredBy,
+          fallbackReason: null,
+        },
+      ).catch((error) =>
+        console.error("[webhook-sync] SHOPIFY targeted reconcile failed:", error),
+      );
+      break;
+    case "BIGCOMMERCE":
+      runBigCommerceWebhookReconcile(
+        {
+          productIds: changedIds,
+          deletedProductIds: deletedIds,
+        },
+        {
+          requestedMode: "incremental",
+          effectiveMode: "incremental",
+          triggerSource: "webhook",
+          triggeredBy,
+          fallbackReason: null,
+        },
+      ).catch((error) =>
+        console.error("[webhook-sync] BIGCOMMERCE targeted reconcile failed:", error),
+      );
+      break;
+    default:
+      return null;
+  }
+
+  await new Promise((resolve) => setTimeout(resolve, 500));
+
+  const job = await db.syncJob.findFirst({
+    where: {
+      integrationId: integration.id,
+      triggeredBy,
+    },
+    orderBy: { createdAt: "desc" },
+  });
+
+  return job;
 }
 
 export async function handleMarketplaceWebhook(
@@ -184,6 +253,22 @@ export async function handleMarketplaceWebhook(
       jobId: recentJob.id,
     };
     await logWebhookEvent(integration.id, options, receivedAt, result);
+    return result;
+  }
+
+  const targetedJob = await startTargetedWebhookSync(integration, options);
+
+  if (targetedJob) {
+    const result: HandleMarketplaceWebhookResult = {
+      accepted: true,
+      triggered: true,
+      status: "started",
+      message: `${integration.label} webhook triggered a targeted incremental refresh.`,
+      jobId: targetedJob.id,
+    };
+
+    await logWebhookEvent(integration.id, options, receivedAt, result);
+
     return result;
   }
 

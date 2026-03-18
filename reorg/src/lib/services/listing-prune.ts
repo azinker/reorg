@@ -1,0 +1,66 @@
+import { db } from "@/lib/db";
+
+export async function removeMarketplaceListingsByPlatformItemIds(
+  integrationId: string,
+  platformItemIds: string[],
+) {
+  if (platformItemIds.length === 0) {
+    return { deletedListings: 0, deletedMasterRows: 0 };
+  }
+
+  const listings = await db.marketplaceListing.findMany({
+    where: {
+      integrationId,
+      platformItemId: { in: platformItemIds },
+    },
+    select: {
+      id: true,
+      masterRowId: true,
+    },
+  });
+
+  if (listings.length === 0) {
+    return { deletedListings: 0, deletedMasterRows: 0 };
+  }
+
+  const listingIds = listings.map((listing) => listing.id);
+  const candidateMasterRowIds = [...new Set(listings.map((listing) => listing.masterRowId))];
+
+  await db.stagedChange.deleteMany({
+    where: {
+      marketplaceListingId: { in: listingIds },
+    },
+  });
+
+  const deletedListings = await db.marketplaceListing.deleteMany({
+    where: { id: { in: listingIds } },
+  });
+
+  const orphanedMasterRows = await db.masterRow.findMany({
+    where: {
+      id: { in: candidateMasterRowIds },
+      isActive: true,
+      listings: { none: {} },
+    },
+    select: { id: true },
+  });
+
+  const orphanedIds = orphanedMasterRows.map((row) => row.id);
+
+  if (orphanedIds.length > 0) {
+    await db.stagedChange.deleteMany({
+      where: {
+        masterRowId: { in: orphanedIds },
+      },
+    });
+
+    await db.masterRow.deleteMany({
+      where: { id: { in: orphanedIds } },
+    });
+  }
+
+  return {
+    deletedListings: deletedListings.count,
+    deletedMasterRows: orphanedIds.length,
+  };
+}

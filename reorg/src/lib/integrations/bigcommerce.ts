@@ -132,6 +132,35 @@ export class BigCommerceAdapter implements MarketplaceAdapter {
     }
   }
 
+  async fetchListingsByProductId(productId: string): Promise<RawListing[]> {
+    const response = await this.apiCall(
+      `/catalog/products/${productId}?include=variants,images`
+    );
+
+    if (response.status === 404) {
+      return [];
+    }
+
+    if (!response.ok) {
+      throw new Error(
+        `BigCommerce fetchListingsByProductId failed: ${response.status}`
+      );
+    }
+
+    const data = await response.json();
+    const product = data.data as Record<string, unknown> | undefined;
+
+    if (!product) return [];
+
+    const variants = (product.variants as Array<Record<string, unknown>>) ?? [];
+
+    if (variants.length <= 1) {
+      return [this.mapProductToListing(product, variants[0])];
+    }
+
+    return variants.map((variant) => this.mapProductToListing(product, variant));
+  }
+
   async fetchInventory(itemIds: string[]): Promise<InventoryMap> {
     const inventoryMap: InventoryMap = {};
 

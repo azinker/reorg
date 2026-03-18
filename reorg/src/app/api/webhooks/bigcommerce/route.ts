@@ -16,6 +16,33 @@ function readSharedSecret(request: NextRequest) {
   );
 }
 
+function extractBigCommerceProductIds(payload: unknown): string[] {
+  if (!payload || typeof payload !== "object") return [];
+
+  const record = payload as Record<string, unknown>;
+  const data =
+    record.data && typeof record.data === "object"
+      ? (record.data as Record<string, unknown>)
+      : null;
+
+  const candidates = [
+    record.id,
+    record.product_id,
+    data?.id,
+    data?.product_id,
+  ];
+
+  return [...new Set(
+    candidates
+      .map((value) =>
+        typeof value === "number" || typeof value === "string"
+          ? String(value)
+          : null,
+      )
+      .filter((value): value is string => !!value),
+  )];
+}
+
 export async function POST(request: NextRequest) {
   const secret = process.env.BIGCOMMERCE_WEBHOOK_SECRET;
   if (!secret) {
@@ -41,6 +68,7 @@ export async function POST(request: NextRequest) {
     typeof payload?.scope === "string"
       ? payload.scope
       : request.headers.get("x-bc-topic");
+  const productIds = extractBigCommerceProductIds(payload);
   const sourceLabel =
     typeof payload?.producer === "string"
       ? payload.producer
@@ -57,6 +85,8 @@ export async function POST(request: NextRequest) {
     topic,
     externalId,
     sourceLabel,
+    changedIds: topic === "store/product/deleted" ? [] : productIds,
+    deletedIds: topic === "store/product/deleted" ? productIds : [],
   });
 
   return NextResponse.json({ data: result }, { status: 202 });

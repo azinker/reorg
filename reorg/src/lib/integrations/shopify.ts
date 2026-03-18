@@ -168,6 +168,33 @@ export class ShopifyAdapter implements MarketplaceAdapter {
     }
   }
 
+  async fetchListingsByProductId(productId: string): Promise<RawListing[]> {
+    const response = await this.apiCall(`/products/${productId}.json`);
+
+    if (response.status === 404) {
+      return [];
+    }
+
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(
+        `Shopify fetchListingsByProductId failed: ${response.status} ${text.slice(0, 200)}`
+      );
+    }
+
+    const data = (await this.parseJsonOrThrow(
+      response,
+      "fetchListingsByProductId"
+    )) as { product?: Record<string, unknown> };
+
+    const product = data.product;
+    if (!product) return [];
+
+    const variants = (product.variants as Record<string, unknown>[] | undefined) ?? [];
+
+    return variants.map((variant) => this.mapVariantToListing(product, variant));
+  }
+
   async fetchInventory(itemIds: string[]): Promise<InventoryMap> {
     const inventoryMap: InventoryMap = {};
 

@@ -4,7 +4,7 @@ import { XMLParser } from "fast-xml-parser";
 import type { RawListing } from "@/lib/integrations/types";
 import { getIntegrationConfig } from "@/lib/integrations/runtime-config";
 import {
-  buildCompletedSyncConfig,
+  buildCompletedSyncConfigFromLatest,
   type SyncExecutionOptions,
 } from "@/lib/services/sync-control";
 import {
@@ -206,7 +206,7 @@ export async function runEbayTtSync(
       where: { id: integration.id },
       data: {
         lastSyncAt: completedAt,
-        config: buildCompletedSyncConfig(
+        config: await buildCompletedSyncConfigFromLatest(
           integration,
           { ...options, effectiveMode },
           completedAt,

@@ -1,8 +1,15 @@
-import { Platform } from "@prisma/client";
+import { Platform, Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import { BigCommerceAdapter } from "@/lib/integrations/bigcommerce";
 import { runSync, type SyncResult } from "@/lib/services/sync";
 import type { SyncExecutionOptions } from "@/lib/services/sync-control";
+import { buildCompletedSyncConfigFromLatest } from "@/lib/services/sync-control";
+import {
+  matchListings,
+  saveUnmatchedListings,
+  upsertMarketplaceListings,
+} from "@/lib/services/matching";
+import { removeMarketplaceListingsByPlatformItemIds } from "@/lib/services/listing-prune";
 
 function getStringConfig(
   config: Record<string, unknown>,
@@ -12,9 +19,7 @@ function getStringConfig(
   return typeof value === "string" && value.trim() ? value : undefined;
 }
 
-export async function runBigCommerceSync(
-  options: SyncExecutionOptions = {},
-): Promise<SyncResult> {
+async function getBigCommerceSyncContext() {
   const integration = await db.integration.findUnique({
     where: { platform: Platform.BIGCOMMERCE },
   });
@@ -36,10 +41,151 @@ export async function runBigCommerceSync(
     );
   }
 
-  const adapter = new BigCommerceAdapter({
-    storeHash,
-    accessToken,
-  });
+  return {
+    integration,
+    adapter: new BigCommerceAdapter({
+      storeHash,
+      accessToken,
+    }),
+  };
+}
+
+export async function runBigCommerceSync(
+  options: SyncExecutionOptions = {},
+): Promise<SyncResult> {
+  const { integration, adapter } = await getBigCommerceSyncContext();
 
   return runSync(adapter, integration.id, options);
+}
+
+export async function runBigCommerceWebhookReconcile(
+  input: {
+    productIds?: string[];
+    deletedProductIds?: string[];
+  },
+  options: SyncExecutionOptions = {},
+): Promise<SyncResult> {
+  const { integration, adapter } = await getBigCommerceSyncContext();
+  const productIds = [...new Set((input.productIds ?? []).filter(Boolean))];
+  const deletedProductIds = [...new Set((input.deletedProductIds ?? []).filter(Boolean))];
+  const startTime = Date.now();
+  const errors: string[] = [];
+
+  const syncJob = await db.syncJob.create({
+    data: {
+      integrationId: integration.id,
+      status: "RUNNING",
+      triggeredBy: options.triggeredBy ?? "webhook:incremental",
+      startedAt: new Date(),
+    },
+  });
+
+  let totalProcessed = 0;
+  let totalCreated = 0;
+  let totalUpdated = 0;
+  let totalUnmatched = 0;
+
+  try {
+    for (const productId of productIds) {
+      const listings = await adapter.fetchListingsByProductId(productId);
+      const matchResult = await matchListings(
+        listings,
+        integration.id,
+        integration.isMaster,
+      );
+
+      const upsertResult = await upsertMarketplaceListings(
+        matchResult.matched,
+        integration.id,
+      );
+
+      if (matchResult.unmatched.length > 0) {
+        await saveUnmatchedListings(matchResult.unmatched, integration.id);
+      }
+
+      totalProcessed += listings.length;
+      totalCreated += upsertResult.created;
+      totalUpdated += upsertResult.updated;
+      totalUnmatched += matchResult.stats.unmatched;
+    }
+
+    if (deletedProductIds.length > 0) {
+      const deleted = await removeMarketplaceListingsByPlatformItemIds(
+        integration.id,
+        deletedProductIds,
+      );
+      totalProcessed += deleted.deletedListings;
+      totalUpdated += deleted.deletedListings;
+    }
+
+    const completedAt = new Date();
+    await db.syncJob.update({
+      where: { id: syncJob.id },
+      data: {
+        status: "COMPLETED",
+        itemsProcessed: totalProcessed,
+        itemsCreated: totalCreated,
+        itemsUpdated: totalUpdated,
+        completedAt,
+        errors,
+      },
+    });
+
+    await db.integration.update({
+      where: { id: integration.id },
+      data: {
+        lastSyncAt: completedAt,
+        config: await buildCompletedSyncConfigFromLatest(
+          integration,
+          {
+            ...options,
+            requestedMode: "incremental",
+            effectiveMode: "incremental",
+            fallbackReason: null,
+          },
+          completedAt,
+        ) as unknown as Prisma.InputJsonValue,
+      },
+    });
+
+    return {
+      syncJobId: syncJob.id,
+      integrationId: integration.id,
+      status: "completed",
+      itemsProcessed: totalProcessed,
+      itemsCreated: totalCreated,
+      itemsUpdated: totalUpdated,
+      unmatchedCount: totalUnmatched,
+      errors,
+      durationMs: Date.now() - startTime,
+    };
+  } catch (error) {
+    const errorMessage =
+      error instanceof Error ? error.message : "Unknown sync error";
+    errors.push(errorMessage);
+
+    await db.syncJob.update({
+      where: { id: syncJob.id },
+      data: {
+        status: "FAILED",
+        itemsProcessed: totalProcessed,
+        itemsCreated: totalCreated,
+        itemsUpdated: totalUpdated,
+        errors,
+        completedAt: new Date(),
+      },
+    });
+
+    return {
+      syncJobId: syncJob.id,
+      integrationId: integration.id,
+      status: "failed",
+      itemsProcessed: totalProcessed,
+      itemsCreated: totalCreated,
+      itemsUpdated: totalUpdated,
+      unmatchedCount: totalUnmatched,
+      errors,
+      durationMs: Date.now() - startTime,
+    };
+  }
 }

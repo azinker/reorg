@@ -111,6 +111,28 @@ export function buildCompletedSyncConfig(
   };
 }
 
+export async function buildCompletedSyncConfigFromLatest(
+  integration: Pick<Integration, "id" | "platform" | "config">,
+  options: SyncExecutionOptions,
+  completedAt: Date,
+  completion: SyncCompletionOptions = {},
+) {
+  const latest = await db.integration.findUnique({
+    where: { id: integration.id },
+    select: {
+      platform: true,
+      config: true,
+    },
+  });
+
+  return buildCompletedSyncConfig(
+    latest ?? integration,
+    options,
+    completedAt,
+    completion,
+  );
+}
+
 export async function startIntegrationSync(
   integration: Integration,
   options: SyncExecutionOptions = {},

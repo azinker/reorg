@@ -2,7 +2,7 @@ import { db } from "@/lib/db";
 import { Platform, Prisma, type SyncStatus } from "@prisma/client";
 import { XMLParser } from "fast-xml-parser";
 import {
-  buildCompletedSyncConfig,
+  buildCompletedSyncConfigFromLatest,
   type SyncExecutionOptions,
 } from "@/lib/services/sync-control";
 import { getIntegrationConfig } from "@/lib/integrations/runtime-config";
@@ -194,7 +194,7 @@ export async function runEbayTppSync(
       where: { id: integration.id },
       data: {
         lastSyncAt: completedAt,
-        config: buildCompletedSyncConfig(
+        config: await buildCompletedSyncConfigFromLatest(
           integration,
           { ...options, effectiveMode },
           completedAt,
