@@ -13,6 +13,10 @@ import {
   removeMarketplaceListingsByPlatformItemIds,
   removeMarketplaceListingsMissingFromProductSet,
 } from "@/lib/services/listing-prune";
+import {
+  recordWebhookReconcileCompleted,
+  recordWebhookReconcileFailed,
+} from "@/lib/services/webhook-reconcile-audit";
 
 function getStringConfig(
   config: Record<string, unknown>,
@@ -72,11 +76,15 @@ export async function runBigCommerceWebhookReconcile(
   const { integration, adapter } = await getBigCommerceSyncContext();
   const productIds = [...new Set((input.productIds ?? []).filter(Boolean))];
   const deletedProductIds = [...new Set((input.deletedProductIds ?? []).filter(Boolean))];
-  const changedVariantIds = new Set(
-    (input.changedVariantIds ?? []).filter(Boolean).map((variantId) => String(variantId)),
-  );
+  const changedVariantIds = [
+    ...new Set(
+      (input.changedVariantIds ?? []).filter(Boolean).map((variantId) => String(variantId)),
+    ),
+  ];
+  const changedVariantIdSet = new Set(changedVariantIds);
   const startTime = Date.now();
   const errors: string[] = [];
+  let prunedListings = 0;
 
   const syncJob = await db.syncJob.create({
     data: {
@@ -97,10 +105,10 @@ export async function runBigCommerceWebhookReconcile(
       const listings = await adapter.fetchListingsByProductId(productId);
       const presentVariantIds = listings.map((listing) => listing.platformVariantId ?? "");
       const targetedListings =
-        changedVariantIds.size > 0
+        changedVariantIdSet.size > 0
           ? listings.filter((listing) => {
               const variantId = listing.platformVariantId ?? "";
-              return changedVariantIds.has(variantId);
+              return changedVariantIdSet.has(variantId);
             })
           : listings;
       const matchResult = await matchListings(
@@ -128,6 +136,7 @@ export async function runBigCommerceWebhookReconcile(
         productId,
         presentVariantIds,
       );
+      prunedListings += pruned.deletedListings;
       totalUpdated += pruned.deletedListings;
     }
 
@@ -136,6 +145,7 @@ export async function runBigCommerceWebhookReconcile(
         integration.id,
         deletedProductIds,
       );
+      prunedListings += deleted.deletedListings;
       totalProcessed += deleted.deletedListings;
       totalUpdated += deleted.deletedListings;
     }
@@ -170,6 +180,21 @@ export async function runBigCommerceWebhookReconcile(
       },
     });
 
+    const durationMs = Date.now() - startTime;
+    await recordWebhookReconcileCompleted({
+      platform: "BIGCOMMERCE",
+      integrationId: integration.id,
+      syncJobId: syncJob.id,
+      productIds,
+      deletedProductIds,
+      changedVariantIds,
+      prunedListings,
+      itemsProcessed: totalProcessed,
+      itemsCreated: totalCreated,
+      itemsUpdated: totalUpdated,
+      durationMs,
+    });
+
     return {
       syncJobId: syncJob.id,
       integrationId: integration.id,
@@ -179,7 +204,7 @@ export async function runBigCommerceWebhookReconcile(
       itemsUpdated: totalUpdated,
       unmatchedCount: totalUnmatched,
       errors,
-      durationMs: Date.now() - startTime,
+      durationMs,
     };
   } catch (error) {
     const errorMessage =
@@ -198,6 +223,22 @@ export async function runBigCommerceWebhookReconcile(
       },
     });
 
+    const durationMs = Date.now() - startTime;
+    await recordWebhookReconcileFailed({
+      platform: "BIGCOMMERCE",
+      integrationId: integration.id,
+      syncJobId: syncJob.id,
+      productIds,
+      deletedProductIds,
+      changedVariantIds,
+      prunedListings,
+      itemsProcessed: totalProcessed,
+      itemsCreated: totalCreated,
+      itemsUpdated: totalUpdated,
+      durationMs,
+      error: errorMessage,
+    });
+
     return {
       syncJobId: syncJob.id,
       integrationId: integration.id,
@@ -207,7 +248,7 @@ export async function runBigCommerceWebhookReconcile(
       itemsUpdated: totalUpdated,
       unmatchedCount: totalUnmatched,
       errors,
-      durationMs: Date.now() - startTime,
+      durationMs,
     };
   }
 }

@@ -75,6 +75,10 @@ async function logWebhookEvent(
         externalId: options.externalId,
         sourceLabel: options.sourceLabel,
         receivedAt: receivedAt.toISOString(),
+        changedIdsCount: (options.changedIds ?? []).filter(Boolean).length,
+        deletedIdsCount: (options.deletedIds ?? []).filter(Boolean).length,
+        changedVariantIdsCount:
+          (options.changedVariantIds ?? []).filter(Boolean).length,
         accepted: result.accepted,
         triggered: result.triggered,
         status: result.status,

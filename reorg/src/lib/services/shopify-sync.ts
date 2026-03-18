@@ -10,6 +10,10 @@ import {
   removeMarketplaceListingsByPlatformItemIds,
   removeMarketplaceListingsMissingFromProductSet,
 } from "@/lib/services/listing-prune";
+import {
+  recordWebhookReconcileCompleted,
+  recordWebhookReconcileFailed,
+} from "@/lib/services/webhook-reconcile-audit";
 
 interface SyncProgress {
   jobId: string;
@@ -177,9 +181,14 @@ export async function runShopifyWebhookReconcile(
   const { integration, adapter } = await getShopifySyncContext();
   const productIds = [...new Set((input.productIds ?? []).filter(Boolean))];
   const deletedProductIds = [...new Set((input.deletedProductIds ?? []).filter(Boolean))];
-  const changedVariantIds = new Set(
-    (input.changedVariantIds ?? []).filter(Boolean).map((variantId) => String(variantId)),
-  );
+  const changedVariantIds = [
+    ...new Set(
+      (input.changedVariantIds ?? []).filter(Boolean).map((variantId) => String(variantId)),
+    ),
+  ];
+  const changedVariantIdSet = new Set(changedVariantIds);
+  const startTime = Date.now();
+  let prunedListings = 0;
 
   const syncJob = await db.syncJob.create({
     data: {
@@ -197,10 +206,10 @@ export async function runShopifyWebhookReconcile(
       const listings = await adapter.fetchListingsByProductId(productId);
       const presentVariantIds = listings.map((listing) => listing.platformVariantId ?? "");
       const targetedListings =
-        changedVariantIds.size > 0
+        changedVariantIdSet.size > 0
           ? listings.filter((listing) => {
               const variantId = listing.platformVariantId ?? "";
-              return changedVariantIds.has(variantId);
+              return changedVariantIdSet.has(variantId);
             })
           : listings;
 
@@ -223,6 +232,7 @@ export async function runShopifyWebhookReconcile(
         productId,
         presentVariantIds,
       );
+      prunedListings += pruned.deletedListings;
       progress.itemsUpdated += pruned.deletedListings;
     }
 
@@ -231,6 +241,7 @@ export async function runShopifyWebhookReconcile(
         integration.id,
         deletedProductIds,
       );
+      prunedListings += deleted.deletedListings;
       progress.itemsProcessed += deleted.deletedListings;
       progress.itemsUpdated += deleted.deletedListings;
     }
@@ -266,12 +277,27 @@ export async function runShopifyWebhookReconcile(
         ) as unknown as Prisma.InputJsonValue,
       },
     });
+
+    await recordWebhookReconcileCompleted({
+      platform: "SHOPIFY",
+      integrationId: integration.id,
+      syncJobId: syncJob.id,
+      productIds,
+      deletedProductIds,
+      changedVariantIds,
+      prunedListings,
+      itemsProcessed: progress.itemsProcessed,
+      itemsCreated: progress.itemsCreated,
+      itemsUpdated: progress.itemsUpdated,
+      durationMs: Date.now() - startTime,
+    });
   } catch (err) {
     progress.status = "FAILED";
+    const errorMessage = err instanceof Error ? err.message : "Sync failed";
 
     const allErrors = [
       ...progress.errors,
-      { sku: "_global", message: err instanceof Error ? err.message : "Sync failed" },
+      { sku: "_global", message: errorMessage },
     ];
 
     await db.syncJob.update({
@@ -284,6 +310,21 @@ export async function runShopifyWebhookReconcile(
         itemsUpdated: progress.itemsUpdated,
         errors: JSON.parse(JSON.stringify(allErrors)),
       },
+    });
+
+    await recordWebhookReconcileFailed({
+      platform: "SHOPIFY",
+      integrationId: integration.id,
+      syncJobId: syncJob.id,
+      productIds,
+      deletedProductIds,
+      changedVariantIds,
+      prunedListings,
+      itemsProcessed: progress.itemsProcessed,
+      itemsCreated: progress.itemsCreated,
+      itemsUpdated: progress.itemsUpdated,
+      durationMs: Date.now() - startTime,
+      error: errorMessage,
     });
   }
 

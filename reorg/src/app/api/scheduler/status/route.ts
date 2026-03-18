@@ -54,7 +54,13 @@ export async function GET() {
       db.auditLog.findMany({
         where: {
           action: {
-            in: ["scheduler_tick", "webhook_received", "sync_stale_failed"],
+            in: [
+              "scheduler_tick",
+              "webhook_received",
+              "webhook_reconcile_completed",
+              "webhook_reconcile_failed",
+              "sync_stale_failed",
+            ],
           },
         },
         orderBy: { createdAt: "desc" },
@@ -157,6 +163,51 @@ export async function GET() {
                     : "completed",
               platform: null,
               detail: `Due ${typeof details.dueCount === "number" ? details.dueCount : 0}, dispatched ${typeof details.dispatchedCount === "number" ? details.dispatchedCount : 0}`,
+              occurredAt: entry.createdAt.toISOString(),
+            };
+          }
+
+          if (
+            entry.action === "webhook_reconcile_completed" ||
+            entry.action === "webhook_reconcile_failed"
+          ) {
+            const isFailed = entry.action === "webhook_reconcile_failed";
+            const platform =
+              typeof details.platform === "string" ? details.platform : null;
+            const productCount =
+              typeof details.productCount === "number" ? details.productCount : 0;
+            const deletedProductCount =
+              typeof details.deletedProductCount === "number"
+                ? details.deletedProductCount
+                : 0;
+            const changedVariantCount =
+              typeof details.changedVariantCount === "number"
+                ? details.changedVariantCount
+                : 0;
+            const itemsProcessed =
+              typeof details.itemsProcessed === "number"
+                ? details.itemsProcessed
+                : 0;
+            const prunedListings =
+              typeof details.prunedListings === "number"
+                ? details.prunedListings
+                : 0;
+            const durationMs =
+              typeof details.durationMs === "number" ? details.durationMs : null;
+
+            return {
+              id: entry.id,
+              type: "webhook",
+              title: isFailed
+                ? "Webhook reconcile failed"
+                : "Webhook reconcile completed",
+              status: isFailed ? "failed" : "completed",
+              platform,
+              detail: isFailed
+                ? typeof details.error === "string"
+                  ? details.error
+                  : "Targeted webhook reconcile failed."
+                : `Products ${productCount}, deletes ${deletedProductCount}, variants ${changedVariantCount}, processed ${itemsProcessed}, pruned ${prunedListings}${durationMs != null ? ` in ${Math.max(0, Math.round(durationMs / 1000))}s` : ""}`,
               occurredAt: entry.createdAt.toISOString(),
             };
           }

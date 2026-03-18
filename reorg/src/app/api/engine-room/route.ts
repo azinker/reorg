@@ -195,6 +195,8 @@ export async function GET() {
       .filter((entry) =>
         entry.action === "scheduler_tick" ||
         entry.action === "webhook_received" ||
+        entry.action === "webhook_reconcile_completed" ||
+        entry.action === "webhook_reconcile_failed" ||
         entry.action === "sync_stale_failed",
       )
       .slice(0, 25)
@@ -232,6 +234,44 @@ export async function GET() {
               typeof details.reason === "string"
                 ? details.reason
                 : "A stale running sync job was marked failed automatically.",
+            time: entry.createdAt.toISOString(),
+          };
+        }
+
+        if (
+          entry.action === "webhook_reconcile_completed" ||
+          entry.action === "webhook_reconcile_failed"
+        ) {
+          const isFailed = entry.action === "webhook_reconcile_failed";
+          const productCount =
+            typeof details.productCount === "number" ? details.productCount : 0;
+          const deletedProductCount =
+            typeof details.deletedProductCount === "number"
+              ? details.deletedProductCount
+              : 0;
+          const changedVariantCount =
+            typeof details.changedVariantCount === "number"
+              ? details.changedVariantCount
+              : 0;
+          const itemsProcessed =
+            typeof details.itemsProcessed === "number" ? details.itemsProcessed : 0;
+          const prunedListings =
+            typeof details.prunedListings === "number" ? details.prunedListings : 0;
+          const durationMs =
+            typeof details.durationMs === "number" ? details.durationMs : null;
+
+          return {
+            id: entry.id,
+            type: "webhook",
+            status: isFailed ? "failed" : "completed",
+            title: isFailed ? "Webhook reconcile failed" : "Webhook reconcile completed",
+            platform:
+              typeof details.platform === "string" ? details.platform : null,
+            detail: isFailed
+              ? typeof details.error === "string"
+                ? details.error
+                : "Targeted webhook reconcile failed."
+              : `Products ${productCount}, deletes ${deletedProductCount}, variants ${changedVariantCount}, processed ${itemsProcessed}, pruned ${prunedListings}${durationMs != null ? ` in ${Math.max(0, Math.round(durationMs / 1000))}s` : ""}`,
             time: entry.createdAt.toISOString(),
           };
         }
