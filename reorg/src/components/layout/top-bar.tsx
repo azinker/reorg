@@ -9,6 +9,7 @@ import { PlatformIcon } from "@/components/grid/platform-icon";
 import type { Density } from "@/lib/settings-store";
 import type { Platform } from "@/lib/grid-types";
 import { PLATFORM_SHORT } from "@/lib/grid-types";
+import { cn } from "@/lib/utils";
 import { Moon, Sun, Monitor, Rows3, Rows4, AlignJustify, Menu, LogOut, ShieldCheck } from "lucide-react";
 
 const PLATFORM_ORDER: Platform[] = ["TPP_EBAY", "TT_EBAY", "BIGCOMMERCE", "SHOPIFY"];
