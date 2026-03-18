@@ -5,11 +5,34 @@ const ADMIN_EMAILS = [
 ];
 
 export function getAppEnv() {
-  return process.env.NEXT_PUBLIC_APP_ENV ?? "local";
+  const vercelEnv = process.env.VERCEL_ENV;
+  if (vercelEnv === "production") return "production";
+  if (vercelEnv === "preview") return "staging";
+
+  const authUrl = process.env.AUTH_URL?.toLowerCase();
+  if (authUrl?.includes("reorg.theperfectpart.net")) return "production";
+  if (authUrl?.includes("stage.reorg.theperfectpart.net")) return "staging";
+
+  const appEnv = process.env.NEXT_PUBLIC_APP_ENV;
+  if (appEnv === "production" || appEnv === "staging") return appEnv;
+
+  return "local";
 }
 
 export function isAuthBypassEnabled() {
-  return process.env.SKIP_AUTH === "true" && getAppEnv() === "local";
+  if (process.env.SKIP_AUTH !== "true") {
+    return false;
+  }
+
+  if (process.env.VERCEL === "1" || process.env.VERCEL_ENV) {
+    return false;
+  }
+
+  if (process.env.NODE_ENV !== "development") {
+    return false;
+  }
+
+  return getAppEnv() === "local";
 }
 
 export function isAdminEmail(email?: string | null) {
