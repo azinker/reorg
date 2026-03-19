@@ -579,9 +579,12 @@ export default function SyncPage() {
     }
   }, []);
 
-  const fetchSchedulerStatus = useCallback(async () => {
+  const fetchSchedulerStatus = useCallback(async (forceRefresh = false) => {
     try {
-      const res = await fetch("/api/scheduler/status", { cache: "no-store" });
+      const res = await fetch(
+        forceRefresh ? "/api/scheduler/status?refresh=1" : "/api/scheduler/status",
+        { cache: "no-store" },
+      );
       const json = await res.json();
       setSchedulerStatus((json.data ?? null) as SchedulerStatus | null);
     } catch {
@@ -668,7 +671,7 @@ export default function SyncPage() {
             }
 
             fetchIntegrations();
-            fetchSchedulerStatus();
+            fetchSchedulerStatus(true);
           }
         } catch {
           // ignore
@@ -749,7 +752,7 @@ export default function SyncPage() {
             [apiPlatform]: json.error ?? "Sync failed",
           }));
           await loadStoreStatus(apiPlatform);
-          fetchSchedulerStatus();
+          fetchSchedulerStatus(true);
           return;
         }
 
@@ -771,7 +774,7 @@ export default function SyncPage() {
         setSyncing((prev) => ({ ...prev, [apiPlatform]: "done" }));
         setResults((prev) => ({ ...prev, [apiPlatform]: message }));
         fetchIntegrations();
-        fetchSchedulerStatus();
+        fetchSchedulerStatus(true);
         await loadStoreStatus(apiPlatform);
       } catch (error) {
         setSyncing((prev) => ({ ...prev, [apiPlatform]: "error" }));

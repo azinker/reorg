@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
 import { db } from "@/lib/db";
 import { buildAutomationHealthSnapshot } from "@/lib/services/automation-health";
 import { planScheduledSyncs } from "@/lib/services/sync-scheduler";
@@ -256,13 +256,16 @@ async function buildSchedulerStatusData() {
   };
 }
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
-    const data = await getServerCachedValue({
-      key: "api:scheduler-status",
-      ttlMs: 15_000,
-      loader: buildSchedulerStatusData,
-    });
+    const forceRefresh = request.nextUrl.searchParams.get("refresh") === "1";
+    const data = forceRefresh
+      ? await buildSchedulerStatusData()
+      : await getServerCachedValue({
+          key: "api:scheduler-status",
+          ttlMs: 15_000,
+          loader: buildSchedulerStatusData,
+        });
 
     return NextResponse.json({ data });
   } catch (error) {
