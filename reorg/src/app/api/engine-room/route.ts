@@ -35,6 +35,68 @@ function normalizeErrorMessage(error: unknown): string {
   return JSON.stringify(error);
 }
 
+type PushJobChangeEntry = {
+  stagedChangeId: string | null;
+  masterRowId: string | null;
+  marketplaceListingId: string | null;
+  platformVariantId: string | null;
+  platform: string;
+  listingId: string;
+  field: "salePrice" | "adRate";
+  oldValue: number | null;
+  newValue: number;
+  sku?: string;
+  title?: string;
+  success?: boolean;
+  error?: string;
+};
+
+function isPushField(value: unknown): value is "salePrice" | "adRate" {
+  return value === "salePrice" || value === "adRate";
+}
+
+function toNullableString(value: unknown) {
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function toNullableNumber(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function parsePushJobChangeEntries(value: unknown): PushJobChangeEntry[] {
+  if (!Array.isArray(value)) return [];
+
+  return value.flatMap((entry) => {
+    if (!entry || typeof entry !== "object") return [];
+
+    const record = entry as Record<string, unknown>;
+    const platform = typeof record.platform === "string" ? record.platform : null;
+    const listingId = typeof record.listingId === "string" ? record.listingId : null;
+    const field = isPushField(record.field) ? record.field : null;
+    const newValue = toNullableNumber(record.newValue);
+
+    if (!platform || !listingId || !field || newValue == null) return [];
+
+    return [
+      {
+        stagedChangeId: toNullableString(record.stagedChangeId),
+        masterRowId: toNullableString(record.masterRowId),
+        marketplaceListingId: toNullableString(record.marketplaceListingId),
+        platformVariantId: toNullableString(record.platformVariantId),
+        platform,
+        listingId,
+        field,
+        oldValue: toNullableNumber(record.oldValue),
+        newValue,
+        sku: typeof record.sku === "string" ? record.sku : undefined,
+        title: typeof record.title === "string" ? record.title : undefined,
+        success: typeof record.success === "boolean" ? record.success : undefined,
+        error: typeof record.error === "string" ? record.error : undefined,
+      },
+    ];
+  });
+}
+
 export async function GET() {
   try {
     const [syncJobs, pushJobs, stagedChanges, auditLogs, globalLock, schedulerSettings, schedulerPlan, integrations] = await Promise.all([
@@ -91,6 +153,69 @@ export async function GET() {
       }),
     ]);
 
+    const pushChangeEntries = pushJobs.flatMap((job) => {
+      const payload = (job.payload as Record<string, unknown>) ?? {};
+      const result = (job.result as Record<string, unknown>) ?? {};
+
+      return [
+        ...parsePushJobChangeEntries(payload.changes),
+        ...parsePushJobChangeEntries(result.results),
+      ];
+    });
+
+    const marketplaceListingIds = [
+      ...new Set(
+        pushChangeEntries
+          .map((entry) => entry.marketplaceListingId)
+          .filter((value): value is string => Boolean(value)),
+      ),
+    ];
+    const masterRowIds = [
+      ...new Set(
+        pushChangeEntries
+          .map((entry) => entry.masterRowId)
+          .filter((value): value is string => Boolean(value)),
+      ),
+    ];
+
+    const [pushJobListings, pushJobMasterRows] = await Promise.all([
+      marketplaceListingIds.length > 0
+        ? db.marketplaceListing.findMany({
+            where: { id: { in: marketplaceListingIds } },
+            select: {
+              id: true,
+              sku: true,
+              title: true,
+              platformItemId: true,
+              platformVariantId: true,
+              masterRow: {
+                select: {
+                  id: true,
+                  sku: true,
+                  title: true,
+                },
+              },
+              integration: {
+                select: {
+                  platform: true,
+                  label: true,
+                },
+              },
+            },
+          })
+        : Promise.resolve([]),
+      masterRowIds.length > 0
+        ? db.masterRow.findMany({
+            where: { id: { in: masterRowIds } },
+            select: {
+              id: true,
+              sku: true,
+              title: true,
+            },
+          })
+        : Promise.resolve([]),
+    ]);
+
     const schedulerMap = Object.fromEntries(
       schedulerSettings.map((setting) => [setting.key, setting.value]),
     );
@@ -115,6 +240,8 @@ export async function GET() {
         getIntegrationConfig(integration),
       ]),
     );
+    const pushJobListingById = new Map(pushJobListings.map((listing) => [listing.id, listing]));
+    const pushJobMasterRowById = new Map(pushJobMasterRows.map((row) => [row.id, row]));
 
     const syncJobsPayload = syncJobs.map((job) => {
       const duration =
@@ -213,6 +340,63 @@ export async function GET() {
       const failedResults = Array.isArray(result.results)
         ? (result.results as Array<Record<string, unknown>>).filter((entry) => entry.success === false)
         : [];
+      const payloadEntries = parsePushJobChangeEntries(payload.changes);
+      const resultEntries = parsePushJobChangeEntries(result.results);
+      const detailByKey = new Map<string, PushJobChangeEntry>();
+
+      for (const entry of payloadEntries) {
+        detailByKey.set(`${entry.platform}:${entry.listingId}:${entry.field}`, entry);
+      }
+
+      for (const entry of resultEntries) {
+        const key = `${entry.platform}:${entry.listingId}:${entry.field}`;
+        const existing = detailByKey.get(key);
+        detailByKey.set(key, {
+          ...existing,
+          ...entry,
+          sku: entry.sku ?? existing?.sku,
+          title: entry.title ?? existing?.title,
+        });
+      }
+
+      const changes = [...detailByKey.values()]
+        .map((entry) => {
+          const listing = entry.marketplaceListingId
+            ? pushJobListingById.get(entry.marketplaceListingId)
+            : null;
+          const masterRow =
+            (entry.masterRowId ? pushJobMasterRowById.get(entry.masterRowId) : null) ??
+            listing?.masterRow ??
+            null;
+          const platformLabel =
+            listing?.integration.label ??
+            PLATFORM_LABEL[entry.platform] ??
+            entry.platform;
+
+          return {
+            stagedChangeId: entry.stagedChangeId,
+            masterRowId: entry.masterRowId ?? masterRow?.id ?? null,
+            marketplaceListingId: entry.marketplaceListingId ?? listing?.id ?? null,
+            platformVariantId: entry.platformVariantId ?? listing?.platformVariantId ?? null,
+            platform: entry.platform,
+            platformLabel,
+            listingId: entry.listingId,
+            field: entry.field,
+            oldValue: entry.oldValue,
+            newValue: entry.newValue,
+            sku: entry.sku ?? masterRow?.sku ?? listing?.sku ?? "-",
+            title: entry.title ?? listing?.title ?? masterRow?.title ?? "-",
+            success: entry.success ?? null,
+            error: entry.error ?? null,
+          };
+        })
+        .sort((a, b) => {
+          const skuCompare = a.sku.localeCompare(b.sku);
+          if (skuCompare !== 0) return skuCompare;
+          const fieldCompare = a.field.localeCompare(b.field);
+          if (fieldCompare !== 0) return fieldCompare;
+          return a.platform.localeCompare(b.platform);
+        });
 
       return {
         id: job.id,
@@ -238,6 +422,7 @@ export async function GET() {
         retryableFailedChanges: failedResults.length,
         blockedReason:
           typeof result.blockedReason === "string" ? result.blockedReason : null,
+        changes,
       };
     });
 

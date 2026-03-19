@@ -14,8 +14,15 @@ import {
   Loader2,
   Clock,
   User,
+  RotateCcw,
+  X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import {
+  PushConfirmModal,
+  type PushApiData,
+  type PushItem,
+} from "@/components/push/push-confirm-modal";
 
 const TABS = [
   { id: "sync-jobs", label: "Sync Jobs", icon: RefreshCw },
@@ -69,6 +76,22 @@ type PushJobRow = {
   refreshDetail: string | null;
   retryableFailedChanges: number;
   blockedReason: string | null;
+  changes: Array<{
+    stagedChangeId: string | null;
+    masterRowId: string | null;
+    marketplaceListingId: string | null;
+    platformVariantId: string | null;
+    platform: string;
+    platformLabel: string;
+    listingId: string;
+    field: "salePrice" | "adRate";
+    oldValue: number | null;
+    newValue: number;
+    sku: string;
+    title: string;
+    success: boolean | null;
+    error: string | null;
+  }>;
 };
 
 type ChangeLogRow = {
@@ -197,6 +220,18 @@ function formatMode(mode: string): string {
     .split(":")
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(" ");
+}
+
+function formatPushField(field: string) {
+  if (field === "salePrice") return "Sale Price";
+  if (field === "adRate") return "Promoted General Ad Rate";
+  return field;
+}
+
+function formatPushValue(field: string, value: number | null) {
+  if (value == null) return "-";
+  if (field === "adRate") return `${(value * 100).toFixed(1)}%`;
+  return `$${value.toFixed(2)}`;
 }
 
 function formatDueWindow(item: DueQueueRow): string {
@@ -471,10 +506,45 @@ function PushQueuePanel({ items }: { items: PushQueueRow[] }) {
   );
 }
 
-function PushJobsPanel({ jobs }: { jobs: PushJobRow[] }) {
+function PushJobsPanel({
+  jobs,
+  onRefresh,
+}: {
+  jobs: PushJobRow[];
+  onRefresh?: () => void;
+}) {
+  const [selectedJob, setSelectedJob] = useState<PushJobRow | null>(null);
+  const [retryItems, setRetryItems] = useState<PushItem[]>([]);
+  const [retryModalOpen, setRetryModalOpen] = useState(false);
+
+  function openRetryReview(items: PushItem[]) {
+    if (items.length === 0) return;
+    setRetryItems(items);
+    setRetryModalOpen(true);
+  }
+
+  function buildRetryItems(job: PushJobRow, failedOnly: boolean) {
+    return job.changes
+      .filter((change) => !failedOnly || change.success === false)
+      .map((change) => ({
+        stagedChangeId: change.stagedChangeId ?? undefined,
+        masterRowId: change.masterRowId ?? undefined,
+        marketplaceListingId: change.marketplaceListingId ?? undefined,
+        platformVariantId: change.platformVariantId ?? undefined,
+        sku: change.sku,
+        title: change.title,
+        platform: change.platform as PushItem["platform"],
+        listingId: change.listingId,
+        field: change.field,
+        oldValue: change.oldValue,
+        newValue: change.newValue,
+      }));
+  }
+
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-sm">
+    <>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
         <thead>
           <tr className="border-b border-border text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">
             <th className="pb-3 pr-4">Job</th>
@@ -517,7 +587,15 @@ function PushJobsPanel({ jobs }: { jobs: PushJobRow[] }) {
               </td>
               <td className="py-3 pr-4 text-right tabular-nums">{job.distinctListings.toLocaleString()}</td>
               <td className="py-3 pr-4 text-right">
-                <div className="tabular-nums">{job.totalChanges.toLocaleString()}</div>
+                <button
+                  type="button"
+                  onClick={() => setSelectedJob(job)}
+                  className="cursor-pointer rounded border border-border bg-background/50 px-2 py-1 text-right transition-colors hover:border-primary/40 hover:bg-primary/5"
+                  title="View the actual changes in this push job"
+                >
+                  <div className="tabular-nums text-foreground">{job.totalChanges.toLocaleString()}</div>
+                  <div className="text-[11px] text-muted-foreground">View changes</div>
+                </button>
                 <div className="text-xs text-muted-foreground">
                   {job.successfulChanges.toLocaleString()} ok / {job.failedChanges.toLocaleString()} failed
                 </div>
@@ -531,15 +609,233 @@ function PushJobsPanel({ jobs }: { jobs: PushJobRow[] }) {
                   : job.retryableFailedChanges > 0
                     ? `${job.retryableFailedChanges} failed change${job.retryableFailedChanges === 1 ? "" : "s"} can be retried safely.`
                     : job.refreshDetail ?? "-"}
+                {job.retryableFailedChanges > 0 ? (
+                  <div className="mt-2">
+                    <button
+                      type="button"
+                      onClick={() => openRetryReview(buildRetryItems(job, true))}
+                      className="inline-flex cursor-pointer items-center gap-1 rounded border border-border px-2 py-1 text-[11px] font-medium text-foreground transition-colors hover:bg-accent"
+                    >
+                      <RotateCcw className="h-3 w-3" />
+                      Retry Failed Only
+                    </button>
+                  </div>
+                ) : null}
               </td>
             </tr>
           ))}
         </tbody>
-      </table>
-      {jobs.length === 0 && (
-        <p className="py-6 text-center text-sm text-muted-foreground">No push jobs yet.</p>
-      )}
-    </div>
+        </table>
+        {jobs.length === 0 && (
+          <p className="py-6 text-center text-sm text-muted-foreground">No push jobs yet.</p>
+        )}
+      </div>
+
+      <PushJobDetailsModal
+        job={selectedJob}
+        onClose={() => setSelectedJob(null)}
+        onRetryFailedOnly={(job) => openRetryReview(buildRetryItems(job, true))}
+        onRetrySingle={(job, changeKey) => {
+          const item = buildRetryItems(job, false).find(
+            (entry) => `${entry.platform}:${entry.listingId}:${entry.field}` === changeKey,
+          );
+          if (item) openRetryReview([item]);
+        }}
+      />
+
+      <PushConfirmModal
+        open={retryModalOpen}
+        onClose={() => setRetryModalOpen(false)}
+        onApplied={(_result: PushApiData) => {
+          setRetryModalOpen(false);
+          onRefresh?.();
+        }}
+        items={retryItems}
+      />
+    </>
+  );
+}
+
+function PushJobDetailsModal({
+  job,
+  onClose,
+  onRetryFailedOnly,
+  onRetrySingle,
+}: {
+  job: PushJobRow | null;
+  onClose: () => void;
+  onRetryFailedOnly: (job: PushJobRow) => void;
+  onRetrySingle: (job: PushJobRow, changeKey: string) => void;
+}) {
+  if (!job) return null;
+
+  const failedChanges = job.changes.filter((change) => change.success === false);
+
+  return (
+    <>
+      <div className="fixed inset-0 z-[300] bg-black/70 backdrop-blur-sm" onClick={onClose} />
+      <div className="fixed left-1/2 top-1/2 z-[301] w-[min(1100px,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-border bg-card shadow-2xl">
+        <div className="flex items-start justify-between gap-4 border-b border-border px-6 py-5">
+          <div>
+            <h2 className="text-lg font-semibold text-foreground">Push Job Details</h2>
+            <p className="mt-1 text-xs text-muted-foreground">
+              {job.user} ran this {job.dryRun ? "dry run" : "live push"} on {formatDateTime(job.createdAt)}.
+              {job.completedAt ? ` Completed ${formatDateTime(job.completedAt)}.` : ""}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="cursor-pointer rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        <div className="max-h-[75vh] overflow-y-auto px-6 py-5">
+          <section className="mb-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+            <div className="rounded-xl border border-border bg-background/50 p-4">
+              <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Status</div>
+              <div className="mt-2">
+                <StatusBadge
+                  status={
+                    job.status === "dry_run"
+                      ? "queued"
+                      : job.status === "executing"
+                        ? "in_progress"
+                        : job.status === "completed"
+                          ? "completed"
+                          : job.status === "partial"
+                            ? "pending_review"
+                            : "failed"
+                  }
+                />
+              </div>
+            </div>
+            <div className="rounded-xl border border-border bg-background/50 p-4">
+              <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Changes</div>
+              <div className="mt-1 text-2xl font-semibold text-foreground">{job.totalChanges}</div>
+            </div>
+            <div className="rounded-xl border border-border bg-background/50 p-4">
+              <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Succeeded</div>
+              <div className="mt-1 text-2xl font-semibold text-emerald-400">{job.successfulChanges}</div>
+            </div>
+            <div className="rounded-xl border border-border bg-background/50 p-4">
+              <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Failed</div>
+              <div className="mt-1 text-2xl font-semibold text-red-400">{job.failedChanges}</div>
+            </div>
+            <div className="rounded-xl border border-border bg-background/50 p-4">
+              <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Refresh</div>
+              <div className="mt-1 text-sm font-medium text-foreground">{job.refreshStatus ?? "-"}</div>
+              <div className="mt-1 text-xs text-muted-foreground">{job.refreshDetail ?? "No refresh note recorded."}</div>
+            </div>
+          </section>
+
+          {(job.blockedReason || job.backupStatus) ? (
+            <section className="mb-5 grid gap-3 lg:grid-cols-2">
+              {job.backupStatus ? (
+                <div className="rounded-xl border border-border bg-background/50 p-4">
+                  <div className="text-sm font-semibold text-foreground">Pre-Push Backup</div>
+                  <div className="mt-2 text-xs text-muted-foreground">{job.backupStatus}</div>
+                </div>
+              ) : null}
+              {job.blockedReason ? (
+                <div className="rounded-xl border border-red-500/20 bg-red-500/5 p-4">
+                  <div className="text-sm font-semibold text-red-300">Blocked Reason</div>
+                  <div className="mt-2 text-xs text-red-200/90">{job.blockedReason}</div>
+                </div>
+              ) : null}
+            </section>
+          ) : null}
+
+          <section>
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h3 className="text-sm font-semibold text-foreground">Actual Changes</h3>
+                <p className="text-xs text-muted-foreground">
+                  Review the exact SKU, field, old value, new value, and result for every change in this push job.
+                </p>
+              </div>
+              {failedChanges.length > 0 ? (
+                <button
+                  type="button"
+                  onClick={() => onRetryFailedOnly(job)}
+                  className="inline-flex cursor-pointer items-center gap-1 rounded-md border border-border px-3 py-2 text-sm font-medium text-foreground transition-colors hover:bg-accent"
+                >
+                  <RotateCcw className="h-4 w-4" />
+                  Retry Failed Only
+                </button>
+              ) : null}
+            </div>
+
+            <div className="overflow-x-auto rounded-xl border border-border">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-border bg-muted/20 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                    <th className="px-3 py-3">SKU</th>
+                    <th className="px-3 py-3">Store</th>
+                    <th className="px-3 py-3">Field</th>
+                    <th className="px-3 py-3">From</th>
+                    <th className="px-3 py-3">To</th>
+                    <th className="px-3 py-3">Result</th>
+                    <th className="px-3 py-3">Detail</th>
+                    <th className="px-3 py-3 text-right">Action</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border/50">
+                  {job.changes.map((change) => {
+                    const changeKey = `${change.platform}:${change.listingId}:${change.field}`;
+                    return (
+                      <tr key={changeKey}>
+                        <td className="px-3 py-3 align-top">
+                          <div className="font-mono text-xs text-foreground">{change.sku}</div>
+                          <div className="mt-1 max-w-[220px] truncate text-xs text-muted-foreground" title={change.title}>
+                            {change.title}
+                          </div>
+                        </td>
+                        <td className="px-3 py-3 align-top">
+                          <div className="text-sm text-foreground">{change.platformLabel}</div>
+                          <div className="mt-1 font-mono text-[11px] text-muted-foreground">{change.listingId}</div>
+                        </td>
+                        <td className="px-3 py-3 align-top text-sm text-foreground">{formatPushField(change.field)}</td>
+                        <td className="px-3 py-3 align-top text-sm text-muted-foreground">{formatPushValue(change.field, change.oldValue)}</td>
+                        <td className="px-3 py-3 align-top text-sm font-semibold text-foreground">{formatPushValue(change.field, change.newValue)}</td>
+                        <td className="px-3 py-3 align-top">
+                          {change.success === null ? (
+                            <span className="text-xs text-muted-foreground">Planned</span>
+                          ) : change.success ? (
+                            <StatusBadge status="completed" />
+                          ) : (
+                            <StatusBadge status="failed" />
+                          )}
+                        </td>
+                        <td className="px-3 py-3 align-top text-xs text-muted-foreground">
+                          {change.error ?? (change.success ? "Push completed." : "No extra detail recorded.")}
+                        </td>
+                        <td className="px-3 py-3 align-top text-right">
+                          {change.success === false ? (
+                            <button
+                              type="button"
+                              onClick={() => onRetrySingle(job, changeKey)}
+                              className="inline-flex cursor-pointer items-center gap-1 rounded border border-border px-2 py-1 text-[11px] font-medium text-foreground transition-colors hover:bg-accent"
+                            >
+                              <RotateCcw className="h-3 w-3" />
+                              Retry
+                            </button>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">-</span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+      </div>
+    </>
   );
 }
 
@@ -711,6 +1007,23 @@ export default function EngineRoomPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  async function loadEngineRoom() {
+    try {
+      const response = await fetch("/api/engine-room", { cache: "no-store" });
+      if (!response.ok) {
+        throw new Error("Failed to load");
+      }
+
+      const json = await response.json();
+      setData((json.data ?? null) as EngineRoomData | null);
+      setError(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to load engine room data");
+    } finally {
+      setLoading(false);
+    }
+  }
+
   useEffect(() => {
     let active = true;
 
@@ -793,7 +1106,7 @@ export default function EngineRoomPage() {
           />
         );
       case "push-jobs":
-        return <PushJobsPanel jobs={data.pushJobs} />;
+        return <PushJobsPanel jobs={data.pushJobs} onRefresh={() => void loadEngineRoom()} />;
       case "push-queue":
         return <PushQueuePanel items={data.pushQueue} />;
       case "change-log":
