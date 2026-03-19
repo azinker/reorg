@@ -34,6 +34,8 @@ export interface SyncDispatchResult {
 
 export interface SyncCompletionOptions {
   cursor?: string | null;
+  pendingIncrementalItemIds?: string[];
+  pendingIncrementalWindowEndedAt?: string | null;
 }
 
 type SyncDispatchMode = "background" | "inline";
@@ -149,6 +151,9 @@ export function buildCompletedSyncConfig(
         completion.cursor !== undefined
           ? completion.cursor
           : config.syncState.lastCursor,
+      pendingIncrementalItemIds: completion.pendingIncrementalItemIds ?? [],
+      pendingIncrementalWindowEndedAt:
+        completion.pendingIncrementalWindowEndedAt ?? null,
       lastFallbackReason:
         options.fallbackReason === undefined
           ? config.syncState.lastFallbackReason

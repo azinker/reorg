@@ -31,6 +31,8 @@ export interface SyncState {
   lastFallbackReason: string | null;
   lastRateLimitAt: string | null;
   lastRateLimitMessage: string | null;
+  pendingIncrementalItemIds: string[];
+  pendingIncrementalWindowEndedAt: string | null;
 }
 
 export interface WebhookState {
@@ -109,6 +111,8 @@ const EMPTY_SYNC_STATE: SyncState = {
   lastFallbackReason: null,
   lastRateLimitAt: null,
   lastRateLimitMessage: null,
+  pendingIncrementalItemIds: [],
+  pendingIncrementalWindowEndedAt: null,
 };
 
 const EMPTY_WEBHOOK_STATE: WebhookState = {
@@ -229,6 +233,8 @@ export function normalizeSyncState(raw: unknown): SyncState {
     lastFallbackReason: asNullableString(record.lastFallbackReason),
     lastRateLimitAt: asNullableString(record.lastRateLimitAt),
     lastRateLimitMessage: asNullableString(record.lastRateLimitMessage),
+    pendingIncrementalItemIds: asStringArray(record.pendingIncrementalItemIds),
+    pendingIncrementalWindowEndedAt: asNullableString(record.pendingIncrementalWindowEndedAt),
   };
 }
 

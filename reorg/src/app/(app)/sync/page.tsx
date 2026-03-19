@@ -14,6 +14,10 @@ import {
   TimerReset,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import {
+  formatEbayAutoSyncSchedule,
+  getNextEbayAutoSyncAt,
+} from "@/lib/services/ebay-sync-policy";
 
 const LOGO_MAP: Record<string, string> = {
   eBay: "/logos/ebay.svg",
@@ -70,6 +74,8 @@ type IntegrationSyncState = {
   lastFallbackReason: string | null;
   lastRateLimitAt: string | null;
   lastRateLimitMessage: string | null;
+  pendingIncrementalItemIds: string[];
+  pendingIncrementalWindowEndedAt: string | null;
 };
 
 type IntegrationWebhookState = {
@@ -375,8 +381,11 @@ function addDaysToParts(
   return getLocalDateTimeParts(baseUtc, timeZone);
 }
 
-function getNextPullAt(profile: SyncProfile, now: Date) {
+function getNextPullAt(profile: SyncProfile, now: Date, platform: string) {
   if (!profile.autoSyncEnabled) return null;
+  if (platform === "TPP_EBAY" || platform === "TT_EBAY") {
+    return getNextEbayAutoSyncAt(now, profile.timezone);
+  }
 
   const nowParts = getLocalDateTimeParts(now, profile.timezone);
   const candidates: Date[] = [];
@@ -445,7 +454,11 @@ function formatCountdown(target: Date | null, now: number) {
   return `${minutes}m ${seconds}s`;
 }
 
-function formatSchedule(profile: SyncProfile) {
+function formatSchedule(profile: SyncProfile, platform: string) {
+  if (platform === "TPP_EBAY" || platform === "TT_EBAY") {
+    return formatEbayAutoSyncSchedule();
+  }
+
   const overnightWindowMinutes =
     (24 - profile.dayEndHour + profile.dayStartHour) * 60;
   const overnightLabel =
@@ -1159,7 +1172,7 @@ export default function SyncPage() {
               ? new Date(cooldown.until)
               : null
             : syncProfile
-              ? getNextPullAt(syncProfile, new Date(nowMs))
+              ? getNextPullAt(syncProfile, new Date(nowMs), store.apiPlatform)
               : null;
           const completionSummary = getCompletionSummary(
             liveJob,
@@ -1286,7 +1299,7 @@ export default function SyncPage() {
                   </div>
                   <div>
                     <div className="font-semibold text-foreground/90">Pull cadence</div>
-                    <div className="mt-1">{formatSchedule(syncProfile)}</div>
+                    <div className="mt-1">{formatSchedule(syncProfile, store.apiPlatform)}</div>
                     <div className="mt-1">
                       Preferred mode: {syncProfile.preferredMode}
                       {syncState?.lastEffectiveMode ? ` | Last mode used: ${syncState.lastEffectiveMode}` : ""}
