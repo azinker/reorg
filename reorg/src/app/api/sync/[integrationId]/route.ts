@@ -18,11 +18,39 @@ import {
 import { getSharedEbayQuotaStoreCount } from "@/lib/services/ebay-sync-budget";
 import { getReservedEbayGetItemCalls } from "@/lib/services/ebay-sync-policy";
 
-const postSchema = z
+  const postSchema = z
   .object({
     mode: z.enum(["full", "incremental"]).optional(),
   })
   .optional();
+
+function normalizeSyncErrors(
+  errors: unknown,
+): Array<{ sku: string; message: string }> {
+  if (!Array.isArray(errors)) return [];
+
+  return errors.flatMap((entry) => {
+    if (typeof entry === "string") {
+      return [{ sku: "_global", message: entry }];
+    }
+
+    if (!entry || typeof entry !== "object") {
+      return [];
+    }
+
+    const record = entry as Record<string, unknown>;
+    const sku =
+      typeof record.sku === "string" && record.sku.trim()
+        ? record.sku
+        : "_global";
+    const message =
+      typeof record.message === "string" && record.message.trim()
+        ? record.message
+        : JSON.stringify(entry);
+
+    return [{ sku, message }];
+  });
+}
 
 export async function POST(
   request: NextRequest,
@@ -120,10 +148,14 @@ export async function POST(
       );
     }
 
-    const result = await startIntegrationSync(integration, {
-      requestedMode: parsed.data?.mode,
-      triggerSource: "manual",
-    });
+    const result = await startIntegrationSync(
+      integration,
+      {
+        requestedMode: parsed.data?.mode,
+        triggerSource: "manual",
+      },
+      "inline",
+    );
 
     if (result.status === "UNSUPPORTED") {
       return NextResponse.json({ error: result.message }, { status: 501 });
@@ -221,7 +253,7 @@ export async function GET(
               itemsProcessed: lastJob.itemsProcessed,
               itemsCreated: lastJob.itemsCreated,
               itemsUpdated: lastJob.itemsUpdated,
-              errors: lastJob.errors,
+              errors: normalizeSyncErrors(lastJob.errors),
               startedAt: lastJob.startedAt,
               completedAt: lastJob.completedAt,
             }
