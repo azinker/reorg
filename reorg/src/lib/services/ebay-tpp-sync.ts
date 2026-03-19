@@ -64,6 +64,7 @@ interface SyncProgress {
 interface IncrementalWindow {
   itemIds: string[];
   windowEndedAt: Date;
+  eventItemsById?: Record<string, unknown>;
 }
 
 interface MarketingCampaign {
@@ -251,6 +252,10 @@ export async function runEbayTppSync(
           },
         });
         const processingItemIds = budgetPlan.itemIdsToProcess;
+        const incrementalEventItemsById =
+          "eventItemsById" in incrementalWindow
+            ? incrementalWindow.eventItemsById
+            : undefined;
         pendingIncrementalItemIdsForCompletion = budgetPlan.pendingItemIds;
         pendingIncrementalWindowEndedAtForCompletion =
           budgetPlan.pendingItemIds.length > 0
@@ -296,21 +301,54 @@ export async function runEbayTppSync(
             index,
             index + GETITEM_CONCURRENCY,
           );
+          const directResults = new Map<string, UpsertResult>();
+          const itemIdsNeedingFetch: string[] = [];
+          for (const itemId of batch) {
+            const directResult = await tryApplyIncrementalQuantityFirstTppItem(
+              incrementalEventItemsById?.[itemId],
+              integration.id,
+            );
+            if (directResult) {
+              directResults.set(itemId, directResult);
+            } else {
+              itemIdsNeedingFetch.push(itemId);
+            }
+          }
           const fullItems = await Promise.allSettled(
-            batch.map((itemId) => fetchFullItem(integration.id, ebayConfig, itemId)),
+            itemIdsNeedingFetch.map((itemId) =>
+              fetchFullItem(integration.id, ebayConfig, itemId),
+            ),
           );
+          let fetchResultIndex = 0;
 
           for (let batchIndex = 0; batchIndex < batch.length; batchIndex += 1) {
             const itemId = batch[batchIndex];
-            const fetched = fullItems[batchIndex];
 
             try {
+              const directResult = directResults.get(itemId);
+              if (directResult) {
+                progress.itemsProcessed++;
+                if (directResult === "created") progress.itemsCreated++;
+                else if (directResult === "updated") progress.itemsUpdated++;
+                if (directResult === "variation_parent") progress.variationsFound++;
+                continue;
+              }
+
+              const fetched = fullItems[fetchResultIndex];
+              fetchResultIndex += 1;
+              if (!fetched) {
+                throw new Error("Missing GetItem result for changed eBay listing.");
+              }
               if (fetched.status === "rejected") {
                 throw fetched.reason;
               }
 
               const fullItem = fetched.value;
-              if (!fullItem) {
+              const result = fullItem
+                ? await upsertEbayItem(fullItem, integration.id)
+                : null;
+
+              if (!result) {
                 progress.errors.push({
                   sku: itemId,
                   message: "GetItem returned no payload for this changed listing.",
@@ -318,7 +356,6 @@ export async function runEbayTppSync(
                 continue;
               }
 
-              const result = await upsertEbayItem(fullItem, integration.id);
               progress.itemsProcessed++;
               if (result === "created") progress.itemsCreated++;
               else if (result === "updated") progress.itemsUpdated++;
@@ -676,6 +713,7 @@ async function fetchIncrementalItemIds(
   const windowEndedAt = new Date();
   const windowStartedAt = new Date(cursorDate.getTime() - 2 * 60 * 1000);
   const itemIds = new Set<string>();
+  const eventItemsById: Record<string, unknown> = {};
   let page = 1;
   let hasMore = true;
 
@@ -758,7 +796,10 @@ async function fetchIncrementalItemIds(
     const items = arr(obj(resp, "ItemArray"), "Item");
     for (const item of items) {
       const itemId = str(item, "ItemID");
-      if (itemId) itemIds.add(itemId);
+      if (itemId) {
+        itemIds.add(itemId);
+        eventItemsById[itemId] = item;
+      }
     }
 
     const totalPages = parseInt(
@@ -769,7 +810,7 @@ async function fetchIncrementalItemIds(
     page++;
   }
 
-  return { itemIds: [...itemIds], windowEndedAt };
+  return { itemIds: [...itemIds], windowEndedAt, eventItemsById };
 }
 
 async function fetchFullItem(
@@ -1189,6 +1230,160 @@ async function upsertEbayItem(
 
   await db.marketplaceListing.create({ data: listingData });
   return "created";
+}
+
+async function tryApplyIncrementalQuantityFirstTppItem(
+  item: unknown,
+  integrationId: string,
+): Promise<UpsertResult | null> {
+  if (!item || typeof item !== "object") {
+    return null;
+  }
+
+  const itemId = str(item, "ItemID");
+  if (!itemId) {
+    return null;
+  }
+
+  const title = str(item, "Title");
+  const now = new Date();
+  const variationsNode = obj(item, "Variations");
+  const variationList = variationsNode ? arr(variationsNode, "Variation") : [];
+
+  if (variationList.length > 0) {
+    const existingParent = await db.marketplaceListing.findFirst({
+      where: { integrationId, platformItemId: itemId, platformVariantId: null },
+      select: { id: true },
+    });
+    const existingChildren = await db.marketplaceListing.findMany({
+      where: {
+        integrationId,
+        platformItemId: itemId,
+        NOT: { platformVariantId: null },
+      },
+      select: { id: true, platformVariantId: true },
+    });
+
+    if (!existingParent || existingChildren.length !== variationList.length) {
+      return null;
+    }
+
+    const childrenByVariantId = new Map(
+      existingChildren
+        .filter(
+          (
+            listing,
+          ): listing is { id: string; platformVariantId: string } =>
+            typeof listing.platformVariantId === "string" &&
+            listing.platformVariantId.trim().length > 0,
+        )
+        .map((listing) => [listing.platformVariantId, listing]),
+    );
+
+    if (childrenByVariantId.size !== variationList.length) {
+      return null;
+    }
+
+    const updates: Array<{ id: string; data: Prisma.MarketplaceListingUpdateInput }> =
+      [];
+    for (const variation of variationList) {
+      const sku = str(variation, "SKU")?.trim();
+      if (!sku) {
+        return null;
+      }
+
+      const existingChild = childrenByVariantId.get(sku);
+      if (!existingChild) {
+        return null;
+      }
+
+      const variationSellingStatus = obj(variation, "SellingStatus");
+      const variationQuantity =
+        num(variation, "Quantity") ??
+        (variationSellingStatus ? num(variationSellingStatus, "Quantity") : undefined) ??
+        0;
+      const variationSold = variationSellingStatus
+        ? num(variationSellingStatus, "QuantitySold") ?? 0
+        : 0;
+      const available = Math.max(0, variationQuantity - variationSold);
+      const salePrice =
+        num(variation, "StartPrice") ??
+        (variationSellingStatus ? num(variationSellingStatus, "CurrentPrice") : undefined);
+
+      const data: Prisma.MarketplaceListingUpdateInput = {
+        inventory: available,
+        status: available > 0 ? "ACTIVE" : "OUT_OF_STOCK",
+        lastSyncedAt: now,
+        rawData: JSON.parse(JSON.stringify(variation)) as Prisma.InputJsonValue,
+      };
+      if (salePrice !== undefined) {
+        data.salePrice = salePrice;
+      }
+      if (title) {
+        data.title = title;
+      }
+
+      updates.push({ id: existingChild.id, data });
+    }
+
+    await db.$transaction([
+      ...updates.map((update) =>
+        db.marketplaceListing.update({
+          where: { id: update.id },
+          data: update.data,
+        }),
+      ),
+      db.marketplaceListing.update({
+        where: { id: existingParent.id },
+        data: {
+          lastSyncedAt: now,
+          rawData: JSON.parse(JSON.stringify(item)) as Prisma.InputJsonValue,
+          ...(title ? { title } : {}),
+        },
+      }),
+    ]);
+
+    return "variation_parent";
+  }
+
+  const existingListing = await db.marketplaceListing.findFirst({
+    where: { integrationId, platformItemId: itemId, platformVariantId: null },
+    select: { id: true },
+  });
+  if (!existingListing) {
+    return null;
+  }
+
+  const sellingStatus = obj(item, "SellingStatus");
+  const quantity =
+    num(item, "Quantity") ??
+    (sellingStatus ? num(sellingStatus, "Quantity") : undefined) ??
+    0;
+  const quantitySold = sellingStatus ? num(sellingStatus, "QuantitySold") ?? 0 : 0;
+  const available = Math.max(0, quantity - quantitySold);
+  const salePrice =
+    num(item, "StartPrice") ??
+    (sellingStatus ? num(sellingStatus, "CurrentPrice") : undefined);
+
+  const data: Prisma.MarketplaceListingUpdateInput = {
+    inventory: available,
+    status: available > 0 ? "ACTIVE" : "OUT_OF_STOCK",
+    lastSyncedAt: now,
+    rawData: JSON.parse(JSON.stringify(item)) as Prisma.InputJsonValue,
+  };
+  if (salePrice !== undefined) {
+    data.salePrice = salePrice;
+  }
+  if (title) {
+    data.title = title;
+  }
+
+  await db.marketplaceListing.update({
+    where: { id: existingListing.id },
+    data,
+  });
+
+  return "updated";
 }
 
 async function fetchMissingUpcs(

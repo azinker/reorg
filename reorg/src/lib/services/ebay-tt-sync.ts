@@ -68,6 +68,7 @@ interface SyncProgress {
 interface IncrementalWindow {
   itemIds: string[];
   windowEndedAt: Date;
+  eventItemsById?: Record<string, unknown>;
 }
 
 interface MarketingCampaign {
@@ -266,6 +267,10 @@ export async function runEbayTtSync(
           },
         });
         const processingItemIds = budgetPlan.itemIdsToProcess;
+        const incrementalEventItemsById =
+          "eventItemsById" in incrementalWindow
+            ? incrementalWindow.eventItemsById
+            : undefined;
         pendingIncrementalItemIdsForCompletion = budgetPlan.pendingItemIds;
         pendingIncrementalWindowEndedAtForCompletion =
           budgetPlan.pendingItemIds.length > 0
@@ -311,20 +316,51 @@ export async function runEbayTtSync(
             index,
             index + GETITEM_CONCURRENCY,
           );
+          const directResults = new Map<
+            string,
+            { itemsProcessed: number; itemsUpdated: number }
+          >();
+          const itemIdsNeedingFetch: string[] = [];
+          for (const itemId of batch) {
+            const directResult = await tryApplyIncrementalQuantityFirstTtItem(
+              incrementalEventItemsById?.[itemId],
+              integration.id,
+            );
+            if (directResult) {
+              directResults.set(itemId, directResult);
+            } else {
+              itemIdsNeedingFetch.push(itemId);
+            }
+          }
           const fullItems = await Promise.allSettled(
-            batch.map((itemId) => fetchFullItem(integration.id, ebayConfig, itemId)),
+            itemIdsNeedingFetch.map((itemId) =>
+              fetchFullItem(integration.id, ebayConfig, itemId),
+            ),
           );
+          let fetchResultIndex = 0;
 
           for (let batchIndex = 0; batchIndex < batch.length; batchIndex += 1) {
             const itemId = batch[batchIndex];
-            const fetched = fullItems[batchIndex];
 
             try {
+              const directResult = directResults.get(itemId);
+              if (directResult) {
+                progress.itemsProcessed += directResult.itemsProcessed;
+                progress.itemsUpdated += directResult.itemsUpdated;
+                continue;
+              }
+
+              const fetched = fullItems[fetchResultIndex];
+              fetchResultIndex += 1;
+              if (!fetched) {
+                throw new Error("Missing GetItem result for changed eBay listing.");
+              }
               if (fetched.status === "rejected") {
                 throw fetched.reason;
               }
 
               const fullItem = fetched.value;
+
               if (!fullItem) {
                 progress.errors.push({
                   sku: itemId,
@@ -634,6 +670,153 @@ async function applyTtItem(
   progress.itemsUpdated += upserted.updated;
 }
 
+async function tryApplyIncrementalQuantityFirstTtItem(
+  item: unknown,
+  integrationId: string,
+): Promise<{ itemsProcessed: number; itemsUpdated: number } | null> {
+  if (!item || typeof item !== "object") {
+    return null;
+  }
+
+  const itemId = str(item, "ItemID");
+  if (!itemId) {
+    return null;
+  }
+
+  const title = str(item, "Title");
+  const now = new Date();
+  const sellingStatus = obj(item, "SellingStatus");
+  const variationsNode = obj(item, "Variations");
+  const variationList = variationsNode ? arr(variationsNode, "Variation") : [];
+
+  if (variationList.length === 0) {
+    const existingListing = await db.marketplaceListing.findFirst({
+      where: { integrationId, platformItemId: itemId, platformVariantId: null },
+      select: { id: true },
+    });
+    if (!existingListing) {
+      return null;
+    }
+
+    const quantity =
+      num(item, "Quantity") ??
+      (sellingStatus ? num(sellingStatus, "Quantity") : undefined) ??
+      0;
+    const quantitySold = sellingStatus ? num(sellingStatus, "QuantitySold") ?? 0 : 0;
+    const available = Math.max(0, quantity - quantitySold);
+    const salePrice =
+      num(item, "StartPrice") ??
+      (sellingStatus ? num(sellingStatus, "CurrentPrice") : undefined);
+
+    const data: Prisma.MarketplaceListingUpdateInput = {
+      inventory: available,
+      status: available > 0 ? "ACTIVE" : "OUT_OF_STOCK",
+      lastSyncedAt: now,
+      rawData: JSON.parse(JSON.stringify(item)) as Prisma.InputJsonValue,
+    };
+    if (salePrice !== undefined) {
+      data.salePrice = salePrice;
+    }
+    if (title) {
+      data.title = title;
+    }
+
+    await db.marketplaceListing.update({
+      where: { id: existingListing.id },
+      data,
+    });
+
+    return { itemsProcessed: 1, itemsUpdated: 1 };
+  }
+
+  const existingChildren = await db.marketplaceListing.findMany({
+    where: {
+      integrationId,
+      platformItemId: itemId,
+      NOT: { platformVariantId: null },
+    },
+    select: { id: true, platformVariantId: true },
+  });
+  if (existingChildren.length !== variationList.length) {
+    return null;
+  }
+
+  const childrenByVariantId = new Map(
+    existingChildren
+      .filter(
+        (
+          listing,
+        ): listing is { id: string; platformVariantId: string } =>
+          typeof listing.platformVariantId === "string" &&
+          listing.platformVariantId.trim().length > 0,
+      )
+      .map((listing) => [listing.platformVariantId, listing]),
+  );
+  if (childrenByVariantId.size !== variationList.length) {
+    return null;
+  }
+
+  const updates: Array<{ id: string; data: Prisma.MarketplaceListingUpdateInput }> =
+    [];
+  for (let index = 0; index < variationList.length; index += 1) {
+    const variation = variationList[index];
+    const variantId = str(variation, "SKU")?.trim() || `variation-${index + 1}`;
+    const existingChild = childrenByVariantId.get(variantId);
+    if (!existingChild) {
+      return null;
+    }
+
+    const variationSellingStatus = obj(variation, "SellingStatus");
+    const quantity =
+      num(variation, "Quantity") ??
+      (variationSellingStatus ? num(variationSellingStatus, "Quantity") : undefined) ??
+      0;
+    const quantitySold = variationSellingStatus
+      ? num(variationSellingStatus, "QuantitySold") ?? 0
+      : 0;
+    const available = Math.max(0, quantity - quantitySold);
+    const salePrice =
+      num(variation, "StartPrice") ??
+      (variationSellingStatus ? num(variationSellingStatus, "CurrentPrice") : undefined) ??
+      (sellingStatus ? num(sellingStatus, "CurrentPrice") : undefined);
+
+    const data: Prisma.MarketplaceListingUpdateInput = {
+      inventory: available,
+      status: available > 0 ? "ACTIVE" : "OUT_OF_STOCK",
+      lastSyncedAt: now,
+      rawData: JSON.parse(
+        JSON.stringify({
+          item,
+          variation,
+          parentItemId: itemId,
+        }),
+      ) as Prisma.InputJsonValue,
+    };
+    if (salePrice !== undefined) {
+      data.salePrice = salePrice;
+    }
+    if (title) {
+      data.title = title;
+    }
+
+    updates.push({ id: existingChild.id, data });
+  }
+
+  await db.$transaction(
+    updates.map((update) =>
+      db.marketplaceListing.update({
+        where: { id: update.id },
+        data: update.data,
+      }),
+    ),
+  );
+
+  return {
+    itemsProcessed: variationList.length,
+    itemsUpdated: variationList.length,
+  };
+}
+
 function extractListingsFromItem(item: unknown): RawListing[] {
   const itemId = str(item, "ItemID");
   if (!itemId) {
@@ -849,6 +1032,7 @@ async function fetchIncrementalItemIds(
   const windowEndedAt = new Date();
   const windowStartedAt = new Date(cursorDate.getTime() - 2 * 60 * 1000);
   const itemIds = new Set<string>();
+  const eventItemsById: Record<string, unknown> = {};
   let page = 1;
   let hasMore = true;
 
@@ -933,6 +1117,7 @@ async function fetchIncrementalItemIds(
       const itemId = str(item, "ItemID");
       if (itemId) {
         itemIds.add(itemId);
+        eventItemsById[itemId] = item;
       }
     }
 
@@ -944,7 +1129,7 @@ async function fetchIncrementalItemIds(
     page++;
   }
 
-  return { itemIds: [...itemIds], windowEndedAt };
+  return { itemIds: [...itemIds], windowEndedAt, eventItemsById };
 }
 
 async function fetchFullItem(
