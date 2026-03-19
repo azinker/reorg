@@ -108,6 +108,8 @@ type EngineRoomData = {
     webhookExpected: boolean;
     webhookMessage: string;
     recommendedAction: string;
+    pendingBacklogCount: number;
+    pendingBacklogWindowEndedAt: string | null;
     rateLimits: {
       fetchedAt: string;
       methods: Array<{
@@ -884,6 +886,14 @@ export default function EngineRoomPage() {
                   {item.webhookExpected ? (
                     <div className="mt-2 rounded border border-border bg-muted/40 px-2 py-1 text-[11px] text-muted-foreground">
                       {item.webhookMessage}
+                    </div>
+                  ) : null}
+                  {item.pendingBacklogCount > 0 ? (
+                    <div className="mt-2 rounded border border-blue-500/20 bg-blue-500/5 px-2 py-1 text-[11px] text-blue-300">
+                      Queued changed listings: {item.pendingBacklogCount.toLocaleString()}
+                      {item.pendingBacklogWindowEndedAt
+                        ? ` from window ending ${formatDateTime(item.pendingBacklogWindowEndedAt)}`
+                        : ""}
                     </div>
                   ) : null}
                   {item.rateLimits ? (

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
+import { getIntegrationConfig } from "@/lib/integrations/runtime-config";
 import { buildAutomationHealthSnapshot } from "@/lib/services/automation-health";
 import { planScheduledSyncs } from "@/lib/services/sync-scheduler";
 import { getEbayTradingRateLimitSnapshotForIntegration } from "@/lib/services/ebay-analytics";
@@ -102,6 +103,12 @@ export async function GET() {
     );
     const schedulerLabelMap = new Map(
       schedulerPlan.map((item) => [item.integrationId, item.label]),
+    );
+    const integrationConfigById = new Map(
+      integrations.map((integration) => [
+        integration.id,
+        getIntegrationConfig(integration),
+      ]),
     );
 
     const syncJobsPayload = syncJobs.map((job) => {
@@ -429,6 +436,12 @@ export async function GET() {
         },
         integrationHealth: automationHealth.integrationHealth.map((item) => ({
           ...item,
+          pendingBacklogCount:
+            integrationConfigById.get(item.integrationId)?.syncState.pendingIncrementalItemIds
+              .length ?? 0,
+          pendingBacklogWindowEndedAt:
+            integrationConfigById.get(item.integrationId)?.syncState.pendingIncrementalWindowEndedAt ??
+            null,
           rateLimits:
             item.platform === "TPP_EBAY" || item.platform === "TT_EBAY"
               ? ebaySnapshotsByPlatform.get(item.platform) ?? null

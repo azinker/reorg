@@ -1165,6 +1165,8 @@ export default function SyncPage() {
           const cooldown = meta?.cooldown ?? null;
           const rateLimits = meta?.rateLimits ?? null;
           const reservedGetItemCalls = meta?.quotaPolicy?.reservedGetItemCalls ?? null;
+          const pendingBacklogCount = syncState?.pendingIncrementalItemIds?.length ?? 0;
+          const pendingBacklogWindowEndedAt = syncState?.pendingIncrementalWindowEndedAt ?? null;
           const webhookState = meta?.webhookState ?? null;
           const webhookHealth = meta?.webhookHealth ?? null;
           const isSyncing = storeSync === "syncing";
@@ -1367,6 +1369,22 @@ export default function SyncPage() {
               {syncState?.lastFallbackReason && !isSyncing ? (
                 <div className="mb-4 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-400">
                   Last fallback note: {syncState.lastFallbackReason}
+                </div>
+              ) : null}
+
+              {pendingBacklogCount > 0 ? (
+                <div className="mb-4 rounded-md border border-blue-500/30 bg-blue-500/10 px-3 py-2 text-xs text-blue-300">
+                  <div className="font-medium text-blue-200">
+                    {pendingBacklogCount.toLocaleString()} changed eBay listing
+                    {pendingBacklogCount === 1 ? "" : "s"} queued for the next pull
+                  </div>
+                  <div className="mt-1">
+                    reorG already saved part of this refresh and is pacing the rest across later pulls
+                    to stay inside the shared eBay quota.
+                    {pendingBacklogWindowEndedAt
+                      ? ` Current queued window ends at ${formatDateTime(pendingBacklogWindowEndedAt)}.`
+                      : ""}
+                  </div>
                 </div>
               ) : null}
 
