@@ -251,16 +251,30 @@ export function getReservedEbayGetItemCalls(
   limit: number,
   sharedStoreCount: number,
 ) {
-  const baseReserve = Math.max(
-    BASE_GETITEM_RESERVE_MIN,
-    Math.floor(limit * BASE_GETITEM_RESERVE_RATIO),
-  );
-  const targetedRefreshReserve = Math.max(
-    sharedStoreCount * TARGETED_REFRESH_RESERVE_PER_STORE,
-    Math.floor(limit * TARGETED_REFRESH_RESERVE_RATIO),
+  const baseReserve = getBaseEbayGetItemReserve(limit);
+  const targetedRefreshReserve = getTargetedRefreshReserve(
+    limit,
+    sharedStoreCount,
   );
 
   return baseReserve + targetedRefreshReserve;
+}
+
+export function getBaseEbayGetItemReserve(limit: number) {
+  return Math.max(
+    BASE_GETITEM_RESERVE_MIN,
+    Math.floor(limit * BASE_GETITEM_RESERVE_RATIO),
+  );
+}
+
+export function getTargetedRefreshReserve(
+  limit: number,
+  sharedStoreCount: number,
+) {
+  return Math.max(
+    sharedStoreCount * TARGETED_REFRESH_RESERVE_PER_STORE,
+    Math.floor(limit * TARGETED_REFRESH_RESERVE_RATIO),
+  );
 }
 
 export function getFallbackPerRunEbayGetItemBudget(
