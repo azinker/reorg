@@ -274,6 +274,35 @@ export function getRelevantMonitoredEbayMethods(message: string | null | undefin
   return [...MONITORED_EBAY_METHODS];
 }
 
+export function getEbayMethodRate(
+  snapshot: EbayTradingRateLimitSnapshot | null,
+  method: MonitoredEbayMethod,
+) {
+  return snapshot?.methods.find((entry) => entry.name === method) ?? null;
+}
+
+export function buildEbayQuotaExhaustedMessage(
+  method: MonitoredEbayMethod,
+  snapshot: EbayTradingRateLimitSnapshot | null,
+) {
+  const rate = getEbayMethodRate(snapshot, method);
+  const resetLabel = rate?.reset
+    ? new Intl.DateTimeFormat("en-US", {
+        month: "short",
+        day: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+        hour12: true,
+        timeZone: "America/New_York",
+        timeZoneName: "short",
+      }).format(new Date(rate.reset))
+    : null;
+
+  return resetLabel
+    ? `${method} is out of eBay Trading API calls until about ${resetLabel}.`
+    : `${method} is out of eBay Trading API calls until the next eBay reset window.`;
+}
+
 export function getEbayCooldownUntilFromSnapshot(
   snapshot: EbayTradingRateLimitSnapshot | null,
   message: string | null | undefined,

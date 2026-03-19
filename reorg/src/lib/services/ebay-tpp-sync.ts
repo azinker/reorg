@@ -6,6 +6,11 @@ import {
   type SyncExecutionOptions,
 } from "@/lib/services/sync-control";
 import { getIntegrationConfig } from "@/lib/integrations/runtime-config";
+import {
+  buildEbayQuotaExhaustedMessage,
+  getEbayMethodRate,
+  getEbayTradingRateLimitSnapshotForIntegration,
+} from "@/lib/services/ebay-analytics";
 
 const TRADING_API = "https://api.ebay.com/ws/api.dll";
 const SITE_ID = "0";
@@ -181,8 +186,30 @@ export async function runEbayTppSync(
     let effectiveMode = options.effectiveMode ?? options.requestedMode ?? "full";
     let completionCursor = new Date().toISOString();
     let fallbackReasonForCompletion = options.fallbackReason ?? null;
+    const analyticsSnapshot = await getEbayTradingRateLimitSnapshotForIntegration(
+      integration,
+    ).catch(() => null);
 
     if (effectiveMode === "incremental") {
+      const getSellerEventsRate = getEbayMethodRate(
+        analyticsSnapshot,
+        "GetSellerEvents",
+      );
+      if (getSellerEventsRate?.status === "exhausted") {
+        throw new EbayTradingApiError(
+          buildEbayQuotaExhaustedMessage("GetSellerEvents", analyticsSnapshot),
+          EBAY_USAGE_LIMIT_ERROR_CODE,
+        );
+      }
+
+      const getItemRate = getEbayMethodRate(analyticsSnapshot, "GetItem");
+      if (getItemRate?.status === "exhausted") {
+        throw new EbayTradingApiError(
+          buildEbayQuotaExhaustedMessage("GetItem", analyticsSnapshot),
+          EBAY_USAGE_LIMIT_ERROR_CODE,
+        );
+      }
+
       const integrationConfig = getIntegrationConfig(integration);
       const lastCursorValue =
         integrationConfig.syncState.lastCursor ??
@@ -298,6 +325,17 @@ export async function runEbayTppSync(
     }
 
     if (effectiveMode === "full") {
+      const getSellerListRate = getEbayMethodRate(
+        analyticsSnapshot,
+        "GetSellerList",
+      );
+      if (getSellerListRate?.status === "exhausted") {
+        throw new EbayTradingApiError(
+          buildEbayQuotaExhaustedMessage("GetSellerList", analyticsSnapshot),
+          EBAY_USAGE_LIMIT_ERROR_CODE,
+        );
+      }
+
       await runFullSync(integration.id, ebayConfig, syncJob.id, progress);
     }
 
