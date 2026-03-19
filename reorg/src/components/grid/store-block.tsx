@@ -551,13 +551,47 @@ function EditableAdRateBlock({ item, rowId, onSave, onPush, onDiscard, showItemI
     const cleaned = raw.replace(/[^\d.]/g, "");
     if (!cleaned) return "";
 
-    const match = cleaned.match(/^(\d{0,3})(?:\.(\d{0,1})?)?/);
-    if (!match) return "";
+    const firstDecimalIndex = cleaned.indexOf(".");
+    const normalizedText =
+      firstDecimalIndex === -1
+        ? cleaned
+        : `${cleaned.slice(0, firstDecimalIndex)}.${cleaned
+            .slice(firstDecimalIndex + 1)
+            .replace(/\./g, "")}`;
 
-    const whole = match[1] ?? "";
-    const decimal = match[2];
-    if (decimal != null) return `${whole}.${decimal}`;
-    return whole;
+    if (normalizedText === ".") return "0.";
+
+    if (/^\d+\.$/.test(normalizedText)) {
+      const wholeNumber = Number.parseInt(normalizedText.slice(0, -1), 10);
+      if (Number.isNaN(wholeNumber)) return "";
+      return wholeNumber >= 100 ? "100.0" : normalizedText;
+    }
+
+    const parsed = Number.parseFloat(normalizedText);
+    if (!Number.isFinite(parsed)) return "";
+
+    const clamped = Math.min(Math.max(parsed, 0), 100);
+    const hasExplicitDecimal = normalizedText.includes(".");
+    const rawDecimals = normalizedText.split(".")[1] ?? "";
+
+    if (hasExplicitDecimal && rawDecimals.length > 1) {
+      return clamped.toFixed(1);
+    }
+
+    if (hasExplicitDecimal && rawDecimals.length === 1) {
+      if (clamped === 100) return "100.0";
+      return `${Math.trunc(clamped)}.${rawDecimals}`;
+    }
+
+    return clamped === 100 ? "100" : `${Math.trunc(clamped)}`;
+  }
+
+  function parseDraftPercentValue(value: string) {
+    if (!value || value.endsWith(".")) return null;
+    const parsed = Number.parseFloat(value);
+    if (!Number.isFinite(parsed)) return null;
+    if (parsed < 0 || parsed > 100) return null;
+    return Math.round(parsed * 10) / 10;
   }
 
   function startEdit() {
@@ -574,9 +608,11 @@ function EditableAdRateBlock({ item, rowId, onSave, onPush, onDiscard, showItemI
   }
 
   function handleSave(mode: "stage" | "push") {
-    const parsed = parseFloat(draftPercent);
-    if (isNaN(parsed) || parsed < 0) { cancelEdit(); return; }
-    const normalizedPercent = Math.round(parsed * 10) / 10;
+    const normalizedPercent = parseDraftPercentValue(draftPercent);
+    if (normalizedPercent == null) {
+      cancelEdit();
+      return;
+    }
     const rate = normalizedPercent / 100;
     onSave(rowId, item.platform, item.listingId, rate, mode);
     setEditing(false);
@@ -598,6 +634,8 @@ function EditableAdRateBlock({ item, rowId, onSave, onPush, onDiscard, showItemI
   }
 
   if (editing) {
+    const canConfirm = parseDraftPercentValue(draftPercent) != null;
+
     return (
       <div className={cn("w-full min-w-0 rounded border px-2.5 py-1.5 text-xs", colorClass, "ring-1 ring-ring")}>
         <div className="flex items-center gap-1 mb-1">
@@ -615,15 +653,26 @@ function EditableAdRateBlock({ item, rowId, onSave, onPush, onDiscard, showItemI
             value={draftPercent}
             onChange={(e) => setDraftPercent(normalizePercentInput(e.target.value))}
             onKeyDown={(e) => {
-              if (e.key === "Enter") setShowActions(true);
+              if (e.key === "Enter" && canConfirm) setShowActions(true);
               if (e.key === "Escape") cancelEdit();
             }}
+            maxLength={5}
             className="w-14 shrink-0 rounded border bg-background px-1.5 py-0.5 text-xs font-mono text-foreground outline-none focus:ring-1 focus:ring-ring"
           />
           <span className="shrink-0 text-[10px] text-muted-foreground">%</span>
           {!showActions ? (
             <>
-              <button onClick={() => setShowActions(true)} className="shrink-0 rounded p-0.5 text-emerald-400 hover:text-emerald-300 cursor-pointer" title="Confirm">
+              <button
+                onClick={() => {
+                  if (canConfirm) setShowActions(true);
+                }}
+                disabled={!canConfirm}
+                className={cn(
+                  "shrink-0 rounded p-0.5 cursor-pointer",
+                  canConfirm ? "text-emerald-400 hover:text-emerald-300" : "text-muted-foreground/30 cursor-not-allowed",
+                )}
+                title="Confirm"
+              >
                 <Check className="h-3 w-3" />
               </button>
               <button onClick={cancelEdit} className="shrink-0 rounded p-0.5 text-muted-foreground hover:text-foreground cursor-pointer" title="Cancel">
