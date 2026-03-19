@@ -56,6 +56,28 @@ export async function POST(request: NextRequest) {
     }
 
     if (action === "stage" && newPrice != null) {
+      const liveValue = targetField === "adRate" ? listing.adRate : listing.salePrice;
+      const existingStaged = await db.stagedChange.findFirst({
+        where: {
+          masterRowId: master.id,
+          marketplaceListingId: listing.id,
+          field: targetField,
+          status: "STAGED",
+        },
+        orderBy: { createdAt: "desc" },
+      });
+      const effectiveValue = existingStaged?.stagedValue != null
+        ? Number(existingStaged.stagedValue)
+        : liveValue;
+      const matchesLive = liveValue != null && Math.abs(Number(liveValue) - newPrice) < 0.000001;
+      const matchesCurrent = effectiveValue != null && Math.abs(Number(effectiveValue) - newPrice) < 0.000001;
+
+      if (matchesCurrent) {
+        return NextResponse.json({
+          data: { action: "noop", reason: "unchanged", sku, listingId, field: targetField, newPrice },
+        });
+      }
+
       await db.stagedChange.updateMany({
         where: {
           masterRowId: master.id,
@@ -66,7 +88,12 @@ export async function POST(request: NextRequest) {
         data: { status: "CANCELLED" },
       });
 
-      const liveValue = targetField === "adRate" ? listing.adRate : listing.salePrice;
+      if (matchesLive) {
+        return NextResponse.json({
+          data: { action: "noop", reason: "matches-live", sku, listingId, field: targetField, newPrice },
+        });
+      }
+
       const systemUser = await getSystemUser();
       await db.stagedChange.create({
         data: {

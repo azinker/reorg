@@ -146,8 +146,8 @@ export function StoreBlockGroup({ items, format = "text", showStaged = true }: S
 interface EditableStoreBlockProps {
   item: StoreValue;
   rowId: string;
-  onSave: (rowId: string, platform: string, listingId: string, newPrice: number, mode: "stage" | "push") => void;
-  onPush: (rowId: string, platform: string, listingId: string) => void;
+  onSave: (rowId: string, platform: string, listingId: string, newPrice: number, mode: "stage" | "push" | "fastPush") => void;
+  onPush: (rowId: string, platform: string, listingId: string, mode?: "review" | "fast") => void;
   onDiscard: (rowId: string, platform: string, listingId: string) => void;
   showItemId?: boolean;
 }
@@ -161,6 +161,8 @@ function EditableStoreBlock({ item, rowId, onSave, onPush, onDiscard, showItemId
   const [draftCents, setDraftCents] = useState(0);
   const [showActions, setShowActions] = useState(false);
   const inputRef = useRef<CurrencyInputHandle>(null);
+  const effectiveCents = Math.round(Number(hasStaged ? item.stagedValue : item.value) * 100) || 0;
+  const hasDraftChange = draftCents !== effectiveCents;
 
   function fmt(val: number | string | null): string {
     if (val == null) return "N/A";
@@ -180,14 +182,17 @@ function EditableStoreBlock({ item, rowId, onSave, onPush, onDiscard, showItemId
 
   function handleKeyDown(e: React.KeyboardEvent) {
     if (e.key === "Escape") cancelEdit();
-    if (e.key === "Enter") setShowActions(true);
+    if (e.key === "Enter" && hasDraftChange) setShowActions(true);
   }
 
   const handleValue = useCallback((c: number) => setDraftCents(c), []);
 
   function confirmStage() {
     const num = draftCents / 100;
-    if (num < 0) return;
+    if (num < 0 || !hasDraftChange) {
+      cancelEdit();
+      return;
+    }
     onSave(rowId, item.platform, item.listingId, num, "stage");
     setEditing(false);
     setShowActions(false);
@@ -195,8 +200,22 @@ function EditableStoreBlock({ item, rowId, onSave, onPush, onDiscard, showItemId
 
   function confirmPush() {
     const num = draftCents / 100;
-    if (num < 0) return;
+    if (num < 0 || !hasDraftChange) {
+      cancelEdit();
+      return;
+    }
     onSave(rowId, item.platform, item.listingId, num, "push");
+    setEditing(false);
+    setShowActions(false);
+  }
+
+  function confirmFastPush() {
+    const num = draftCents / 100;
+    if (num < 0 || !hasDraftChange) {
+      cancelEdit();
+      return;
+    }
+    onSave(rowId, item.platform, item.listingId, num, "fastPush");
     setEditing(false);
     setShowActions(false);
   }
@@ -224,7 +243,7 @@ function EditableStoreBlock({ item, rowId, onSave, onPush, onDiscard, showItemId
           />
           {!showActions ? (
             <>
-              <button onClick={() => setShowActions(true)} className="rounded p-0.5 text-emerald-400 hover:text-emerald-300 cursor-pointer" title="Confirm">
+              <button onClick={() => { if (hasDraftChange) setShowActions(true); else cancelEdit(); }} className="rounded p-0.5 text-emerald-400 hover:text-emerald-300 cursor-pointer" title="Confirm">
                 <Check className="h-3 w-3" />
               </button>
               <button onClick={cancelEdit} className="rounded p-0.5 text-muted-foreground hover:text-foreground cursor-pointer" title="Cancel">
@@ -246,6 +265,13 @@ function EditableStoreBlock({ item, rowId, onSave, onPush, onDiscard, showItemId
                 title="Review the guarded live push flow for this value"
               >
                 Review Push
+              </button>
+              <button
+                onClick={confirmFastPush}
+                className="flex items-center gap-0.5 rounded bg-blue-500 px-1.5 py-0.5 text-[10px] font-bold text-white hover:bg-blue-600 cursor-pointer"
+                title="Run the dry run automatically, then take you straight to the live push confirmation"
+              >
+                Fast Push
               </button>
               <button onClick={cancelEdit} className="rounded p-0.5 text-muted-foreground hover:text-foreground cursor-pointer" title="Cancel">
                 <X className="h-3 w-3" />
@@ -287,12 +313,20 @@ function EditableStoreBlock({ item, rowId, onSave, onPush, onDiscard, showItemId
             </span>
             <div className="mt-1 flex items-center gap-1">
               <button
-                onClick={() => onPush(rowId, item.platform, item.listingId)}
+                onClick={() => onPush(rowId, item.platform, item.listingId, "review")}
                 className="flex items-center gap-0.5 rounded bg-emerald-500 px-1.5 py-0.5 text-[10px] font-bold text-white hover:bg-emerald-600 cursor-pointer"
                 title="Review the guarded live push flow for this staged price"
               >
                 <Upload className="h-2.5 w-2.5" />
                 Review Push
+              </button>
+              <button
+                onClick={() => onPush(rowId, item.platform, item.listingId, "fast")}
+                className="flex items-center gap-0.5 rounded bg-blue-500 px-1.5 py-0.5 text-[10px] font-bold text-white hover:bg-blue-600 cursor-pointer"
+                title="Run the dry run automatically, then take you straight to the live push confirmation"
+              >
+                <Upload className="h-2.5 w-2.5" />
+                Fast Push
               </button>
               <button
                 onClick={() => onDiscard(rowId, item.platform, item.listingId)}
@@ -323,8 +357,8 @@ function EditableStoreBlock({ item, rowId, onSave, onPush, onDiscard, showItemId
 interface EditableStoreBlockGroupProps {
   items: StoreValue[];
   rowId: string;
-  onSave: (rowId: string, platform: string, listingId: string, newPrice: number, mode: "stage" | "push") => void;
-  onPush: (rowId: string, platform: string, listingId: string) => void;
+  onSave: (rowId: string, platform: string, listingId: string, newPrice: number, mode: "stage" | "push" | "fastPush") => void;
+  onPush: (rowId: string, platform: string, listingId: string, mode?: "review" | "fast") => void;
   onDiscard: (rowId: string, platform: string, listingId: string) => void;
 }
 
@@ -524,8 +558,8 @@ const NON_AD_RATE_PLATFORMS: string[] = ["SHOPIFY", "BIGCOMMERCE"];
 interface EditableAdRateBlockProps {
   item: StoreValue;
   rowId: string;
-  onSave: (rowId: string, platform: string, listingId: string, newRate: number, mode: "stage" | "push") => void;
-  onPush: (rowId: string, platform: string, listingId: string) => void;
+  onSave: (rowId: string, platform: string, listingId: string, newRate: number, mode: "stage" | "push" | "fastPush") => void;
+  onPush: (rowId: string, platform: string, listingId: string, mode?: "review" | "fast") => void;
   onDiscard: (rowId: string, platform: string, listingId: string) => void;
   showItemId?: boolean;
 }
@@ -541,6 +575,10 @@ function EditableAdRateBlock({ item, rowId, onSave, onPush, onDiscard, showItemI
   const [draftPercent, setDraftPercent] = useState("");
   const [showActions, setShowActions] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const effectivePercent = (() => {
+    const current = hasStaged ? Number(item.stagedValue) : (item.value != null ? Number(item.value) : 0);
+    return (current * 100).toFixed(1);
+  })();
 
   function fmtPercent(val: number | string | null): string {
     if (val == null) return "N/A";
@@ -609,12 +647,24 @@ function EditableAdRateBlock({ item, rowId, onSave, onPush, onDiscard, showItemI
 
   function handleSave(mode: "stage" | "push") {
     const normalizedPercent = parseDraftPercentValue(draftPercent);
-    if (normalizedPercent == null) {
+    if (normalizedPercent == null || draftPercent === effectivePercent) {
       cancelEdit();
       return;
     }
     const rate = normalizedPercent / 100;
     onSave(rowId, item.platform, item.listingId, rate, mode);
+    setEditing(false);
+    setShowActions(false);
+  }
+
+  function handleFastPush() {
+    const normalizedPercent = parseDraftPercentValue(draftPercent);
+    if (normalizedPercent == null || draftPercent === effectivePercent) {
+      cancelEdit();
+      return;
+    }
+    const rate = normalizedPercent / 100;
+    onSave(rowId, item.platform, item.listingId, rate, "fastPush");
     setEditing(false);
     setShowActions(false);
   }
@@ -695,6 +745,13 @@ function EditableAdRateBlock({ item, rowId, onSave, onPush, onDiscard, showItemI
               >
                 Review Push
               </button>
+              <button
+                onClick={handleFastPush}
+                className="rounded bg-blue-500 px-1.5 py-0.5 text-[10px] font-bold text-white hover:bg-blue-600 cursor-pointer"
+                title="Run the dry run automatically, then take you straight to the live push confirmation"
+              >
+                Fast Push
+              </button>
               <button onClick={cancelEdit} className="rounded p-0.5 text-muted-foreground hover:text-foreground cursor-pointer" title="Cancel">
                 <X className="h-3 w-3" />
               </button>
@@ -731,12 +788,20 @@ function EditableAdRateBlock({ item, rowId, onSave, onPush, onDiscard, showItemI
             </span>
             <div className="mt-1 flex items-center gap-1">
               <button
-                onClick={() => onPush(rowId, item.platform, item.listingId)}
+                onClick={() => onPush(rowId, item.platform, item.listingId, "review")}
                 className="flex items-center gap-0.5 rounded bg-emerald-500 px-1.5 py-0.5 text-[10px] font-bold text-white hover:bg-emerald-600 cursor-pointer"
                 title="Review the guarded live push flow for this staged ad rate"
               >
                 <Upload className="h-2.5 w-2.5" />
                 Review Push
+              </button>
+              <button
+                onClick={() => onPush(rowId, item.platform, item.listingId, "fast")}
+                className="flex items-center gap-0.5 rounded bg-blue-500 px-1.5 py-0.5 text-[10px] font-bold text-white hover:bg-blue-600 cursor-pointer"
+                title="Run the dry run automatically, then take you straight to the live push confirmation"
+              >
+                <Upload className="h-2.5 w-2.5" />
+                Fast Push
               </button>
               <button
                 onClick={() => onDiscard(rowId, item.platform, item.listingId)}
@@ -766,8 +831,8 @@ function EditableAdRateBlock({ item, rowId, onSave, onPush, onDiscard, showItemI
 interface EditableAdRateBlockGroupProps {
   items: StoreValue[];
   rowId: string;
-  onSave: (rowId: string, platform: string, listingId: string, newRate: number, mode: "stage" | "push") => void;
-  onPush: (rowId: string, platform: string, listingId: string) => void;
+  onSave: (rowId: string, platform: string, listingId: string, newRate: number, mode: "stage" | "push" | "fastPush") => void;
+  onPush: (rowId: string, platform: string, listingId: string, mode?: "review" | "fast") => void;
   onDiscard: (rowId: string, platform: string, listingId: string) => void;
 }
 

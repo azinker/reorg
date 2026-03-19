@@ -116,6 +116,7 @@ interface PushConfirmModalProps {
   onClose: () => void;
   onApplied?: (result: PushApiData) => void;
   items: PushItem[];
+  autoRunDryRun?: boolean;
 }
 
 type ModalPhase =
@@ -212,11 +213,13 @@ export function PushConfirmModal({
   onClose,
   onApplied,
   items,
+  autoRunDryRun = false,
 }: PushConfirmModalProps) {
   const [phase, setPhase] = useState<ModalPhase>("review");
   const [result, setResult] = useState<PushApiData | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [activeItems, setActiveItems] = useState<PushItem[]>(items);
+  const [autoDryRunStarted, setAutoDryRunStarted] = useState(false);
 
   useEffect(() => {
     if (!open) return;
@@ -224,6 +227,7 @@ export function PushConfirmModal({
     setResult(null);
     setErrorMessage(null);
     setActiveItems(items);
+    setAutoDryRunStarted(false);
   }, [open, items]);
 
   const groupedByListing = useMemo(() => {
@@ -298,6 +302,12 @@ export function PushConfirmModal({
     }
   }
 
+  useEffect(() => {
+    if (!open || !autoRunDryRun || autoDryRunStarted || phase !== "review") return;
+    setAutoDryRunStarted(true);
+    void runRequest(true);
+  }, [autoDryRunStarted, autoRunDryRun, open, phase]);
+
   if (!open) return null;
 
   return (
@@ -313,7 +323,9 @@ export function PushConfirmModal({
               <Send className="h-5 w-5" />
             </div>
             <div>
-              <h2 className="text-lg font-semibold text-foreground">Review Push</h2>
+              <h2 className="text-lg font-semibold text-foreground">
+                {autoRunDryRun ? "Fast Push Review" : "Review Push"}
+              </h2>
               <p className="text-xs text-muted-foreground">
                 {activeItems.length} change{activeItems.length === 1 ? "" : "s"} across {Object.keys(groupedByListing).length} listing
                 {Object.keys(groupedByListing).length === 1 ? "" : "s"}
@@ -567,7 +579,7 @@ export function PushConfirmModal({
                   onClick={() => void runRequest(true)}
                   className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 cursor-pointer"
                 >
-                  Run Dry Run
+                  {autoRunDryRun ? "Checking Push" : "Run Dry Run"}
                 </button>
               </>
             ) : null}
@@ -585,7 +597,7 @@ export function PushConfirmModal({
                   disabled={!canConfirmLive}
                   className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"
                 >
-                  Confirm Live Push
+                  {autoRunDryRun ? "Push Now" : "Confirm Live Push"}
                 </button>
               </>
             ) : null}
