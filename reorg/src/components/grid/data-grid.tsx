@@ -10,7 +10,12 @@ import { FilterBar } from "@/components/grid/filter-bar";
 import { UpcCell } from "@/components/grid/cells/upc-cell";
 import { PhotoCell, PhotoOverlay } from "@/components/grid/cells/photo-cell";
 import { ItemNumberCell } from "@/components/grid/cells/item-number-cell";
-import { StoreBlockGroup, EditableStoreBlockGroup, EditableAdRateBlockGroup } from "@/components/grid/store-block";
+import {
+  StoreBlockGroup,
+  EditableStoreBlockGroup,
+  EditableAdRateBlockGroup,
+  type QuickPushState,
+} from "@/components/grid/store-block";
 import { PlatformIcon } from "@/components/grid/platform-icon";
 import { CopyValue } from "@/components/grid/copy-value";
 import { ColumnManager } from "@/components/grid/column-manager";
@@ -371,7 +376,9 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
   const [failedPushes, setFailedPushes] = useState<FailedPushItem[]>([]);
   const [failedPushesOpen, setFailedPushesOpen] = useState(false);
   const [failedPushesLoading, setFailedPushesLoading] = useState(false);
+  const [quickPushStates, setQuickPushStates] = useState<Record<string, QuickPushState>>({});
   const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const quickPushTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const parentRef = useRef<HTMLDivElement>(null);
 
   function showToast(msg: string) {
@@ -399,6 +406,12 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
     void loadFailedPushes();
   }, []);
 
+  useEffect(() => {
+    return () => {
+      Object.values(quickPushTimersRef.current).forEach((timer) => clearTimeout(timer));
+    };
+  }, []);
+
   function queuePushReview(items: PushItem[], launchMode: PushLaunchMode = "review") {
     if (items.length === 0) {
       showToast("No staged changes were ready to review for push.");
@@ -407,6 +420,35 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
     setPushModalItems(items);
     setPushModalLaunchMode(launchMode);
     setPushModalOpen(true);
+  }
+
+  function getQuickPushKey(rowId: string, platform: string, listingId: string, field: PushField) {
+    return `${rowId}:${platform}:${listingId}:${field}`;
+  }
+
+  function setQuickPushState(key: string, state: QuickPushState) {
+    setQuickPushStates((prev) => ({ ...prev, [key]: state }));
+  }
+
+  function clearQuickPushState(key: string) {
+    if (quickPushTimersRef.current[key]) {
+      clearTimeout(quickPushTimersRef.current[key]);
+      delete quickPushTimersRef.current[key];
+    }
+    setQuickPushStates((prev) => {
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
+  }
+
+  function scheduleQuickPushSuccessClear(key: string) {
+    if (quickPushTimersRef.current[key]) {
+      clearTimeout(quickPushTimersRef.current[key]);
+    }
+    quickPushTimersRef.current[key] = setTimeout(() => {
+      clearQuickPushState(key);
+    }, 2500);
   }
 
   function buildPushItem(
@@ -446,6 +488,112 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
       oldValue: liveValue,
       newValue: stagedValue,
     };
+  }
+
+  async function submitPushRequest(items: PushItem[], dryRun: boolean, confirmedLivePush: boolean) {
+    const response = await fetch("/api/push", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        changes: items.map((item) => ({
+          sku: item.sku,
+          title: item.title,
+          platform: item.platform,
+          listingId: item.listingId,
+          marketplaceListingId: item.marketplaceListingId,
+          platformVariantId: item.platformVariantId,
+          stagedChangeId: item.stagedChangeId,
+          masterRowId: item.masterRowId,
+          field: item.field,
+          oldValue: item.oldValue,
+          newValue: item.newValue,
+        })),
+        dryRun,
+        confirmedLivePush,
+      }),
+    });
+
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok && !payload?.data) {
+      throw new Error(payload?.error ?? `Push request failed (${response.status})`);
+    }
+    return payload.data as PushApiData;
+  }
+
+  async function startInlineFastPush(rowId: string, platform: string, listingId: string, field: PushField) {
+    const key = getQuickPushKey(rowId, platform, listingId, field);
+    const row = findRow(rowId);
+    const pushItem = buildPushItem(row, platform, listingId, field);
+    if (!pushItem) {
+      showToast("No staged change was ready for fast push.");
+      return;
+    }
+
+    setQuickPushState(key, { phase: "dry-run", detail: "Running dry run inline..." });
+
+    try {
+      const result = await submitPushRequest([pushItem], true, false);
+      if (result.status === "blocked") {
+        setQuickPushState(key, {
+          phase: "blocked",
+          detail: result.blockedReason ?? result.nextStep ?? result.message,
+        });
+        return;
+      }
+
+      setQuickPushState(key, {
+        phase: "ready",
+        detail: "Dry run passed. Confirm the single live push inline.",
+      });
+    } catch (error) {
+      setQuickPushState(key, {
+        phase: "error",
+        detail: error instanceof Error ? error.message : "Fast push dry run failed.",
+      });
+    }
+  }
+
+  async function confirmInlineFastPush(rowId: string, platform: string, listingId: string, field: PushField) {
+    const key = getQuickPushKey(rowId, platform, listingId, field);
+    const row = findRow(rowId);
+    const pushItem = buildPushItem(row, platform, listingId, field);
+    if (!pushItem) {
+      clearQuickPushState(key);
+      showToast("The staged change is no longer available to push.");
+      return;
+    }
+
+    setQuickPushState(key, { phase: "pushing", detail: "Sending the live push..." });
+
+    try {
+      const result = await submitPushRequest([pushItem], false, true);
+      if (result.status === "blocked") {
+        setQuickPushState(key, {
+          phase: "blocked",
+          detail: result.blockedReason ?? result.nextStep ?? result.message,
+        });
+        return;
+      }
+
+      applyPushOutcome(result);
+      if (result.summary.successfulChanges > 0) {
+        setQuickPushState(key, {
+          phase: "success",
+          detail: result.postPushRefresh?.detail ?? "Push completed.",
+        });
+        scheduleQuickPushSuccessClear(key);
+      } else {
+        setQuickPushState(key, {
+          phase: "error",
+          detail: result.nextStep ?? result.message,
+        });
+      }
+    } catch (error) {
+      setQuickPushState(key, {
+        phase: "error",
+        detail: error instanceof Error ? error.message : "Live push failed.",
+      });
+    }
   }
 
   function applyPushOutcome(result: PushApiData) {
@@ -637,11 +785,16 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
     void persistStageAction(sku, platform, listingId, "stage", newPrice);
 
     if (mode === "push" || mode === "fastPush") {
+      clearQuickPushState(getQuickPushKey(rowId, platform, listingId, "salePrice"));
       const pushItem = buildPushItem(row, platform, listingId, "salePrice", newPrice);
-      queuePushReview(pushItem ? [pushItem] : [], mode === "fastPush" ? "fast" : "review");
+      if (mode === "fastPush") {
+        void startInlineFastPush(rowId, platform, listingId, "salePrice");
+      } else {
+        queuePushReview(pushItem ? [pushItem] : [], "review");
+      }
       showToast(
         mode === "fastPush"
-          ? `Fast push prepared - SKU ${sku} (${platLabel}) from ${oldVal} to ${fmtDollar(newPrice)}`
+          ? `Fast push check started - SKU ${sku} (${platLabel}) from ${oldVal} to ${fmtDollar(newPrice)}`
           : `Price staged for push review — SKU ${sku} (${platLabel}) from ${oldVal} to ${fmtDollar(newPrice)}`,
       );
       return;
@@ -693,11 +846,16 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
     void persistAdRateAction(sku, platform, listingId, "stage", newRate);
 
     if (mode === "push" || mode === "fastPush") {
+      clearQuickPushState(getQuickPushKey(rowId, platform, listingId, "adRate"));
       const pushItem = buildPushItem(row, platform, listingId, "adRate", newRate);
-      queuePushReview(pushItem ? [pushItem] : [], mode === "fastPush" ? "fast" : "review");
+      if (mode === "fastPush") {
+        void startInlineFastPush(rowId, platform, listingId, "adRate");
+      } else {
+        queuePushReview(pushItem ? [pushItem] : [], "review");
+      }
       showToast(
         mode === "fastPush"
-          ? `Fast push prepared - SKU ${sku} (${platLabel}) from ${oldVal} to ${fmtPct(newRate)}`
+          ? `Fast push check started - SKU ${sku} (${platLabel}) from ${oldVal} to ${fmtPct(newRate)}`
           : `Ad rate staged for push review — SKU ${sku} (${platLabel}) from ${oldVal} to ${fmtPct(newRate)}`,
       );
       return;
@@ -712,11 +870,16 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
     const platLabel = PLATFORM_SHORT[platform as keyof typeof PLATFORM_SHORT] ?? platform;
     const adRate = row?.adRates.find((rate) => rate.platform === platform && rate.listingId === listingId);
     const stagedVal = adRate?.stagedValue != null ? `${(Number(adRate.stagedValue) * 100).toFixed(1)}%` : "—";
-    const pushItem = buildPushItem(row, platform, listingId, "adRate");
-    queuePushReview(pushItem ? [pushItem] : [], launchMode);
+    if (launchMode === "fast") {
+      clearQuickPushState(getQuickPushKey(rowId, platform, listingId, "adRate"));
+      void startInlineFastPush(rowId, platform, listingId, "adRate");
+    } else {
+      const pushItem = buildPushItem(row, platform, listingId, "adRate");
+      queuePushReview(pushItem ? [pushItem] : [], launchMode);
+    }
     showToast(
       launchMode === "fast"
-        ? `Fast push ready - SKU ${sku} (${platLabel}) ${stagedVal}`
+        ? `Fast push check started - SKU ${sku} (${platLabel}) ${stagedVal}`
         : `Reviewing staged ad rate push — SKU ${sku} (${platLabel}) ${stagedVal}`,
     );
   }
@@ -740,6 +903,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
     });
 
     persistAdRateAction(sku, platform, listingId, "discard");
+    clearQuickPushState(getQuickPushKey(rowId, platform, listingId, "adRate"));
     showToast(`Staged Ad Rate Discarded — SKU ${sku} (${platLabel}) reverted from ${stagedVal} to ${liveVal}`);
   }
 
@@ -757,11 +921,16 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
     const platLabel = PLATFORM_SHORT[platform as keyof typeof PLATFORM_SHORT] ?? platform;
     const sp = row?.salePrices.find((s) => s.platform === platform && s.listingId === listingId);
     const stagedVal = sp?.stagedValue != null ? fmtDollar(Number(sp.stagedValue)) : "—";
-    const pushItem = buildPushItem(row, platform, listingId, "salePrice");
-    queuePushReview(pushItem ? [pushItem] : [], launchMode);
+    if (launchMode === "fast") {
+      clearQuickPushState(getQuickPushKey(rowId, platform, listingId, "salePrice"));
+      void startInlineFastPush(rowId, platform, listingId, "salePrice");
+    } else {
+      const pushItem = buildPushItem(row, platform, listingId, "salePrice");
+      queuePushReview(pushItem ? [pushItem] : [], launchMode);
+    }
     showToast(
       launchMode === "fast"
-        ? `Fast push ready - SKU ${sku} (${platLabel}) ${stagedVal}`
+        ? `Fast push check started - SKU ${sku} (${platLabel}) ${stagedVal}`
         : `Reviewing staged price push — SKU ${sku} (${platLabel}) ${stagedVal}`,
     );
   }
@@ -784,6 +953,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
       return recalcRow(updated);
     });
     persistStageAction(sku, platform, listingId, "discard");
+    clearQuickPushState(getQuickPushKey(rowId, platform, listingId, "salePrice"));
     showToast(`Staged Price Discarded — SKU ${sku} (${platLabel}) reverted from ${stagedVal} to ${liveVal}`);
   }
 
@@ -1439,6 +1609,13 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
                         onSave={handleSalePriceEdit}
                         onPush={handlePushStaged}
                         onDiscard={handleDiscardStaged}
+                        quickPushStates={quickPushStates}
+                        onFastPushConfirm={(targetRowId, platform, listingId) => {
+                          void confirmInlineFastPush(targetRowId, platform, listingId, "salePrice");
+                        }}
+                        onFastPushCancel={(targetRowId, platform, listingId) => {
+                          clearQuickPushState(getQuickPushKey(targetRowId, platform, listingId, "salePrice"));
+                        }}
                       />
                     </div>
                   )}
@@ -1512,6 +1689,13 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
                           onSave={handleAdRateEdit}
                           onPush={handlePushStagedAdRate}
                           onDiscard={handleDiscardStagedAdRate}
+                          quickPushStates={quickPushStates}
+                          onFastPushConfirm={(targetRowId, platform, listingId) => {
+                            void confirmInlineFastPush(targetRowId, platform, listingId, "adRate");
+                          }}
+                          onFastPushCancel={(targetRowId, platform, listingId) => {
+                            clearQuickPushState(getQuickPushKey(targetRowId, platform, listingId, "adRate"));
+                          }}
                         />
                       )}
                     </div>
