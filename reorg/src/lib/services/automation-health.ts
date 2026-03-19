@@ -497,7 +497,7 @@ export async function buildAutomationHealthSnapshot(
       const webhookStatusImpact =
         webhook.webhookStatus === "missing"
           ? syncMonitor.status === "healthy"
-            ? "delayed"
+            ? "healthy"
             : "attention"
           : syncMonitor.status;
       const combinedStatus = getWorseMonitorStatus(

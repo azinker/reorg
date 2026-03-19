@@ -435,9 +435,11 @@ export async function GET() {
       }
 
       if (hasMissingWebhook && !needsPullAttention) {
+        const missingWebhookSeverity =
+          item.combinedStatus === "healthy" ? "info" : "warning";
         entries.push({
           id: `automation-webhook-missing-${item.integrationId}`,
-          severity: "warning",
+          severity: missingWebhookSeverity,
           category: "dead-webhook",
           summary: `${item.label} is missing store change notices`,
           technicalDetails: [
@@ -456,7 +458,7 @@ export async function GET() {
           recommendedAction: item.recommendedAction,
           actionLabel: "Check Webhooks",
           actionHref: "/integrations",
-          priority: 40,
+          priority: item.combinedStatus === "healthy" ? 85 : 40,
         });
       }
 
