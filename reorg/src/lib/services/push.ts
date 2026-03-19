@@ -17,6 +17,8 @@ import { formatCooldownRetryAt } from "@/lib/services/ebay-rate-limit";
 import { startIntegrationSync } from "@/lib/services/sync-control";
 import { createBackup } from "@/lib/services/backup";
 import { getMissingR2EnvVars, isR2Configured } from "@/lib/r2";
+import { runBigCommerceWebhookReconcile } from "@/lib/services/bigcommerce-sync";
+import { runShopifyWebhookReconcile } from "@/lib/services/shopify-sync";
 
 export interface PushRequest {
   userId: string;
@@ -59,6 +61,7 @@ export interface PushExecutionResult {
     stagedChangeId: string | null;
     masterRowId: string;
     marketplaceListingId: string;
+    platformVariantId?: string | null;
     platform: Platform;
     listingId: string;
     field: string;
@@ -118,11 +121,29 @@ export interface PushExecutionResult {
 }
 
 const EBAY_PUSH_PLATFORMS = new Set<Platform>(["TPP_EBAY", "TT_EBAY"]);
+const TARGETED_READBACK_PLATFORMS = new Set<Platform>(["BIGCOMMERCE", "SHOPIFY"]);
 const PRE_PUSH_BACKUP_LISTING_THRESHOLD = 10;
 const RECOMMENDED_LIVE_PUSH_LISTINGS = 25;
 const HARD_LIVE_PUSH_LISTINGS = 50;
 const RECOMMENDED_LIVE_PUSH_CHANGES = 50;
 const HARD_LIVE_PUSH_CHANGES = 100;
+
+function matchesPushChange(
+  change: PushChangeItem,
+  field: PushChangeItem["field"],
+  listingId: string,
+  platformVariantId?: string | null,
+) {
+  if (change.field !== field || change.listingId !== listingId) {
+    return false;
+  }
+
+  if (platformVariantId != null) {
+    return (change.platformVariantId ?? null) === platformVariantId;
+  }
+
+  return true;
+}
 
 function buildPushSummary(byPlatform: Map<Platform, PushChangeItem[]>, results?: PushExecutionResult["results"]) {
   const listingKeys = new Set(
@@ -308,10 +329,28 @@ async function evaluatePostPushRefreshHeadroom(
   byPlatform: Map<Platform, PushChangeItem[]>,
   dryRun: boolean,
 ): Promise<PushExecutionResult["postPushRefresh"]> {
+  const targetedReadbackPlatforms = [...byPlatform.keys()].filter((platform) =>
+    TARGETED_READBACK_PLATFORMS.has(platform),
+  );
   const ebayPlatforms = [...byPlatform.keys()].filter((platform) =>
     EBAY_PUSH_PLATFORMS.has(platform),
   );
   if (ebayPlatforms.length === 0) {
+    if (targetedReadbackPlatforms.length > 0) {
+      const labels = targetedReadbackPlatforms.map((platform) =>
+        platform === "BIGCOMMERCE" ? "BigCommerce" : "Shopify",
+      );
+      return {
+        status: "ready",
+        detail:
+          labels.length === 1
+            ? `Post-push targeted readback is ready for ${labels[0]}.`
+            : `Post-push targeted readback is ready for ${labels.slice(0, -1).join(", ")} and ${labels.at(-1)}.`,
+        retryAt: null,
+        requiredCalls: 0,
+        availableCalls: null,
+      };
+    }
     return {
       status: "not-needed",
       detail: "No eBay targeted refresh headroom is needed for this push.",
@@ -489,21 +528,40 @@ async function executePostPushTargetedRefresh(args: {
   results: PushExecutionResult["results"];
 }): Promise<PushExecutionResult["postPushRefresh"]> {
   const targetedByPlatform = new Map<Platform, Set<string>>();
+  const targetedReadbackByPlatform = new Map<
+    Platform,
+    { productIds: Set<string>; variantIds: Set<string> }
+  >();
 
   for (const result of args.results) {
-    if (!result.success || !EBAY_PUSH_PLATFORMS.has(result.platform)) {
+    if (!result.success) {
       continue;
     }
 
-    const existing = targetedByPlatform.get(result.platform) ?? new Set<string>();
-    existing.add(result.listingId);
-    targetedByPlatform.set(result.platform, existing);
+    if (EBAY_PUSH_PLATFORMS.has(result.platform)) {
+      const existing = targetedByPlatform.get(result.platform) ?? new Set<string>();
+      existing.add(result.listingId);
+      targetedByPlatform.set(result.platform, existing);
+      continue;
+    }
+
+    if (TARGETED_READBACK_PLATFORMS.has(result.platform)) {
+      const existing = targetedReadbackByPlatform.get(result.platform) ?? {
+        productIds: new Set<string>(),
+        variantIds: new Set<string>(),
+      };
+      existing.productIds.add(result.listingId);
+      if (result.platformVariantId) {
+        existing.variantIds.add(result.platformVariantId);
+      }
+      targetedReadbackByPlatform.set(result.platform, existing);
+    }
   }
 
-  if (targetedByPlatform.size === 0) {
+  if (targetedByPlatform.size === 0 && targetedReadbackByPlatform.size === 0) {
     return {
       status: "not-needed",
-      detail: "No successful eBay listing updates needed a post-push targeted refresh.",
+      detail: "No successful marketplace listing updates needed a post-push targeted readback.",
       retryAt: null,
       requiredCalls: 0,
       availableCalls: null,
@@ -512,7 +570,11 @@ async function executePostPushTargetedRefresh(args: {
   }
 
   const integrations = await db.integration.findMany({
-    where: { platform: { in: [...targetedByPlatform.keys()] } },
+    where: {
+      platform: {
+        in: [...new Set([...targetedByPlatform.keys(), ...targetedReadbackByPlatform.keys()])],
+      },
+    },
     orderBy: { platform: "asc" },
   });
 
@@ -523,42 +585,126 @@ async function executePostPushTargetedRefresh(args: {
   let runningCount = 0;
 
   for (const integration of integrations) {
-    const targetedItemIds = [...(targetedByPlatform.get(integration.platform) ?? new Set())];
-    if (targetedItemIds.length === 0) {
+    if (EBAY_PUSH_PLATFORMS.has(integration.platform)) {
+      const targetedItemIds = [...(targetedByPlatform.get(integration.platform) ?? new Set())];
+      if (targetedItemIds.length === 0) {
+        continue;
+      }
+
+      const dispatch = await startIntegrationSync(
+        integration as Integration,
+        {
+          requestedMode: "incremental",
+          effectiveMode: "incremental",
+          triggerSource: "push",
+          triggeredBy: `push:targeted_refresh:${args.pushJobId}`,
+          fallbackReason:
+            `Post-push targeted refresh requested for ${targetedItemIds.length.toLocaleString()} ` +
+            `eBay listing${targetedItemIds.length === 1 ? "" : "s"}.`,
+          targetedPlatformItemIds: targetedItemIds,
+          preserveSyncState: true,
+        },
+        "inline",
+      );
+
+      refreshResults.push({
+        platform: integration.platform,
+        label: integration.label,
+        status: dispatch.status,
+        jobId: dispatch.jobId,
+        message: dispatch.message,
+        targetedCount: targetedItemIds.length,
+      });
+
+      if (dispatch.status === "COMPLETED") {
+        completedCount += 1;
+      } else if (dispatch.status === "ALREADY_RUNNING") {
+        runningCount += 1;
+      } else {
+        failedCount += 1;
+      }
       continue;
     }
 
-    const dispatch = await startIntegrationSync(
-      integration as Integration,
-      {
-        requestedMode: "incremental",
-        effectiveMode: "incremental",
-        triggerSource: "push",
-        triggeredBy: `push:targeted_refresh:${args.pushJobId}`,
-        fallbackReason:
-          `Post-push targeted refresh requested for ${targetedItemIds.length.toLocaleString()} ` +
-          `eBay listing${targetedItemIds.length === 1 ? "" : "s"}.`,
-        targetedPlatformItemIds: targetedItemIds,
-        preserveSyncState: true,
-      },
-      "inline",
-    );
+    if (TARGETED_READBACK_PLATFORMS.has(integration.platform)) {
+      const targetedReadback = targetedReadbackByPlatform.get(integration.platform);
+      if (!targetedReadback || targetedReadback.productIds.size === 0) {
+        continue;
+      }
 
-    refreshResults.push({
-      platform: integration.platform,
-      label: integration.label,
-      status: dispatch.status,
-      jobId: dispatch.jobId,
-      message: dispatch.message,
-      targetedCount: targetedItemIds.length,
-    });
+      const productIds = [...targetedReadback.productIds];
+      const changedVariantIds = [...targetedReadback.variantIds];
 
-    if (dispatch.status === "COMPLETED") {
-      completedCount += 1;
-    } else if (dispatch.status === "ALREADY_RUNNING") {
-      runningCount += 1;
-    } else {
-      failedCount += 1;
+      if (integration.platform === "BIGCOMMERCE") {
+        const reconcile = await runBigCommerceWebhookReconcile(
+          {
+            productIds,
+            changedVariantIds,
+          },
+          {
+            requestedMode: "incremental",
+            effectiveMode: "incremental",
+            triggerSource: "push",
+            triggeredBy: `push:targeted_refresh:${args.pushJobId}`,
+            fallbackReason: null,
+            preserveSyncState: true,
+          },
+        );
+
+        refreshResults.push({
+          platform: integration.platform,
+          label: integration.label,
+          status: reconcile.status === "completed" ? "COMPLETED" : "FAILED",
+          jobId: reconcile.syncJobId,
+          message:
+            reconcile.status === "completed"
+              ? `Post-push targeted readback refreshed ${productIds.length.toLocaleString()} BigCommerce product${productIds.length === 1 ? "" : "s"}.`
+              : reconcile.errors[0] ?? "BigCommerce targeted readback failed.",
+          targetedCount: productIds.length,
+        });
+
+        if (reconcile.status === "completed") {
+          completedCount += 1;
+        } else {
+          failedCount += 1;
+        }
+        continue;
+      }
+
+      if (integration.platform === "SHOPIFY") {
+        const reconcile = await runShopifyWebhookReconcile(
+          {
+            productIds,
+            changedVariantIds,
+          },
+          {
+            requestedMode: "incremental",
+            effectiveMode: "incremental",
+            triggerSource: "push",
+            triggeredBy: `push:targeted_refresh:${args.pushJobId}`,
+            fallbackReason: null,
+            preserveSyncState: true,
+          },
+        );
+
+        refreshResults.push({
+          platform: integration.platform,
+          label: integration.label,
+          status: reconcile.status === "COMPLETED" ? "COMPLETED" : "FAILED",
+          jobId: reconcile.jobId,
+          message:
+            reconcile.status === "COMPLETED"
+              ? `Post-push targeted readback refreshed ${productIds.length.toLocaleString()} Shopify product${productIds.length === 1 ? "" : "s"}.`
+              : reconcile.errors[0]?.message ?? "Shopify targeted readback failed.",
+          targetedCount: productIds.length,
+        });
+
+        if (reconcile.status === "COMPLETED") {
+          completedCount += 1;
+        } else {
+          failedCount += 1;
+        }
+      }
     }
   }
 
@@ -586,12 +732,12 @@ async function executePostPushTargetedRefresh(args: {
 
   return {
     status: completedCount > 0 ? "completed" : "not-needed",
-    detail:
+      detail:
       completedCount > 0
-        ? `Post-push targeted refresh completed for ${detailBase}.`
-        : "No successful eBay listing updates needed a post-push targeted refresh.",
-    retryAt: null,
-    results: refreshResults,
+        ? `Post-push targeted readback completed for ${detailBase}.`
+        : "No successful marketplace listing updates needed a post-push targeted readback.",
+      retryAt: null,
+      results: refreshResults,
   };
 }
 
@@ -774,6 +920,7 @@ export async function executePush(
       results.push({
         platform: change.platform,
         listingId: change.listingId,
+        platformVariantId: change.platformVariantId ?? null,
         field: change.field,
           stagedChangeId: change.stagedChangeId ?? null,
           masterRowId: change.masterRowId,
@@ -976,7 +1123,13 @@ export async function executePush(
       const priceResult = await adapter.pushPriceUpdates(priceUpdates);
       for (const update of priceUpdates) {
         const change = changes.find(
-          (entry) => entry.field === "salePrice" && entry.listingId === update.platformItemId,
+          (entry) =>
+            matchesPushChange(
+              entry,
+              "salePrice",
+              update.platformItemId,
+              update.platformVariantId ?? null,
+            ),
         );
         const error = priceResult.errors.find(
           (e) => e.platformItemId === update.platformItemId
@@ -984,6 +1137,7 @@ export async function executePush(
         results.push({
           platform,
           listingId: update.platformItemId,
+          platformVariantId: change?.platformVariantId ?? update.platformVariantId ?? null,
           field: "salePrice",
           stagedChangeId: change?.stagedChangeId ?? null,
           masterRowId: change?.masterRowId ?? "",
@@ -1000,7 +1154,7 @@ export async function executePush(
       const adResult = await adapter.pushAdRateUpdates(adRateUpdates);
       for (const update of adRateUpdates) {
         const change = changes.find(
-          (entry) => entry.field === "adRate" && entry.listingId === update.platformItemId,
+          (entry) => matchesPushChange(entry, "adRate", update.platformItemId),
         );
         const error = adResult.errors.find(
           (e) => e.platformItemId === update.platformItemId
@@ -1008,6 +1162,7 @@ export async function executePush(
         results.push({
           platform,
           listingId: update.platformItemId,
+          platformVariantId: change?.platformVariantId ?? null,
           field: "adRate",
           stagedChangeId: change?.stagedChangeId ?? null,
           masterRowId: change?.masterRowId ?? "",
