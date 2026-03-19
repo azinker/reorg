@@ -1,6 +1,10 @@
 const PEAK_START_HOUR = 9;
 const PEAK_END_HOUR = 16;
 const QUIET_START_HOUR = 22;
+const BASE_GETITEM_RESERVE_MIN = 500;
+const BASE_GETITEM_RESERVE_RATIO = 0.2;
+const TARGETED_REFRESH_RESERVE_PER_STORE = 200;
+const TARGETED_REFRESH_RESERVE_RATIO = 0.08;
 
 export type EbayPullWindow = "peak" | "shoulder" | "quiet";
 
@@ -221,7 +225,10 @@ export function getPerRunEbayGetItemBudget(args: {
   timeZone: string;
   sharedStoreCount: number;
 }) {
-  const reserve = Math.max(500, Math.floor(args.limit * 0.2));
+  const reserve = getReservedEbayGetItemCalls(
+    args.limit,
+    args.sharedStoreCount,
+  );
   const usableRemaining = Math.max(0, args.remaining - reserve);
   const { currentWeight, weightedRunsRemaining } = getRemainingEbayWeightedStoreRuns(
     args.now,
@@ -238,6 +245,22 @@ export function getPerRunEbayGetItemBudget(args: {
   );
   const minimumBudget = Math.min(25, usableRemaining);
   return Math.max(minimumBudget, Math.min(usableRemaining, weightedShare));
+}
+
+export function getReservedEbayGetItemCalls(
+  limit: number,
+  sharedStoreCount: number,
+) {
+  const baseReserve = Math.max(
+    BASE_GETITEM_RESERVE_MIN,
+    Math.floor(limit * BASE_GETITEM_RESERVE_RATIO),
+  );
+  const targetedRefreshReserve = Math.max(
+    sharedStoreCount * TARGETED_REFRESH_RESERVE_PER_STORE,
+    Math.floor(limit * TARGETED_REFRESH_RESERVE_RATIO),
+  );
+
+  return baseReserve + targetedRefreshReserve;
 }
 
 export function getFallbackPerRunEbayGetItemBudget(

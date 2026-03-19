@@ -9,6 +9,7 @@ import {
 import {
   getFallbackPerRunEbayGetItemBudget,
   getPerRunEbayGetItemBudget,
+  getReservedEbayGetItemCalls,
 } from "@/lib/services/ebay-sync-policy";
 
 export interface EbayIncrementalWindowState {
@@ -23,6 +24,7 @@ export interface EbayIncrementalBudgetPlan {
   pendingItemIds: string[];
   sharedStoreCount: number;
   usedFallbackBudget: boolean;
+  reservedGetItemCalls: number | null;
 }
 
 export function getPendingIncrementalWindow(
@@ -85,6 +87,10 @@ export async function buildEbayIncrementalBudgetPlan(args: {
   const now = args.now ?? new Date();
   const sharedStoreCount = await getSharedEbayQuotaStoreCount(args.integration);
   const getItemRate = getEbayMethodRate(args.snapshot, "GetItem");
+  const reservedGetItemCalls =
+    getItemRate && getItemRate.limit > 0
+      ? getReservedEbayGetItemCalls(getItemRate.limit, sharedStoreCount)
+      : null;
   const budget =
     getItemRate && getItemRate.limit > 0
       ? getPerRunEbayGetItemBudget({
@@ -102,5 +108,6 @@ export async function buildEbayIncrementalBudgetPlan(args: {
     pendingItemIds: args.window.itemIds.slice(budget),
     sharedStoreCount,
     usedFallbackBudget: !getItemRate || getItemRate.limit <= 0,
+    reservedGetItemCalls,
   } satisfies EbayIncrementalBudgetPlan;
 }

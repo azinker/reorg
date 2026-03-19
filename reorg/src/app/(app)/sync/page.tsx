@@ -125,6 +125,9 @@ type SyncRouteData = {
     exhaustedMethods: string[];
     nextResetAt: string | null;
   } | null;
+  quotaPolicy: {
+    reservedGetItemCalls: number | null;
+  } | null;
   webhookState: IntegrationWebhookState;
   webhookHealth: {
     status: "ok" | "warning" | "info";
@@ -1161,6 +1164,7 @@ export default function SyncPage() {
           const syncState = meta?.syncState ?? null;
           const cooldown = meta?.cooldown ?? null;
           const rateLimits = meta?.rateLimits ?? null;
+          const reservedGetItemCalls = meta?.quotaPolicy?.reservedGetItemCalls ?? null;
           const webhookState = meta?.webhookState ?? null;
           const webhookHealth = meta?.webhookHealth ?? null;
           const isSyncing = storeSync === "syncing";
@@ -1420,6 +1424,12 @@ export default function SyncPage() {
                   {rateLimits.nextResetAt ? (
                     <div className="mt-2 text-[11px]">
                       Next known Trading API reset: {formatDateTime(rateLimits.nextResetAt)}
+                    </div>
+                  ) : null}
+                  {reservedGetItemCalls ? (
+                    <div className="mt-2 text-[11px]">
+                      Auto-pulls keep about {reservedGetItemCalls.toLocaleString()} GetItem calls in
+                      reserve for later targeted refreshes and recovery work.
                     </div>
                   ) : null}
                 </div>

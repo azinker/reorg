@@ -12,8 +12,11 @@ import {
 } from "@/lib/services/ebay-rate-limit";
 import {
   getEbayCooldownUntilFromSnapshot,
+  getEbayMethodRate,
   getEbayTradingRateLimitSnapshotForIntegration,
 } from "@/lib/services/ebay-analytics";
+import { getSharedEbayQuotaStoreCount } from "@/lib/services/ebay-sync-budget";
+import { getReservedEbayGetItemCalls } from "@/lib/services/ebay-sync-policy";
 
 const postSchema = z
   .object({
@@ -68,6 +71,14 @@ export async function POST(
     const rateLimits = isEbayPlatform(integration.platform)
       ? await getEbayTradingRateLimitSnapshotForIntegration(integration).catch(() => null)
       : null;
+    const sharedStoreCount = isEbayPlatform(integration.platform)
+      ? await getSharedEbayQuotaStoreCount(integration)
+      : 1;
+    const getItemRate = rateLimits ? getEbayMethodRate(rateLimits, "GetItem") : null;
+    const reservedGetItemCalls =
+      getItemRate && getItemRate.limit > 0
+        ? getReservedEbayGetItemCalls(getItemRate.limit, sharedStoreCount)
+        : null;
     const cooldownUntil =
       getEbayCooldownUntilFromSnapshot(
         rateLimits,
@@ -97,6 +108,7 @@ export async function POST(
             cooldownUntil: cooldownUntil.toISOString(),
             cooldownMessage: config.syncState.lastRateLimitMessage,
             rateLimits,
+            reservedGetItemCalls,
           },
         },
         {
@@ -161,6 +173,14 @@ export async function GET(
     const rateLimits = isEbayPlatform(integration.platform)
       ? await getEbayTradingRateLimitSnapshotForIntegration(integration).catch(() => null)
       : null;
+    const sharedStoreCount = isEbayPlatform(integration.platform)
+      ? await getSharedEbayQuotaStoreCount(integration)
+      : 1;
+    const getItemRate = rateLimits ? getEbayMethodRate(rateLimits, "GetItem") : null;
+    const reservedGetItemCalls =
+      getItemRate && getItemRate.limit > 0
+        ? getReservedEbayGetItemCalls(getItemRate.limit, sharedStoreCount)
+        : null;
     const cooldownUntil =
       getEbayCooldownUntilFromSnapshot(
         rateLimits,
@@ -190,6 +210,9 @@ export async function GET(
           retryLabel: formatCooldownRetryAt(cooldownUntil),
         },
         rateLimits,
+        quotaPolicy: {
+          reservedGetItemCalls,
+        },
         webhookHealth: assessIntegrationWebhookHealth(integration),
         lastJob: lastJob
           ? {
