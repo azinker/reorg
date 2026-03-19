@@ -15,6 +15,8 @@ import {
 import { getSharedEbayQuotaStoreCount } from "@/lib/services/ebay-sync-budget";
 import { formatCooldownRetryAt } from "@/lib/services/ebay-rate-limit";
 import { startIntegrationSync } from "@/lib/services/sync-control";
+import { createBackup } from "@/lib/services/backup";
+import { getMissingR2EnvVars, isR2Configured } from "@/lib/r2";
 
 export interface PushRequest {
   userId: string;
@@ -37,6 +39,19 @@ export interface PushExecutionResult {
   pushJobId: string;
   dryRun: boolean;
   status: "completed" | "failed" | "blocked";
+  summary: {
+    totalChanges: number;
+    distinctListings: number;
+    successfulChanges: number;
+    failedChanges: number;
+    affectedPlatforms: Platform[];
+    byPlatform: Array<{
+      platform: Platform;
+      changes: number;
+      distinctListings: number;
+      fields: Array<"salePrice" | "adRate">;
+    }>;
+  };
   results: {
     platform: Platform;
     listingId: string;
@@ -45,6 +60,13 @@ export interface PushExecutionResult {
     error?: string;
   }[];
   blockedReason?: string;
+  prePushBackup?: {
+    status: "not-needed" | "ready" | "completed" | "warning" | "blocked" | "failed";
+    detail: string;
+    backupId?: string | null;
+    missingEnvVars?: string[];
+    required?: boolean;
+  };
   postPushRefresh?: {
     status:
       | "not-needed"
@@ -74,6 +96,63 @@ export interface PushExecutionResult {
 }
 
 const EBAY_PUSH_PLATFORMS = new Set<Platform>(["TPP_EBAY", "TT_EBAY"]);
+const PRE_PUSH_BACKUP_LISTING_THRESHOLD = 10;
+
+function buildPushSummary(byPlatform: Map<Platform, PushChangeItem[]>, results?: PushExecutionResult["results"]) {
+  const byPlatformSummary = [...byPlatform.entries()].map(([platform, changes]) => ({
+    platform,
+    changes: changes.length,
+    distinctListings: new Set(changes.map((change) => change.marketplaceListingId)).size,
+    fields: [...new Set(changes.map((change) => change.field))],
+  }));
+
+  return {
+    totalChanges: [...byPlatform.values()].reduce((sum, changes) => sum + changes.length, 0),
+    distinctListings: new Set(
+      [...byPlatform.values()].flatMap((changes) => changes.map((change) => change.marketplaceListingId)),
+    ).size,
+    successfulChanges: results ? results.filter((result) => result.success).length : 0,
+    failedChanges: results ? results.filter((result) => !result.success).length : 0,
+    affectedPlatforms: [...byPlatform.keys()],
+    byPlatform: byPlatformSummary,
+  } satisfies PushExecutionResult["summary"];
+}
+
+function evaluatePrePushBackupNeed(
+  summary: PushExecutionResult["summary"],
+  dryRun: boolean,
+): NonNullable<PushExecutionResult["prePushBackup"]> {
+  if (summary.distinctListings < PRE_PUSH_BACKUP_LISTING_THRESHOLD) {
+    return {
+      status: "not-needed",
+      detail:
+        `This push touches ${summary.distinctListings.toLocaleString()} listing` +
+        `${summary.distinctListings === 1 ? "" : "s"}, so it stays below the automatic pre-push backup threshold.`,
+      required: false,
+      backupId: null,
+    };
+  }
+
+  if (!isR2Configured()) {
+    return {
+      status: dryRun ? "warning" : "blocked",
+      detail:
+        `This push touches ${summary.distinctListings.toLocaleString()} listings, so a pre-push backup is required before a live write can run. ` +
+        "Cloudflare R2 is not configured yet, so the live push would be blocked.",
+      backupId: null,
+      required: true,
+      missingEnvVars: getMissingR2EnvVars(),
+    };
+  }
+
+  return {
+    status: dryRun ? "ready" : "not-needed",
+    detail:
+      `This push touches ${summary.distinctListings.toLocaleString()} listings, so reorG will create a pre-push backup automatically before the live write starts.`,
+    backupId: null,
+    required: true,
+  };
+}
 
 async function evaluatePostPushRefreshHeadroom(
   byPlatform: Map<Platform, PushChangeItem[]>,
@@ -366,6 +445,25 @@ async function executePostPushTargetedRefresh(args: {
   };
 }
 
+function buildBlockedResult(args: {
+  dryRun: boolean;
+  blockedReason: string;
+  summary: PushExecutionResult["summary"];
+  prePushBackup?: PushExecutionResult["prePushBackup"];
+  postPushRefresh?: PushExecutionResult["postPushRefresh"];
+}): PushExecutionResult {
+  return {
+    pushJobId: "",
+    dryRun: args.dryRun,
+    status: "blocked",
+    summary: args.summary,
+    results: [],
+    blockedReason: args.blockedReason,
+    prePushBackup: args.prePushBackup,
+    postPushRefresh: args.postPushRefresh,
+  };
+}
+
 /**
  * Execute a push operation through the full safety chain:
  * 1. Check global write lock
@@ -390,19 +488,28 @@ export async function executePush(
     existing.push(change);
     byPlatform.set(change.platform, existing);
   }
+  const summary = buildPushSummary(byPlatform);
 
   // Check write safety for each platform
   for (const platform of byPlatform.keys()) {
     const safety = await checkWriteSafety(platform);
     if (!safety.allowed) {
-      return {
-        pushJobId: "",
+      return buildBlockedResult({
         dryRun: request.dryRun,
-        status: "blocked",
-        results: [],
-        blockedReason: safety.reason,
-      };
+        blockedReason: safety.reason ?? "Push blocked by write safety settings.",
+        summary,
+      });
     }
+  }
+
+  const prePushBackupPlan = evaluatePrePushBackupNeed(summary, request.dryRun);
+  if (!request.dryRun && prePushBackupPlan.status === "blocked") {
+    return buildBlockedResult({
+      dryRun: false,
+      blockedReason: prePushBackupPlan.detail,
+      summary,
+      prePushBackup: prePushBackupPlan,
+    });
   }
 
   const postPushRefresh = await evaluatePostPushRefreshHeadroom(
@@ -410,14 +517,13 @@ export async function executePush(
     request.dryRun,
   );
   if (!request.dryRun && postPushRefresh?.status === "blocked") {
-    return {
-      pushJobId: "",
+    return buildBlockedResult({
       dryRun: false,
-      status: "blocked",
-      results: [],
       blockedReason: postPushRefresh.detail,
+      summary,
+      prePushBackup: prePushBackupPlan,
       postPushRefresh,
-    };
+    });
   }
 
   // Create push job record
@@ -426,7 +532,10 @@ export async function executePush(
       userId: request.userId,
       dryRun: request.dryRun,
       status: request.dryRun ? "DRY_RUN" : "EXECUTING",
-      payload: request.changes as unknown as object[],
+      payload: {
+        changes: request.changes,
+        summary,
+      } as unknown as object,
     },
   });
 
@@ -445,7 +554,13 @@ export async function executePush(
       where: { id: pushJob.id },
       data: {
         status: "COMPLETED",
-        result: { dryRun: true, results, postPushRefresh },
+        result: {
+          dryRun: true,
+          summary,
+          results,
+          prePushBackup: prePushBackupPlan,
+          postPushRefresh,
+        },
         completedAt: new Date(),
       },
     });
@@ -454,9 +569,61 @@ export async function executePush(
       pushJobId: pushJob.id,
       dryRun: true,
       status: "completed",
+      summary,
       results,
+      prePushBackup: prePushBackupPlan,
       postPushRefresh,
     };
+  }
+
+  let completedPrePushBackup: PushExecutionResult["prePushBackup"] = prePushBackupPlan;
+  if (prePushBackupPlan.required) {
+    try {
+      const backup = await createBackup({
+        type: "PRE_PUSH",
+        triggeredById: request.userId,
+      });
+      completedPrePushBackup = {
+        status: "completed",
+        detail: "Pre-push backup completed successfully before the live marketplace write started.",
+        backupId: backup.id,
+        required: true,
+      };
+    } catch (error) {
+      const detail =
+        error instanceof Error
+          ? `Pre-push backup failed, so the live push was blocked: ${error.message}`
+          : "Pre-push backup failed, so the live push was blocked.";
+      await db.pushJob.update({
+        where: { id: pushJob.id },
+        data: {
+          status: "FAILED",
+          result: {
+            summary,
+            results: [],
+            prePushBackup: {
+              status: "failed",
+              detail,
+              required: true,
+            },
+            postPushRefresh,
+          },
+          completedAt: new Date(),
+        },
+      });
+
+      return buildBlockedResult({
+        dryRun: false,
+        blockedReason: detail,
+        summary,
+        prePushBackup: {
+          status: "failed",
+          detail,
+          required: true,
+        },
+        postPushRefresh,
+      });
+    }
   }
 
   // Execute live push per platform
@@ -538,6 +705,7 @@ export async function executePush(
   }
 
   const status = results.every((r) => r.success) ? "completed" : "failed";
+  const finalSummary = buildPushSummary(byPlatform, results);
   const completedPostPushRefresh =
     status === "completed" || results.some((result) => result.success)
       ? await executePostPushTargetedRefresh({
@@ -550,7 +718,12 @@ export async function executePush(
     where: { id: pushJob.id },
     data: {
       status: status === "completed" ? "COMPLETED" : "FAILED",
-      result: { results, postPushRefresh: completedPostPushRefresh },
+      result: {
+        summary: finalSummary,
+        results,
+        prePushBackup: completedPrePushBackup,
+        postPushRefresh: completedPostPushRefresh,
+      },
       completedAt: new Date(),
     },
   });
@@ -566,6 +739,8 @@ export async function executePush(
         totalChanges: request.changes.length,
         successful: results.filter((r) => r.success).length,
         failed: results.filter((r) => !r.success).length,
+        summary: finalSummary,
+        prePushBackup: completedPrePushBackup ?? null,
         postPushRefresh: completedPostPushRefresh ?? null,
       },
     },
@@ -575,7 +750,9 @@ export async function executePush(
     pushJobId: pushJob.id,
     dryRun: false,
     status,
+    summary: finalSummary,
     results,
+    prePushBackup: completedPrePushBackup,
     postPushRefresh: completedPostPushRefresh,
   };
 }

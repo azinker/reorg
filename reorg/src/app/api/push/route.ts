@@ -92,16 +92,37 @@ export async function POST(request: NextRequest) {
       adapters,
     );
 
-    return NextResponse.json({
-      data: {
-        ...result,
-        changes: changes.length,
-        message:
-          dryRun
-            ? "Dry run passed. Review the results, then explicitly confirm if you want a live push later."
-            : "Live push executed through the full write safety chain.",
+    const nextStep =
+      result.status === "blocked"
+        ? result.blockedReason ?? "Resolve the blocker before retrying this push."
+        : dryRun
+          ? "Review the dry-run summary, backup requirement, and post-push refresh readiness before confirming a live push."
+          : result.postPushRefresh?.status === "completed"
+            ? "Review Engine Room or Sync if you want to inspect the targeted post-push refresh jobs."
+            : result.postPushRefresh?.status === "warning"
+              ? "Review Sync or Engine Room to confirm the targeted refresh finishes cleanly."
+              : "Review Engine Room or Sync if you need to inspect the live push and follow-up refresh.";
+
+    const message =
+      result.status === "blocked"
+        ? "Push blocked by a safety rule."
+        : dryRun
+          ? "Dry run completed. Review the impact summary and live-push readiness before confirming anything."
+          : result.prePushBackup?.status === "completed"
+            ? "Live push completed through the write safety chain, including the automatic pre-push backup."
+            : "Live push completed through the write safety chain.";
+
+    return NextResponse.json(
+      {
+        data: {
+          ...result,
+          changes: changes.length,
+          message,
+          nextStep,
+        },
       },
-    });
+      { status: result.status === "blocked" ? 409 : 200 },
+    );
   } catch (error) {
     console.error("[push] Failed to process push request", error);
     return NextResponse.json(
