@@ -134,6 +134,13 @@ function extractCredentials(integration: Pick<Integration, "config">): EbayCrede
   };
 }
 
+export function getEbayCredentialFingerprint(
+  integration: Pick<Integration, "config">,
+) {
+  const credentials = extractCredentials(integration);
+  return credentials ? getCacheKey(credentials) : null;
+}
+
 function pickMonitoredMethod(resourceName: string | null) {
   if (!resourceName) return null;
   return (

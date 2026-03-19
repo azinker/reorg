@@ -11,6 +11,7 @@ import {
   getEbayRateLimitCooldownUntil,
 } from "@/lib/services/ebay-rate-limit";
 import {
+  getEbayCredentialFingerprint,
   getEbayCooldownUntilFromSnapshot,
   getEbayTradingRateLimitSnapshotForIntegration,
 } from "@/lib/services/ebay-analytics";
@@ -236,21 +237,42 @@ export async function planScheduledSyncs(now = new Date()) {
     };
   });
 
-  const ebayDueIndexes = items
-    .map((item, index) => ({ item, index }))
-    .filter(({ item }) => item.due && (item.platform === "TPP_EBAY" || item.platform === "TT_EBAY"))
-    .sort((a, b) => a.item.label.localeCompare(b.item.label));
+  const integrationById = new Map(integrations.map((integration) => [integration.id, integration]));
+  const ebayDueGroups = new Map<string, Array<{ index: number; item: SchedulerPlanItem }>>();
+  items.forEach((item, index) => {
+    if (!item.due || (item.platform !== "TPP_EBAY" && item.platform !== "TT_EBAY")) {
+      return;
+    }
+    const integration = integrationById.get(item.integrationId);
+    const groupKey =
+      (integration && getEbayCredentialFingerprint(integration)) ?? `platform:${item.platform}`;
+    const group = ebayDueGroups.get(groupKey) ?? [];
+    group.push({ index, item });
+    ebayDueGroups.set(groupKey, group);
+  });
 
-  for (let i = 1; i < ebayDueIndexes.length; i += 1) {
-    const { index } = ebayDueIndexes[i];
-    const delayedUntil = new Date(now.getTime() + 15 * 60 * 1000);
-    items[index] = {
-      ...items[index],
-      due: false,
-      nextDueAt: delayedUntil.toISOString(),
-      minutesUntilDue: 15,
-      reason: "Delayed to the next scheduler tick to avoid eBay Trading API rate-limit spikes.",
-    };
+  for (const group of ebayDueGroups.values()) {
+    group.sort((a, b) => {
+      const integrationA = integrationById.get(a.item.integrationId);
+      const integrationB = integrationById.get(b.item.integrationId);
+      const lastSyncA = integrationA?.lastSyncAt?.getTime() ?? 0;
+      const lastSyncB = integrationB?.lastSyncAt?.getTime() ?? 0;
+      if (lastSyncA !== lastSyncB) return lastSyncA - lastSyncB;
+      return a.item.label.localeCompare(b.item.label);
+    });
+
+    for (let i = 1; i < group.length; i += 1) {
+      const { index } = group[i];
+      const delayedUntil = new Date(now.getTime() + 15 * 60 * 1000);
+      items[index] = {
+        ...items[index],
+        due: false,
+        nextDueAt: delayedUntil.toISOString(),
+        minutesUntilDue: 15,
+        reason:
+          "Queued behind another eBay store that shares the same Trading API quota window.",
+      };
+    }
   }
 
   return items;
