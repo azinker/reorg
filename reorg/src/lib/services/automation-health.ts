@@ -27,9 +27,13 @@ export interface IntegrationHealthSnapshot {
   nextDueAt: string | null;
   webhookExpected: boolean;
   lastWebhookAt: string | null;
+  lastWebhookTopic: string | null;
+  lastWebhookEventStatus: string | null;
   minutesSinceWebhook: number | null;
   webhookStatus: WebhookMonitorStatus;
   webhookMessage: string;
+  webhookProofStatus: "none" | "before_last_pull" | "after_last_pull";
+  webhookProofMessage: string;
   backlogCount: number;
   backlogAgeMinutes: number | null;
   backlogStatus: "clear" | "queued" | "delayed" | "stale";
@@ -54,6 +58,13 @@ export interface AutomationHealthSnapshot {
   integrationHealth: IntegrationHealthSnapshot[];
   summary: AutomationHealthSummary;
 }
+
+type LatestWebhookSnapshot = {
+  createdAt: Date;
+  topic: string | null;
+  status: string | null;
+  message: string | null;
+};
 
 const WEBHOOK_PLATFORMS = new Set(["SHOPIFY", "BIGCOMMERCE"]);
 
@@ -214,6 +225,47 @@ function getWebhookHealthStatus(
     webhookStatus: "ok" as const,
     minutesSinceWebhook,
     webhookMessage: `Recent change notice arrived ${formatMinutesLabel(minutesSinceWebhook)} ago.`,
+  };
+}
+
+function getWebhookProofStatus(args: {
+  webhookExpected: boolean;
+  lastWebhookAt: Date | null;
+  lastWebhookTopic: string | null;
+  lastSyncAt: Date | null;
+}) {
+  if (!args.webhookExpected) {
+    return {
+      webhookProofStatus: "none" as const,
+      webhookProofMessage: "This store relies on scheduled pulls only.",
+    };
+  }
+
+  if (!args.lastWebhookAt) {
+    return {
+      webhookProofStatus: "none" as const,
+      webhookProofMessage: "No marketplace change notice has been recorded yet.",
+    };
+  }
+
+  const topicLabel = args.lastWebhookTopic ?? "change notice";
+  if (!args.lastSyncAt) {
+    return {
+      webhookProofStatus: "after_last_pull" as const,
+      webhookProofMessage: `Latest notice: ${topicLabel}. No completed pull has been recorded after it yet.`,
+    };
+  }
+
+  if (args.lastWebhookAt.getTime() > args.lastSyncAt.getTime()) {
+    return {
+      webhookProofStatus: "after_last_pull" as const,
+      webhookProofMessage: `Latest notice: ${topicLabel}. It arrived after the last completed pull and can wake the next earlier refresh.`,
+    };
+  }
+
+  return {
+    webhookProofStatus: "before_last_pull" as const,
+    webhookProofMessage: `Latest notice: ${topicLabel}. No newer marketplace notice has arrived since the last completed pull.`,
   };
 }
 
@@ -405,12 +457,17 @@ export async function buildAutomationHealthSnapshot(
     }),
   ]);
 
-  const lastWebhookByPlatform = new Map<string, Date>();
+  const lastWebhookByPlatform = new Map<string, LatestWebhookSnapshot>();
   for (const entry of recentWebhookEntries) {
     const details = (entry.details as Record<string, unknown>) ?? {};
     const platform = typeof details.platform === "string" ? details.platform : null;
     if (!platform || lastWebhookByPlatform.has(platform)) continue;
-    lastWebhookByPlatform.set(platform, entry.createdAt);
+    lastWebhookByPlatform.set(platform, {
+      createdAt: entry.createdAt,
+      topic: typeof details.topic === "string" ? details.topic : null,
+      status: typeof details.status === "string" ? details.status : null,
+      message: typeof details.message === "string" ? details.message : null,
+    });
   }
 
   const integrationMap = new Map(integrations.map((integration) => [integration.id, integration]));
@@ -436,7 +493,8 @@ export async function buildAutomationHealthSnapshot(
     .map((item) => {
       const integration = integrationMap.get(item.integrationId)!;
       const lastSyncAt = integration.lastSyncAt;
-      const lastWebhookAt = lastWebhookByPlatform.get(integration.platform) ?? null;
+      const latestWebhook = lastWebhookByPlatform.get(integration.platform) ?? null;
+      const lastWebhookAt = latestWebhook?.createdAt ?? null;
       const storedConfig = getIntegrationConfig(integration);
       const sync = getSyncHealthStatus(item, lastSyncAt, now);
       const backlog = getBacklogHealthStatus({
@@ -517,6 +575,12 @@ export async function buildAutomationHealthSnapshot(
         webhookStatus: webhook.webhookStatus,
         rateLimitCooldownUntil,
       });
+      const webhookProof = getWebhookProofStatus({
+        webhookExpected: webhook.webhookExpected,
+        lastWebhookAt,
+        lastWebhookTopic: latestWebhook?.topic ?? null,
+        lastSyncAt,
+      });
 
       return {
         integrationId: integration.id,
@@ -533,9 +597,13 @@ export async function buildAutomationHealthSnapshot(
         nextDueAt: item.nextDueAt,
         webhookExpected: webhook.webhookExpected,
         lastWebhookAt: lastWebhookAt?.toISOString() ?? null,
+        lastWebhookTopic: latestWebhook?.topic ?? null,
+        lastWebhookEventStatus: latestWebhook?.status ?? null,
         minutesSinceWebhook: webhook.minutesSinceWebhook,
         webhookStatus: webhook.webhookStatus,
         webhookMessage: webhook.webhookMessage,
+        webhookProofStatus: webhookProof.webhookProofStatus,
+        webhookProofMessage: webhookProof.webhookProofMessage,
         backlogCount: backlog.backlogCount,
         backlogAgeMinutes: backlog.backlogAgeMinutes,
         backlogStatus: backlog.backlogStatus,

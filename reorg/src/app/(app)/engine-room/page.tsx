@@ -149,7 +149,11 @@ type EngineRoomData = {
     due: boolean;
     nextDueAt: string | null;
     webhookExpected: boolean;
+    lastWebhookTopic: string | null;
+    lastWebhookEventStatus: string | null;
     webhookMessage: string;
+    webhookProofStatus: "none" | "before_last_pull" | "after_last_pull";
+    webhookProofMessage: string;
     recommendedAction: string;
     pendingBacklogCount: number;
     pendingBacklogWindowEndedAt: string | null;
@@ -262,6 +266,15 @@ function getHealthClasses(status: "healthy" | "delayed" | "attention") {
   if (status === "attention") return "border-red-500/30 bg-red-500/10 text-red-400";
   if (status === "delayed") return "border-amber-500/30 bg-amber-500/10 text-amber-400";
   return "border-emerald-500/30 bg-emerald-500/10 text-emerald-400";
+}
+
+function getWebhookProofClasses(
+  status: "none" | "before_last_pull" | "after_last_pull",
+) {
+  if (status === "after_last_pull") {
+    return "border-blue-500/20 bg-blue-500/5 text-blue-300";
+  }
+  return "border-border bg-muted/40 text-muted-foreground";
 }
 
 function StatusBadge({ status }: { status: string }) {
@@ -1418,6 +1431,24 @@ export default function EngineRoomPage() {
                   {item.webhookExpected ? (
                     <div className="mt-2 rounded border border-border bg-muted/40 px-2 py-1 text-[11px] text-muted-foreground">
                       {item.webhookMessage}
+                    </div>
+                  ) : null}
+                  {item.webhookExpected ? (
+                    <div
+                      className={cn(
+                        "mt-2 rounded border px-2 py-1 text-[11px]",
+                        getWebhookProofClasses(item.webhookProofStatus),
+                      )}
+                    >
+                      <div>{item.webhookProofMessage}</div>
+                      {item.lastWebhookTopic ? (
+                        <div className="mt-1 text-[10px] uppercase tracking-wide opacity-80">
+                          Topic: {item.lastWebhookTopic}
+                          {item.lastWebhookEventStatus
+                            ? ` • ${item.lastWebhookEventStatus}`
+                            : ""}
+                        </div>
+                      ) : null}
                     </div>
                   ) : null}
                   {item.pendingBacklogCount > 0 ? (

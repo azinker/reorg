@@ -52,6 +52,14 @@ function normalizeSyncErrors(
   });
 }
 
+function getWebhookProofStatus(lastSyncAt: Date | null, receivedAt: Date | null) {
+  if (!receivedAt) return "none";
+  if (!lastSyncAt) return "after_last_pull";
+  return receivedAt.getTime() > lastSyncAt.getTime()
+    ? "after_last_pull"
+    : "before_last_pull";
+}
+
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ integrationId: string }> }
@@ -200,8 +208,25 @@ export async function GET(
       where: { integrationId: integration.id },
       orderBy: { createdAt: "desc" },
     });
+    const recentWebhookEntries = await db.auditLog.findMany({
+      where: { action: "webhook_received" },
+      orderBy: { createdAt: "desc" },
+      take: 200,
+      select: {
+        createdAt: true,
+        details: true,
+      },
+    });
 
     const config = getIntegrationConfig(integration);
+    const latestWebhook = recentWebhookEntries.find((entry) => {
+      const details = (entry.details as Record<string, unknown>) ?? {};
+      return details.platform === integration.platform;
+    });
+    const latestWebhookDetails = latestWebhook
+      ? ((latestWebhook.details as Record<string, unknown>) ?? {})
+      : null;
+    const lastWebhookReceivedAt = latestWebhook?.createdAt ?? null;
     const rateLimits = isEbayPlatform(integration.platform)
       ? await getEbayTradingRateLimitSnapshotForIntegration(integration).catch(() => null)
       : null;
@@ -235,6 +260,27 @@ export async function GET(
         syncProfile: config.syncProfile,
         syncState: config.syncState,
         webhookState: config.webhookState,
+        lastWebhookEvent: latestWebhook
+          ? {
+              topic:
+                typeof latestWebhookDetails?.topic === "string"
+                  ? latestWebhookDetails.topic
+                  : null,
+              status:
+                typeof latestWebhookDetails?.status === "string"
+                  ? latestWebhookDetails.status
+                  : null,
+              message:
+                typeof latestWebhookDetails?.message === "string"
+                  ? latestWebhookDetails.message
+                  : null,
+              receivedAt: lastWebhookReceivedAt?.toISOString() ?? null,
+              relationToLastSync: getWebhookProofStatus(
+                integration.lastSyncAt,
+                lastWebhookReceivedAt,
+              ),
+            }
+          : null,
         cooldown: {
           active: Boolean(cooldownUntil),
           until: cooldownUntil?.toISOString() ?? null,

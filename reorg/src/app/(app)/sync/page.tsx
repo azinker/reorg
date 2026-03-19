@@ -105,6 +105,13 @@ type SyncRouteData = {
   lastSyncAt: string | null;
   syncProfile: SyncProfile;
   syncState: IntegrationSyncState;
+  lastWebhookEvent: {
+    topic: string | null;
+    status: string | null;
+    message: string | null;
+    receivedAt: string | null;
+    relationToLastSync: "none" | "before_last_pull" | "after_last_pull";
+  } | null;
   cooldown: {
     active: boolean;
     until: string | null;
@@ -175,9 +182,13 @@ type SchedulerStatus = {
     nextDueAt: string | null;
     webhookExpected: boolean;
     lastWebhookAt: string | null;
+    lastWebhookTopic: string | null;
+    lastWebhookEventStatus: string | null;
     minutesSinceWebhook: number | null;
     webhookStatus: "ok" | "quiet" | "missing" | "n/a";
     webhookMessage: string;
+    webhookProofStatus: "none" | "before_last_pull" | "after_last_pull";
+    webhookProofMessage: string;
     recommendedAction: string;
   }>;
   recentJobs: Array<{
@@ -295,6 +306,15 @@ function getReadableWebhookStatus(status: string) {
   if (status === "completed") return "completed";
   if (status === "failed") return "failed";
   return status;
+}
+
+function getWebhookProofClasses(
+  status: "none" | "before_last_pull" | "after_last_pull",
+) {
+  if (status === "after_last_pull") {
+    return "border-blue-500/20 bg-blue-500/5 text-blue-300";
+  }
+  return "border-border bg-muted/40 text-muted-foreground";
 }
 
 function getHealthClasses(status: "healthy" | "delayed" | "attention") {
@@ -991,6 +1011,24 @@ export default function SyncPage() {
                       {item.webhookMessage}
                     </div>
                   ) : null}
+                  {item.webhookExpected ? (
+                    <div
+                      className={cn(
+                        "mt-2 rounded border px-2 py-1 text-[11px]",
+                        getWebhookProofClasses(item.webhookProofStatus),
+                      )}
+                    >
+                      <div>{item.webhookProofMessage}</div>
+                      {item.lastWebhookTopic ? (
+                        <div className="mt-1 text-[10px] uppercase tracking-wide opacity-80">
+                          Topic: {item.lastWebhookTopic}
+                          {item.lastWebhookEventStatus
+                            ? ` • ${getReadableWebhookStatus(item.lastWebhookEventStatus)}`
+                            : ""}
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
                 </div>
               ))}
             </div>
@@ -1330,6 +1368,31 @@ export default function SyncPage() {
                         ? "Marketplace webhooks can trigger an earlier pull-only refresh between scheduled runs."
                         : "This store relies on its scheduled cadence unless you start a manual pull."}
                     </div>
+                    {usesWebhookWakeup(syncProfile) && meta?.lastWebhookEvent ? (
+                      <div
+                        className={cn(
+                          "mt-2 rounded border px-2 py-1.5 text-[11px]",
+                          getWebhookProofClasses(meta.lastWebhookEvent.relationToLastSync),
+                        )}
+                      >
+                        <div>
+                          Latest notice: {meta.lastWebhookEvent.topic ?? "Unknown topic"} at{" "}
+                          {formatDateTime(meta.lastWebhookEvent.receivedAt)}
+                        </div>
+                        <div className="mt-1">
+                          {meta.lastWebhookEvent.relationToLastSync === "after_last_pull"
+                            ? "It arrived after the last completed pull, so it can wake the next earlier refresh."
+                            : meta.lastWebhookEvent.relationToLastSync === "before_last_pull"
+                              ? "No newer marketplace notice has arrived since the last completed pull."
+                              : "No marketplace notice has been recorded yet."}
+                        </div>
+                        {meta.lastWebhookEvent.status ? (
+                          <div className="mt-1 text-[10px] uppercase tracking-wide opacity-80">
+                            {getReadableWebhookStatus(meta.lastWebhookEvent.status)}
+                          </div>
+                        ) : null}
+                      </div>
+                    ) : null}
                     {usesWebhookWakeup(syncProfile) && webhookState ? (
                       <div className="mt-2 rounded border border-border/60 bg-background/40 px-2 py-1.5">
                         <div>
