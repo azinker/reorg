@@ -60,7 +60,13 @@ export async function copySvgElementImage(svg: SVGSVGElement) {
 }
 
 export async function copyImageFromUrl(imageUrl: string) {
-  const response = await fetch(imageUrl, { cache: "force-cache" });
+  const proxyUrl = `/api/image-proxy?url=${encodeURIComponent(imageUrl)}`;
+
+  let response = await fetch(proxyUrl, { cache: "no-store" });
+  if (!response.ok) {
+    response = await fetch(imageUrl, { cache: "force-cache" });
+  }
+
   if (!response.ok) {
     throw new Error(`Unable to fetch image (${response.status}).`);
   }

@@ -44,6 +44,17 @@ interface DataGridProps {
 
 type PushField = "salePrice" | "adRate";
 
+type FailedPushItem = PushItem & {
+  retryKey: string;
+  pushJobId: string;
+  failedAt: string;
+  platformLabel: string;
+  fieldLabel: string;
+  oldDisplay: string;
+  newDisplay: string;
+  error: string;
+};
+
 const DEFAULT_FILTERS: FilterState = {
   marketplace: "all",
   stockStatus: "all",
@@ -355,6 +366,9 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
   const [toast, setToast] = useState<string | null>(null);
   const [pushModalOpen, setPushModalOpen] = useState(false);
   const [pushModalItems, setPushModalItems] = useState<PushItem[]>([]);
+  const [failedPushes, setFailedPushes] = useState<FailedPushItem[]>([]);
+  const [failedPushesOpen, setFailedPushesOpen] = useState(false);
+  const [failedPushesLoading, setFailedPushesLoading] = useState(false);
   const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const parentRef = useRef<HTMLDivElement>(null);
 
@@ -362,6 +376,26 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
     setToast(msg);
     setTimeout(() => setToast(null), 4000);
   }
+
+  async function loadFailedPushes() {
+    setFailedPushesLoading(true);
+    try {
+      const response = await fetch("/api/push/failures", { cache: "no-store" });
+      if (!response.ok) {
+        throw new Error(`Failed to load push failures (${response.status})`);
+      }
+      const payload = await response.json();
+      setFailedPushes(payload.data?.failures ?? []);
+    } catch (error) {
+      console.error("[data-grid] failed to load push failures", error);
+    } finally {
+      setFailedPushesLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    void loadFailedPushes();
+  }, []);
 
   function queuePushReview(items: PushItem[]) {
     if (items.length === 0) {
@@ -413,6 +447,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
 
   function applyPushOutcome(result: PushApiData) {
     const successful = result.results.filter((entry) => entry.success);
+    void loadFailedPushes();
     if (successful.length === 0) {
       showToast(result.message);
       return;
@@ -782,6 +817,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
 
   const [clearStagedOpen, setClearStagedOpen] = useState(false);
   const [clearStagedInput, setClearStagedInput] = useState("");
+  const failedPushCount = failedPushes.length;
 
   const stagedCount = useMemo(() => {
     let count = 0;
@@ -1007,6 +1043,18 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
             >
               <Trash2 className="h-3 w-3" />
               Clear Staged ({stagedCount})
+            </button>
+          )}
+          {failedPushCount > 0 && (
+            <button
+              onClick={() => {
+                void loadFailedPushes();
+                setFailedPushesOpen(true);
+              }}
+              className="flex items-center gap-1 rounded border border-red-500/30 bg-red-500/10 px-2.5 py-1 text-xs font-medium text-red-300 transition-colors hover:bg-red-500/20 cursor-pointer"
+            >
+              <AlertTriangle className="h-3 w-3" />
+              Pushes Failed ({failedPushCount})
             </button>
           )}
           <ColumnManager columns={columns} onToggle={toggleColumn} />
@@ -1468,6 +1516,107 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
               >
                 Confirm
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {failedPushesOpen && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/50">
+          <div className="w-full max-w-4xl rounded-xl border border-border bg-card shadow-2xl">
+            <div className="flex items-center justify-between border-b border-border px-5 py-4">
+              <div>
+                <h3 className="text-base font-bold text-foreground">Failed Pushes</h3>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  These marketplace writes failed and are still safe to retry through the guarded push flow.
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                {failedPushCount > 1 && (
+                  <button
+                    onClick={() => {
+                      setFailedPushesOpen(false);
+                      queuePushReview(
+                        failedPushes.map(
+                          ({ retryKey: _retryKey, pushJobId: _pushJobId, failedAt: _failedAt, platformLabel: _platformLabel, fieldLabel: _fieldLabel, oldDisplay: _oldDisplay, newDisplay: _newDisplay, error: _error, ...item }) =>
+                            item,
+                        ),
+                      );
+                    }}
+                    className="rounded-md border border-primary/30 bg-primary/10 px-3 py-2 text-xs font-medium text-primary transition-colors hover:bg-primary/20 cursor-pointer"
+                  >
+                    Retry All
+                  </button>
+                )}
+                <button
+                  onClick={() => setFailedPushesOpen(false)}
+                  className="rounded-md px-3 py-2 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground cursor-pointer"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+            <div className="max-h-[70vh] overflow-y-auto px-5 py-4">
+              {failedPushesLoading ? (
+                <div className="py-12 text-center text-sm text-muted-foreground">Loading failed pushes...</div>
+              ) : failedPushCount === 0 ? (
+                <div className="py-12 text-center text-sm text-muted-foreground">No failed pushes are waiting for retry.</div>
+              ) : (
+                <div className="space-y-3">
+                  {failedPushes.map((failure) => {
+                    const {
+                      retryKey,
+                      pushJobId,
+                      failedAt,
+                      platformLabel,
+                      fieldLabel,
+                      oldDisplay,
+                      newDisplay,
+                      error,
+                      ...pushItem
+                    } = failure;
+
+                    return (
+                      <article key={retryKey} className="rounded-xl border border-red-500/20 bg-red-500/5 px-4 py-3">
+                        <div className="flex flex-wrap items-start justify-between gap-3">
+                          <div className="min-w-0 flex-1">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="rounded bg-red-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-red-300">
+                                {PLATFORM_SHORT[failure.platform]}
+                              </span>
+                              <span className="text-sm font-semibold text-foreground">{failure.sku}</span>
+                              <span className="text-xs text-muted-foreground">{fieldLabel}</span>
+                            </div>
+                            <p className="mt-1 text-sm text-foreground">
+                              {oldDisplay} changed to {newDisplay}
+                            </p>
+                            <p className="mt-1 text-xs text-muted-foreground">
+                              {platformLabel} • Job {pushJobId.slice(0, 8)} • {new Date(failedAt).toLocaleString("en-US", {
+                                timeZone: "America/New_York",
+                                month: "numeric",
+                                day: "numeric",
+                                year: "numeric",
+                                hour: "numeric",
+                                minute: "2-digit",
+                              })}
+                            </p>
+                            <p className="mt-2 text-xs text-red-200">{error}</p>
+                          </div>
+                          <button
+                            onClick={() => {
+                              setFailedPushesOpen(false);
+                              queuePushReview([pushItem]);
+                            }}
+                            className="shrink-0 rounded-md bg-primary px-3 py-2 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90 cursor-pointer"
+                          >
+                            Retry Push
+                          </button>
+                        </div>
+                      </article>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           </div>
         </div>

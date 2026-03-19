@@ -547,6 +547,19 @@ function EditableAdRateBlock({ item, rowId, onSave, onPush, onDiscard, showItemI
     return `${(Number(val) * 100).toFixed(1)}%`;
   }
 
+  function normalizePercentInput(raw: string) {
+    const cleaned = raw.replace(/[^\d.]/g, "");
+    if (!cleaned) return "";
+
+    const match = cleaned.match(/^(\d{0,3})(?:\.(\d{0,1})?)?/);
+    if (!match) return "";
+
+    const whole = match[1] ?? "";
+    const decimal = match[2];
+    if (decimal != null) return `${whole}.${decimal}`;
+    return whole;
+  }
+
   function startEdit() {
     if (isNonAdPlatform) return;
     const current = hasStaged ? Number(item.stagedValue) : (item.value != null ? Number(item.value) : 0);
@@ -563,7 +576,8 @@ function EditableAdRateBlock({ item, rowId, onSave, onPush, onDiscard, showItemI
   function handleSave(mode: "stage" | "push") {
     const parsed = parseFloat(draftPercent);
     if (isNaN(parsed) || parsed < 0) { cancelEdit(); return; }
-    const rate = parsed / 100;
+    const normalizedPercent = Math.round(parsed * 10) / 10;
+    const rate = normalizedPercent / 100;
     onSave(rowId, item.platform, item.listingId, rate, mode);
     setEditing(false);
     setShowActions(false);
@@ -597,8 +611,9 @@ function EditableAdRateBlock({ item, rowId, onSave, onPush, onDiscard, showItemI
           <input
             ref={inputRef}
             type="text"
+            inputMode="decimal"
             value={draftPercent}
-            onChange={(e) => setDraftPercent(e.target.value)}
+            onChange={(e) => setDraftPercent(normalizePercentInput(e.target.value))}
             onKeyDown={(e) => {
               if (e.key === "Enter") setShowActions(true);
               if (e.key === "Escape") cancelEdit();
