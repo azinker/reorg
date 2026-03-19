@@ -1,8 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { ImageOff } from "lucide-react";
-import { copyImageFromUrl } from "@/lib/client-clipboard";
+import {
+  copyImageFromUrl,
+  copyRenderedImageElement,
+  getImageProxyUrl,
+} from "@/lib/client-clipboard";
 
 interface PhotoCellProps {
   imageUrl: string | null;
@@ -16,12 +20,19 @@ interface PhotoCellProps {
 export function PhotoCell({ imageUrl, alt, imageSource, rowId, expandedPhotoId, onToggleExpand }: PhotoCellProps) {
   const [imgError, setImgError] = useState(false);
   const [copiedImage, setCopiedImage] = useState(false);
+  const imageRef = useRef<HTMLImageElement | null>(null);
   const isExpanded = expandedPhotoId === rowId;
+  const displayImageUrl = useMemo(() => (imageUrl ? getImageProxyUrl(imageUrl) : null), [imageUrl]);
 
   async function handleCopyImage() {
     if (!imageUrl) return;
     try {
-      await copyImageFromUrl(imageUrl);
+      const imageElement = imageRef.current;
+      if (imageElement && imageElement.complete && imageElement.naturalWidth > 0) {
+        await copyRenderedImageElement(imageElement);
+      } else {
+        await copyImageFromUrl(imageUrl);
+      }
       setCopiedImage(true);
       window.setTimeout(() => setCopiedImage(false), 1500);
     } catch (error) {
@@ -40,17 +51,28 @@ export function PhotoCell({ imageUrl, alt, imageSource, rowId, expandedPhotoId, 
   return (
     <button
       onClick={() => onToggleExpand(isExpanded ? null : rowId)}
-      className="relative h-24 w-24 shrink-0 overflow-hidden rounded border border-border transition-all hover:ring-2 hover:ring-ring/50 cursor-pointer"
+      className="relative h-24 w-24 shrink-0 cursor-pointer overflow-hidden rounded border border-border transition-all hover:ring-2 hover:ring-ring/50"
+      title="Left click to enlarge. Right click to copy image."
+      onMouseDown={(e) => {
+        if (e.button === 2) {
+          e.preventDefault();
+        }
+      }}
       onContextMenu={(e) => {
         e.preventDefault();
         void handleCopyImage();
       }}
     >
       <img
-        src={imageUrl}
+        ref={imageRef}
+        src={displayImageUrl ?? imageUrl}
         alt={alt}
         className="h-full w-full object-cover"
         onError={() => setImgError(true)}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          void handleCopyImage();
+        }}
       />
       {copiedImage && (
         <span className="absolute left-1/2 top-2 z-10 -translate-x-1/2 rounded bg-foreground px-2 py-0.5 text-[10px] font-medium text-background shadow-lg">
@@ -74,10 +96,17 @@ interface PhotoOverlayProps {
 
 export function PhotoOverlay({ imageUrl, alt, onClose }: PhotoOverlayProps) {
   const [copiedImage, setCopiedImage] = useState(false);
+  const imageRef = useRef<HTMLImageElement | null>(null);
+  const displayImageUrl = useMemo(() => getImageProxyUrl(imageUrl), [imageUrl]);
 
   async function handleCopyImage() {
     try {
-      await copyImageFromUrl(imageUrl);
+      const imageElement = imageRef.current;
+      if (imageElement && imageElement.complete && imageElement.naturalWidth > 0) {
+        await copyRenderedImageElement(imageElement);
+      } else {
+        await copyImageFromUrl(imageUrl);
+      }
       setCopiedImage(true);
       window.setTimeout(() => setCopiedImage(false), 1500);
     } catch (error) {
@@ -105,9 +134,15 @@ export function PhotoOverlay({ imageUrl, alt, onClose }: PhotoOverlayProps) {
           <span className="text-sm font-bold">&times;</span>
         </button>
         <img
-          src={imageUrl}
+          ref={imageRef}
+          src={displayImageUrl}
           alt={alt}
           className="max-h-[55vh] w-full object-contain"
+          onMouseDown={(e) => {
+            if (e.button === 2) {
+              e.preventDefault();
+            }
+          }}
           onContextMenu={(e) => {
             e.preventDefault();
             void handleCopyImage();

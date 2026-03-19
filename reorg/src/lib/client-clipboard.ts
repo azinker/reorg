@@ -1,12 +1,26 @@
 "use client";
 
-async function writeBlobToClipboard(blob: Blob) {
+function ensureClipboardWriteSupport() {
   if (typeof window === "undefined" || !("ClipboardItem" in window) || !navigator.clipboard?.write) {
     throw new Error("Image clipboard is not supported in this browser.");
   }
+}
+
+async function writeBlobToClipboard(blob: Blob) {
+  ensureClipboardWriteSupport();
 
   const item = new window.ClipboardItem({
     [blob.type]: blob,
+  });
+
+  await navigator.clipboard.write([item]);
+}
+
+async function writeClipboardItemWithPromise(type: string, blobPromise: Promise<Blob>) {
+  ensureClipboardWriteSupport();
+
+  const item = new window.ClipboardItem({
+    [type]: blobPromise,
   });
 
   await navigator.clipboard.write([item]);
@@ -59,8 +73,42 @@ export async function copySvgElementImage(svg: SVGSVGElement) {
   }
 }
 
+export function getImageProxyUrl(imageUrl: string) {
+  return `/api/image-proxy?url=${encodeURIComponent(imageUrl)}`;
+}
+
+function imageElementToPngBlob(image: HTMLImageElement) {
+  return new Promise<Blob>((resolve, reject) => {
+    const width = Math.max(image.naturalWidth || image.width, 1);
+    const height = Math.max(image.naturalHeight || image.height, 1);
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+
+    const context = canvas.getContext("2d");
+    if (!context) {
+      reject(new Error("Unable to create canvas context."));
+      return;
+    }
+
+    context.drawImage(image, 0, 0, width, height);
+    canvas.toBlob((blob) => {
+      if (!blob) {
+        reject(new Error("Unable to convert image for clipboard copy."));
+        return;
+      }
+      resolve(blob);
+    }, "image/png");
+  });
+}
+
+export async function copyRenderedImageElement(image: HTMLImageElement) {
+  const pngBlobPromise = imageElementToPngBlob(image);
+  await writeClipboardItemWithPromise("image/png", pngBlobPromise);
+}
+
 export async function copyImageFromUrl(imageUrl: string) {
-  const proxyUrl = `/api/image-proxy?url=${encodeURIComponent(imageUrl)}`;
+  const proxyUrl = getImageProxyUrl(imageUrl);
 
   let response = await fetch(proxyUrl, { cache: "no-store" });
   if (!response.ok) {
