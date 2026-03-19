@@ -16,6 +16,11 @@ import { CopyValue } from "@/components/grid/copy-value";
 import { ColumnManager } from "@/components/grid/column-manager";
 import { EditableCurrencyCell } from "@/components/grid/cells/editable-currency-cell";
 import { EditableWeightCell } from "@/components/grid/cells/editable-weight-cell";
+import {
+  PushConfirmModal,
+  type PushApiData,
+  type PushItem,
+} from "@/components/push/push-confirm-modal";
 import { useShippingRates } from "@/lib/use-shipping-rates";
 import { useSettings } from "@/lib/use-settings";
 import { getDensityPadding, getRowHeightEstimate } from "@/lib/settings-store";
@@ -36,6 +41,8 @@ import {
 interface DataGridProps {
   rows: GridRow[];
 }
+
+type PushField = "salePrice" | "adRate";
 
 const DEFAULT_FILTERS: FilterState = {
   marketplace: "all",
@@ -345,13 +352,123 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
     loadUserPref("columns", DEFAULT_COLUMNS)
   );
   const [highlightedRowId, setHighlightedRowId] = useState<string | null>(null);
-    const [toast, setToast] = useState<string | null>(null);
-    const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-    const parentRef = useRef<HTMLDivElement>(null);
+  const [toast, setToast] = useState<string | null>(null);
+  const [pushModalOpen, setPushModalOpen] = useState(false);
+  const [pushModalItems, setPushModalItems] = useState<PushItem[]>([]);
+  const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const parentRef = useRef<HTMLDivElement>(null);
 
   function showToast(msg: string) {
     setToast(msg);
     setTimeout(() => setToast(null), 4000);
+  }
+
+  function queuePushReview(items: PushItem[]) {
+    if (items.length === 0) {
+      showToast("No staged changes were ready to review for push.");
+      return;
+    }
+    setPushModalItems(items);
+    setPushModalOpen(true);
+  }
+
+  function buildPushItem(
+    row: GridRow | undefined,
+    platform: string,
+    listingId: string,
+    field: PushField,
+    newValue?: number,
+  ): PushItem | null {
+    if (!row) return null;
+
+    const sourceValues = field === "salePrice" ? row.salePrices : row.adRates;
+    const value = sourceValues.find(
+      (entry) => entry.platform === platform && entry.listingId === listingId,
+    );
+    if (!value) return null;
+
+    const liveValue =
+      value.value != null && typeof value.value === "number"
+        ? Number(value.value)
+        : null;
+    const stagedValue =
+      newValue ??
+      (value.stagedValue != null && typeof value.stagedValue === "number"
+        ? Number(value.stagedValue)
+        : null);
+
+    if (stagedValue == null) return null;
+
+    return {
+      sku: row.sku,
+      title: row.title,
+      platform: platform as Platform,
+      listingId,
+      field,
+      oldValue: liveValue,
+      newValue: stagedValue,
+    };
+  }
+
+  function applyPushOutcome(result: PushApiData) {
+    const successful = result.results.filter((entry) => entry.success);
+    if (successful.length === 0) {
+      showToast(result.message);
+      return;
+    }
+
+    const successMap = new Map(
+      successful.map((entry) => [
+        `${entry.platform}:${entry.listingId}:${entry.field}`,
+        entry,
+      ]),
+    );
+
+    function applyToRow(row: GridRow): GridRow {
+      const salePrices = row.salePrices.map((entry) => {
+        const key = `${entry.platform}:${entry.listingId}:salePrice`;
+        const pushed = successMap.get(key);
+        return pushed
+          ? { ...entry, value: pushed.newValue, stagedValue: undefined }
+          : entry;
+      });
+      const adRates = row.adRates.map((entry) => {
+        const key = `${entry.platform}:${entry.listingId}:adRate`;
+        const pushed = successMap.get(key);
+        return pushed
+          ? { ...entry, value: pushed.newValue, stagedValue: undefined }
+          : entry;
+      });
+      const childRows = row.childRows?.map((child) => applyToRow(child));
+      const updated = recalcRow({
+        ...row,
+        salePrices,
+        adRates,
+        childRows,
+      });
+      const hasChildStaged = childRows?.some((child) => child.hasStagedChanges) ?? false;
+      return {
+        ...updated,
+        childRows,
+        hasStagedChanges:
+          updated.salePrices.some((entry) => entry.stagedValue != null && entry.stagedValue !== entry.value) ||
+          updated.adRates.some((entry) => entry.stagedValue != null && entry.stagedValue !== entry.value) ||
+          hasChildStaged,
+      };
+    }
+
+    setGridRows((prev) => prev.map((row) => applyToRow(row)));
+
+    if (result.status === "partial") {
+      showToast(
+        `Push partially completed — ${result.summary.successfulChanges} change${result.summary.successfulChanges === 1 ? "" : "s"} pushed, ${result.summary.failedChanges} still staged.`,
+      );
+      return;
+    }
+
+    showToast(
+      `Live push completed — ${result.summary.successfulChanges} change${result.summary.successfulChanges === 1 ? "" : "s"} pushed successfully.`,
+    );
   }
 
   function findRow(rowId: string): GridRow | undefined {
@@ -401,7 +518,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
   }
 
   function persistStageAction(sku: string, platform: string, listingId: string, action: string, newPrice?: number) {
-    fetch("/api/grid/stage", {
+    return fetch("/api/grid/stage", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action, sku, platform, listingId, newPrice }),
@@ -452,12 +569,16 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
       const updated = { ...r, salePrices: newSalePrices };
       return recalcRow(updated);
     });
-    persistStageAction(sku, platform, listingId, mode, newPrice);
-    showToast(
-      mode === "push"
-        ? `Price Pushed Live — SKU ${sku} (${platLabel}) from ${oldVal} to ${fmtDollar(newPrice)}`
-        : `Price Staged — SKU ${sku} (${platLabel}) from ${oldVal} to ${fmtDollar(newPrice)}`
-    );
+    void persistStageAction(sku, platform, listingId, "stage", newPrice);
+
+    if (mode === "push") {
+      const pushItem = buildPushItem(row, platform, listingId, "salePrice", newPrice);
+      queuePushReview(pushItem ? [pushItem] : []);
+      showToast(`Price staged for push review — SKU ${sku} (${platLabel}) from ${oldVal} to ${fmtDollar(newPrice)}`);
+      return;
+    }
+
+    showToast(`Price Staged — SKU ${sku} (${platLabel}) from ${oldVal} to ${fmtDollar(newPrice)}`);
   }
 
   function handleAdRateEdit(rowId: string, platform: string, listingId: string, newRate: number, mode: "stage" | "push") {
@@ -480,12 +601,16 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
       const updated = { ...r, adRates: newAdRates };
       return recalcRow(updated);
     });
-    persistAdRateAction(sku, platform, listingId, mode, newRate);
-    showToast(
-      mode === "push"
-        ? `Ad Rate Pushed Live — SKU ${sku} (${platLabel}) from ${oldVal} to ${fmtPct(newRate)}`
-        : `Ad Rate Staged — SKU ${sku} (${platLabel}) from ${oldVal} to ${fmtPct(newRate)}`
-    );
+    void persistAdRateAction(sku, platform, listingId, "stage", newRate);
+
+    if (mode === "push") {
+      const pushItem = buildPushItem(row, platform, listingId, "adRate", newRate);
+      queuePushReview(pushItem ? [pushItem] : []);
+      showToast(`Ad rate staged for push review — SKU ${sku} (${platLabel}) from ${oldVal} to ${fmtPct(newRate)}`);
+      return;
+    }
+
+    showToast(`Ad Rate Staged — SKU ${sku} (${platLabel}) from ${oldVal} to ${fmtPct(newRate)}`);
   }
 
   function handlePushStagedAdRate(rowId: string, platform: string, listingId: string) {
@@ -494,20 +619,9 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
     const platLabel = PLATFORM_SHORT[platform as keyof typeof PLATFORM_SHORT] ?? platform;
     const adRate = row?.adRates.find((rate) => rate.platform === platform && rate.listingId === listingId);
     const stagedVal = adRate?.stagedValue != null ? `${(Number(adRate.stagedValue) * 100).toFixed(1)}%` : "—";
-    const pushRate = adRate?.stagedValue != null ? Number(adRate.stagedValue) : undefined;
-
-    updateRowById(rowId, (r) => {
-      const newAdRates = r.adRates.map((rate) => {
-        if (rate.platform === platform && rate.listingId === listingId && rate.stagedValue != null) {
-          return { ...rate, value: rate.stagedValue, stagedValue: undefined };
-        }
-        return rate;
-      });
-      return recalcRow({ ...r, adRates: newAdRates });
-    });
-
-    if (pushRate != null) persistAdRateAction(sku, platform, listingId, "push", pushRate);
-    showToast(`Ad Rate Pushed Live — SKU ${sku} (${platLabel}) ${stagedVal} is now live`);
+    const pushItem = buildPushItem(row, platform, listingId, "adRate");
+    queuePushReview(pushItem ? [pushItem] : []);
+    showToast(`Reviewing staged ad rate push — SKU ${sku} (${platLabel}) ${stagedVal}`);
   }
 
   function handleDiscardStagedAdRate(rowId: string, platform: string, listingId: string) {
@@ -533,7 +647,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
   }
 
   function persistAdRateAction(sku: string, platform: string, listingId: string, action: string, newRate?: number) {
-    fetch("/api/grid/stage", {
+    return fetch("/api/grid/stage", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action, sku, platform, listingId, newPrice: newRate, field: "adRate" }),
@@ -546,19 +660,9 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
     const platLabel = PLATFORM_SHORT[platform as keyof typeof PLATFORM_SHORT] ?? platform;
     const sp = row?.salePrices.find((s) => s.platform === platform && s.listingId === listingId);
     const stagedVal = sp?.stagedValue != null ? fmtDollar(Number(sp.stagedValue)) : "—";
-    const pushPrice = sp?.stagedValue != null ? Number(sp.stagedValue) : undefined;
-    updateRowById(rowId, (r) => {
-      const newSalePrices = r.salePrices.map((s) => {
-        if (s.platform === platform && s.listingId === listingId && s.stagedValue != null) {
-          return { ...s, value: s.stagedValue, stagedValue: undefined };
-        }
-        return s;
-      });
-      const updated = { ...r, salePrices: newSalePrices };
-      return recalcRow(updated);
-    });
-    if (pushPrice != null) persistStageAction(sku, platform, listingId, "push", pushPrice);
-    showToast(`Price Pushed Live — SKU ${sku} (${platLabel}) ${stagedVal} is now live`);
+    const pushItem = buildPushItem(row, platform, listingId, "salePrice");
+    queuePushReview(pushItem ? [pushItem] : []);
+    showToast(`Reviewing staged price push — SKU ${sku} (${platLabel}) ${stagedVal}`);
   }
 
   function handleDiscardStaged(rowId: string, platform: string, listingId: string) {
@@ -758,6 +862,8 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
     const srcShort = PLATFORM_SHORT[gpSource];
     const destShorts = [...gpDest].map((p) => PLATFORM_SHORT[p]).join(", ");
     let updated = 0;
+    const pushItems: PushItem[] = [];
+    const stageWrites: Array<{ sku: string; platform: string; listingId: string; newPrice: number }> = [];
 
     setGridRows((prev) =>
       prev.map((row) => {
@@ -770,13 +876,25 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
             if (gpDest.has(sp.platform as Platform) && sp.platform !== gpSource) {
               changed = true;
               updated++;
-              if (mode === "push") return { ...sp, value: sourcePrice, stagedValue: undefined };
+              stageWrites.push({ sku: r.sku, platform: sp.platform, listingId: sp.listingId, newPrice: sourcePrice });
+              if (mode === "push") {
+                pushItems.push({
+                  sku: r.sku,
+                  title: r.title,
+                  platform: sp.platform as Platform,
+                  listingId: sp.listingId,
+                  field: "salePrice",
+                  oldValue: sp.value != null && typeof sp.value === "number" ? Number(sp.value) : null,
+                  newValue: sourcePrice,
+                });
+              }
+              if (mode === "push") return { ...sp, stagedValue: sourcePrice };
               return { ...sp, stagedValue: sourcePrice };
             }
             return sp;
           });
           if (!changed) return r;
-          return recalcRowStatic({ ...r, salePrices: newSalePrices, hasStagedChanges: mode === "stage" || r.hasStagedChanges }, globalFeeRate);
+          return recalcRowStatic({ ...r, salePrices: newSalePrices, hasStagedChanges: true }, globalFeeRate);
         }
 
         const newRow = applyToRow(row);
@@ -792,11 +910,18 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
     setGpSource(null);
     setGpDest(new Set());
     setGpMode(null);
-    showToast(
-      mode === "push"
-        ? `Global Price Push — ${srcShort} → ${destShorts} (${updated} listings updated live)`
-        : `Global Price Staged — ${srcShort} → ${destShorts} (${updated} listings staged)`
+    void Promise.allSettled(
+      stageWrites.map((item) =>
+        persistStageAction(item.sku, item.platform, item.listingId, "stage", item.newPrice),
+      ),
     );
+    if (mode === "push") {
+      queuePushReview(pushItems);
+      showToast(`Global Price Review — ${srcShort} → ${destShorts} (${updated} listings staged for push review)`);
+      return;
+    }
+
+    showToast(`Global Price Staged — ${srcShort} → ${destShorts} (${updated} listings staged)`);
   }
 
   function fmtCurrency(val: number | null): string {
@@ -1437,12 +1562,12 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
                   >
                     Stage All
                   </button>
-                  <button
-                    onClick={() => handleGlobalPriceUpdate("push")}
-                    className="flex items-center gap-1 rounded-md bg-emerald-500 px-3 py-1.5 text-xs font-bold text-white hover:bg-emerald-600 cursor-pointer"
-                  >
-                    Push All Live
-                  </button>
+                    <button
+                      onClick={() => handleGlobalPriceUpdate("push")}
+                      className="flex items-center gap-1 rounded-md bg-emerald-500 px-3 py-1.5 text-xs font-bold text-white hover:bg-emerald-600 cursor-pointer"
+                    >
+                      Review Push All
+                    </button>
                 </div>
               </div>
             )}
@@ -1458,6 +1583,18 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
           </div>
         </div>
       )}
+
+      <PushConfirmModal
+        open={pushModalOpen}
+        onClose={() => {
+          setPushModalOpen(false);
+          setPushModalItems([]);
+        }}
+        items={pushModalItems}
+        onApplied={(result) => {
+          applyPushOutcome(result);
+        }}
+      />
 
       {/* Toast notification */}
       {toast && (

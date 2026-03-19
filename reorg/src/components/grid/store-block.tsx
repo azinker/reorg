@@ -243,9 +243,9 @@ function EditableStoreBlock({ item, rowId, onSave, onPush, onDiscard, showItemId
               <button
                 onClick={confirmPush}
                 className="flex items-center gap-0.5 rounded bg-emerald-500 px-1.5 py-0.5 text-[10px] font-bold text-white hover:bg-emerald-600 cursor-pointer"
-                title="Push value live to marketplace immediately"
+                title="Review the guarded live push flow for this value"
               >
-                Push
+                Review Push
               </button>
               <button onClick={cancelEdit} className="rounded p-0.5 text-muted-foreground hover:text-foreground cursor-pointer" title="Cancel">
                 <X className="h-3 w-3" />
@@ -289,10 +289,10 @@ function EditableStoreBlock({ item, rowId, onSave, onPush, onDiscard, showItemId
               <button
                 onClick={() => onPush(rowId, item.platform, item.listingId)}
                 className="flex items-center gap-0.5 rounded bg-emerald-500 px-1.5 py-0.5 text-[10px] font-bold text-white hover:bg-emerald-600 cursor-pointer"
-                title="Push staged price live to marketplace"
+                title="Review the guarded live push flow for this staged price"
               >
                 <Upload className="h-2.5 w-2.5" />
-                Push Live
+                Review Push
               </button>
               <button
                 onClick={() => onDiscard(rowId, item.platform, item.listingId)}
@@ -494,9 +494,9 @@ export function EditableStoreBlockGroup({ items, rowId, onSave, onPush, onDiscar
               <button
                 onClick={() => applyBulk("push")}
                 className="flex items-center gap-0.5 rounded bg-emerald-500 px-2 py-1 text-[10px] font-bold text-white hover:bg-emerald-600 cursor-pointer"
-                title="Push this price live to all stores"
+                title="Review the guarded live push flow for all selected stores"
               >
-                Push All
+                Review Push
               </button>
             </div>
           )}
@@ -627,9 +627,9 @@ function EditableAdRateBlock({ item, rowId, onSave, onPush, onDiscard, showItemI
               <button
                 onClick={() => handleSave("push")}
                 className="rounded bg-emerald-500 px-1.5 py-0.5 text-[10px] font-bold text-white hover:bg-emerald-600 cursor-pointer"
-                title="Push ad rate live immediately"
+                title="Review the guarded live push flow for this ad rate"
               >
-                Push
+                Review Push
               </button>
               <button onClick={cancelEdit} className="rounded p-0.5 text-muted-foreground hover:text-foreground cursor-pointer" title="Cancel">
                 <X className="h-3 w-3" />
@@ -669,10 +669,10 @@ function EditableAdRateBlock({ item, rowId, onSave, onPush, onDiscard, showItemI
               <button
                 onClick={() => onPush(rowId, item.platform, item.listingId)}
                 className="flex items-center gap-0.5 rounded bg-emerald-500 px-1.5 py-0.5 text-[10px] font-bold text-white hover:bg-emerald-600 cursor-pointer"
-                title="Push staged ad rate live to marketplace"
+                title="Review the guarded live push flow for this staged ad rate"
               >
                 <Upload className="h-2.5 w-2.5" />
-                Push Live
+                Review Push
               </button>
               <button
                 onClick={() => onDiscard(rowId, item.platform, item.listingId)}

@@ -32,16 +32,28 @@ reorG is built so marketplace changes only happen when you explicitly approve th
 
 - [ ] **Dry-run works** — You can run a push in dry-run mode
 - [ ] **Dry-run shows details** — You see what would change (store, listing, field, old value, new value)
+- [ ] **Dry-run shows go-live checklist** — You see batch size, backup readiness, confirmation status, and post-push refresh readiness
 - [ ] **No writes in dry-run** — Dry-run never writes to any marketplace
 - [ ] **Confirmation required for live push** — A real push only runs after you confirm the dry-run results
 
----
+--- 
 
 ## Push Confirmation
 
 - [ ] **Confirmation step exists** — Before a live push, you must explicitly confirm
 - [ ] **All changes listed** — The confirmation shows every change that will be sent
 - [ ] **Clear platform and listing** — Each change is tied to a specific store and listing
+- [ ] **Batch limits enforced** — Oversized live pushes are blocked until split into safer batches
+- [ ] **Pre-push backup enforced** — Bulk live pushes require backup readiness before they can run
+
+--- 
+
+## Push Result Handling
+
+- [ ] **Partial failure is explicit** — If some listings push and others fail, the result clearly says so
+- [ ] **Successful changes clear staged state only for those exact changes**
+- [ ] **Failed changes remain staged for safe retry**
+- [ ] **Post-push refresh result is visible** — You can see whether the follow-up targeted refresh completed, warned, or failed
 
 ---
 

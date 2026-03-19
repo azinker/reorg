@@ -34,6 +34,9 @@ Use this checklist before taking reorG live in production. Completing each step 
 - [ ] **Global write lock ON** — `GLOBAL_WRITE_LOCK=true` or equivalent in production
 - [ ] **Per-store write locks ON** — No store can push until you enable it
 - [ ] **Dry-run tested** — Run a dry-run push and confirm output looks correct
+- [ ] **Batch guardrails reviewed** — Confirm the push stays within the recommended safe batch size before live confirmation
+- [ ] **Pre-push backup ready** — For larger live pushes, confirm backup storage is configured and the dry-run says the automatic pre-push backup is ready
+- [ ] **Post-push refresh ready** — Confirm the dry-run says the follow-up targeted refresh can run safely after the push
 - [ ] **Staging tested** — If using staging (`stage.reorg.theperfectpart.net`), confirm writes are blocked
 
 See `docs/write-safety-checklist.md` for full details.
@@ -92,5 +95,7 @@ See `docs/backup-recovery.md` for more.
 
 1. Confirm all items above
 2. Enable write locks only when ready to push
-3. Monitor Engine Room and Errors for the first few hours
-4. Keep a backup from just before first real push
+3. Run a small first live push rather than a large batch
+4. Review the live push result for partial failures before retrying anything
+5. Monitor Engine Room and Errors for the first few hours
+6. Keep a backup from just before first real push

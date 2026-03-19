@@ -100,33 +100,13 @@ export async function POST(request: NextRequest) {
     }
 
     if (action === "push" && newPrice != null) {
-      const oldValue = targetField === "adRate" ? listing.adRate : listing.salePrice;
-
-      await db.marketplaceListing.update({
-        where: { id: listing.id },
-        data: { [targetField]: newPrice },
-      });
-
-      await db.stagedChange.updateMany({
-        where: {
-          masterRowId: master.id,
-          marketplaceListingId: listing.id,
-          field: targetField,
-          status: "STAGED",
+      return NextResponse.json(
+        {
+          error:
+            "Direct push from the staging route is disabled. Run the guarded /api/push dry-run and confirmation flow instead.",
         },
-        data: { status: "PUSHED", pushedAt: new Date() },
-      });
-
-      await db.auditLog.create({
-        data: {
-          action: targetField === "adRate" ? "push_ad_rate" : "push_price",
-          entityType: "MarketplaceListing",
-          entityId: listing.id,
-          details: { sku, platform, listingId, oldValue, newPrice, field: targetField },
-        },
-      });
-
-      return NextResponse.json({ data: { action: "pushed", sku, listingId, field: targetField, oldValue, newPrice } });
+        { status: 409 },
+      );
     }
 
     if (action === "discard") {

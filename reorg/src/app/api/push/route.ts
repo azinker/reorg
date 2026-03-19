@@ -11,9 +11,11 @@ import type { Platform } from "@prisma/client";
 const pushSchema = z.object({
   changes: z.array(
     z.object({
-      stagedChangeId: z.string(),
-      masterRowId: z.string(),
-      marketplaceListingId: z.string(),
+      stagedChangeId: z.string().optional(),
+      masterRowId: z.string().optional(),
+      marketplaceListingId: z.string().optional(),
+      sku: z.string().optional(),
+      title: z.string().optional(),
       platform: z.enum(["TPP_EBAY", "TT_EBAY", "BIGCOMMERCE", "SHOPIFY"]),
       listingId: z.string(),
       field: z.enum(["salePrice", "adRate"]),
@@ -24,6 +26,72 @@ const pushSchema = z.object({
   dryRun: z.boolean().default(true),
   confirmedLivePush: z.boolean().default(false),
 });
+
+async function resolvePushChanges(
+  changes: z.infer<typeof pushSchema>["changes"],
+) {
+  return Promise.all(
+    changes.map(async (change) => {
+      const listing =
+        change.marketplaceListingId
+          ? await db.marketplaceListing.findUnique({
+              where: { id: change.marketplaceListingId },
+              include: {
+                masterRow: { select: { id: true, sku: true } },
+                stagedChanges: {
+                  where: { status: "STAGED", field: change.field },
+                  orderBy: { createdAt: "desc" },
+                  take: 1,
+                },
+              },
+            })
+          : await db.marketplaceListing.findFirst({
+              where: {
+                platformItemId: change.listingId,
+                integration: { platform: change.platform },
+                ...(change.masterRowId
+                  ? { masterRowId: change.masterRowId }
+                  : change.sku
+                    ? { masterRow: { sku: change.sku } }
+                    : {}),
+              },
+              include: {
+                masterRow: { select: { id: true, sku: true } },
+                stagedChanges: {
+                  where: { status: "STAGED", field: change.field },
+                  orderBy: { createdAt: "desc" },
+                  take: 1,
+                },
+              },
+            });
+
+      if (!listing) {
+        throw new Error(
+          `Could not resolve ${change.platform} listing ${change.listingId} for ${change.field}.`,
+        );
+      }
+
+      const stagedChangeId =
+        change.stagedChangeId ??
+        listing.stagedChanges[0]?.id ??
+        null;
+
+      return {
+        stagedChangeId,
+        masterRowId: change.masterRowId ?? listing.masterRowId,
+        marketplaceListingId: change.marketplaceListingId ?? listing.id,
+        platform: change.platform,
+        listingId: change.listingId,
+        field: change.field,
+        oldValue:
+          change.oldValue ??
+          (change.field === "adRate" ? listing.adRate : listing.salePrice) ??
+          null,
+        newValue: change.newValue,
+      };
+    }),
+  );
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -83,10 +151,12 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const resolvedChanges = await resolvePushChanges(changes);
+
     const result = await executePush(
       {
         userId: session.user.id,
-        changes,
+        changes: resolvedChanges,
         dryRun,
       },
       adapters,
@@ -94,9 +164,11 @@ export async function POST(request: NextRequest) {
 
     const nextStep =
       result.status === "blocked"
-        ? result.blockedReason ?? "Resolve the blocker before retrying this push."
-        : dryRun
-          ? "Review the dry-run summary, backup requirement, and post-push refresh readiness before confirming a live push."
+          ? result.blockedReason ?? "Resolve the blocker before retrying this push."
+          : dryRun
+            ? "Review the dry-run summary, go-live checklist, and post-push refresh readiness before confirming a live push."
+            : result.status === "partial"
+              ? "Review the failed listings, then retry only the remaining staged changes after checking Engine Room."
           : result.postPushRefresh?.status === "completed"
             ? "Review Engine Room or Sync if you want to inspect the targeted post-push refresh jobs."
             : result.postPushRefresh?.status === "warning"
@@ -107,7 +179,9 @@ export async function POST(request: NextRequest) {
       result.status === "blocked"
         ? "Push blocked by a safety rule."
         : dryRun
-          ? "Dry run completed. Review the impact summary and live-push readiness before confirming anything."
+          ? "Dry run completed. Review the impact summary, batch guardrails, and live-push readiness before confirming anything."
+          : result.status === "partial"
+            ? "Live push partially completed. Some listings updated, and some still need attention before you retry."
           : result.prePushBackup?.status === "completed"
             ? "Live push completed through the write safety chain, including the automatic pre-push backup."
             : "Live push completed through the write safety chain.";

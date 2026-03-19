@@ -25,7 +25,7 @@ export interface PushRequest {
 }
 
 export interface PushChangeItem {
-  stagedChangeId: string;
+  stagedChangeId?: string | null;
   masterRowId: string;
   marketplaceListingId: string;
   platform: Platform;
@@ -38,12 +38,14 @@ export interface PushChangeItem {
 export interface PushExecutionResult {
   pushJobId: string;
   dryRun: boolean;
-  status: "completed" | "failed" | "blocked";
+  status: "completed" | "partial" | "failed" | "blocked";
   summary: {
     totalChanges: number;
     distinctListings: number;
     successfulChanges: number;
     failedChanges: number;
+    successfulListings: number;
+    failedListings: number;
     affectedPlatforms: Platform[];
     byPlatform: Array<{
       platform: Platform;
@@ -53,13 +55,32 @@ export interface PushExecutionResult {
     }>;
   };
   results: {
+    stagedChangeId: string | null;
+    masterRowId: string;
+    marketplaceListingId: string;
     platform: Platform;
     listingId: string;
     field: string;
+    oldValue: number | null;
+    newValue: number;
     success: boolean;
     error?: string;
   }[];
   blockedReason?: string;
+  batchSafety?: {
+    status: "ready" | "warning" | "blocked";
+    detail: string;
+    recommendedListings: number;
+    hardListings: number;
+    recommendedChanges: number;
+    hardChanges: number;
+  };
+  goLiveChecklist?: Array<{
+    key: "write-safety" | "batch-size" | "pre-push-backup" | "confirmation" | "post-push-refresh";
+    label: string;
+    status: "ready" | "warning" | "blocked" | "completed";
+    detail: string;
+  }>;
   prePushBackup?: {
     status: "not-needed" | "ready" | "completed" | "warning" | "blocked" | "failed";
     detail: string;
@@ -97,8 +118,31 @@ export interface PushExecutionResult {
 
 const EBAY_PUSH_PLATFORMS = new Set<Platform>(["TPP_EBAY", "TT_EBAY"]);
 const PRE_PUSH_BACKUP_LISTING_THRESHOLD = 10;
+const RECOMMENDED_LIVE_PUSH_LISTINGS = 25;
+const HARD_LIVE_PUSH_LISTINGS = 50;
+const RECOMMENDED_LIVE_PUSH_CHANGES = 50;
+const HARD_LIVE_PUSH_CHANGES = 100;
 
 function buildPushSummary(byPlatform: Map<Platform, PushChangeItem[]>, results?: PushExecutionResult["results"]) {
+  const listingKeys = new Set(
+    [...byPlatform.values()].flatMap((changes) =>
+      changes.map((change) => `${change.platform}:${change.listingId}`),
+    ),
+  );
+  const successfulListingKeys = results
+    ? new Set(
+        results
+          .filter((result) => result.success)
+          .map((result) => `${result.platform}:${result.listingId}`),
+      )
+    : new Set<string>();
+  const failedListingKeys = results
+    ? new Set(
+        results
+          .filter((result) => !result.success)
+          .map((result) => `${result.platform}:${result.listingId}`),
+      )
+    : new Set<string>();
   const byPlatformSummary = [...byPlatform.entries()].map(([platform, changes]) => ({
     platform,
     changes: changes.length,
@@ -108,14 +152,119 @@ function buildPushSummary(byPlatform: Map<Platform, PushChangeItem[]>, results?:
 
   return {
     totalChanges: [...byPlatform.values()].reduce((sum, changes) => sum + changes.length, 0),
-    distinctListings: new Set(
-      [...byPlatform.values()].flatMap((changes) => changes.map((change) => change.marketplaceListingId)),
-    ).size,
+    distinctListings: listingKeys.size,
     successfulChanges: results ? results.filter((result) => result.success).length : 0,
     failedChanges: results ? results.filter((result) => !result.success).length : 0,
+    successfulListings: successfulListingKeys.size,
+    failedListings: failedListingKeys.size,
     affectedPlatforms: [...byPlatform.keys()],
     byPlatform: byPlatformSummary,
   } satisfies PushExecutionResult["summary"];
+}
+
+function evaluateBatchSafety(
+  summary: PushExecutionResult["summary"],
+  dryRun: boolean,
+): NonNullable<PushExecutionResult["batchSafety"]> {
+  const tooManyListings = summary.distinctListings > HARD_LIVE_PUSH_LISTINGS;
+  const tooManyChanges = summary.totalChanges > HARD_LIVE_PUSH_CHANGES;
+  if (tooManyListings || tooManyChanges) {
+    return {
+      status: dryRun ? "warning" : "blocked",
+      detail:
+        `This push touches ${summary.distinctListings.toLocaleString()} listings across ${summary.totalChanges.toLocaleString()} changes. ` +
+        `Live pushes are capped at ${HARD_LIVE_PUSH_LISTINGS.toLocaleString()} listings or ${HARD_LIVE_PUSH_CHANGES.toLocaleString()} changes per batch. ` +
+        "Split this into smaller batches before pushing live.",
+      recommendedListings: RECOMMENDED_LIVE_PUSH_LISTINGS,
+      hardListings: HARD_LIVE_PUSH_LISTINGS,
+      recommendedChanges: RECOMMENDED_LIVE_PUSH_CHANGES,
+      hardChanges: HARD_LIVE_PUSH_CHANGES,
+    };
+  }
+
+  const largeListings = summary.distinctListings > RECOMMENDED_LIVE_PUSH_LISTINGS;
+  const largeChanges = summary.totalChanges > RECOMMENDED_LIVE_PUSH_CHANGES;
+  if (largeListings || largeChanges) {
+    return {
+      status: "warning",
+      detail:
+        `This push is larger than the recommended safe batch size of ${RECOMMENDED_LIVE_PUSH_LISTINGS.toLocaleString()} listings or ${RECOMMENDED_LIVE_PUSH_CHANGES.toLocaleString()} changes. ` +
+        "It can still run, but smaller batches are safer for first live pushes and cleaner to recover if anything fails.",
+      recommendedListings: RECOMMENDED_LIVE_PUSH_LISTINGS,
+      hardListings: HARD_LIVE_PUSH_LISTINGS,
+      recommendedChanges: RECOMMENDED_LIVE_PUSH_CHANGES,
+      hardChanges: HARD_LIVE_PUSH_CHANGES,
+    };
+  }
+
+  return {
+    status: "ready",
+    detail:
+      `This push stays within the recommended batch size (${RECOMMENDED_LIVE_PUSH_LISTINGS.toLocaleString()} listings / ${RECOMMENDED_LIVE_PUSH_CHANGES.toLocaleString()} changes).`,
+    recommendedListings: RECOMMENDED_LIVE_PUSH_LISTINGS,
+    hardListings: HARD_LIVE_PUSH_LISTINGS,
+    recommendedChanges: RECOMMENDED_LIVE_PUSH_CHANGES,
+    hardChanges: HARD_LIVE_PUSH_CHANGES,
+  };
+}
+
+function buildGoLiveChecklist(args: {
+  dryRun: boolean;
+  writeSafetyDetail: string;
+  writeSafetyStatus: "ready" | "blocked";
+  batchSafety: NonNullable<PushExecutionResult["batchSafety"]>;
+  prePushBackup: NonNullable<PushExecutionResult["prePushBackup"]>;
+  confirmationStatus: "ready" | "completed";
+  postPushRefresh: NonNullable<PushExecutionResult["postPushRefresh"]>;
+}): NonNullable<PushExecutionResult["goLiveChecklist"]> {
+  return [
+    {
+      key: "write-safety",
+      label: "Write safety checks",
+      status: args.writeSafetyStatus,
+      detail: args.writeSafetyDetail,
+    },
+    {
+      key: "batch-size",
+      label: "Batch size",
+      status: args.batchSafety.status,
+      detail: args.batchSafety.detail,
+    },
+    {
+      key: "pre-push-backup",
+      label: "Pre-push backup",
+      status:
+        args.prePushBackup.status === "blocked" || args.prePushBackup.status === "failed"
+          ? "blocked"
+          : args.prePushBackup.status === "warning"
+            ? "warning"
+            : args.prePushBackup.status === "completed"
+              ? "completed"
+              : "ready",
+      detail: args.prePushBackup.detail,
+    },
+    {
+      key: "confirmation",
+      label: "Explicit confirmation",
+      status: args.confirmationStatus,
+      detail: args.dryRun
+        ? "Dry run completed. A separate explicit confirmation is still required before any live push."
+        : "Live push was run only after explicit confirmation.",
+    },
+    {
+      key: "post-push-refresh",
+      label: "Post-push live readback",
+      status:
+        args.postPushRefresh.status === "blocked" || args.postPushRefresh.status === "failed"
+          ? "blocked"
+          : args.postPushRefresh.status === "warning"
+            ? "warning"
+            : args.postPushRefresh.status === "completed"
+              ? "completed"
+              : "ready",
+      detail: args.postPushRefresh.detail,
+    },
+  ];
 }
 
 function evaluatePrePushBackupNeed(
@@ -449,6 +598,8 @@ function buildBlockedResult(args: {
   dryRun: boolean;
   blockedReason: string;
   summary: PushExecutionResult["summary"];
+  batchSafety?: PushExecutionResult["batchSafety"];
+  goLiveChecklist?: PushExecutionResult["goLiveChecklist"];
   prePushBackup?: PushExecutionResult["prePushBackup"];
   postPushRefresh?: PushExecutionResult["postPushRefresh"];
 }): PushExecutionResult {
@@ -459,6 +610,8 @@ function buildBlockedResult(args: {
     summary: args.summary,
     results: [],
     blockedReason: args.blockedReason,
+    batchSafety: args.batchSafety,
+    goLiveChecklist: args.goLiveChecklist,
     prePushBackup: args.prePushBackup,
     postPushRefresh: args.postPushRefresh,
   };
@@ -489,6 +642,7 @@ export async function executePush(
     byPlatform.set(change.platform, existing);
   }
   const summary = buildPushSummary(byPlatform);
+  const writeSafetyMessages: string[] = [];
 
   // Check write safety for each platform
   for (const platform of byPlatform.keys()) {
@@ -498,16 +652,64 @@ export async function executePush(
         dryRun: request.dryRun,
         blockedReason: safety.reason ?? "Push blocked by write safety settings.",
         summary,
+        batchSafety: evaluateBatchSafety(summary, request.dryRun),
       });
     }
+    writeSafetyMessages.push(
+      safety.reason ?? `${platform} passed the current write lock and environment checks.`,
+    );
   }
 
+  const batchSafety = evaluateBatchSafety(summary, request.dryRun);
   const prePushBackupPlan = evaluatePrePushBackupNeed(summary, request.dryRun);
   if (!request.dryRun && prePushBackupPlan.status === "blocked") {
+    const goLiveChecklist = buildGoLiveChecklist({
+      dryRun: false,
+      writeSafetyDetail: writeSafetyMessages.join(" "),
+      writeSafetyStatus: "ready",
+      batchSafety,
+      prePushBackup: prePushBackupPlan,
+      confirmationStatus: "completed",
+      postPushRefresh: {
+        status: "ready",
+        detail: "Post-push refresh was not evaluated because the backup requirement blocked the live push first.",
+        retryAt: null,
+        requiredCalls: null,
+        availableCalls: null,
+      },
+    });
     return buildBlockedResult({
       dryRun: false,
       blockedReason: prePushBackupPlan.detail,
       summary,
+      batchSafety,
+      goLiveChecklist,
+      prePushBackup: prePushBackupPlan,
+    });
+  }
+
+  if (!request.dryRun && batchSafety.status === "blocked") {
+    const goLiveChecklist = buildGoLiveChecklist({
+      dryRun: false,
+      writeSafetyDetail: writeSafetyMessages.join(" "),
+      writeSafetyStatus: "ready",
+      batchSafety,
+      prePushBackup: prePushBackupPlan,
+      confirmationStatus: "completed",
+      postPushRefresh: {
+        status: "ready",
+        detail: "Post-push refresh was not evaluated because the batch size must be split first.",
+        retryAt: null,
+        requiredCalls: null,
+        availableCalls: null,
+      },
+    });
+    return buildBlockedResult({
+      dryRun: false,
+      blockedReason: batchSafety.detail,
+      summary,
+      batchSafety,
+      goLiveChecklist,
       prePushBackup: prePushBackupPlan,
     });
   }
@@ -516,11 +718,28 @@ export async function executePush(
     byPlatform,
     request.dryRun,
   );
+  const dryRunChecklist = buildGoLiveChecklist({
+    dryRun: request.dryRun,
+    writeSafetyDetail: writeSafetyMessages.join(" "),
+    writeSafetyStatus: "ready",
+    batchSafety,
+    prePushBackup: prePushBackupPlan,
+    confirmationStatus: request.dryRun ? "ready" : "completed",
+    postPushRefresh: postPushRefresh ?? {
+      status: "not-needed",
+      detail: "No post-push refresh requirement was detected for this push.",
+      retryAt: null,
+      requiredCalls: null,
+      availableCalls: null,
+    },
+  });
   if (!request.dryRun && postPushRefresh?.status === "blocked") {
     return buildBlockedResult({
       dryRun: false,
       blockedReason: postPushRefresh.detail,
       summary,
+      batchSafety,
+      goLiveChecklist: dryRunChecklist,
       prePushBackup: prePushBackupPlan,
       postPushRefresh,
     });
@@ -546,6 +765,11 @@ export async function executePush(
         platform: change.platform,
         listingId: change.listingId,
         field: change.field,
+        stagedChangeId: change.stagedChangeId ?? null,
+        masterRowId: change.masterRowId,
+        marketplaceListingId: change.marketplaceListingId,
+        oldValue: change.oldValue,
+        newValue: change.newValue,
         success: true,
       });
     }
@@ -558,6 +782,8 @@ export async function executePush(
           dryRun: true,
           summary,
           results,
+          batchSafety,
+          goLiveChecklist: dryRunChecklist,
           prePushBackup: prePushBackupPlan,
           postPushRefresh,
         },
@@ -571,12 +797,45 @@ export async function executePush(
       status: "completed",
       summary,
       results,
+      batchSafety,
+      goLiveChecklist: dryRunChecklist,
       prePushBackup: prePushBackupPlan,
       postPushRefresh,
     };
   }
 
   let completedPrePushBackup: PushExecutionResult["prePushBackup"] = prePushBackupPlan;
+  const normalizedChanges = await Promise.all(
+    request.changes.map(async (change) => {
+      if (change.stagedChangeId) return change;
+
+      const created = await db.stagedChange.create({
+        data: {
+          masterRowId: change.masterRowId,
+          marketplaceListingId: change.marketplaceListingId,
+          field: change.field,
+          stagedValue: String(change.newValue),
+          liveValue: change.oldValue != null ? String(change.oldValue) : null,
+          changedById: request.userId,
+        },
+      });
+
+      return {
+        ...change,
+        stagedChangeId: created.id,
+      };
+    }),
+  );
+  request = {
+    ...request,
+    changes: normalizedChanges,
+  };
+  byPlatform.clear();
+  for (const change of request.changes) {
+    const existing = byPlatform.get(change.platform) ?? [];
+    existing.push(change);
+    byPlatform.set(change.platform, existing);
+  }
   if (prePushBackupPlan.required) {
     try {
       const backup = await createBackup({
@@ -601,6 +860,26 @@ export async function executePush(
           result: {
             summary,
             results: [],
+            batchSafety,
+            goLiveChecklist: buildGoLiveChecklist({
+              dryRun: false,
+              writeSafetyDetail: writeSafetyMessages.join(" "),
+              writeSafetyStatus: "ready",
+              batchSafety,
+              prePushBackup: {
+                status: "failed",
+                detail,
+                required: true,
+              },
+              confirmationStatus: "completed",
+              postPushRefresh: postPushRefresh ?? {
+                status: "not-needed",
+                detail: "No post-push refresh requirement was detected for this push.",
+                retryAt: null,
+                requiredCalls: null,
+                availableCalls: null,
+              },
+            }),
             prePushBackup: {
               status: "failed",
               detail,
@@ -616,6 +895,26 @@ export async function executePush(
         dryRun: false,
         blockedReason: detail,
         summary,
+        batchSafety,
+        goLiveChecklist: buildGoLiveChecklist({
+          dryRun: false,
+          writeSafetyDetail: writeSafetyMessages.join(" "),
+          writeSafetyStatus: "ready",
+          batchSafety,
+          prePushBackup: {
+            status: "failed",
+            detail,
+            required: true,
+          },
+          confirmationStatus: "completed",
+          postPushRefresh: postPushRefresh ?? {
+            status: "not-needed",
+            detail: "No post-push refresh requirement was detected for this push.",
+            retryAt: null,
+            requiredCalls: null,
+            availableCalls: null,
+          },
+        }),
         prePushBackup: {
           status: "failed",
           detail,
@@ -632,9 +931,14 @@ export async function executePush(
     if (!adapter) {
       for (const change of changes) {
         results.push({
+          stagedChangeId: change.stagedChangeId ?? null,
+          masterRowId: change.masterRowId,
+          marketplaceListingId: change.marketplaceListingId,
           platform,
           listingId: change.listingId,
           field: change.field,
+          oldValue: change.oldValue,
+          newValue: change.newValue,
           success: false,
           error: `No adapter configured for ${platform}`,
         });
@@ -660,6 +964,9 @@ export async function executePush(
     if (priceUpdates.length > 0) {
       const priceResult = await adapter.pushPriceUpdates(priceUpdates);
       for (const update of priceUpdates) {
+        const change = changes.find(
+          (entry) => entry.field === "salePrice" && entry.listingId === update.platformItemId,
+        );
         const error = priceResult.errors.find(
           (e) => e.platformItemId === update.platformItemId
         );
@@ -667,6 +974,11 @@ export async function executePush(
           platform,
           listingId: update.platformItemId,
           field: "salePrice",
+          stagedChangeId: change?.stagedChangeId ?? null,
+          masterRowId: change?.masterRowId ?? "",
+          marketplaceListingId: change?.marketplaceListingId ?? "",
+          oldValue: change?.oldValue ?? null,
+          newValue: change?.newValue ?? update.newPrice,
           success: !error,
           error: error?.message,
         });
@@ -676,6 +988,9 @@ export async function executePush(
     if (adRateUpdates.length > 0) {
       const adResult = await adapter.pushAdRateUpdates(adRateUpdates);
       for (const update of adRateUpdates) {
+        const change = changes.find(
+          (entry) => entry.field === "adRate" && entry.listingId === update.platformItemId,
+        );
         const error = adResult.errors.find(
           (e) => e.platformItemId === update.platformItemId
         );
@@ -683,6 +998,11 @@ export async function executePush(
           platform,
           listingId: update.platformItemId,
           field: "adRate",
+          stagedChangeId: change?.stagedChangeId ?? null,
+          masterRowId: change?.masterRowId ?? "",
+          marketplaceListingId: change?.marketplaceListingId ?? "",
+          oldValue: change?.oldValue ?? null,
+          newValue: change?.newValue ?? update.newAdRate,
           success: !error,
           error: error?.message,
         });
@@ -691,23 +1011,26 @@ export async function executePush(
   }
 
   // Update staged changes for successful pushes
-  const successfulIds = results
+  const successfulStagedIds = results
     .filter((r) => r.success)
-    .map((r) => r.listingId);
+    .map((r) => r.stagedChangeId)
+    .filter((value): value is string => Boolean(value));
 
-  for (const change of request.changes) {
-    if (successfulIds.includes(change.listingId)) {
-      await db.stagedChange.update({
-        where: { id: change.stagedChangeId },
-        data: { status: "PUSHED", pushedAt: new Date() },
-      });
-    }
+  if (successfulStagedIds.length > 0) {
+    await db.stagedChange.updateMany({
+      where: { id: { in: successfulStagedIds } },
+      data: { status: "PUSHED", pushedAt: new Date() },
+    });
   }
 
-  const status = results.every((r) => r.success) ? "completed" : "failed";
+  const status = results.every((r) => r.success)
+    ? "completed"
+    : results.some((r) => r.success)
+      ? "partial"
+      : "failed";
   const finalSummary = buildPushSummary(byPlatform, results);
   const completedPostPushRefresh =
-    status === "completed" || results.some((result) => result.success)
+    status === "completed" || status === "partial"
       ? await executePostPushTargetedRefresh({
           pushJobId: pushJob.id,
           results,
@@ -721,6 +1044,22 @@ export async function executePush(
       result: {
         summary: finalSummary,
         results,
+        batchSafety,
+        goLiveChecklist: buildGoLiveChecklist({
+          dryRun: false,
+          writeSafetyDetail: writeSafetyMessages.join(" "),
+          writeSafetyStatus: "ready",
+          batchSafety,
+          prePushBackup: completedPrePushBackup ?? prePushBackupPlan,
+          confirmationStatus: "completed",
+          postPushRefresh: completedPostPushRefresh ?? {
+            status: "not-needed",
+            detail: "No successful eBay listing updates needed a post-push targeted refresh.",
+            retryAt: null,
+            requiredCalls: null,
+            availableCalls: null,
+          },
+        }),
         prePushBackup: completedPrePushBackup,
         postPushRefresh: completedPostPushRefresh,
       },
@@ -740,6 +1079,7 @@ export async function executePush(
         successful: results.filter((r) => r.success).length,
         failed: results.filter((r) => !r.success).length,
         summary: finalSummary,
+        batchSafety,
         prePushBackup: completedPrePushBackup ?? null,
         postPushRefresh: completedPostPushRefresh ?? null,
       },
@@ -752,6 +1092,22 @@ export async function executePush(
     status,
     summary: finalSummary,
     results,
+    batchSafety,
+    goLiveChecklist: buildGoLiveChecklist({
+      dryRun: false,
+      writeSafetyDetail: writeSafetyMessages.join(" "),
+      writeSafetyStatus: "ready",
+      batchSafety,
+      prePushBackup: completedPrePushBackup ?? prePushBackupPlan,
+      confirmationStatus: "completed",
+      postPushRefresh: completedPostPushRefresh ?? {
+        status: "not-needed",
+        detail: "No successful eBay listing updates needed a post-push targeted refresh.",
+        retryAt: null,
+        requiredCalls: null,
+        availableCalls: null,
+      },
+    }),
     prePushBackup: completedPrePushBackup,
     postPushRefresh: completedPostPushRefresh,
   };
