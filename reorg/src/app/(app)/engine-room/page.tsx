@@ -248,9 +248,124 @@ function StatusBadge({ status }: { status: string }) {
 }
 
 function SyncJobsPanel({ jobs }: { jobs: SyncJobRow[] }) {
+  const [sourceFilter, setSourceFilter] = useState<"all" | SyncJobRow["source"]>("all");
+  const [platformFilter, setPlatformFilter] = useState<string>("all");
+  const [hideTinyWebhookJobs, setHideTinyWebhookJobs] = useState(true);
+
+  const platformOptions = Array.from(new Set(jobs.map((job) => job.platform))).sort((a, b) =>
+    a.localeCompare(b),
+  );
+
+  const filteredJobs = jobs.filter((job) => {
+    if (sourceFilter !== "all" && job.source !== sourceFilter) return false;
+    if (platformFilter !== "all" && job.platform !== platformFilter) return false;
+    if (hideTinyWebhookJobs && job.source === "webhook" && job.items <= 1) return false;
+    return true;
+  });
+
+  const hiddenTinyWebhookCount = jobs.filter(
+    (job) => job.source === "webhook" && job.items <= 1,
+  ).length;
+
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-sm">
+    <div className="space-y-4">
+      <div className="rounded-lg border border-border bg-muted/20 p-4">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="space-y-1">
+            <h3 className="text-sm font-semibold text-foreground">Filter Sync Activity</h3>
+            <p className="max-w-3xl text-xs text-muted-foreground">
+              This table logs every real pull job across all connected stores. Use these filters to focus on the type
+              of sync work you care about.
+            </p>
+          </div>
+          <div className="rounded border border-border bg-background/60 px-3 py-2 text-xs text-muted-foreground">
+            Showing {filteredJobs.length.toLocaleString()} of {jobs.length.toLocaleString()} sync jobs
+          </div>
+        </div>
+
+        <div className="mt-4 grid gap-3 lg:grid-cols-[minmax(0,220px)_minmax(0,220px)_1fr]">
+          <label className="space-y-1">
+            <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Source</span>
+            <select
+              value={sourceFilter}
+              onChange={(event) => setSourceFilter(event.target.value as "all" | SyncJobRow["source"])}
+              className="h-10 w-full rounded-md border border-border bg-background px-3 text-sm text-foreground outline-none transition focus:border-ring"
+            >
+              <option value="all">All activity</option>
+              <option value="webhook">Webhook updates</option>
+              <option value="scheduler">Scheduled pulls</option>
+              <option value="manual">Manual pulls</option>
+              <option value="push">Push follow-up refreshes</option>
+            </select>
+            <p className="text-[11px] text-muted-foreground">
+              Webhook updates are small marketplace change notices. Scheduled pulls are automatic cadence checks.
+            </p>
+          </label>
+
+          <label className="space-y-1">
+            <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Store</span>
+            <select
+              value={platformFilter}
+              onChange={(event) => setPlatformFilter(event.target.value)}
+              className="h-10 w-full rounded-md border border-border bg-background px-3 text-sm text-foreground outline-none transition focus:border-ring"
+            >
+              <option value="all">All stores</option>
+              {platformOptions.map((platform) => (
+                <option key={platform} value={platform}>
+                  {platform}
+                </option>
+              ))}
+            </select>
+            <p className="text-[11px] text-muted-foreground">
+              Use this when you want to isolate one marketplace like Shopify, BigCommerce, or one eBay store.
+            </p>
+          </label>
+
+          <label className="flex cursor-pointer items-start gap-3 rounded-md border border-border bg-background/60 px-3 py-3">
+            <input
+              type="checkbox"
+              checked={hideTinyWebhookJobs}
+              onChange={(event) => setHideTinyWebhookJobs(event.target.checked)}
+              className="mt-0.5 h-4 w-4 rounded border-border bg-background text-primary focus:ring-ring"
+            />
+            <span className="space-y-1">
+              <span className="block text-sm font-medium text-foreground">Hide tiny webhook refreshes</span>
+              <span className="block text-[11px] text-muted-foreground">
+                Turns off the noisy 1-item webhook jobs that happen when Shopify or BigCommerce tells reorG a single
+                product changed. This only changes the view, not the sync behavior.
+              </span>
+              {hiddenTinyWebhookCount > 0 ? (
+                <span className="block text-[11px] text-muted-foreground">
+                  {hiddenTinyWebhookCount.toLocaleString()} tiny webhook job
+                  {hiddenTinyWebhookCount === 1 ? "" : "s"} currently match this rule.
+                </span>
+              ) : null}
+            </span>
+          </label>
+        </div>
+
+        <div className="mt-4 grid gap-2 text-[11px] text-muted-foreground md:grid-cols-2 xl:grid-cols-4">
+          <div className="rounded border border-border bg-background/40 px-3 py-2">
+            <span className="font-medium text-foreground">Webhook updates</span> are small targeted refreshes after a
+            marketplace notice. Many Shopify rows with 1 item synced are normal here.
+          </div>
+          <div className="rounded border border-border bg-background/40 px-3 py-2">
+            <span className="font-medium text-foreground">Scheduled pulls</span> are the automatic background checks
+            that run on the store cadence.
+          </div>
+          <div className="rounded border border-border bg-background/40 px-3 py-2">
+            <span className="font-medium text-foreground">Manual pulls</span> are jobs started by a user from Sync or
+            another control surface.
+          </div>
+          <div className="rounded border border-border bg-background/40 px-3 py-2">
+            <span className="font-medium text-foreground">Push follow-up refreshes</span> are targeted read-backs
+            after a confirmed marketplace push.
+          </div>
+        </div>
+      </div>
+
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
         <thead>
           <tr className="border-b border-border text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">
             <th className="pb-3 pr-4">ID</th>
@@ -265,7 +380,7 @@ function SyncJobsPanel({ jobs }: { jobs: SyncJobRow[] }) {
           </tr>
         </thead>
         <tbody className="divide-y divide-border/50">
-          {jobs.map((job) => (
+          {filteredJobs.map((job) => (
             <tr key={job.id} className="text-foreground">
               <td className="py-3 pr-4 font-mono text-xs text-muted-foreground">{job.id.slice(0, 8)}</td>
               <td className="py-3 pr-4">{job.platform}</td>
@@ -304,9 +419,15 @@ function SyncJobsPanel({ jobs }: { jobs: SyncJobRow[] }) {
             </tr>
           ))}
         </tbody>
-      </table>
+        </table>
+      </div>
       {jobs.length === 0 && (
         <p className="py-6 text-center text-sm text-muted-foreground">No sync jobs yet.</p>
+      )}
+      {jobs.length > 0 && filteredJobs.length === 0 && (
+        <p className="py-6 text-center text-sm text-muted-foreground">
+          No sync jobs match the current filters. Try switching back to <span className="font-medium text-foreground">All activity</span> or turning off <span className="font-medium text-foreground">Hide tiny webhook refreshes</span>.
+        </p>
       )}
     </div>
   );
