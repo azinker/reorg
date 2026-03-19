@@ -16,6 +16,7 @@ export interface AppSettings {
   defaultSort: SortColumn;
   autoExpandVariations: boolean;
   globalWriteLock: boolean;
+  livePushEnabled: boolean;
 }
 
 const DEFAULTS: AppSettings = {
@@ -29,6 +30,7 @@ const DEFAULTS: AppSettings = {
   defaultSort: "title",
   autoExpandVariations: false,
   globalWriteLock: false,
+  livePushEnabled: false,
 };
 
 let cached: AppSettings | null = null;
@@ -68,6 +70,12 @@ function persist(settings: AppSettings) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ key: "global_write_lock", value: settings.globalWriteLock }),
   }).catch((err) => console.error("[settings] global_write_lock persist failed", err));
+
+  fetch("/api/settings", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ key: "live_push_enabled", value: settings.livePushEnabled }),
+  }).catch((err) => console.error("[settings] live_push_enabled persist failed", err));
 }
 
 export function getSettings(): AppSettings {
@@ -104,9 +112,10 @@ export async function hydrateSettings(): Promise<void> {
   if (hydrated) return;
   hydrated = true;
   try {
-    const [resApp, resLock] = await Promise.all([
+    const [resApp, resLock, resLivePush] = await Promise.all([
       fetch(`/api/settings?key=${DB_KEY}`),
       fetch(`/api/settings?key=global_write_lock`),
+      fetch(`/api/settings?key=live_push_enabled`),
     ]);
     let merged: Partial<AppSettings> = { ...DEFAULTS };
     if (resApp.ok) {
@@ -119,6 +128,12 @@ export async function hydrateSettings(): Promise<void> {
       const json = await resLock.json();
       if (typeof json.data === "boolean") {
         merged.globalWriteLock = json.data;
+      }
+    }
+    if (resLivePush.ok) {
+      const json = await resLivePush.json();
+      if (typeof json.data === "boolean") {
+        merged.livePushEnabled = json.data;
       }
     }
     cached = { ...DEFAULTS, ...merged };

@@ -310,6 +310,28 @@ export default function SettingsPage() {
                 className={cn(settings.globalWriteLock && "!bg-amber-500 hover:!bg-amber-600")}
               />
             </div>
+            <div className="flex items-start justify-between gap-6">
+              <div className="flex-1">
+                <div className="flex items-center gap-2">
+                  {settings.livePushEnabled ? (
+                    <Unlock className="h-5 w-5 text-red-400" />
+                  ) : (
+                    <Lock className="h-5 w-5 text-muted-foreground" />
+                  )}
+                  <span className="font-medium">Live Push Enabled</span>
+                </div>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  When enabled, confirmed push actions are allowed to send marketplace writes.
+                  Dry runs still work with this off. Keep this off unless you are intentionally
+                  testing or running live pushes.
+                </p>
+              </div>
+              <ToggleSwitch
+                checked={settings.livePushEnabled}
+                onCheckedChange={(v) => update({ livePushEnabled: v })}
+                className={cn(settings.livePushEnabled && "!bg-red-500 hover:!bg-red-600")}
+              />
+            </div>
             <div className="flex items-center gap-2">
               <span className="text-xs text-muted-foreground">Environment:</span>
               <span className="inline-flex items-center rounded-full border border-border bg-muted px-2.5 py-0.5 text-xs font-medium">
