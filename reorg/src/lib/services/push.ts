@@ -644,11 +644,20 @@ export async function executePush(
   }
   const summary = buildPushSummary(byPlatform);
   const writeSafetyMessages: string[] = [];
+  let writeSafetyStatus: "ready" | "blocked" = "ready";
 
   // Check write safety for each platform
   for (const platform of byPlatform.keys()) {
     const safety = await checkWriteSafety(platform);
     if (!safety.allowed) {
+      if (request.dryRun) {
+        writeSafetyStatus = "blocked";
+        writeSafetyMessages.push(
+          safety.reason ??
+            `${platform} is currently blocked for live writes. Dry run can continue, but confirmation would still be blocked.`,
+        );
+        continue;
+      }
       return buildBlockedResult({
         dryRun: request.dryRun,
         blockedReason: safety.reason ?? "Push blocked by write safety settings.",
@@ -722,7 +731,7 @@ export async function executePush(
   const dryRunChecklist = buildGoLiveChecklist({
     dryRun: request.dryRun,
     writeSafetyDetail: writeSafetyMessages.join(" "),
-    writeSafetyStatus: "ready",
+    writeSafetyStatus,
     batchSafety,
     prePushBackup: prePushBackupPlan,
     confirmationStatus: request.dryRun ? "ready" : "completed",
