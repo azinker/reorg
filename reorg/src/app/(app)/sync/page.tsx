@@ -512,6 +512,20 @@ function usesWebhookWakeup(profile: SyncProfile) {
   );
 }
 
+function getRelevantFallbackReason(
+  profile: SyncProfile,
+  syncState: IntegrationSyncState | null | undefined,
+) {
+  if (!syncState?.lastFallbackReason) return null;
+  if (
+    profile.preferredMode === "full" &&
+    syncState.lastEffectiveMode === "full"
+  ) {
+    return null;
+  }
+  return syncState.lastFallbackReason;
+}
+
 function getCompletionSummary(
   job: SyncJobInfo | null,
   fallbackReason: string | null,
@@ -1221,9 +1235,12 @@ export default function SyncPage() {
             : syncProfile
               ? getNextPullAt(syncProfile, new Date(nowMs), store.apiPlatform)
               : null;
+          const relevantFallbackReason = syncProfile
+            ? getRelevantFallbackReason(syncProfile, syncState)
+            : null;
           const completionSummary = getCompletionSummary(
             liveJob,
-            syncState?.lastFallbackReason ?? null,
+            relevantFallbackReason,
           );
           const cooldownActive = Boolean(cooldown?.active);
           const summaryClasses =
@@ -1432,9 +1449,9 @@ export default function SyncPage() {
                 </div>
               ) : null}
 
-              {syncState?.lastFallbackReason && !isSyncing ? (
+              {relevantFallbackReason && !isSyncing ? (
                 <div className="mb-4 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-400">
-                  Last fallback note: {syncState.lastFallbackReason}
+                  Last fallback note: {relevantFallbackReason}
                 </div>
               ) : null}
 

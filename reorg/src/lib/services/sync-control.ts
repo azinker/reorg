@@ -134,6 +134,10 @@ export function buildCompletedSyncConfig(
 ) {
   const config = getIntegrationConfig(integration);
   const effectiveMode = options.effectiveMode ?? options.requestedMode ?? "full";
+  const shouldClearFallbackReason =
+    !options.preserveSyncState &&
+    options.fallbackReason == null &&
+    effectiveMode === config.syncProfile.preferredMode;
 
   return {
     ...config,
@@ -165,6 +169,8 @@ export function buildCompletedSyncConfig(
       lastFallbackReason:
         options.preserveSyncState
           ? config.syncState.lastFallbackReason
+          : shouldClearFallbackReason
+          ? null
           : options.fallbackReason === undefined
           ? config.syncState.lastFallbackReason
           : options.fallbackReason,
