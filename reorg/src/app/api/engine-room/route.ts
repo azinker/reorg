@@ -37,11 +37,16 @@ function normalizeErrorMessage(error: unknown): string {
 
 export async function GET() {
   try {
-    const [syncJobs, stagedChanges, auditLogs, globalLock, schedulerSettings, schedulerPlan, integrations] = await Promise.all([
+    const [syncJobs, pushJobs, stagedChanges, auditLogs, globalLock, schedulerSettings, schedulerPlan, integrations] = await Promise.all([
       db.syncJob.findMany({
         orderBy: { createdAt: "desc" },
         take: 50,
         include: { integration: { select: { platform: true, label: true } } },
+      }),
+      db.pushJob.findMany({
+        orderBy: { createdAt: "desc" },
+        take: 25,
+        include: { user: { select: { name: true, email: true } } },
       }),
       db.stagedChange.findMany({
         where: { status: "STAGED" },
@@ -173,6 +178,66 @@ export async function GET() {
         platform,
         status: "queued" as const,
         editedBy: sc.changedBy?.name ?? "-",
+      };
+    });
+
+    const pushJobsPayload = pushJobs.map((job) => {
+      const payload = (job.payload as Record<string, unknown>) ?? {};
+      const result = (job.result as Record<string, unknown>) ?? {};
+      const summary = ((result.summary as Record<string, unknown> | undefined) ??
+        (payload.summary as Record<string, unknown> | undefined) ??
+        {}) as Record<string, unknown>;
+      const prePushBackup = (result.prePushBackup as Record<string, unknown> | undefined) ?? null;
+      const postPushRefresh = (result.postPushRefresh as Record<string, unknown> | undefined) ?? null;
+      const resultStatus =
+        result.status === "partial" ||
+        result.status === "blocked" ||
+        result.status === "completed" ||
+        result.status === "failed"
+          ? result.status
+          : null;
+
+      const normalizedStatus =
+        resultStatus === "partial"
+          ? "partial"
+          : resultStatus === "blocked"
+            ? "blocked"
+            : job.status === "DRY_RUN"
+              ? "dry_run"
+              : job.status === "EXECUTING"
+                ? "executing"
+                : job.status === "FAILED"
+                  ? "failed"
+                  : "completed";
+
+      const failedResults = Array.isArray(result.results)
+        ? (result.results as Array<Record<string, unknown>>).filter((entry) => entry.success === false)
+        : [];
+
+      return {
+        id: job.id,
+        createdAt: job.createdAt.toISOString(),
+        completedAt: job.completedAt?.toISOString() ?? null,
+        user: job.user?.name ?? job.user?.email ?? "Unknown",
+        dryRun: job.dryRun,
+        status: normalizedStatus,
+        totalChanges:
+          typeof summary.totalChanges === "number" ? summary.totalChanges : 0,
+        distinctListings:
+          typeof summary.distinctListings === "number" ? summary.distinctListings : 0,
+        successfulChanges:
+          typeof summary.successfulChanges === "number" ? summary.successfulChanges : 0,
+        failedChanges:
+          typeof summary.failedChanges === "number" ? summary.failedChanges : 0,
+        backupStatus:
+          typeof prePushBackup?.status === "string" ? prePushBackup.status : null,
+        refreshStatus:
+          typeof postPushRefresh?.status === "string" ? postPushRefresh.status : null,
+        refreshDetail:
+          typeof postPushRefresh?.detail === "string" ? postPushRefresh.detail : null,
+        retryableFailedChanges: failedResults.length,
+        blockedReason:
+          typeof result.blockedReason === "string" ? result.blockedReason : null,
       };
     });
 
@@ -409,6 +474,7 @@ export async function GET() {
     return NextResponse.json({
       data: {
         syncJobs: syncJobsPayload,
+        pushJobs: pushJobsPayload,
         pushQueue: pushQueuePayload,
         changeLog: changeLogPayload,
         rawEvents: rawEventsPayload,

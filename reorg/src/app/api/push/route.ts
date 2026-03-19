@@ -14,6 +14,7 @@ const pushSchema = z.object({
       stagedChangeId: z.string().optional(),
       masterRowId: z.string().optional(),
       marketplaceListingId: z.string().optional(),
+      platformVariantId: z.string().optional(),
       sku: z.string().optional(),
       title: z.string().optional(),
       platform: z.enum(["TPP_EBAY", "TT_EBAY", "BIGCOMMERCE", "SHOPIFY"]),
@@ -26,6 +27,25 @@ const pushSchema = z.object({
   dryRun: z.boolean().default(true),
   confirmedLivePush: z.boolean().default(false),
 });
+
+const FIRST_LIVE_PUSH_CHECKLIST = [
+  {
+    label: "Keep the batch small",
+    detail: "Use a small first live push so the result is easy to inspect and recover if anything behaves unexpectedly.",
+  },
+  {
+    label: "Confirm backup readiness",
+    detail: "If the push touches many listings, make sure the dry run says the automatic pre-push backup is ready before you confirm.",
+  },
+  {
+    label: "Watch Engine Room after push",
+    detail: "After the live push finishes, check Engine Room and Sync to confirm the post-push refresh and audit trail look correct.",
+  },
+  {
+    label: "Retry only failures",
+    detail: "If any listing fails, retry only those failed staged changes instead of rerunning the whole batch immediately.",
+  },
+] as const;
 
 async function resolvePushChanges(
   changes: z.infer<typeof pushSchema>["changes"],
@@ -43,6 +63,7 @@ async function resolvePushChanges(
                   orderBy: { createdAt: "desc" },
                   take: 1,
                 },
+                integration: { select: { platform: true } },
               },
             })
           : await db.marketplaceListing.findFirst({
@@ -62,6 +83,7 @@ async function resolvePushChanges(
                   orderBy: { createdAt: "desc" },
                   take: 1,
                 },
+                integration: { select: { platform: true } },
               },
             });
 
@@ -80,6 +102,7 @@ async function resolvePushChanges(
         stagedChangeId,
         masterRowId: change.masterRowId ?? listing.masterRowId,
         marketplaceListingId: change.marketplaceListingId ?? listing.id,
+        platformVariantId: change.platformVariantId ?? listing.platformVariantId ?? null,
         platform: change.platform,
         listingId: change.listingId,
         field: change.field,
@@ -153,6 +176,12 @@ export async function POST(request: NextRequest) {
 
     const resolvedChanges = await resolvePushChanges(changes);
 
+    const priorLivePushCount = await db.pushJob.count({
+      where: {
+        dryRun: false,
+        status: { in: ["EXECUTING", "COMPLETED", "FAILED"] },
+      },
+    });
     const result = await executePush(
       {
         userId: session.user.id,
@@ -161,6 +190,7 @@ export async function POST(request: NextRequest) {
       },
       adapters,
     );
+    const firstLivePush = priorLivePushCount === 0;
 
     const nextStep =
       result.status === "blocked"
@@ -190,6 +220,8 @@ export async function POST(request: NextRequest) {
       {
         data: {
           ...result,
+          firstLivePush,
+          operatorChecklist: firstLivePush ? FIRST_LIVE_PUSH_CHECKLIST : [],
           changes: changes.length,
           message,
           nextStep,

@@ -404,6 +404,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
       title: row.title,
       platform: platform as Platform,
       listingId,
+      platformVariantId: value.variantId,
       field,
       oldValue: liveValue,
       newValue: stagedValue,

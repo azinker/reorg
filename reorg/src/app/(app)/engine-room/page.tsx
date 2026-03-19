@@ -20,6 +20,7 @@ import { cn } from "@/lib/utils";
 const TABS = [
   { id: "sync-jobs", label: "Sync Jobs", icon: RefreshCw },
   { id: "automation", label: "Automation", icon: Activity },
+  { id: "push-jobs", label: "Push Jobs", icon: Send },
   { id: "push-queue", label: "Push Queue", icon: Send },
   { id: "change-log", label: "Change Log", icon: ScrollText },
   { id: "raw-events", label: "Raw Events", icon: Terminal },
@@ -50,6 +51,24 @@ type PushQueueRow = {
   platform: string;
   status: "queued";
   editedBy: string;
+};
+
+type PushJobRow = {
+  id: string;
+  createdAt: string;
+  completedAt: string | null;
+  user: string;
+  dryRun: boolean;
+  status: "dry_run" | "executing" | "completed" | "partial" | "failed" | "blocked";
+  totalChanges: number;
+  distinctListings: number;
+  successfulChanges: number;
+  failedChanges: number;
+  backupStatus: string | null;
+  refreshStatus: string | null;
+  refreshDetail: string | null;
+  retryableFailedChanges: number;
+  blockedReason: string | null;
 };
 
 type ChangeLogRow = {
@@ -89,6 +108,7 @@ type DueQueueRow = {
 
 type EngineRoomData = {
   syncJobs: SyncJobRow[];
+  pushJobs: PushJobRow[];
   pushQueue: PushQueueRow[];
   changeLog: ChangeLogRow[];
   rawEvents: RawEventRow[];
@@ -325,6 +345,78 @@ function PushQueuePanel({ items }: { items: PushQueueRow[] }) {
       </table>
       {items.length === 0 && (
         <p className="py-6 text-center text-sm text-muted-foreground">Push queue is empty.</p>
+      )}
+    </div>
+  );
+}
+
+function PushJobsPanel({ jobs }: { jobs: PushJobRow[] }) {
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="border-b border-border text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">
+            <th className="pb-3 pr-4">Job</th>
+            <th className="pb-3 pr-4">Type</th>
+            <th className="pb-3 pr-4">Status</th>
+            <th className="pb-3 pr-4 text-right">Listings</th>
+            <th className="pb-3 pr-4 text-right">Changes</th>
+            <th className="pb-3 pr-4">Backup</th>
+            <th className="pb-3 pr-4">Refresh</th>
+            <th className="pb-3 pr-4">User</th>
+            <th className="pb-3">Notes</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-border/50">
+          {jobs.map((job) => (
+            <tr key={job.id} className="text-foreground">
+              <td className="py-3 pr-4">
+                <div className="font-mono text-xs text-muted-foreground">{job.id.slice(0, 8)}</div>
+                <div className="mt-1 text-xs text-muted-foreground">{formatDateTime(job.createdAt)}</div>
+              </td>
+              <td className="py-3 pr-4">
+                <span className="inline-flex items-center rounded border border-border bg-muted/40 px-2 py-0.5 text-xs font-medium text-foreground/80">
+                  {job.dryRun ? "Dry Run" : "Live Push"}
+                </span>
+              </td>
+              <td className="py-3 pr-4">
+                <StatusBadge
+                  status={
+                    job.status === "dry_run"
+                      ? "queued"
+                      : job.status === "executing"
+                        ? "in_progress"
+                        : job.status === "completed"
+                          ? "completed"
+                          : job.status === "partial"
+                            ? "pending_review"
+                            : "failed"
+                  }
+                />
+              </td>
+              <td className="py-3 pr-4 text-right tabular-nums">{job.distinctListings.toLocaleString()}</td>
+              <td className="py-3 pr-4 text-right">
+                <div className="tabular-nums">{job.totalChanges.toLocaleString()}</div>
+                <div className="text-xs text-muted-foreground">
+                  {job.successfulChanges.toLocaleString()} ok / {job.failedChanges.toLocaleString()} failed
+                </div>
+              </td>
+              <td className="py-3 pr-4 text-xs text-muted-foreground">{job.backupStatus ?? "-"}</td>
+              <td className="py-3 pr-4 text-xs text-muted-foreground">{job.refreshStatus ?? "-"}</td>
+              <td className="py-3 pr-4 text-xs text-muted-foreground">{job.user}</td>
+              <td className="py-3 text-xs text-muted-foreground">
+                {job.blockedReason
+                  ? job.blockedReason
+                  : job.retryableFailedChanges > 0
+                    ? `${job.retryableFailedChanges} failed change${job.retryableFailedChanges === 1 ? "" : "s"} can be retried safely.`
+                    : job.refreshDetail ?? "-"}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {jobs.length === 0 && (
+        <p className="py-6 text-center text-sm text-muted-foreground">No push jobs yet.</p>
       )}
     </div>
   );
@@ -579,6 +671,8 @@ export default function EngineRoomPage() {
             events={data.automationFeed}
           />
         );
+      case "push-jobs":
+        return <PushJobsPanel jobs={data.pushJobs} />;
       case "push-queue":
         return <PushQueuePanel items={data.pushQueue} />;
       case "change-log":

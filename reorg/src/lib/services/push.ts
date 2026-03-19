@@ -28,6 +28,7 @@ export interface PushChangeItem {
   stagedChangeId?: string | null;
   masterRowId: string;
   marketplaceListingId: string;
+  platformVariantId?: string | null;
   platform: Platform;
   listingId: string;
   field: "salePrice" | "adRate";
@@ -765,12 +766,12 @@ export async function executePush(
         platform: change.platform,
         listingId: change.listingId,
         field: change.field,
-        stagedChangeId: change.stagedChangeId ?? null,
-        masterRowId: change.masterRowId,
-        marketplaceListingId: change.marketplaceListingId,
-        oldValue: change.oldValue,
-        newValue: change.newValue,
-        success: true,
+          stagedChangeId: change.stagedChangeId ?? null,
+          masterRowId: change.masterRowId,
+          marketplaceListingId: change.marketplaceListingId,
+          oldValue: change.oldValue,
+          newValue: change.newValue,
+          success: true,
       });
     }
 
@@ -951,6 +952,7 @@ export async function executePush(
       .filter((c) => c.field === "salePrice")
       .map((c) => ({
         platformItemId: c.listingId,
+        platformVariantId: c.platformVariantId ?? undefined,
         newPrice: c.newValue,
       }));
 

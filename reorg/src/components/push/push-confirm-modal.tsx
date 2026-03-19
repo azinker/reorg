@@ -18,6 +18,7 @@ export interface PushItem {
   stagedChangeId?: string;
   masterRowId?: string;
   marketplaceListingId?: string;
+  platformVariantId?: string;
   sku: string;
   title: string;
   platform: Platform;
@@ -68,6 +69,11 @@ export type PushApiData = {
   };
   results: PushResultItem[];
   blockedReason?: string;
+  firstLivePush?: boolean;
+  operatorChecklist?: Array<{
+    label: string;
+    detail: string;
+  }>;
   message: string;
   nextStep: string;
   batchSafety?: {
@@ -210,24 +216,35 @@ export function PushConfirmModal({
   const [phase, setPhase] = useState<ModalPhase>("review");
   const [result, setResult] = useState<PushApiData | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [activeItems, setActiveItems] = useState<PushItem[]>(items);
 
   useEffect(() => {
     if (!open) return;
     setPhase("review");
     setResult(null);
     setErrorMessage(null);
+    setActiveItems(items);
   }, [open, items]);
 
   const groupedByListing = useMemo(() => {
-    return items.reduce<Record<string, PushItem[]>>((acc, item) => {
+    return activeItems.reduce<Record<string, PushItem[]>>((acc, item) => {
       const key = `${item.platform}:${item.listingId}`;
       if (!acc[key]) acc[key] = [];
       acc[key].push(item);
       return acc;
     }, {});
-  }, [items]);
+  }, [activeItems]);
 
   const failedResults = result?.results.filter((entry) => !entry.success) ?? [];
+  const retryFailedItems = useMemo(() => {
+    if (!result || failedResults.length === 0) return [];
+    const failedKeys = new Set(
+      failedResults.map((entry) => `${entry.platform}:${entry.listingId}:${entry.field}`),
+    );
+    return activeItems.filter((item) =>
+      failedKeys.has(`${item.platform}:${item.listingId}:${item.field}`),
+    );
+  }, [activeItems, failedResults, result]);
   const canClose = phase !== "dry-run" && phase !== "pushing";
   const banner = getBanner(phase, result, errorMessage);
   const BannerIcon = banner.icon;
@@ -246,7 +263,7 @@ export function PushConfirmModal({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          changes: items,
+          changes: activeItems,
           dryRun,
           confirmedLivePush: !dryRun,
         }),
@@ -298,7 +315,7 @@ export function PushConfirmModal({
             <div>
               <h2 className="text-lg font-semibold text-foreground">Review Push</h2>
               <p className="text-xs text-muted-foreground">
-                {items.length} change{items.length === 1 ? "" : "s"} across {Object.keys(groupedByListing).length} listing
+                {activeItems.length} change{activeItems.length === 1 ? "" : "s"} across {Object.keys(groupedByListing).length} listing
                 {Object.keys(groupedByListing).length === 1 ? "" : "s"}
               </p>
             </div>
@@ -350,6 +367,23 @@ export function PushConfirmModal({
               </div>
             </div>
           </section>
+
+          {result?.firstLivePush && result.operatorChecklist?.length ? (
+            <section className="mb-5 rounded-xl border border-violet-500/30 bg-violet-500/10 p-4">
+              <div className="text-sm font-semibold text-violet-100">First Live Push Operator Checklist</div>
+              <p className="mt-1 text-xs text-violet-100/85">
+                This looks like the first live marketplace push in this environment. Review this once before you confirm.
+              </p>
+              <div className="mt-3 grid gap-2 md:grid-cols-2">
+                {result.operatorChecklist.map((item) => (
+                  <article key={item.label} className="rounded-lg border border-violet-400/20 bg-black/10 px-3 py-2">
+                    <div className="text-[11px] font-semibold uppercase tracking-wide text-violet-100">{item.label}</div>
+                    <div className="mt-1 text-xs text-violet-100/85">{item.detail}</div>
+                  </article>
+                ))}
+              </div>
+            </section>
+          ) : null}
 
           {result?.goLiveChecklist?.length ? (
             <section className="mb-5">
@@ -557,12 +591,27 @@ export function PushConfirmModal({
             ) : null}
 
             {(phase === "done" || phase === "blocked" || phase === "error") ? (
-              <button
-                onClick={onClose}
-                className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 cursor-pointer"
-              >
-                Close
-              </button>
+              <>
+                {retryFailedItems.length > 0 ? (
+                  <button
+                    onClick={() => {
+                      setActiveItems(retryFailedItems);
+                      setResult(null);
+                      setErrorMessage(null);
+                      setPhase("review");
+                    }}
+                    className="rounded-md border border-border px-4 py-2 text-sm text-foreground transition-colors hover:bg-accent cursor-pointer"
+                  >
+                    Retry Failed Only
+                  </button>
+                ) : null}
+                <button
+                  onClick={onClose}
+                  className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 cursor-pointer"
+                >
+                  Close
+                </button>
+              </>
             ) : null}
           </div>
         </div>
