@@ -1,5 +1,6 @@
 import { Prisma, type Integration, Platform } from "@prisma/client";
 import { db } from "@/lib/db";
+import { getAppEnv } from "@/lib/app-env";
 import { getIntegrationConfig } from "@/lib/integrations/runtime-config";
 import { getExpectedWebhookBaseUrl } from "@/lib/webhook-health";
 
@@ -104,6 +105,20 @@ async function shopifyGraphQL<T>(
   return json.data;
 }
 
+function assertSafeWebhookDestination(destination: string) {
+  const appEnv = getAppEnv();
+
+  if (
+    appEnv === "local" &&
+    destination.includes("ngrok-free.dev") &&
+    process.env.ALLOW_LOCAL_WEBHOOK_DESTINATION !== "true"
+  ) {
+    throw new Error(
+      "Refusing to register local ngrok webhook destinations without ALLOW_LOCAL_WEBHOOK_DESTINATION=true.",
+    );
+  }
+}
+
 async function ensureShopifyWebhooks(
   integration: IntegrationWithConfig,
 ): Promise<EnsureWebhookResult> {
@@ -124,6 +139,7 @@ async function ensureShopifyWebhooks(
     ? storeDomain
     : `${storeDomain}.myshopify.com`;
   const destination = `${getExpectedWebhookBaseUrl()}/api/webhooks/shopify`;
+  assertSafeWebhookDestination(destination);
   const endpoint = `https://${normalizedStore}/admin/api/${apiVersion}/graphql.json`;
 
   const listData = await shopifyGraphQL<{
@@ -139,8 +155,8 @@ async function ensureShopifyWebhooks(
   }>(
     endpoint,
     accessToken,
-    `query ExistingWebhookSubscriptions($uri: String!) {
-      webhookSubscriptions(first: 50, uri: $uri) {
+    `query ExistingWebhookSubscriptions {
+      webhookSubscriptions(first: 100) {
         edges {
           node {
             id
@@ -150,11 +166,52 @@ async function ensureShopifyWebhooks(
         }
       }
     }`,
-    { uri: destination },
   );
 
   const existing = listData.webhookSubscriptions.edges.map((edge) => edge.node);
-  const existingByTopic = new Map(existing.map((item) => [item.topic, item]));
+  const managedExisting = existing.filter((item) =>
+    SHOPIFY_TOPICS.includes(item.topic as (typeof SHOPIFY_TOPICS)[number]),
+  );
+  const existingByTopic = new Map<string, { id: string; topic: string; uri: string | null }>();
+  const staleSubscriptions: Array<{ id: string; topic: string; uri: string | null }> = [];
+
+  for (const subscription of managedExisting) {
+    if (subscription.uri === destination && !existingByTopic.has(subscription.topic)) {
+      existingByTopic.set(subscription.topic, subscription);
+      continue;
+    }
+
+    staleSubscriptions.push(subscription);
+  }
+
+  const deleteQuery = `mutation DeleteWebhookSubscription($id: ID!) {
+    webhookSubscriptionDelete(id: $id) {
+      deletedWebhookSubscriptionId
+      userErrors {
+        field
+        message
+      }
+    }
+  }`;
+
+  for (const subscription of staleSubscriptions) {
+    const deleteData = await shopifyGraphQL<{
+      webhookSubscriptionDelete: {
+        deletedWebhookSubscriptionId: string | null;
+        userErrors: Array<{ field?: string[] | null; message: string }>;
+      };
+    }>(endpoint, accessToken, deleteQuery, {
+      id: subscription.id,
+    });
+
+    if (deleteData.webhookSubscriptionDelete.userErrors.length > 0) {
+      throw new Error(
+        `Shopify could not remove stale ${subscription.topic} webhook: ${deleteData.webhookSubscriptionDelete.userErrors
+          .map((error) => error.message)
+          .join("; ")}`,
+      );
+    }
+  }
 
   const createQuery = `mutation CreateWebhookSubscription($topic: WebhookSubscriptionTopic!, $webhookSubscription: WebhookSubscriptionInput!) {
     webhookSubscriptionCreate(topic: $topic, webhookSubscription: $webhookSubscription) {
