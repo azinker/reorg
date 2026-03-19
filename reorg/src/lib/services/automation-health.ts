@@ -7,6 +7,7 @@ import {
   isEbayUsageLimitMessage,
 } from "@/lib/services/ebay-rate-limit";
 import { getIntegrationConfig } from "@/lib/integrations/runtime-config";
+import { getFallbackPerRunEbayGetItemBudget } from "@/lib/services/ebay-sync-policy";
 
 export type MonitorHealthStatus = "healthy" | "delayed" | "attention";
 export type WebhookMonitorStatus = "ok" | "quiet" | "missing" | "n/a";
@@ -29,6 +30,10 @@ export interface IntegrationHealthSnapshot {
   minutesSinceWebhook: number | null;
   webhookStatus: WebhookMonitorStatus;
   webhookMessage: string;
+  backlogCount: number;
+  backlogAgeMinutes: number | null;
+  backlogStatus: "clear" | "queued" | "delayed" | "stale";
+  backlogMessage: string;
   recommendedAction: string;
   combinedStatus: MonitorHealthStatus;
 }
@@ -212,6 +217,92 @@ function getWebhookHealthStatus(
   };
 }
 
+function getWorseMonitorStatus(
+  left: MonitorHealthStatus,
+  right: MonitorHealthStatus,
+): MonitorHealthStatus {
+  if (left === "attention" || right === "attention") return "attention";
+  if (left === "delayed" || right === "delayed") return "delayed";
+  return "healthy";
+}
+
+function getBacklogHealthStatus(args: {
+  platform: string;
+  intervalMinutes: number;
+  timeZone: string;
+  pendingBacklogCount: number;
+  pendingWindowEndedAt: string | null;
+  now: Date;
+}) {
+  if (
+    (args.platform !== "TPP_EBAY" && args.platform !== "TT_EBAY") ||
+    args.pendingBacklogCount <= 0
+  ) {
+    return {
+      backlogCount: 0,
+      backlogAgeMinutes: null,
+      backlogStatus: "clear" as const,
+      monitorStatus: "healthy" as const,
+      backlogMessage: "No queued eBay backlog waiting for a later pull.",
+    };
+  }
+
+  const backlogAgeMinutes = args.pendingWindowEndedAt
+    ? minutesBetween(args.now, new Date(args.pendingWindowEndedAt))
+    : null;
+  const perRunBudget = getFallbackPerRunEbayGetItemBudget(args.now, args.timeZone);
+  const graceMinutes = getGraceMinutes(args.intervalMinutes);
+  const delayedAgeThreshold = args.intervalMinutes + graceMinutes;
+  const attentionAgeThreshold = args.intervalMinutes * 3 + graceMinutes;
+  const delayedBacklogThreshold =
+    perRunBudget > 0 ? Math.max(perRunBudget, 75) : 150;
+  const attentionBacklogThreshold =
+    perRunBudget > 0 ? Math.max(perRunBudget * 3, 250) : 300;
+
+  if (
+    (backlogAgeMinutes !== null && backlogAgeMinutes > attentionAgeThreshold) ||
+    args.pendingBacklogCount >= attentionBacklogThreshold
+  ) {
+    return {
+      backlogCount: args.pendingBacklogCount,
+      backlogAgeMinutes,
+      backlogStatus: "stale" as const,
+      monitorStatus: "attention" as const,
+      backlogMessage:
+        backlogAgeMinutes !== null
+          ? `Queued eBay backlog has carried for ${formatMinutesLabel(backlogAgeMinutes)} across multiple pull windows (${args.pendingBacklogCount.toLocaleString()} listings still waiting).`
+          : `Queued eBay backlog is large (${args.pendingBacklogCount.toLocaleString()} listings still waiting) and has likely carried across multiple pull windows.`,
+    };
+  }
+
+  if (
+    (backlogAgeMinutes !== null && backlogAgeMinutes > delayedAgeThreshold) ||
+    args.pendingBacklogCount >= delayedBacklogThreshold
+  ) {
+    return {
+      backlogCount: args.pendingBacklogCount,
+      backlogAgeMinutes,
+      backlogStatus: "delayed" as const,
+      monitorStatus: "delayed" as const,
+      backlogMessage:
+        backlogAgeMinutes !== null
+          ? `Queued eBay backlog is still draining after ${formatMinutesLabel(backlogAgeMinutes)} (${args.pendingBacklogCount.toLocaleString()} changed listings waiting for later pulls).`
+          : `Queued eBay backlog is still draining (${args.pendingBacklogCount.toLocaleString()} changed listings waiting for later pulls).`,
+    };
+  }
+
+  return {
+    backlogCount: args.pendingBacklogCount,
+    backlogAgeMinutes,
+    backlogStatus: "queued" as const,
+    monitorStatus: "healthy" as const,
+    backlogMessage:
+      args.pendingBacklogCount === 1
+        ? "1 changed eBay listing is queued for the next pull window to protect shared quota."
+        : `${args.pendingBacklogCount.toLocaleString()} changed eBay listings are queued for later pull windows to protect shared quota.`,
+  };
+}
+
 function getRecommendedAction(args: {
   label: string;
   platform: string;
@@ -219,6 +310,8 @@ function getRecommendedAction(args: {
   running: boolean;
   syncStatus: IntegrationHealthSnapshot["syncStatus"];
   syncMonitorStatus: MonitorHealthStatus;
+  backlogStatus: IntegrationHealthSnapshot["backlogStatus"];
+  backlogCount: number;
   webhookExpected: boolean;
   webhookStatus: WebhookMonitorStatus;
   rateLimitCooldownUntil?: Date | null;
@@ -237,6 +330,9 @@ function getRecommendedAction(args: {
   }
 
   if (args.syncMonitorStatus === "attention") {
+    if (args.backlogStatus === "stale" && args.backlogCount > 0) {
+      return "This eBay backlog has carried across several pull windows. Let the next automatic checks keep draining it, and review Sync or Engine Room if the queued count is not shrinking.";
+    }
     if (args.running) {
       return "A pull is already running. Let it finish, then check Sync or Errors if this store still needs attention.";
     }
@@ -247,6 +343,9 @@ function getRecommendedAction(args: {
   }
 
   if (args.syncMonitorStatus === "delayed") {
+    if (args.backlogStatus === "delayed" && args.backlogCount > 0) {
+      return "reorG is pacing a larger eBay backlog across multiple pull windows. Watch the next automatic checks and make sure the queued count keeps shrinking.";
+    }
     if (args.running) {
       return "A pull is already running. Refresh Sync after it finishes to confirm this store recovers.";
     }
@@ -340,6 +439,14 @@ export async function buildAutomationHealthSnapshot(
       const lastWebhookAt = lastWebhookByPlatform.get(integration.platform) ?? null;
       const storedConfig = getIntegrationConfig(integration);
       const sync = getSyncHealthStatus(item, lastSyncAt, now);
+      const backlog = getBacklogHealthStatus({
+        platform: integration.platform,
+        intervalMinutes: item.intervalMinutes,
+        timeZone: storedConfig.syncProfile.timezone,
+        pendingBacklogCount: storedConfig.syncState.pendingIncrementalItemIds.length,
+        pendingWindowEndedAt: storedConfig.syncState.pendingIncrementalWindowEndedAt,
+        now,
+      });
       const recentFailure = latestFailedJobByIntegration.get(integration.id);
       const rateLimitCooldownUntil =
         item.reason.toLowerCase().includes("ebay") && item.nextDueAt
@@ -352,7 +459,7 @@ export async function buildAutomationHealthSnapshot(
       const failedAfterLastSuccess =
         recentFailure &&
         (!lastSyncAt || recentFailure.failedAt.getTime() > lastSyncAt.getTime());
-      const syncMonitor = failedAfterLastSuccess
+      const syncMonitorBase = failedAfterLastSuccess
         ? {
             ...sync,
             status: "attention" as const,
@@ -364,21 +471,39 @@ export async function buildAutomationHealthSnapshot(
                   : "Latest pull hit eBay API usage limits. The next retry should happen after the cooldown window."
                 : recentFailure.message
                   ? `Latest pull failed: ${recentFailure.message}`
-                  : "Latest pull failed before this store recorded a newer successful update.",
+                : "Latest pull failed before this store recorded a newer successful update.",
           }
         : sync;
+      const syncMonitor =
+        backlog.monitorStatus === "healthy"
+          ? syncMonitorBase
+          : {
+              ...syncMonitorBase,
+              status: getWorseMonitorStatus(
+                syncMonitorBase.status,
+                backlog.monitorStatus,
+              ),
+              syncMessage:
+                syncMonitorBase.status === "attention"
+                  ? syncMonitorBase.syncMessage
+                  : backlog.backlogMessage,
+            };
       const webhook = getWebhookHealthStatus(
         integration.platform,
         item.intervalMinutes,
         lastWebhookAt,
         now,
       );
-      const combinedStatus =
+      const webhookStatusImpact =
         webhook.webhookStatus === "missing"
           ? syncMonitor.status === "healthy"
             ? "delayed"
             : "attention"
           : syncMonitor.status;
+      const combinedStatus = getWorseMonitorStatus(
+        syncMonitor.status,
+        webhookStatusImpact,
+      );
       const recommendedAction = getRecommendedAction({
         label: integration.label,
         platform: integration.platform,
@@ -386,6 +511,8 @@ export async function buildAutomationHealthSnapshot(
         running: item.running,
         syncStatus: syncMonitor.syncStatus,
         syncMonitorStatus: syncMonitor.status,
+        backlogStatus: backlog.backlogStatus,
+        backlogCount: backlog.backlogCount,
         webhookExpected: webhook.webhookExpected,
         webhookStatus: webhook.webhookStatus,
         rateLimitCooldownUntil,
@@ -409,6 +536,10 @@ export async function buildAutomationHealthSnapshot(
         minutesSinceWebhook: webhook.minutesSinceWebhook,
         webhookStatus: webhook.webhookStatus,
         webhookMessage: webhook.webhookMessage,
+        backlogCount: backlog.backlogCount,
+        backlogAgeMinutes: backlog.backlogAgeMinutes,
+        backlogStatus: backlog.backlogStatus,
+        backlogMessage: backlog.backlogMessage,
         recommendedAction,
         combinedStatus,
       } satisfies IntegrationHealthSnapshot;
