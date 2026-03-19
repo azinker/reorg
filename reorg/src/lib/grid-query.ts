@@ -4,18 +4,61 @@ import type { GridRow, StoreValue, Platform } from "@/lib/grid-types";
 import { Prisma } from "@prisma/client";
 
 const masterRowWithRelations = Prisma.validator<Prisma.MasterRowDefaultArgs>()({
-  include: {
+  select: {
+    id: true,
+    sku: true,
+    title: true,
+    imageUrl: true,
+    upc: true,
+    weight: true,
+    supplierCost: true,
+    supplierShipping: true,
+    shippingCostOverride: true,
     listings: {
-      include: {
-        integration: true,
-        childListings: {
-          include: { integration: true },
+      select: {
+        id: true,
+        platformItemId: true,
+        platformVariantId: true,
+        sku: true,
+        title: true,
+        salePrice: true,
+        adRate: true,
+        inventory: true,
+        isVariation: true,
+        parentListingId: true,
+        integration: {
+          select: {
+            platform: true,
+          },
         },
-        parentListing: true,
+        childListings: {
+          select: {
+            id: true,
+            platformItemId: true,
+            platformVariantId: true,
+            sku: true,
+            title: true,
+            salePrice: true,
+            adRate: true,
+            inventory: true,
+            parentListingId: true,
+            integration: {
+              select: {
+                platform: true,
+              },
+            },
+          },
+        },
       },
     },
     stagedChanges: {
       where: { status: "STAGED" },
+      select: {
+        marketplaceListingId: true,
+        field: true,
+        stagedValue: true,
+        liveValue: true,
+      },
     },
   },
 });
@@ -123,9 +166,42 @@ async function buildChildRows(
   // Fetch full master rows for child SKUs with ALL their listings (cross-platform)
   const childMasters = await db.masterRow.findMany({
     where: { sku: { in: [...childSkus] } },
-    include: {
-      listings: { include: { integration: true } },
-      stagedChanges: { where: { status: "STAGED" } },
+    select: {
+      id: true,
+      sku: true,
+      title: true,
+      imageUrl: true,
+      upc: true,
+      weight: true,
+      supplierCost: true,
+      supplierShipping: true,
+      shippingCostOverride: true,
+      listings: {
+        select: {
+          id: true,
+          platformItemId: true,
+          platformVariantId: true,
+          sku: true,
+          title: true,
+          salePrice: true,
+          adRate: true,
+          inventory: true,
+          integration: {
+            select: {
+              platform: true,
+            },
+          },
+        },
+      },
+      stagedChanges: {
+        where: { status: "STAGED" },
+        select: {
+          marketplaceListingId: true,
+          field: true,
+          stagedValue: true,
+          liveValue: true,
+        },
+      },
     },
   });
 

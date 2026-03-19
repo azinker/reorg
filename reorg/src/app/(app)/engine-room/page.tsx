@@ -1051,7 +1051,7 @@ export default function EngineRoomPage() {
     void load();
     const timer = setInterval(() => {
       void load();
-    }, 30_000);
+    }, 120_000);
 
     return () => {
       active = false;

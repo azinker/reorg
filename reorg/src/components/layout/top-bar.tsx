@@ -67,7 +67,7 @@ export function TopBar({ user, onOpenSidebar }: TopBarProps) {
     void loadAutomationHealth();
     const timer = window.setInterval(() => {
       void loadAutomationHealth();
-    }, 60_000);
+    }, 120_000);
 
     return () => {
       active = false;

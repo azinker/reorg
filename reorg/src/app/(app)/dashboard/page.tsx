@@ -8,6 +8,7 @@ import { MOCK_ROWS } from "@/lib/mock-data";
 import { Loader2, RefreshCw } from "lucide-react";
 
 const GRID_VERSION_POLL_MS = 60_000;
+const SCHEDULER_HEALTH_POLL_MS = 120_000;
 
 interface GridPayload {
   rows: GridRow[];
@@ -199,6 +200,8 @@ export default function DashboardPage() {
 
     const intervalId = window.setInterval(() => {
       void refreshGridIfChanged();
+    }, GRID_VERSION_POLL_MS);
+    const schedulerHealthTimer = window.setInterval(() => {
       void fetchSchedulerHealth()
         .then((health) => {
           if (!cancelled) setSchedulerHealth(health);
@@ -206,7 +209,7 @@ export default function DashboardPage() {
         .catch(() => {
           if (!cancelled) setSchedulerHealth(null);
         });
-    }, GRID_VERSION_POLL_MS);
+    }, SCHEDULER_HEALTH_POLL_MS);
 
     window.addEventListener("focus", handleVisibilityOrFocus);
     document.addEventListener("visibilitychange", handleVisibilityOrFocus);
@@ -215,6 +218,7 @@ export default function DashboardPage() {
       cancelled = true;
       window.clearInterval(progressTimer);
       window.clearInterval(intervalId);
+      window.clearInterval(schedulerHealthTimer);
       window.removeEventListener("focus", handleVisibilityOrFocus);
       document.removeEventListener("visibilitychange", handleVisibilityOrFocus);
     };

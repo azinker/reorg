@@ -75,7 +75,7 @@ export function Sidebar({ mobile = false, onNavigate }: SidebarProps) {
     void loadHealth();
     const timer = window.setInterval(() => {
       void loadHealth();
-    }, 60_000);
+    }, 120_000);
 
     return () => {
       active = false;

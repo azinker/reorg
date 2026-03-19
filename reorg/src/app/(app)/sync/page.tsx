@@ -593,7 +593,7 @@ export default function SyncPage() {
     fetchIntegrations();
     fetchSchedulerSetting();
     fetchSchedulerStatus();
-    const schedulerTimer = setInterval(fetchSchedulerStatus, 30_000);
+    const schedulerTimer = setInterval(fetchSchedulerStatus, 60_000);
     return () => {
       Object.values(pollTimers.current).forEach(clearInterval);
       clearInterval(schedulerTimer);
