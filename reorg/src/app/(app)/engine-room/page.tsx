@@ -31,7 +31,7 @@ type SyncJobRow = {
   id: string;
   platform: string;
   status: "pending" | "in_progress" | "completed" | "failed";
-  source: "manual" | "scheduler" | "webhook";
+  source: "manual" | "scheduler" | "webhook" | "push";
   mode: string;
   triggerKey: string | null;
   items: number;
@@ -256,12 +256,16 @@ function SyncJobsPanel({ jobs }: { jobs: SyncJobRow[] }) {
                     ? "border-blue-500/30 bg-blue-500/10 text-blue-400"
                     : job.source === "webhook"
                       ? "border-violet-500/30 bg-violet-500/10 text-violet-400"
+                    : job.source === "push"
+                      ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-400"
                     : "border-border bg-muted/50 text-muted-foreground"
                 )}>
                   {job.source === "scheduler"
                     ? "Scheduler"
                     : job.source === "webhook"
                       ? "Webhook"
+                      : job.source === "push"
+                        ? "Push"
                       : "Manual"}
                 </span>
               </td>

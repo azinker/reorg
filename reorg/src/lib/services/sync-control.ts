@@ -11,7 +11,7 @@ import { runShopifySync } from "@/lib/services/shopify-sync";
 import { runEbayTppSync } from "@/lib/services/ebay-tpp-sync";
 import { failStaleRunningJob, isRunningJobStale } from "@/lib/services/sync-jobs";
 
-export type SyncTriggerSource = "manual" | "scheduler" | "webhook";
+export type SyncTriggerSource = "manual" | "scheduler" | "webhook" | "push";
 
 export interface SyncExecutionOptions {
   requestedMode?: SyncMode;
@@ -19,6 +19,8 @@ export interface SyncExecutionOptions {
   triggeredBy?: string;
   triggerSource?: SyncTriggerSource;
   fallbackReason?: string | null;
+  targetedPlatformItemIds?: string[];
+  preserveSyncState?: boolean;
 }
 
 export interface SyncDispatchResult {
@@ -148,14 +150,22 @@ export function buildCompletedSyncConfig(
           ? completedAt.toISOString()
           : config.syncState.lastIncrementalSyncAt,
       lastCursor:
-        completion.cursor !== undefined
+        options.preserveSyncState
+          ? config.syncState.lastCursor
+          : completion.cursor !== undefined
           ? completion.cursor
           : config.syncState.lastCursor,
-      pendingIncrementalItemIds: completion.pendingIncrementalItemIds ?? [],
+      pendingIncrementalItemIds: options.preserveSyncState
+        ? config.syncState.pendingIncrementalItemIds
+        : completion.pendingIncrementalItemIds ?? [],
       pendingIncrementalWindowEndedAt:
-        completion.pendingIncrementalWindowEndedAt ?? null,
+        options.preserveSyncState
+          ? config.syncState.pendingIncrementalWindowEndedAt
+          : completion.pendingIncrementalWindowEndedAt ?? null,
       lastFallbackReason:
-        options.fallbackReason === undefined
+        options.preserveSyncState
+          ? config.syncState.lastFallbackReason
+          : options.fallbackReason === undefined
           ? config.syncState.lastFallbackReason
           : options.fallbackReason,
       lastRateLimitAt: null,

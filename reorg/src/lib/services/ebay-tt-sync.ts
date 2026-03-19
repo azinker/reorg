@@ -212,6 +212,13 @@ export async function runEbayTtSync(
     let effectiveMode = options.effectiveMode ?? options.requestedMode ?? "full";
     let completionCursor = new Date().toISOString();
     let fallbackReasonForCompletion = options.fallbackReason ?? null;
+    const targetedPlatformItemIds = [
+      ...new Set(
+        (options.targetedPlatformItemIds ?? []).filter(
+          (itemId): itemId is string => typeof itemId === "string" && itemId.trim().length > 0,
+        ),
+      ),
+    ];
     const analyticsSnapshot = await getEbayTradingRateLimitSnapshotForIntegration(
       integration,
     ).catch(() => null);
@@ -219,7 +226,7 @@ export async function runEbayTtSync(
     if (effectiveMode === "incremental") {
       const integrationConfig = getIntegrationConfig(integration);
       const pendingWindow = getPendingIncrementalWindow(integrationConfig.syncState);
-      if (!pendingWindow) {
+      if (targetedPlatformItemIds.length === 0 && !pendingWindow) {
         const getSellerEventsRate = getEbayMethodRate(
           analyticsSnapshot,
           "GetSellerEvents",
@@ -247,7 +254,12 @@ export async function runEbayTtSync(
         integration.lastSyncAt?.toISOString() ??
         null;
       const incrementalWindow =
-        pendingWindow ??
+        targetedPlatformItemIds.length > 0
+          ? {
+              itemIds: targetedPlatformItemIds,
+              windowEndedAt: new Date(),
+            }
+          : pendingWindow ??
         (await fetchIncrementalItemIds(
           integration.id,
           ebayConfig,
@@ -263,25 +275,41 @@ export async function runEbayTtSync(
           timeZone: integrationConfig.syncProfile.timezone,
           window: {
             ...incrementalWindow,
-            source: pendingWindow ? "pending" : "fresh",
+            source:
+              targetedPlatformItemIds.length > 0
+                ? "fresh"
+                : pendingWindow
+                  ? "pending"
+                  : "fresh",
           },
         });
-        const processingItemIds = budgetPlan.itemIdsToProcess;
+        const processingItemIds =
+          targetedPlatformItemIds.length > 0
+            ? incrementalWindow.itemIds
+            : budgetPlan.itemIdsToProcess;
         const incrementalEventItemsById =
           "eventItemsById" in incrementalWindow
             ? incrementalWindow.eventItemsById
             : undefined;
-        pendingIncrementalItemIdsForCompletion = budgetPlan.pendingItemIds;
+        pendingIncrementalItemIdsForCompletion =
+          targetedPlatformItemIds.length > 0
+            ? integrationConfig.syncState.pendingIncrementalItemIds
+            : budgetPlan.pendingItemIds;
         pendingIncrementalWindowEndedAtForCompletion =
-          budgetPlan.pendingItemIds.length > 0
-            ? incrementalWindow.windowEndedAt.toISOString()
-            : null;
+          targetedPlatformItemIds.length > 0
+            ? integrationConfig.syncState.pendingIncrementalWindowEndedAt
+            : budgetPlan.pendingItemIds.length > 0
+              ? incrementalWindow.windowEndedAt.toISOString()
+              : null;
         completionCursor =
-          budgetPlan.pendingItemIds.length > 0
+          targetedPlatformItemIds.length > 0
             ? lastCursorValue ?? completionCursor
-            : incrementalWindow.windowEndedAt.toISOString();
+            : budgetPlan.pendingItemIds.length > 0
+              ? lastCursorValue ?? completionCursor
+              : incrementalWindow.windowEndedAt.toISOString();
 
         if (
+          targetedPlatformItemIds.length === 0 &&
           budgetPlan.pendingItemIds.length > 0 &&
           budgetPlan.itemIdsToProcess.length > 0
         ) {
@@ -296,6 +324,7 @@ export async function runEbayTtSync(
         }
 
         if (
+          targetedPlatformItemIds.length === 0 &&
           incrementalWindow.itemIds.length > 0 &&
           budgetPlan.itemIdsToProcess.length === 0
         ) {

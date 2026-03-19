@@ -150,6 +150,8 @@ export async function GET() {
             ? "scheduler"
             : typeof job.triggeredBy === "string" && job.triggeredBy.startsWith("webhook:")
               ? "webhook"
+            : typeof job.triggeredBy === "string" && job.triggeredBy.startsWith("push:")
+              ? "push"
             : "manual",
       };
     });

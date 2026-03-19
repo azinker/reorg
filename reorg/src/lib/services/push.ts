@@ -1,7 +1,7 @@
 import { db } from "@/lib/db";
 import { checkWriteSafety } from "@/lib/safety";
 import type { MarketplaceAdapter, PriceUpdate, AdRateUpdate } from "@/lib/integrations/types";
-import type { Platform } from "@prisma/client";
+import type { Integration, Platform } from "@prisma/client";
 import {
   getEbayCooldownUntilFromSnapshot,
   getEbayCredentialFingerprint,
@@ -14,6 +14,7 @@ import {
 } from "@/lib/services/ebay-sync-policy";
 import { getSharedEbayQuotaStoreCount } from "@/lib/services/ebay-sync-budget";
 import { formatCooldownRetryAt } from "@/lib/services/ebay-rate-limit";
+import { startIntegrationSync } from "@/lib/services/sync-control";
 
 export interface PushRequest {
   userId: string;
@@ -45,11 +46,30 @@ export interface PushExecutionResult {
   }[];
   blockedReason?: string;
   postPushRefresh?: {
-    status: "not-needed" | "ready" | "warning" | "blocked";
+    status:
+      | "not-needed"
+      | "ready"
+      | "warning"
+      | "blocked"
+      | "completed"
+      | "failed";
     detail: string;
     retryAt?: string | null;
     requiredCalls?: number | null;
     availableCalls?: number | null;
+    results?: Array<{
+      platform: Platform;
+      label: string;
+      status:
+        | "COMPLETED"
+        | "FAILED"
+        | "ALREADY_RUNNING"
+        | "UNSUPPORTED"
+        | "STARTED";
+      jobId: string | null;
+      message: string;
+      targetedCount: number;
+    }>;
   };
 }
 
@@ -235,6 +255,117 @@ async function evaluatePostPushRefreshHeadroom(
   };
 }
 
+async function executePostPushTargetedRefresh(args: {
+  pushJobId: string;
+  results: PushExecutionResult["results"];
+}): Promise<PushExecutionResult["postPushRefresh"]> {
+  const targetedByPlatform = new Map<Platform, Set<string>>();
+
+  for (const result of args.results) {
+    if (!result.success || !EBAY_PUSH_PLATFORMS.has(result.platform)) {
+      continue;
+    }
+
+    const existing = targetedByPlatform.get(result.platform) ?? new Set<string>();
+    existing.add(result.listingId);
+    targetedByPlatform.set(result.platform, existing);
+  }
+
+  if (targetedByPlatform.size === 0) {
+    return {
+      status: "not-needed",
+      detail: "No successful eBay listing updates needed a post-push targeted refresh.",
+      retryAt: null,
+      requiredCalls: 0,
+      availableCalls: null,
+      results: [],
+    };
+  }
+
+  const integrations = await db.integration.findMany({
+    where: { platform: { in: [...targetedByPlatform.keys()] } },
+    orderBy: { platform: "asc" },
+  });
+
+  const refreshResults: NonNullable<PushExecutionResult["postPushRefresh"]>["results"] =
+    [];
+  let completedCount = 0;
+  let failedCount = 0;
+  let runningCount = 0;
+
+  for (const integration of integrations) {
+    const targetedItemIds = [...(targetedByPlatform.get(integration.platform) ?? new Set())];
+    if (targetedItemIds.length === 0) {
+      continue;
+    }
+
+    const dispatch = await startIntegrationSync(
+      integration as Integration,
+      {
+        requestedMode: "incremental",
+        effectiveMode: "incremental",
+        triggerSource: "push",
+        triggeredBy: `push:targeted_refresh:${args.pushJobId}`,
+        fallbackReason:
+          `Post-push targeted refresh requested for ${targetedItemIds.length.toLocaleString()} ` +
+          `eBay listing${targetedItemIds.length === 1 ? "" : "s"}.`,
+        targetedPlatformItemIds: targetedItemIds,
+        preserveSyncState: true,
+      },
+      "inline",
+    );
+
+    refreshResults.push({
+      platform: integration.platform,
+      label: integration.label,
+      status: dispatch.status,
+      jobId: dispatch.jobId,
+      message: dispatch.message,
+      targetedCount: targetedItemIds.length,
+    });
+
+    if (dispatch.status === "COMPLETED") {
+      completedCount += 1;
+    } else if (dispatch.status === "ALREADY_RUNNING") {
+      runningCount += 1;
+    } else {
+      failedCount += 1;
+    }
+  }
+
+  const labels = refreshResults.map((result) => result.label);
+  const detailBase =
+    labels.length === 1 ? labels[0] : `${labels.slice(0, -1).join(", ")} and ${labels.at(-1)}`;
+
+  if (failedCount > 0) {
+    return {
+      status: "failed",
+      detail: `Post-push targeted refresh failed for ${detailBase}. Review Sync or Engine Room before trusting the live readback.`,
+      retryAt: null,
+      results: refreshResults,
+    };
+  }
+
+  if (runningCount > 0) {
+    return {
+      status: "warning",
+      detail: `A sync was already running for ${detailBase}, so reorG relied on that in-flight pull to refresh the pushed eBay listings.`,
+      retryAt: null,
+      results: refreshResults,
+    };
+  }
+
+  return {
+    status: completedCount > 0 ? "completed" : "not-needed",
+    detail:
+      completedCount > 0
+        ? `Post-push targeted refresh completed for ${detailBase}.`
+        : "No successful eBay listing updates needed a post-push targeted refresh.",
+    retryAt: null,
+    results: refreshResults,
+  };
+}
+
 /**
  * Execute a push operation through the full safety chain:
  * 1. Check global write lock
@@ -407,12 +538,19 @@ export async function executePush(
   }
 
   const status = results.every((r) => r.success) ? "completed" : "failed";
+  const completedPostPushRefresh =
+    status === "completed" || results.some((result) => result.success)
+      ? await executePostPushTargetedRefresh({
+          pushJobId: pushJob.id,
+          results,
+        })
+      : postPushRefresh;
 
   await db.pushJob.update({
     where: { id: pushJob.id },
     data: {
       status: status === "completed" ? "COMPLETED" : "FAILED",
-      result: { results, postPushRefresh },
+      result: { results, postPushRefresh: completedPostPushRefresh },
       completedAt: new Date(),
     },
   });
@@ -428,6 +566,7 @@ export async function executePush(
         totalChanges: request.changes.length,
         successful: results.filter((r) => r.success).length,
         failed: results.filter((r) => !r.success).length,
+        postPushRefresh: completedPostPushRefresh ?? null,
       },
     },
   });
@@ -437,6 +576,6 @@ export async function executePush(
     dryRun: false,
     status,
     results,
-    postPushRefresh,
+    postPushRefresh: completedPostPushRefresh,
   };
 }
