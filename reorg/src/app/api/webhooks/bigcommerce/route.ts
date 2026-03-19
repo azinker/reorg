@@ -31,6 +31,12 @@ function extractBigCommerceProductIds(payload: unknown): string[] {
     record.product_id,
     data?.id,
     data?.product_id,
+    data?.inventory && typeof data.inventory === "object"
+      ? (data.inventory as Record<string, unknown>).product_id
+      : null,
+    data?.sku && typeof data.sku === "object"
+      ? (data.sku as Record<string, unknown>).product_id
+      : null,
   ];
 
   return [...new Set(
@@ -56,6 +62,13 @@ function extractBigCommerceVariantIds(payload: unknown): string[] {
   const candidates = [
     record.variant_id,
     data?.variant_id,
+    data?.inventory && typeof data.inventory === "object"
+      ? (data.inventory as Record<string, unknown>).variant_id
+      : null,
+    data?.sku && typeof data.sku === "object"
+      ? (data.sku as Record<string, unknown>).variant_id
+      : null,
+    data?.id,
   ];
 
   return [...new Set(

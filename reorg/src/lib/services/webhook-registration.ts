@@ -17,6 +17,8 @@ const BIGCOMMERCE_SCOPES = [
   "store/product/created",
   "store/product/updated",
   "store/product/deleted",
+  "store/product/inventory/updated",
+  "store/sku/inventory/updated",
   "store/channel/*/inventory/product/stock_changed",
 ] as const;
 
@@ -326,13 +328,23 @@ async function ensureBigCommerceWebhooks(
   }>(storeHash, accessToken, "/hooks");
 
   const existing = existingResponse.data ?? [];
+  const managedExisting = existing.filter((hook) =>
+    BIGCOMMERCE_SCOPES.includes(hook.scope as (typeof BIGCOMMERCE_SCOPES)[number]),
+  );
   const matchingByScope = new Map(
-    existing
+    managedExisting
       .filter((hook) => hook.destination === destination)
       .map((hook) => [hook.scope, hook]),
   );
+  const staleHooks = managedExisting.filter((hook) => hook.destination !== destination);
 
   const providerIds: string[] = [];
+
+  for (const staleHook of staleHooks) {
+    await bigCommerceRequest(storeHash, accessToken, `/hooks/${staleHook.id}`, {
+      method: "DELETE",
+    });
+  }
 
   for (const scope of BIGCOMMERCE_SCOPES) {
     const current = matchingByScope.get(scope);
