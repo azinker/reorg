@@ -18,9 +18,14 @@ const BIGCOMMERCE_SCOPES = [
   "store/product/updated",
   "store/product/deleted",
   "store/product/inventory/updated",
+  "store/product/inventory/order/updated",
   "store/sku/inventory/updated",
+  "store/sku/inventory/order/updated",
   "store/channel/*/inventory/product/stock_changed",
 ] as const;
+
+const BIGCOMMERCE_DELIVERY_EXCEPTION_SCOPE =
+  "store/hook/deliveryException" as const;
 
 type IntegrationWithConfig = Pick<
   Integration,
@@ -318,6 +323,7 @@ async function ensureBigCommerceWebhooks(
   }
 
   const destination = `${getExpectedWebhookBaseUrl()}/api/webhooks/bigcommerce`;
+  const deliveryExceptionDestination = `${getExpectedWebhookBaseUrl()}/api/webhooks/bigcommerce-delivery-exception`;
   const existingResponse = await bigCommerceRequest<{
     data?: Array<{
       id: number | string;
@@ -378,6 +384,47 @@ async function ensureBigCommerceWebhooks(
     });
 
     providerIds.push(String(ensured.data?.id ?? current.id));
+  }
+
+  const existingDeliveryExceptionHook = existing.find(
+    (hook) => hook.scope === BIGCOMMERCE_DELIVERY_EXCEPTION_SCOPE,
+  );
+  const deliveryExceptionPayload = {
+    scope: BIGCOMMERCE_DELIVERY_EXCEPTION_SCOPE,
+    destination: deliveryExceptionDestination,
+    is_active: true,
+    headers: {
+      Authorization: `Bearer ${sharedSecret}`,
+    },
+  };
+
+  if (!existingDeliveryExceptionHook) {
+    const created = await bigCommerceRequest<{
+      data?: { id: number | string };
+    }>(storeHash, accessToken, "/hooks", {
+      method: "POST",
+      body: JSON.stringify(deliveryExceptionPayload),
+    });
+
+    if (created.data?.id != null) {
+      providerIds.push(String(created.data.id));
+    }
+  } else if (
+    existingDeliveryExceptionHook.destination !== deliveryExceptionDestination ||
+    !existingDeliveryExceptionHook.is_active
+  ) {
+    const ensured = await bigCommerceRequest<{
+      data?: { id: number | string };
+    }>(storeHash, accessToken, `/hooks/${existingDeliveryExceptionHook.id}`, {
+      method: "PUT",
+      body: JSON.stringify(deliveryExceptionPayload),
+    });
+
+    providerIds.push(
+      String(ensured.data?.id ?? existingDeliveryExceptionHook.id),
+    );
+  } else {
+    providerIds.push(String(existingDeliveryExceptionHook.id));
   }
 
   return {
