@@ -857,7 +857,7 @@ export default function SyncPage() {
         </p>
       </div>
 
-      <div className="mb-6 flex items-center gap-3 rounded-lg border border-border bg-muted/50 px-4 py-3">
+      <div className="mb-6 flex items-center gap-3 rounded-lg border border-border bg-muted/50 px-4 py-3" data-tour="sync-pull-only">
         <CheckCircle className="h-5 w-5 shrink-0 text-muted-foreground" aria-hidden />
         <p className="text-sm text-muted-foreground">
           Sync is pull-only. It never pushes changes to marketplaces.
@@ -880,7 +880,7 @@ export default function SyncPage() {
         </button>
       </div>
 
-      <div className="mb-8 rounded-lg border border-border bg-card p-4">
+      <div className="mb-8 rounded-lg border border-border bg-card p-4" data-tour="sync-scheduler">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <div className="flex items-center gap-2">
@@ -980,7 +980,7 @@ export default function SyncPage() {
           </div>
         )}
         {!!schedulerStatus?.integrationHealth?.length && (
-          <div className="mt-4 rounded border border-border bg-muted/20 p-3">
+          <div className="mt-4 rounded border border-border bg-muted/20 p-3" data-tour="sync-freshness">
             <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
               Store Freshness
             </div>
@@ -1113,7 +1113,7 @@ export default function SyncPage() {
           </div>
         )}
         {!!schedulerStatus?.upcoming?.length && (
-          <div className="mt-4 rounded border border-border bg-muted/20 p-3">
+          <div className="mt-4 rounded border border-border bg-muted/20 p-3" data-tour="sync-upcoming">
             <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
               What Happens Next
             </div>
@@ -1156,7 +1156,7 @@ export default function SyncPage() {
           </div>
         )}
         {!!schedulerStatus?.recentWebhooks?.length && (
-          <div className="mt-4 rounded border border-border bg-muted/20 p-3">
+          <div className="mt-4 rounded border border-border bg-muted/20 p-3" data-tour="sync-webhooks">
             <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
               Recent Store Change Notices
             </div>
@@ -1189,7 +1189,7 @@ export default function SyncPage() {
           </div>
         )}
         {!!schedulerStatus?.automationEvents?.length && (
-          <div className="mt-4 rounded border border-border bg-muted/20 p-3">
+          <div className="mt-4 rounded border border-border bg-muted/20 p-3" data-tour="sync-automation-events">
             <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
               Why The System Did What It Did
             </div>

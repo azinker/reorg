@@ -632,11 +632,17 @@ async function buildEngineRoomData() {
       (j) => j.status === "FAILED" && j.completedAt && Date.now() - j.completedAt.getTime() < 7 * 24 * 60 * 60 * 1000,
     );
     const recentErrors = failedInLast7Days.length;
+    const mostRecentFailure = failedInLast7Days[0] ?? null;
     const recentErrorDetail =
-      failedInLast7Days.length > 0
-        ? Array.isArray(failedInLast7Days[0].errors) && failedInLast7Days[0].errors.length > 0
-          ? normalizeErrorMessage(failedInLast7Days[0].errors[0])
+      mostRecentFailure
+        ? Array.isArray(mostRecentFailure.errors) && mostRecentFailure.errors.length > 0
+          ? normalizeErrorMessage(mostRecentFailure.errors[0])
           : "Sync failed (no message)"
+        : null;
+    const recentErrorAt = mostRecentFailure?.completedAt?.toISOString() ?? null;
+    const recentErrorStore =
+      typeof mostRecentFailure?.integration?.label === "string"
+        ? mostRecentFailure.integration.label
         : null;
     const writeLockOn = globalLock?.value === true;
     const schedulerEnabled = schedulerMap.scheduler_enabled === true;
@@ -688,6 +694,8 @@ async function buildEngineRoomData() {
         queuedPushes,
         recentErrors,
         recentErrorDetail,
+        recentErrorAt,
+        recentErrorStore,
         writeLockOn,
         schedulerEnabled,
         schedulerLastTickAt,

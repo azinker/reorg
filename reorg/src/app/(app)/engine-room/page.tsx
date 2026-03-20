@@ -185,6 +185,8 @@ type EngineRoomData = {
     queuedPushes: number;
     recentErrors: number;
     recentErrorDetail: string | null;
+    recentErrorAt: string | null;
+    recentErrorStore: string | null;
     writeLockOn: boolean;
     schedulerEnabled: boolean;
     schedulerLastTickAt: string | null;
@@ -1097,6 +1099,8 @@ export default function EngineRoomPage() {
     queuedPushes: 0,
     recentErrors: 0,
     recentErrorDetail: null as string | null,
+    recentErrorAt: null as string | null,
+    recentErrorStore: null as string | null,
     writeLockOn: false,
     schedulerEnabled: false,
     schedulerLastTickAt: null as string | null,
@@ -1164,13 +1168,14 @@ export default function EngineRoomPage() {
       </div>
 
       {/* Summary cards */}
-      <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4" data-tour="engine-summary">
         <article
           className={cn(
             "rounded-lg border border-border bg-card p-4 transition-colors duration-200",
             "ring-1 ring-border/50",
             "hover:border-border/80 hover:bg-card/95"
           )}
+          data-tour="engine-recent-errors"
         >
           <div className="flex items-center gap-3">
             <div
@@ -1240,11 +1245,19 @@ export default function EngineRoomPage() {
                 {loading ? "-" : summary.recentErrors}
               </p>
               <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                Recent Errors
+                Recent Failures (7d)
               </p>
               {!loading && summary.recentErrors > 0 && summary.recentErrorDetail && (
-                <p className="mt-1 max-w-full truncate text-xs text-red-400/90" title={summary.recentErrorDetail}>
+                <p
+                  className="mt-1 max-w-full whitespace-normal break-words text-xs leading-relaxed text-red-400/90"
+                  title={summary.recentErrorDetail}
+                >
                   {summary.recentErrorDetail}
+                </p>
+              )}
+              {!loading && summary.recentErrors > 0 && (
+                <p className="mt-1 max-w-full text-[11px] text-muted-foreground">
+                  Latest: {summary.recentErrorStore ?? "unknown store"} at {formatDateTime(summary.recentErrorAt)}
                 </p>
               )}
             </div>
@@ -1308,6 +1321,7 @@ export default function EngineRoomPage() {
             "ring-1 ring-amber-500/20",
             "hover:border-amber-500/40 hover:bg-card/95"
           )}
+          data-tour="engine-write-lock"
         >
           <div className="flex items-center gap-3">
             <div
@@ -1335,6 +1349,7 @@ export default function EngineRoomPage() {
             "ring-1 ring-border/50",
             "hover:border-border/80 hover:bg-card/95"
           )}
+          data-tour="engine-scheduler"
         >
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div className="space-y-1.5">
