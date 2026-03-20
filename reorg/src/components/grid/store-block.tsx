@@ -706,7 +706,9 @@ function EditableAdRateBlock({
   const [draftPercent, setDraftPercent] = useState("");
   const [showActions, setShowActions] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const livePercentValue = Math.round((item.value != null ? Number(item.value) : 0) * 1000) / 10;
   const livePercent = ((item.value != null ? Number(item.value) : 0) * 100).toFixed(1);
+  const effectivePercentValue = Math.round((hasStaged ? Number(item.stagedValue) : (item.value != null ? Number(item.value) : 0)) * 1000) / 10;
   const effectivePercent = (() => {
     const current = hasStaged ? Number(item.stagedValue) : (item.value != null ? Number(item.value) : 0);
     return (current * 100).toFixed(1);
@@ -831,7 +833,7 @@ function EditableAdRateBlock({
 
   function handleSave(mode: "stage" | "push") {
     const normalizedPercent = parseDraftPercentValue(draftPercent);
-    if (normalizedPercent == null || draftPercent === effectivePercent) {
+    if (normalizedPercent == null || normalizedPercent === effectivePercentValue) {
       cancelEdit();
       return;
     }
@@ -843,7 +845,7 @@ function EditableAdRateBlock({
 
   function handleFastPush() {
     const normalizedPercent = parseDraftPercentValue(draftPercent);
-    if (normalizedPercent == null || draftPercent === effectivePercent) {
+    if (normalizedPercent == null || normalizedPercent === effectivePercentValue) {
       cancelEdit();
       return;
     }
@@ -868,7 +870,8 @@ function EditableAdRateBlock({
   }
 
   if (editing) {
-    const canConfirm = parseDraftPercentValue(draftPercent) != null && draftPercent !== livePercent;
+    const parsedDraftPercent = parseDraftPercentValue(draftPercent);
+    const canConfirm = parsedDraftPercent != null && parsedDraftPercent !== livePercentValue;
 
     return (
       <div className={cn("w-full min-w-0 rounded border px-2.5 py-1.5 text-xs", colorClass, "ring-1 ring-ring")}>
