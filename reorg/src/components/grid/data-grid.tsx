@@ -540,11 +540,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
         });
         return;
       }
-
-      setQuickPushState(key, {
-        phase: "ready",
-        detail: "Dry run passed. Confirm the single live push inline.",
-      });
+      await confirmInlineFastPush(rowId, platform, listingId, field);
     } catch (error) {
       setQuickPushState(key, {
         phase: "error",
@@ -1610,12 +1606,6 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
                         onPush={handlePushStaged}
                         onDiscard={handleDiscardStaged}
                         quickPushStates={quickPushStates}
-                        onFastPushConfirm={(targetRowId, platform, listingId) => {
-                          void confirmInlineFastPush(targetRowId, platform, listingId, "salePrice");
-                        }}
-                        onFastPushCancel={(targetRowId, platform, listingId) => {
-                          clearQuickPushState(getQuickPushKey(targetRowId, platform, listingId, "salePrice"));
-                        }}
                       />
                     </div>
                   )}
@@ -1690,12 +1680,6 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
                           onPush={handlePushStagedAdRate}
                           onDiscard={handleDiscardStagedAdRate}
                           quickPushStates={quickPushStates}
-                          onFastPushConfirm={(targetRowId, platform, listingId) => {
-                            void confirmInlineFastPush(targetRowId, platform, listingId, "adRate");
-                          }}
-                          onFastPushCancel={(targetRowId, platform, listingId) => {
-                            clearQuickPushState(getQuickPushKey(targetRowId, platform, listingId, "adRate"));
-                          }}
                         />
                       )}
                     </div>

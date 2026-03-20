@@ -150,8 +150,6 @@ interface EditableStoreBlockProps {
   onPush: (rowId: string, platform: string, listingId: string, mode?: "review" | "fast") => void;
   onDiscard: (rowId: string, platform: string, listingId: string) => void;
   quickPushState?: QuickPushState;
-  onFastPushConfirm: (rowId: string, platform: string, listingId: string) => void;
-  onFastPushCancel: (rowId: string, platform: string, listingId: string) => void;
   showItemId?: boolean;
 }
 
@@ -176,8 +174,6 @@ function EditableStoreBlock({
   onPush,
   onDiscard,
   quickPushState,
-  onFastPushConfirm,
-  onFastPushCancel,
   showItemId = false,
 }: EditableStoreBlockProps) {
   const label = PLATFORM_SHORT[item.platform];
@@ -249,87 +245,45 @@ function EditableStoreBlock({
 
   const displayVal = hasStaged ? fmt(item.stagedValue!) : fmt(item.value);
   const shortItemId = showItemId ? item.listingId.slice(-6) : null;
-  const showQuickPushActions = hasStaged && quickPushState && quickPushState.phase !== "idle";
+  const quickPhase = quickPushState?.phase ?? "idle";
+  const fastPushBusy = quickPhase === "dry-run" || quickPhase === "pushing";
+  const fastPushSucceeded = quickPhase === "success";
+  const fastPushRetry = quickPhase === "error" || quickPhase === "blocked";
 
-  function renderQuickPushStatus() {
-    if (!showQuickPushActions || !quickPushState) return null;
-
-    const phase = quickPushState.phase;
-    const detail = quickPushState.detail;
-
-    return (
-      <div className="mt-1.5 rounded border border-white/10 bg-black/15 px-2 py-1">
-        <div className="flex flex-wrap items-center gap-1.5">
-          {phase === "dry-run" ? (
-            <>
-              <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-blue-300">
-                <Loader2 className="h-3 w-3 animate-spin" />
-                Checking push
-              </span>
-              <button
-                onClick={() => onFastPushCancel(rowId, item.platform, item.listingId)}
-                className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground hover:text-foreground cursor-pointer"
-              >
-                Cancel
-              </button>
-            </>
-          ) : null}
-          {phase === "ready" ? (
-            <>
-              <button
-                onClick={() => onFastPushConfirm(rowId, item.platform, item.listingId)}
-                className="inline-flex items-center gap-1 rounded bg-blue-500 px-2 py-0.5 text-[10px] font-bold text-white hover:bg-blue-600 cursor-pointer"
-                title="Confirm this live push"
-              >
-                <Upload className="h-2.5 w-2.5" />
-                Confirm Push
-              </button>
-              <button
-                onClick={() => onFastPushCancel(rowId, item.platform, item.listingId)}
-                className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground hover:text-foreground cursor-pointer"
-              >
-                Cancel
-              </button>
-            </>
-          ) : null}
-          {phase === "pushing" ? (
-            <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-amber-300">
-              <Loader2 className="h-3 w-3 animate-spin" />
-              Pushing
-            </span>
-          ) : null}
-          {phase === "success" ? (
-            <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-300">
-              <Check className="h-3 w-3" />
-              Pushed
-            </span>
-          ) : null}
-          {phase === "error" || phase === "blocked" ? (
-            <>
-              <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-red-300">
-                <AlertTriangle className="h-3 w-3" />
-                Push blocked
-              </span>
-              <button
-                onClick={() => onPush(rowId, item.platform, item.listingId, "fast")}
-                className="rounded bg-blue-500 px-1.5 py-0.5 text-[10px] font-bold text-white hover:bg-blue-600 cursor-pointer"
-              >
-                Retry
-              </button>
-              <button
-                onClick={() => onFastPushCancel(rowId, item.platform, item.listingId)}
-                className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground hover:text-foreground cursor-pointer"
-              >
-                Clear
-              </button>
-            </>
-          ) : null}
-        </div>
-        {detail ? (
-          <p className="mt-1 text-[10px] leading-tight text-muted-foreground">{detail}</p>
-        ) : null}
-      </div>
-    );
+  function renderFastPushLabel() {
+    if (quickPhase === "dry-run") {
+      return (
+        <>
+          <Loader2 className="h-3 w-3 animate-spin" />
+          Checking
+        </>
+      );
+    }
+    if (quickPhase === "pushing") {
+      return (
+        <>
+          <Loader2 className="h-3 w-3 animate-spin" />
+          Pushing
+        </>
+      );
+    }
+    if (quickPhase === "success") {
+      return (
+        <>
+          <Check className="h-3 w-3" />
+          Pushed
+        </>
+      );
+    }
+    if (quickPhase === "error" || quickPhase === "blocked") {
+      return (
+        <>
+          <AlertTriangle className="h-3 w-3" />
+          Retry
+        </>
+      );
+    }
+    return "Fast Push";
   }
 
   if (editing) {
@@ -360,7 +314,7 @@ function EditableStoreBlock({
               </button>
             </>
           ) : (
-            <div className="ml-1 flex min-w-0 flex-1 flex-wrap items-center gap-1">
+            <div className="ml-1 grid min-w-0 flex-1 grid-cols-3 gap-1">
               <button
                 onClick={confirmStage}
                 className="inline-flex min-w-0 items-center justify-center rounded bg-[var(--staged)] px-2 py-1 text-[10px] font-bold leading-none text-[var(--staged-foreground)] hover:opacity-80 cursor-pointer"
@@ -377,13 +331,10 @@ function EditableStoreBlock({
               </button>
               <button
                 onClick={confirmFastPush}
-                className="inline-flex min-w-0 items-center justify-center rounded bg-blue-500 px-2 py-1 text-[10px] font-bold leading-none text-white hover:bg-blue-600 cursor-pointer"
-                title="Run the dry run inline, then confirm the live push without opening a popup"
+                className="inline-flex min-w-0 items-center justify-center gap-1 rounded bg-blue-500 px-2 py-1 text-[10px] font-bold leading-none text-white hover:bg-blue-600 cursor-pointer"
+                title="Run the guarded fast push for this one value"
               >
                 Fast Push
-              </button>
-              <button onClick={cancelEdit} className="rounded p-0.5 text-muted-foreground hover:text-foreground cursor-pointer" title="Cancel">
-                <X className="h-3 w-3" />
               </button>
             </div>
           )}
@@ -426,14 +377,23 @@ function EditableStoreBlock({
                 className="inline-flex min-w-0 items-center justify-center rounded bg-emerald-500 px-2 py-1 text-[10px] font-bold leading-none text-white hover:bg-emerald-600 cursor-pointer"
                 title="Review the guarded live push flow for this staged price"
               >
-                Review
+                Review Push
               </button>
               <button
                 onClick={() => onPush(rowId, item.platform, item.listingId, "fast")}
-                className="inline-flex min-w-0 items-center justify-center rounded bg-blue-500 px-2 py-1 text-[10px] font-bold leading-none text-white hover:bg-blue-600 cursor-pointer"
-                title="Run the dry run inline, then confirm the live push without opening a popup"
+                disabled={fastPushBusy || fastPushSucceeded}
+                className={cn(
+                  "inline-flex min-w-0 items-center justify-center gap-1 rounded px-2 py-1 text-[10px] font-bold leading-none text-white cursor-pointer",
+                  fastPushSucceeded
+                    ? "bg-emerald-500 hover:bg-emerald-500"
+                    : fastPushRetry
+                      ? "bg-amber-500 hover:bg-amber-600"
+                      : "bg-blue-500 hover:bg-blue-600",
+                  (fastPushBusy || fastPushSucceeded) && "cursor-default",
+                )}
+                title={quickPushState?.detail ?? "Run the guarded fast push for this staged price"}
               >
-                Fast Push
+                {renderFastPushLabel()}
               </button>
               <button
                 onClick={() => onDiscard(rowId, item.platform, item.listingId)}
@@ -443,7 +403,6 @@ function EditableStoreBlock({
                 Discard
               </button>
             </div>
-            {renderQuickPushStatus()}
           </>
         ) : (
           <span className={cn("font-medium leading-tight", isNegative(item.value) ? "text-red-400" : "text-emerald-400")}>{fmt(item.value)}</span>
@@ -468,8 +427,6 @@ interface EditableStoreBlockGroupProps {
   onPush: (rowId: string, platform: string, listingId: string, mode?: "review" | "fast") => void;
   onDiscard: (rowId: string, platform: string, listingId: string) => void;
   quickPushStates?: Record<string, QuickPushState>;
-  onFastPushConfirm: (rowId: string, platform: string, listingId: string) => void;
-  onFastPushCancel: (rowId: string, platform: string, listingId: string) => void;
 }
 
 export function EditableStoreBlockGroup({
@@ -479,8 +436,6 @@ export function EditableStoreBlockGroup({
   onPush,
   onDiscard,
   quickPushStates,
-  onFastPushConfirm,
-  onFastPushCancel,
 }: EditableStoreBlockGroupProps) {
   const [bulkOpen, setBulkOpen] = useState(false);
   const [bulkCents, setBulkCents] = useState(0);
@@ -664,8 +619,6 @@ export function EditableStoreBlockGroup({
           onPush={onPush}
           onDiscard={onDiscard}
           quickPushState={quickPushStates?.[`${rowId}:${item.platform}:${item.listingId}:salePrice`]}
-          onFastPushConfirm={onFastPushConfirm}
-          onFastPushCancel={onFastPushCancel}
           showItemId={hasDuplicatePlatforms && (platformCounts.get(item.platform) ?? 0) > 1}
         />
       ))}
@@ -684,8 +637,6 @@ interface EditableAdRateBlockProps {
   onPush: (rowId: string, platform: string, listingId: string, mode?: "review" | "fast") => void;
   onDiscard: (rowId: string, platform: string, listingId: string) => void;
   quickPushState?: QuickPushState;
-  onFastPushConfirm: (rowId: string, platform: string, listingId: string) => void;
-  onFastPushCancel: (rowId: string, platform: string, listingId: string) => void;
   showItemId?: boolean;
 }
 
@@ -696,8 +647,6 @@ function EditableAdRateBlock({
   onPush,
   onDiscard,
   quickPushState,
-  onFastPushConfirm,
-  onFastPushCancel,
   showItemId = false,
 }: EditableAdRateBlockProps) {
   const label = PLATFORM_SHORT[item.platform];
@@ -714,86 +663,45 @@ function EditableAdRateBlock({
     const current = hasStaged ? Number(item.stagedValue) : (item.value != null ? Number(item.value) : 0);
     return (current * 100).toFixed(1);
   })();
-  const showQuickPushActions = hasStaged && quickPushState && quickPushState.phase !== "idle";
+  const quickPhase = quickPushState?.phase ?? "idle";
+  const fastPushBusy = quickPhase === "dry-run" || quickPhase === "pushing";
+  const fastPushSucceeded = quickPhase === "success";
+  const fastPushRetry = quickPhase === "error" || quickPhase === "blocked";
 
-  function renderQuickPushStatus() {
-    if (!showQuickPushActions || !quickPushState) return null;
-
-    const phase = quickPushState.phase;
-    const detail = quickPushState.detail;
-
-    return (
-      <div className="mt-1.5 rounded border border-white/10 bg-black/15 px-2 py-1">
-        <div className="flex flex-wrap items-center gap-1.5">
-          {phase === "dry-run" ? (
-            <>
-              <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-blue-300">
-                <Loader2 className="h-3 w-3 animate-spin" />
-                Checking push
-              </span>
-              <button
-                onClick={() => onFastPushCancel(rowId, item.platform, item.listingId)}
-                className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground hover:text-foreground cursor-pointer"
-              >
-                Cancel
-              </button>
-            </>
-          ) : null}
-          {phase === "ready" ? (
-            <>
-              <button
-                onClick={() => onFastPushConfirm(rowId, item.platform, item.listingId)}
-                className="inline-flex items-center gap-1 rounded bg-blue-500 px-2 py-0.5 text-[10px] font-bold text-white hover:bg-blue-600 cursor-pointer"
-              >
-                <Upload className="h-2.5 w-2.5" />
-                Confirm Push
-              </button>
-              <button
-                onClick={() => onFastPushCancel(rowId, item.platform, item.listingId)}
-                className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground hover:text-foreground cursor-pointer"
-              >
-                Cancel
-              </button>
-            </>
-          ) : null}
-          {phase === "pushing" ? (
-            <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-amber-300">
-              <Loader2 className="h-3 w-3 animate-spin" />
-              Pushing
-            </span>
-          ) : null}
-          {phase === "success" ? (
-            <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-300">
-              <Check className="h-3 w-3" />
-              Pushed
-            </span>
-          ) : null}
-          {phase === "error" || phase === "blocked" ? (
-            <>
-              <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-red-300">
-                <AlertTriangle className="h-3 w-3" />
-                Push blocked
-              </span>
-              <button
-                onClick={() => onPush(rowId, item.platform, item.listingId, "fast")}
-                className="rounded bg-blue-500 px-1.5 py-0.5 text-[10px] font-bold text-white hover:bg-blue-600 cursor-pointer"
-              >
-                Retry
-              </button>
-              <button
-                onClick={() => onFastPushCancel(rowId, item.platform, item.listingId)}
-                className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground hover:text-foreground cursor-pointer"
-              >
-                Clear
-              </button>
-            </>
-          ) : null}
-        </div>
-        {detail ? (
-          <p className="mt-1 text-[10px] leading-tight text-muted-foreground">{detail}</p>
-        ) : null}
-      </div>
-    );
+  function renderFastPushLabel() {
+    if (quickPhase === "dry-run") {
+      return (
+        <>
+          <Loader2 className="h-3 w-3 animate-spin" />
+          Checking
+        </>
+      );
+    }
+    if (quickPhase === "pushing") {
+      return (
+        <>
+          <Loader2 className="h-3 w-3 animate-spin" />
+          Pushing
+        </>
+      );
+    }
+    if (quickPhase === "success") {
+      return (
+        <>
+          <Check className="h-3 w-3" />
+          Pushed
+        </>
+      );
+    }
+    if (quickPhase === "error" || quickPhase === "blocked") {
+      return (
+        <>
+          <AlertTriangle className="h-3 w-3" />
+          Retry
+        </>
+      );
+    }
+    return "Fast Push";
   }
 
   function fmtPercent(val: number | string | null): string {
@@ -946,7 +854,7 @@ function EditableAdRateBlock({
               </button>
             </>
           ) : (
-            <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">
+            <div className="grid min-w-0 flex-1 grid-cols-3 gap-1">
               <button
                 onClick={() => handleSave("stage")}
                 className="inline-flex min-w-0 items-center justify-center rounded bg-[var(--staged)] px-2 py-1 text-[10px] font-bold leading-none text-[var(--staged-foreground)] hover:opacity-80 cursor-pointer"
@@ -963,13 +871,10 @@ function EditableAdRateBlock({
               </button>
               <button
                 onClick={handleFastPush}
-                className="inline-flex min-w-0 items-center justify-center rounded bg-blue-500 px-2 py-1 text-[10px] font-bold leading-none text-white hover:bg-blue-600 cursor-pointer"
-                title="Run the dry run inline, then confirm the live push without opening a popup"
+                className="inline-flex min-w-0 items-center justify-center gap-1 rounded bg-blue-500 px-2 py-1 text-[10px] font-bold leading-none text-white hover:bg-blue-600 cursor-pointer"
+                title="Run the guarded fast push for this one ad rate"
               >
                 Fast Push
-              </button>
-              <button onClick={cancelEdit} className="rounded p-0.5 text-muted-foreground hover:text-foreground cursor-pointer" title="Cancel">
-                <X className="h-3 w-3" />
               </button>
             </div>
           )}
@@ -1008,14 +913,23 @@ function EditableAdRateBlock({
                 className="inline-flex min-w-0 items-center justify-center rounded bg-emerald-500 px-2 py-1 text-[10px] font-bold leading-none text-white hover:bg-emerald-600 cursor-pointer"
                 title="Review the guarded live push flow for this staged ad rate"
               >
-                Review
+                Review Push
               </button>
               <button
                 onClick={() => onPush(rowId, item.platform, item.listingId, "fast")}
-                className="inline-flex min-w-0 items-center justify-center rounded bg-blue-500 px-2 py-1 text-[10px] font-bold leading-none text-white hover:bg-blue-600 cursor-pointer"
-                title="Run the dry run inline, then confirm the live push without opening a popup"
+                disabled={fastPushBusy || fastPushSucceeded}
+                className={cn(
+                  "inline-flex min-w-0 items-center justify-center gap-1 rounded px-2 py-1 text-[10px] font-bold leading-none text-white cursor-pointer",
+                  fastPushSucceeded
+                    ? "bg-emerald-500 hover:bg-emerald-500"
+                    : fastPushRetry
+                      ? "bg-amber-500 hover:bg-amber-600"
+                      : "bg-blue-500 hover:bg-blue-600",
+                  (fastPushBusy || fastPushSucceeded) && "cursor-default",
+                )}
+                title={quickPushState?.detail ?? "Run the guarded fast push for this staged ad rate"}
               >
-                Fast Push
+                {renderFastPushLabel()}
               </button>
               <button
                 onClick={() => onDiscard(rowId, item.platform, item.listingId)}
@@ -1025,7 +939,6 @@ function EditableAdRateBlock({
                 Discard
               </button>
             </div>
-            {renderQuickPushStatus()}
           </>
         ) : (
           <span className="font-medium leading-tight text-emerald-400">{fmtPercent(item.value)}</span>
@@ -1049,8 +962,6 @@ interface EditableAdRateBlockGroupProps {
   onPush: (rowId: string, platform: string, listingId: string, mode?: "review" | "fast") => void;
   onDiscard: (rowId: string, platform: string, listingId: string) => void;
   quickPushStates?: Record<string, QuickPushState>;
-  onFastPushConfirm: (rowId: string, platform: string, listingId: string) => void;
-  onFastPushCancel: (rowId: string, platform: string, listingId: string) => void;
 }
 
 export function EditableAdRateBlockGroup({
@@ -1060,8 +971,6 @@ export function EditableAdRateBlockGroup({
   onPush,
   onDiscard,
   quickPushStates,
-  onFastPushConfirm,
-  onFastPushCancel,
 }: EditableAdRateBlockGroupProps) {
   if (items.length === 0) {
     return <span className="text-xs text-muted-foreground">—</span>;
@@ -1084,8 +993,6 @@ export function EditableAdRateBlockGroup({
           onPush={onPush}
           onDiscard={onDiscard}
           quickPushState={quickPushStates?.[`${rowId}:${item.platform}:${item.listingId}:adRate`]}
-          onFastPushConfirm={onFastPushConfirm}
-          onFastPushCancel={onFastPushCancel}
           showItemId={hasDuplicatePlatforms && (platformCounts.get(item.platform) ?? 0) > 1}
         />
       ))}
