@@ -15,6 +15,13 @@ type LiveUpcLine =
       value: string;
     };
 
+type LiveUpcChoice = {
+  platform: Platform;
+  label: string;
+  value: string;
+  editable: boolean;
+};
+
 const PLATFORM_ORDER: Platform[] = ["TPP_EBAY", "SHOPIFY", "BIGCOMMERCE", "TT_EBAY"];
 const PLATFORM_SHORT: Record<Platform, string> = {
   TPP_EBAY: "TPP",
@@ -145,6 +152,13 @@ export async function GET(
       })
       .filter((entry): entry is { platform: Platform; label: string; value: string } => Boolean(entry));
 
+    const choices: LiveUpcChoice[] = ordered.map((entry) => ({
+      platform: entry.platform,
+      label: entry.label,
+      value: entry.value,
+      editable: entry.platform === "BIGCOMMERCE" || entry.platform === "SHOPIFY",
+    }));
+
     const distinctValues = [...new Set(ordered.map((entry) => entry.value))];
     const lines: LiveUpcLine[] =
       ordered.length > 1 && distinctValues.length === 1
@@ -163,7 +177,7 @@ export async function GET(
           }));
 
     return NextResponse.json(
-      { data: { lines } },
+      { data: { lines, choices } },
       {
         headers: {
           "Cache-Control": "no-store",

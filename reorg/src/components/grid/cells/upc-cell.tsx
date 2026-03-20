@@ -2,10 +2,10 @@
 
 import { useEffect, useRef, useState } from "react";
 import JsBarcode from "jsbarcode";
-import { AlertTriangle, Check, Copy, Loader2, X } from "lucide-react";
+import { AlertTriangle, Check, Copy, Loader2, Lock, X } from "lucide-react";
 import { copySvgElementImage } from "@/lib/client-clipboard";
 import { PlatformIcon } from "@/components/grid/platform-icon";
-import type { Platform } from "@/lib/grid-types";
+import { PLATFORM_COLORS, type Platform } from "@/lib/grid-types";
 import { cn } from "@/lib/utils";
 
 type LiveUpcLine =
@@ -21,8 +21,19 @@ type LiveUpcLine =
       value: string;
     };
 
+type LiveUpcChoice = {
+  platform: Platform;
+  label: string;
+  value: string;
+  editable: boolean;
+};
+
 const upcLiveCache = new Map<string, { expiresAt: number; value: LiveUpcLine[] }>();
-const upcLiveInflight = new Map<string, Promise<LiveUpcLine[]>>();
+const upcLiveInflight = new Map<
+  string,
+  Promise<{ lines: LiveUpcLine[]; choices: LiveUpcChoice[] }>
+>();
+const upcChoiceCache = new Map<string, { expiresAt: number; value: LiveUpcChoice[] }>();
 
 type UpcQuickPushPhase =
   | "idle"
@@ -98,8 +109,10 @@ export function UpcCell({
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
   const [showActions, setShowActions] = useState(false);
-  const [selectorMode, setSelectorMode] = useState<"review" | "fast" | null>(null);
+  const [selectorMode, setSelectorMode] = useState<"review" | "fast" | "edit" | null>(null);
   const [liveLines, setLiveLines] = useState<LiveUpcLine[]>([]);
+  const [liveChoices, setLiveChoices] = useState<LiveUpcChoice[]>([]);
+  const [selectedTarget, setSelectedTarget] = useState<{ platform: string; listingId: string } | null>(null);
   const quickPhase = quickPushState?.phase ?? "idle";
   const displayedUpc = stagedUpc ?? upc ?? liveLines[0]?.value ?? null;
   const effectiveUpc = stagedUpc ?? upc ?? liveLines[0]?.value ?? "";
@@ -108,8 +121,10 @@ export function UpcCell({
   useEffect(() => {
     let active = true;
     const cached = upcLiveCache.get(rowId);
-    if (cached && cached.expiresAt > Date.now()) {
+    const cachedChoices = upcChoiceCache.get(rowId);
+    if (cached && cached.expiresAt > Date.now() && cachedChoices && cachedChoices.expiresAt > Date.now()) {
       setLiveLines(cached.value);
+      setLiveChoices(cachedChoices.value);
       return;
     }
 
@@ -121,13 +136,18 @@ export function UpcCell({
           if (!response.ok) {
             throw new Error(`Failed to load live UPCs: ${response.status}`);
           }
-          const payload = (await response.json()) as { data?: { lines?: LiveUpcLine[] } };
+          const payload = (await response.json()) as { data?: { lines?: LiveUpcLine[]; choices?: LiveUpcChoice[] } };
           const lines = payload.data?.lines ?? [];
+          const choices = payload.data?.choices ?? [];
           upcLiveCache.set(rowId, {
             expiresAt: Date.now() + 60_000,
             value: lines,
           });
-          return lines;
+          upcChoiceCache.set(rowId, {
+            expiresAt: Date.now() + 60_000,
+            value: choices,
+          });
+          return { lines, choices };
         })
         .finally(() => {
           upcLiveInflight.delete(rowId);
@@ -138,9 +158,10 @@ export function UpcCell({
     }
 
     void request
-      .then((lines) => {
+      .then(({ lines, choices }) => {
         if (active) {
           setLiveLines(lines);
+          setLiveChoices(choices);
         }
       })
       .catch((error) => {
@@ -155,16 +176,23 @@ export function UpcCell({
   useEffect(() => {
     if (quickPhase === "success") {
       upcLiveCache.delete(rowId);
+      upcChoiceCache.delete(rowId);
       void fetch(`/api/grid/${rowId}/upc-live`)
         .then(async (response) => {
           if (!response.ok) return [];
-          const payload = (await response.json()) as { data?: { lines?: LiveUpcLine[] } };
+          const payload = (await response.json()) as { data?: { lines?: LiveUpcLine[]; choices?: LiveUpcChoice[] } };
           const lines = payload.data?.lines ?? [];
+          const choices = payload.data?.choices ?? [];
           upcLiveCache.set(rowId, {
             expiresAt: Date.now() + 60_000,
             value: lines,
           });
+          upcChoiceCache.set(rowId, {
+            expiresAt: Date.now() + 60_000,
+            value: choices,
+          });
           setLiveLines(lines);
+          setLiveChoices(choices);
           return lines;
         })
         .catch((error) => {
@@ -176,6 +204,7 @@ export function UpcCell({
   useEffect(() => {
     if (!stagedUpc) {
       setSelectorMode(null);
+      setSelectedTarget(null);
     }
   }, [stagedUpc]);
 
@@ -281,7 +310,19 @@ export function UpcCell({
 
   function startEdit() {
     if (!editable) return;
-    setDraft(stagedUpc ?? upc ?? "");
+    const editChoices = liveChoices.filter((choice) => choice.editable);
+    if (editChoices.length > 1) {
+      setShowActions(false);
+      setSelectorMode("edit");
+      return;
+    }
+    const choice = editChoices[0];
+    setDraft(choice?.value ?? stagedUpc ?? upc ?? "");
+    setSelectedTarget(
+      choice
+        ? { platform: choice.platform, listingId: pushTargets.find((target) => target.platform === choice.platform)?.listingId ?? "" }
+        : null,
+    );
     setShowActions(false);
     setEditing(true);
   }
@@ -289,6 +330,7 @@ export function UpcCell({
   function cancelEdit() {
     setEditing(false);
     setShowActions(false);
+    setSelectorMode(null);
   }
 
   function normalizedDraft() {
@@ -304,6 +346,29 @@ export function UpcCell({
       <span className="flex items-center justify-center gap-1">
         <span>{label}</span>
       </span>
+    );
+  }
+
+  function handleEditChoice(choice: LiveUpcChoice) {
+    if (!choice.editable) return;
+    setSelectedTarget({
+      platform: choice.platform,
+      listingId: pushTargets.find((target) => target.platform === choice.platform)?.listingId ?? "",
+    });
+    setDraft(choice.value);
+    setSelectorMode(null);
+    setShowActions(false);
+    setEditing(true);
+  }
+
+  function getActivePushTarget() {
+    if (!selectedTarget) return null;
+    return (
+      pushTargets.find(
+        (target) =>
+          target.platform === selectedTarget.platform &&
+          (!selectedTarget.listingId || target.listingId === selectedTarget.listingId),
+      ) ?? null
     );
   }
 
@@ -334,7 +399,7 @@ export function UpcCell({
               <span className="inline-flex items-center rounded-sm bg-emerald-500/15 px-1 py-px text-[9px] font-bold uppercase text-emerald-300">
                 {line.label}
               </span>
-              <span className="truncate">{line.value}</span>
+              <span className="font-mono text-[10px] tracking-tight">{line.value}</span>
               <span className="rounded-sm bg-emerald-500 px-1 py-px text-[9px] font-bold text-white">
                 LIVE
               </span>
@@ -342,13 +407,39 @@ export function UpcCell({
           ) : (
             <div
               key={`${line.platform}:${line.value}`}
-              className="flex items-center justify-center gap-1 font-mono text-[11px] font-semibold text-emerald-400"
+              className="flex items-center justify-center gap-1 font-mono text-[11px] font-semibold"
             >
-              <span className="inline-flex items-center gap-1 rounded-sm bg-emerald-500/15 px-1 py-px text-[9px] font-bold uppercase text-emerald-300">
+              <span
+                className={cn(
+                  "inline-flex items-center gap-1 rounded-sm px-1 py-px text-[9px] font-bold uppercase",
+                  PLATFORM_COLORS[line.platform],
+                )}
+              >
                 <PlatformIcon platform={line.platform} size={11} />
                 <span>{line.label}</span>
               </span>
-              <span className="truncate">{line.value}</span>
+              <span
+                className={cn(
+                  "font-mono text-[10px] tracking-tight",
+                  line.platform === "TPP_EBAY" && "text-blue-400",
+                  line.platform === "TT_EBAY" && "text-emerald-400",
+                  line.platform === "BIGCOMMERCE" && "text-orange-400",
+                  line.platform === "SHOPIFY" && "text-lime-400",
+                )}
+              >
+                {line.value}
+              </span>
+              <span
+                className={cn(
+                  "rounded-sm px-1 py-px text-[9px] font-bold text-white",
+                  line.platform === "TPP_EBAY" && "bg-blue-500",
+                  line.platform === "TT_EBAY" && "bg-emerald-500",
+                  line.platform === "BIGCOMMERCE" && "bg-orange-500",
+                  line.platform === "SHOPIFY" && "bg-lime-500 text-black",
+                )}
+              >
+                LIVE
+              </span>
             </div>
           ),
         )}
@@ -396,6 +487,13 @@ export function UpcCell({
           <div className="mt-1 grid w-full grid-cols-3 gap-1">
             <button
               onClick={() => {
+                const activeTarget = getActivePushTarget();
+                if (activeTarget) {
+                  onSave?.(normalizedDraft(), "stage");
+                  setEditing(false);
+                  setShowActions(false);
+                  return;
+                }
                 onSave?.(normalizedDraft(), "stage");
                 setEditing(false);
                 setShowActions(false);
@@ -406,6 +504,14 @@ export function UpcCell({
             </button>
             <button
               onClick={() => {
+                const activeTarget = getActivePushTarget();
+                if (activeTarget) {
+                  onSave?.(normalizedDraft(), "stage");
+                  setEditing(false);
+                  setShowActions(false);
+                  onReviewPushTarget?.(activeTarget.platform, activeTarget.listingId);
+                  return;
+                }
                 if (hasMultipleTargets) {
                   onSave?.(normalizedDraft(), "stage");
                   setEditing(false);
@@ -423,6 +529,14 @@ export function UpcCell({
             </button>
             <button
               onClick={() => {
+                const activeTarget = getActivePushTarget();
+                if (activeTarget) {
+                  onSave?.(normalizedDraft(), "stage");
+                  setEditing(false);
+                  setShowActions(false);
+                  onFastPushTarget?.(activeTarget.platform, activeTarget.listingId);
+                  return;
+                }
                 if (hasMultipleTargets) {
                   onSave?.(normalizedDraft(), "stage");
                   setEditing(false);
@@ -506,10 +620,35 @@ export function UpcCell({
         ) : selectorMode ? (
           <div className="mt-1 w-full space-y-1">
             <div className="rounded border border-border bg-background/40 px-2 py-1 text-center text-[10px] font-medium text-muted-foreground">
-              Choose marketplace
+              {selectorMode === "edit" ? "Choose marketplace to edit" : "Choose marketplace"}
             </div>
-            <div className="grid grid-cols-2 gap-1">
-              {pushTargets.map((target) => (
+            <div className={cn("gap-1", selectorMode === "edit" ? "grid grid-cols-1" : "grid grid-cols-2")}>
+              {selectorMode === "edit"
+                ? liveChoices.map((choice) => (
+                    <button
+                      key={`edit:${choice.platform}:${choice.value}`}
+                      onClick={() => handleEditChoice(choice)}
+                      disabled={!choice.editable}
+                      className={cn(
+                        "flex min-w-0 items-center justify-between gap-1 rounded border px-2 py-1 text-left text-[10px] font-semibold",
+                        PLATFORM_COLORS[choice.platform],
+                        !choice.editable && "cursor-not-allowed opacity-55",
+                      )}
+                      title={
+                        choice.editable
+                          ? `Edit ${choice.label} UPC`
+                          : `${choice.label} UPC push is not enabled yet`
+                      }
+                    >
+                      <span className="inline-flex min-w-0 items-center gap-1">
+                        <PlatformIcon platform={choice.platform} size={11} />
+                        <span>{choice.label}</span>
+                      </span>
+                      <span className="min-w-0 flex-1 break-all text-right font-mono text-[10px]">{choice.value}</span>
+                      {!choice.editable ? <Lock className="h-3 w-3 shrink-0" /> : null}
+                    </button>
+                  ))
+                : pushTargets.map((target) => (
                 <button
                   key={`${target.platform}:${target.listingId}`}
                   onClick={() => {
