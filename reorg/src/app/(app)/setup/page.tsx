@@ -358,7 +358,6 @@ export default async function SetupPage() {
           );
         })}
       </div>
-      <div data-tour="setup-priority" />
       <PageTour page="setup" steps={PAGE_TOUR_STEPS.setup} ready />
     </div>
   );

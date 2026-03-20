@@ -16,6 +16,7 @@ import {
 import { cn } from "@/lib/utils";
 import { PageTour } from "@/components/onboarding/page-tour";
 import { PAGE_TOUR_STEPS } from "@/components/onboarding/page-tour-steps";
+import { usePageVisibility } from "@/lib/use-page-visibility";
 import {
   formatEbayAutoSyncSchedule,
   getNextEbayAutoSyncAt,
@@ -581,6 +582,7 @@ function getCompletionSummary(
 }
 
 export default function SyncPage() {
+  const isPageVisible = usePageVisibility();
   const [integrations, setIntegrations] = useState<IntegrationStatus[]>([]);
   const [schedulerEnabled, setSchedulerEnabled] = useState(false);
   const [schedulerStatus, setSchedulerStatus] = useState<SchedulerStatus | null>(null);
@@ -634,7 +636,10 @@ export default function SyncPage() {
     fetchIntegrations();
     fetchSchedulerSetting();
     fetchSchedulerStatus();
-    const schedulerTimer = setInterval(fetchSchedulerStatus, 60_000);
+    const schedulerTimer = setInterval(() => {
+      if (document.visibilityState !== "visible") return;
+      void fetchSchedulerStatus();
+    }, 60_000);
     return () => {
       Object.values(pollTimers.current).forEach(clearInterval);
       clearInterval(schedulerTimer);
@@ -677,6 +682,14 @@ export default function SyncPage() {
     return data;
   }, []);
 
+  useEffect(() => {
+    if (!isPageVisible) return;
+    void fetchSchedulerStatus();
+    for (const store of stores) {
+      void loadStoreStatus(store.apiPlatform);
+    }
+  }, [fetchSchedulerStatus, isPageVisible, loadStoreStatus]);
+
   const pollSyncStatus = useCallback(
     (apiPlatform: string) => {
       if (pollTimers.current[apiPlatform]) {
@@ -684,6 +697,7 @@ export default function SyncPage() {
       }
 
       const timer = setInterval(async () => {
+        if (!isPageVisible) return;
         try {
           const data = await loadStoreStatus(apiPlatform);
           const job = data?.lastJob ?? null;
@@ -718,7 +732,7 @@ export default function SyncPage() {
 
       pollTimers.current[apiPlatform] = timer;
     },
-    [fetchIntegrations, fetchSchedulerStatus, loadStoreStatus],
+    [fetchIntegrations, fetchSchedulerStatus, isPageVisible, loadStoreStatus],
   );
 
   useEffect(() => {
@@ -1061,7 +1075,7 @@ export default function SyncPage() {
           </div>
         )}
         {!!schedulerStatus?.recentJobs?.length && (
-          <div className="mt-4 rounded border border-border bg-muted/20 p-3">
+          <div className="mt-4 rounded border border-border bg-muted/20 p-3" data-tour="sync-jobs">
             <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
               Latest Scheduled Update Per Store
             </div>
@@ -1679,7 +1693,6 @@ export default function SyncPage() {
           );
         })}
       </div>
-      <div data-tour="sync-jobs" />
       <PageTour page="sync" steps={PAGE_TOUR_STEPS.sync} ready />
     </div>
   );

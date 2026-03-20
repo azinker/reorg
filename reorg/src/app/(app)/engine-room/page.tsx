@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import {
   Activity,
   FileText,
@@ -1042,37 +1042,23 @@ export default function EngineRoomPage() {
   const [data, setData] = useState<EngineRoomData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-
-  async function loadEngineRoom() {
-    try {
-      const response = await fetch("/api/engine-room", { cache: "no-store" });
-      if (!response.ok) {
-        throw new Error("Failed to load");
-      }
-
-      const json = await response.json();
-      setData((json.data ?? null) as EngineRoomData | null);
-      setError(null);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to load engine room data");
-    } finally {
-      setLoading(false);
+  const loadEngineRoom = useCallback(async () => {
+    const response = await fetch("/api/engine-room", { cache: "no-store" });
+    if (!response.ok) {
+      throw new Error("Failed to load");
     }
-  }
+    const json = await response.json();
+    return (json.data ?? null) as EngineRoomData | null;
+  }, []);
 
   useEffect(() => {
     let active = true;
 
     const load = async () => {
       try {
-        const response = await fetch("/api/engine-room", { cache: "no-store" });
-        if (!response.ok) {
-          throw new Error("Failed to load");
-        }
-
-        const json = await response.json();
+        const nextData = await loadEngineRoom();
         if (!active) return;
-        setData((json.data ?? null) as EngineRoomData | null);
+        setData(nextData);
         setError(null);
       } catch (e) {
         if (!active) return;
@@ -1085,15 +1071,26 @@ export default function EngineRoomPage() {
     };
 
     void load();
+    function handleVisibilityRefresh() {
+      if (document.visibilityState !== "visible") return;
+      void load();
+    }
+
     const timer = setInterval(() => {
+      if (document.visibilityState !== "visible") return;
       void load();
     }, 120_000);
+
+    window.addEventListener("focus", handleVisibilityRefresh);
+    document.addEventListener("visibilitychange", handleVisibilityRefresh);
 
     return () => {
       active = false;
       clearInterval(timer);
+      window.removeEventListener("focus", handleVisibilityRefresh);
+      document.removeEventListener("visibilitychange", handleVisibilityRefresh);
     };
-  }, []);
+  }, [loadEngineRoom]);
 
   const summary = data?.summary ?? {
     activeSyncs: 0,
