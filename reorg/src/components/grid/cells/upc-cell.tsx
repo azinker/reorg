@@ -97,6 +97,7 @@ export function UpcCell({
   }, [quickPhase]);
 
   useEffect(() => {
+    if (editing) return;
     if (!svgRef.current) return;
 
     if (!displayedUpc) {
@@ -133,7 +134,7 @@ export function UpcCell({
         if (svgRef.current) svgRef.current.innerHTML = "";
       }
     }
-  }, [displayedUpc]);
+  }, [displayedUpc, editing]);
 
   function handleCopy() {
     if (!displayedUpc) return;

@@ -185,7 +185,9 @@ function EditableStoreBlock({
   const [showActions, setShowActions] = useState(false);
   const inputRef = useRef<CurrencyInputHandle>(null);
   const effectiveCents = Math.round(Number(hasStaged ? item.stagedValue : item.value) * 100) || 0;
+  const liveCents = Math.round(Number(item.value) * 100) || 0;
   const hasDraftChange = draftCents !== effectiveCents;
+  const hasMeaningfulLiveChange = draftCents !== liveCents;
 
   function fmt(val: number | string | null): string {
     if (val == null) return "N/A";
@@ -316,7 +318,17 @@ function EditableStoreBlock({
             autoFocus
             onKeyDown={handleKeyDown}
           />
-          <button onClick={() => { if (hasDraftChange) setShowActions(true); else cancelEdit(); }} className="rounded p-0.5 text-emerald-400 hover:text-emerald-300 cursor-pointer" title="Confirm">
+          <button
+            onClick={() => {
+              if (hasMeaningfulLiveChange) setShowActions(true);
+            }}
+            disabled={!hasMeaningfulLiveChange}
+            className={cn(
+              "rounded p-0.5 cursor-pointer",
+              hasMeaningfulLiveChange ? "text-emerald-400 hover:text-emerald-300" : "text-muted-foreground/30 cursor-not-allowed",
+            )}
+            title="Confirm"
+          >
             <Check className="h-3 w-3" />
           </button>
           <button onClick={cancelEdit} className="rounded p-0.5 text-muted-foreground hover:text-foreground cursor-pointer" title="Cancel">
@@ -397,7 +409,7 @@ function EditableStoreBlock({
                 </div>
               </div>
             ) : (
-              <div className="mt-1 grid grid-cols-3 gap-1">
+              <div className="mt-1 grid grid-cols-2 gap-1">
                 <button
                   onClick={() => onPush(rowId, item.platform, item.listingId, "review")}
                   className="inline-flex min-w-0 items-center justify-center rounded bg-emerald-500 px-1.5 py-1.5 text-[9px] font-bold leading-none text-white hover:bg-emerald-600 cursor-pointer"
@@ -414,7 +426,7 @@ function EditableStoreBlock({
                 </button>
                 <button
                   onClick={() => onDiscard(rowId, item.platform, item.listingId)}
-                  className="inline-flex min-w-0 items-center justify-center rounded bg-muted px-1.5 py-1.5 text-[9px] font-medium leading-none text-muted-foreground hover:text-foreground cursor-pointer"
+                  className="col-span-2 inline-flex min-w-0 items-center justify-center rounded bg-muted px-1.5 py-1.5 text-[9px] font-medium leading-none text-muted-foreground hover:text-foreground cursor-pointer"
                   title="Discard staged price and revert to live"
                 >
                   {renderCompactButtonLabel("Discard")}
@@ -694,6 +706,7 @@ function EditableAdRateBlock({
   const [draftPercent, setDraftPercent] = useState("");
   const [showActions, setShowActions] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const livePercent = ((item.value != null ? Number(item.value) : 0) * 100).toFixed(1);
   const effectivePercent = (() => {
     const current = hasStaged ? Number(item.stagedValue) : (item.value != null ? Number(item.value) : 0);
     return (current * 100).toFixed(1);
@@ -855,7 +868,7 @@ function EditableAdRateBlock({
   }
 
   if (editing) {
-    const canConfirm = parseDraftPercentValue(draftPercent) != null;
+    const canConfirm = parseDraftPercentValue(draftPercent) != null && draftPercent !== livePercent;
 
     return (
       <div className={cn("w-full min-w-0 rounded border px-2.5 py-1.5 text-xs", colorClass, "ring-1 ring-ring")}>
@@ -968,7 +981,7 @@ function EditableAdRateBlock({
                 </div>
               </div>
             ) : (
-              <div className="mt-1 grid grid-cols-3 gap-1">
+              <div className="mt-1 grid grid-cols-2 gap-1">
                 <button
                   onClick={() => onPush(rowId, item.platform, item.listingId, "review")}
                   className="inline-flex min-w-0 items-center justify-center rounded bg-emerald-500 px-1.5 py-1.5 text-[9px] font-bold leading-none text-white hover:bg-emerald-600 cursor-pointer"
@@ -985,7 +998,7 @@ function EditableAdRateBlock({
                 </button>
                 <button
                   onClick={() => onDiscard(rowId, item.platform, item.listingId)}
-                  className="inline-flex min-w-0 items-center justify-center rounded bg-muted px-1.5 py-1.5 text-[9px] font-medium leading-none text-muted-foreground hover:text-foreground cursor-pointer"
+                  className="col-span-2 inline-flex min-w-0 items-center justify-center rounded bg-muted px-1.5 py-1.5 text-[9px] font-medium leading-none text-muted-foreground hover:text-foreground cursor-pointer"
                   title="Discard staged ad rate and revert to live"
                 >
                   {renderCompactButtonLabel("Discard")}
