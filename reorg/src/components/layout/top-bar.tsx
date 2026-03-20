@@ -109,8 +109,8 @@ export function TopBar({ user, onOpenSidebar }: TopBarProps) {
         : "Marketplace Operations - Not Connected";
 
   return (
-    <header className="flex h-14 items-center justify-between border-b border-border bg-card px-4 sm:px-6">
-      <div className="flex min-w-0 items-center gap-2">
+    <header className="flex h-14 min-w-0 items-center justify-between gap-2 overflow-x-auto overflow-y-hidden border-b border-border bg-card px-4 sm:px-6">
+      <div className="flex min-w-0 shrink-0 items-center gap-2">
         <button
           onClick={onOpenSidebar}
           className="flex h-9 w-9 items-center justify-center rounded-md border border-border bg-background text-muted-foreground transition-colors hover:text-foreground lg:hidden cursor-pointer"
@@ -175,7 +175,7 @@ export function TopBar({ user, onOpenSidebar }: TopBarProps) {
           )}
         </div>
       </div>
-      <div className="flex min-w-0 items-center gap-2 sm:gap-3">
+      <div className="flex min-w-0 flex-shrink-0 flex-nowrap items-center justify-end gap-2 sm:gap-3">
         {automationHealth && automationHealth.status !== "healthy" && (
           <div
             className={cn(
@@ -275,11 +275,12 @@ export function TopBar({ user, onOpenSidebar }: TopBarProps) {
               router.push("/dashboard?tour=manual");
             }
           }}
-          className="flex h-9 shrink-0 items-center justify-center rounded-md border border-border bg-background px-2.5 text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground cursor-pointer"
+          className="inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-md border border-primary/35 bg-primary/10 px-2.5 text-primary transition-colors hover:bg-primary/20 cursor-pointer"
           title="Dashboard tour — walk through search, filters, and the grid"
+          aria-label="Dashboard tour"
         >
-          <Sparkles className="h-3.5 w-3.5" />
-          <span className="ml-1.5 hidden text-xs font-medium sm:inline">Tour</span>
+          <Sparkles className="h-3.5 w-3.5 shrink-0" />
+          <span className="max-w-[4.5rem] truncate text-xs font-semibold sm:max-w-none">Tour</span>
         </button>
 
         {user && (
