@@ -67,6 +67,81 @@ type DBMasterRow = Prisma.MasterRowGetPayload<typeof masterRowWithRelations>;
 type DBListing = DBMasterRow["listings"][number];
 type DBListingRef = Pick<DBListing, "integration" | "platformItemId" | "platformVariantId">;
 
+const childMasterRowSnapshotSelect = Prisma.validator<Prisma.MasterRowDefaultArgs>()({
+  select: {
+    id: true,
+    sku: true,
+    title: true,
+    imageUrl: true,
+    upc: true,
+    listings: {
+      select: {
+        id: true,
+        platformItemId: true,
+        platformVariantId: true,
+        inventory: true,
+        integration: {
+          select: {
+            platform: true,
+          },
+        },
+      },
+    },
+    stagedChanges: {
+      where: { status: "STAGED" },
+      select: {
+        marketplaceListingId: true,
+        field: true,
+        stagedValue: true,
+        liveValue: true,
+      },
+    },
+  },
+});
+
+const childMasterRowFullSelect = Prisma.validator<Prisma.MasterRowDefaultArgs>()({
+  select: {
+    id: true,
+    sku: true,
+    title: true,
+    imageUrl: true,
+    upc: true,
+    weight: true,
+    supplierCost: true,
+    supplierShipping: true,
+    shippingCostOverride: true,
+    listings: {
+      select: {
+        id: true,
+        platformItemId: true,
+        platformVariantId: true,
+        sku: true,
+        title: true,
+        salePrice: true,
+        adRate: true,
+        inventory: true,
+        integration: {
+          select: {
+            platform: true,
+          },
+        },
+      },
+    },
+    stagedChanges: {
+      where: { status: "STAGED" },
+      select: {
+        marketplaceListingId: true,
+        field: true,
+        stagedValue: true,
+        liveValue: true,
+      },
+    },
+  },
+});
+
+type DBChildMasterRowSnapshot = Prisma.MasterRowGetPayload<typeof childMasterRowSnapshotSelect>;
+type DBChildMasterRowFull = Prisma.MasterRowGetPayload<typeof childMasterRowFullSelect>;
+
 function appendItemNumber(
   map: Map<string, StoreValue>,
   entry: DBListingRef | StoreValue,
@@ -148,76 +223,105 @@ function listingToStoreValue(listing: ListingLike, field: "salePrice" | "adRate"
   };
 }
 
-async function buildChildRows(
-  _master: DBMasterRow,
-  parentListings: DBMasterRow["listings"],
-  _stagedMap: Map<string, { field: string; stagedValue: string; liveValue: string | null }>,
-  shippingRateMap: Map<string, number>,
-  feeRate: number,
-): Promise<GridRow[]> {
+function collectChildSkus(parentListings: DBMasterRow["listings"]): string[] {
   const childSkus = new Set<string>();
   for (const p of parentListings) {
     for (const cl of p.childListings ?? []) {
       childSkus.add(cl.sku);
     }
   }
-  if (childSkus.size === 0) return [];
+  return [...childSkus];
+}
 
-  // Fetch full master rows for child SKUs with ALL their listings (cross-platform)
-  const childMasters = await db.masterRow.findMany({
-    where: { sku: { in: [...childSkus] } },
-    select: {
-      id: true,
-      sku: true,
-      title: true,
-      imageUrl: true,
-      upc: true,
-      weight: true,
-      supplierCost: true,
-      supplierShipping: true,
-      shippingCostOverride: true,
-      listings: {
-        select: {
-          id: true,
-          platformItemId: true,
-          platformVariantId: true,
-          sku: true,
-          title: true,
-          salePrice: true,
-          adRate: true,
-          inventory: true,
-          integration: {
-            select: {
-              platform: true,
-            },
-          },
-        },
-      },
-      stagedChanges: {
-        where: { status: "STAGED" },
-        select: {
-          marketplaceListingId: true,
-          field: true,
-          stagedValue: true,
-          liveValue: true,
-        },
-      },
-    },
+function buildChildStagedMap(
+  stagedChanges: Array<{
+    marketplaceListingId: string | null;
+    field: string;
+    stagedValue: string;
+    liveValue: string | null;
+  }>,
+) {
+  const childStagedMap = new Map<string, { field: string; stagedValue: string; liveValue: string | null }>();
+  for (const sc of stagedChanges) {
+    if (sc.marketplaceListingId) {
+      childStagedMap.set(`${sc.marketplaceListingId}-${sc.field}`, {
+        field: sc.field,
+        stagedValue: sc.stagedValue,
+        liveValue: sc.liveValue,
+      });
+    }
+  }
+  return childStagedMap;
+}
+
+async function fetchChildMasterSnapshots(parentListings: DBMasterRow["listings"]) {
+  const childSkus = collectChildSkus(parentListings);
+  if (childSkus.length === 0) return [];
+
+  return db.masterRow.findMany({
+    where: { sku: { in: childSkus } },
+    ...childMasterRowSnapshotSelect,
   });
+}
 
+async function fetchChildMasterRows(parentListings: DBMasterRow["listings"]) {
+  const childSkus = collectChildSkus(parentListings);
+  if (childSkus.length === 0) return [];
+
+  return db.masterRow.findMany({
+    where: { sku: { in: [...childSkus] } },
+    ...childMasterRowFullSelect,
+  });
+}
+
+function buildChildRowStubs(childMasters: DBChildMasterRowSnapshot[]): GridRow[] {
   const rows: GridRow[] = [];
 
   for (const cm of childMasters) {
-    const childStagedMap = new Map<string, { field: string; stagedValue: string; liveValue: string | null }>();
-    for (const sc of cm.stagedChanges) {
-      if (sc.marketplaceListingId) {
-        childStagedMap.set(`${sc.marketplaceListingId}-${sc.field}`, {
-          field: sc.field,
-          stagedValue: sc.stagedValue,
-          liveValue: sc.liveValue,
-        });
-      }
+    const childInv = cm.listings.find((l) => l.inventory != null)?.inventory ?? null;
+    const itemNumberMap = new Map<string, StoreValue>();
+    for (const listing of cm.listings) {
+      appendItemNumber(itemNumberMap, listing);
     }
+
+    rows.push({
+      id: `child-${cm.id}`,
+      sku: cm.sku,
+      title: cm.title ?? cm.sku,
+      upc: cm.upc,
+      imageUrl: cm.imageUrl,
+      weight: null,
+      supplierCost: null,
+      supplierShipping: null,
+      shippingCost: null,
+      platformFeeRate: 0,
+      inventory: childInv,
+      isVariation: true,
+      isParent: false,
+      childRowsHydrated: true,
+      alternateTitles: [],
+      hasStagedChanges: cm.stagedChanges.length > 0,
+      itemNumbers: [...itemNumberMap.values()],
+      salePrices: [],
+      adRates: [],
+      platformFees: [],
+      profits: [],
+    });
+  }
+
+  return rows;
+}
+
+function buildFullChildRows(
+  childMasters: DBChildMasterRowFull[],
+  shippingRateMap: Map<string, number>,
+  feeRate: number,
+): GridRow[] {
+  
+  const rows: GridRow[] = [];
+
+  for (const cm of childMasters) {
+    const childStagedMap = buildChildStagedMap(cm.stagedChanges);
 
     const childShipCost = cm.shippingCostOverride ?? lookupShipping(cm.weight, shippingRateMap);
 
@@ -289,6 +393,7 @@ async function buildChildRows(
       inventory: childInv,
       isVariation: true,
       isParent: false,
+      childRowsHydrated: true,
       alternateTitles: [],
       hasStagedChanges:
         childSalePrices.some((sp) => sp.stagedValue != null && sp.stagedValue !== sp.value)
@@ -374,7 +479,7 @@ async function buildGridRow(
   }
 
   const childRows: GridRow[] | undefined = isVariationParent
-    ? await buildChildRows(master, parentListings, stagedMap, shippingRateMap, feeRate)
+    ? await buildChildRowsSnapshot(parentListings)
     : undefined;
 
   const itemNumberMap = new Map<string, StoreValue>();
@@ -405,6 +510,7 @@ async function buildGridRow(
     inventory,
     isVariation: isVariationParent,
     isParent: isVariationParent,
+    childRowsHydrated: !isVariationParent,
     alternateTitles,
     hasStagedChanges,
     itemNumbers,
@@ -453,4 +559,37 @@ export async function getGridData(): Promise<GridRow[]> {
   }
 
   return rows;
+}
+
+export async function getGridChildRows(parentRowId: string): Promise<GridRow[]> {
+  const [master, shippingRateMap, feeRateSetting] = await Promise.all([
+    db.masterRow.findUnique({
+      where: { id: parentRowId },
+      ...masterRowWithRelations,
+    }),
+    fetchShippingRates(),
+    db.appSetting.findUnique({ where: { key: "platformFeeRate" } }),
+  ]);
+
+  if (!master) {
+    return [];
+  }
+
+  const feeRate = feeRateSetting?.value != null ? Number(feeRateSetting.value) : 0.136;
+  const parentListings = master.listings.filter((listing: DBListing) => !listing.parentListingId);
+  return buildChildRows(parentListings, shippingRateMap, feeRate);
+}
+
+async function buildChildRowsSnapshot(parentListings: DBMasterRow["listings"]): Promise<GridRow[]> {
+  const childMasters = await fetchChildMasterSnapshots(parentListings);
+  return buildChildRowStubs(childMasters);
+}
+
+async function buildChildRows(
+  parentListings: DBMasterRow["listings"],
+  shippingRateMap: Map<string, number>,
+  feeRate: number,
+): Promise<GridRow[]> {
+  const childMasters = await fetchChildMasterRows(parentListings);
+  return buildFullChildRows(childMasters, shippingRateMap, feeRate);
 }

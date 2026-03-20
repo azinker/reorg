@@ -380,13 +380,64 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
   const [failedPushesOpen, setFailedPushesOpen] = useState(false);
   const [failedPushesLoading, setFailedPushesLoading] = useState(false);
   const [quickPushStates, setQuickPushStates] = useState<Record<string, QuickPushState>>({});
+  const [childRowsLoading, setChildRowsLoading] = useState<Record<string, boolean>>({});
+  const [pendingScrollRowId, setPendingScrollRowId] = useState<string | null>(null);
   const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const quickPushTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const childRowsLoadRef = useRef<Partial<Record<string, Promise<boolean>>>>({});
   const parentRef = useRef<HTMLDivElement>(null);
 
   function showToast(msg: string) {
     setToast(msg);
     setTimeout(() => setToast(null), 4000);
+  }
+
+  function replaceParentRow(rowId: string, updater: (row: GridRow) => GridRow) {
+    setGridRows((prev) => prev.map((row) => (row.id === rowId ? updater(row) : row)));
+  }
+
+  async function ensureChildRowsLoaded(rowId: string) {
+    const parentRow = gridRows.find((row) => row.id === rowId);
+    if (!parentRow?.isParent || parentRow.childRowsHydrated) {
+      return true;
+    }
+
+    if (childRowsLoadRef.current[rowId]) {
+      return childRowsLoadRef.current[rowId];
+    }
+
+    setChildRowsLoading((prev) => ({ ...prev, [rowId]: true }));
+    const loadPromise = fetch(`/api/grid/${rowId}/children`, { cache: "no-store" })
+      .then(async (response) => {
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          throw new Error(payload?.error ?? `Failed to load variation rows (${response.status})`);
+        }
+
+        const rows = payload?.data?.rows as GridRow[] | undefined;
+        replaceParentRow(rowId, (row) => ({
+          ...row,
+          childRows: rows ?? [],
+          childRowsHydrated: true,
+        }));
+        return true;
+      })
+      .catch((error) => {
+        console.error("[data-grid] failed to load child rows", error);
+        showToast("Failed to load variation rows. Please try again.");
+        return false;
+      })
+      .finally(() => {
+        setChildRowsLoading((prev) => {
+          const next = { ...prev };
+          delete next[rowId];
+          return next;
+        });
+        delete childRowsLoadRef.current[rowId];
+      });
+
+    childRowsLoadRef.current[rowId] = loadPromise;
+    return loadPromise;
   }
 
   async function loadFailedPushes() {
@@ -995,6 +1046,39 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
     [sortedRows, expandedRows, filters.stockStatus, filters.stagedOnly]
   );
 
+  useEffect(() => {
+    const needsChildHydration =
+      filters.stagedOnly ||
+      filters.stockStatus === "low_stock" ||
+      filters.stockStatus === "out_of_stock";
+
+    if (!needsChildHydration) return;
+
+    const targetParents = gridRows.filter((row) => {
+      if (!row.isParent || row.childRowsHydrated || !row.childRows?.length) {
+        return false;
+      }
+
+      if (filters.stagedOnly && row.childRows.some((child) => child.hasStagedChanges)) {
+        return true;
+      }
+
+      if (filters.stockStatus === "low_stock") {
+        return row.childRows.some((child) => child.inventory != null && child.inventory > 0 && child.inventory < 25);
+      }
+
+      if (filters.stockStatus === "out_of_stock") {
+        return row.childRows.some((child) => child.inventory === 0);
+      }
+
+      return false;
+    });
+
+    if (targetParents.length === 0) return;
+
+    void Promise.all(targetParents.map((row) => ensureChildRowsLoaded(row.id)));
+  }, [filters.stagedOnly, filters.stockStatus, gridRows]);
+
   const rowVirtualizer = useVirtualizer({
     count: flatRows.length,
     getScrollElement: () => parentRef.current,
@@ -1003,13 +1087,29 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
     getItemKey: (index) => flatRows[index]?.id ?? index,
   });
 
-  function toggleExpand(rowId: string) {
-    setExpandedRows((prev) => {
-      const next = new Set(prev);
-      if (next.has(rowId)) next.delete(rowId);
-      else next.add(rowId);
-      return next;
-    });
+  useEffect(() => {
+    if (!pendingScrollRowId) return;
+    const index = flatRows.findIndex((row) => row.id === pendingScrollRowId);
+    if (index < 0) return;
+    rowVirtualizer.scrollToIndex(index, { align: "center", behavior: "smooth" });
+    setTimeout(() => highlightRow(pendingScrollRowId), 300);
+    setPendingScrollRowId(null);
+  }, [flatRows, pendingScrollRowId, rowVirtualizer]);
+
+  async function toggleExpand(rowId: string) {
+    if (expandedRows.has(rowId)) {
+      setExpandedRows((prev) => {
+        const next = new Set(prev);
+        next.delete(rowId);
+        return next;
+      });
+      return;
+    }
+
+    const loaded = await ensureChildRowsLoaded(rowId);
+    if (!loaded) return;
+
+    setExpandedRows((prev) => new Set([...prev, rowId]));
   }
 
   function toggleSort(field: SortField) {
@@ -1039,7 +1139,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
     });
   }
 
-  function scrollToRow(rowId: string) {
+  async function scrollToRow(rowId: string) {
     const idx = flatRows.findIndex((r) => r.id === rowId);
     if (idx >= 0) {
       rowVirtualizer.scrollToIndex(idx, { align: "center", behavior: "smooth" });
@@ -1048,19 +1148,13 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
     }
     for (const r of gridRows) {
       if (r.childRows?.find((c) => c.id === rowId)) {
-        if (!expandedRows.has(r.id)) {
-          setExpandedRows((prev) => new Set([...prev, r.id]));
-        }
+        const loaded = await ensureChildRowsLoaded(r.id);
+        if (!loaded) return;
+        setExpandedRows((prev) => new Set([...prev, r.id]));
+        setPendingScrollRowId(rowId);
         break;
       }
     }
-    setTimeout(() => {
-      const i = flatRows.findIndex((r) => r.id === rowId);
-      if (i >= 0) {
-        rowVirtualizer.scrollToIndex(i, { align: "center", behavior: "smooth" });
-        setTimeout(() => highlightRow(rowId), 300);
-      }
-    }, 100);
   }
 
   function isColVisible(id: string) {
@@ -1478,6 +1572,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
             const isChild = row.depth > 0;
             const isParent = row.isParent;
             const isExpanded = expandedRows.has(row.id);
+            const isChildLoading = isParent && childRowsLoading[row.id];
 
             return (
               <div
@@ -1511,15 +1606,26 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
                     {isParent && (
                       <button
                         onClick={() => toggleExpand(row.id)}
+                        disabled={isChildLoading}
                         className={cn(
                           "flex h-5 w-5 items-center justify-center rounded text-white transition-colors cursor-pointer",
-                          isExpanded
+                          isChildLoading
+                            ? "bg-emerald-500/70 cursor-wait"
+                            : isExpanded
                             ? "bg-emerald-600 hover:bg-emerald-700"
                             : "bg-emerald-500 hover:bg-emerald-600"
                         )}
-                        title={isExpanded ? "Collapse variations" : "Expand variations"}
+                        title={
+                          isChildLoading
+                            ? "Loading variations"
+                            : isExpanded
+                              ? "Collapse variations"
+                              : "Expand variations"
+                        }
                       >
-                        {isExpanded ? (
+                        {isChildLoading ? (
+                          <RefreshCw className="h-3.5 w-3.5 animate-spin" strokeWidth={2.75} />
+                        ) : isExpanded ? (
                           <Minus className="h-3.5 w-3.5" strokeWidth={3} />
                         ) : (
                           <Plus className="h-3.5 w-3.5" strokeWidth={3} />
@@ -1573,6 +1679,9 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
                             <span className="rounded bg-emerald-500/20 px-1 text-[10px] tabular-nums">
                               {row.childRows.length}
                             </span>
+                          )}
+                          {isChildLoading && (
+                            <RefreshCw className="h-3 w-3 animate-spin" strokeWidth={2.5} />
                           )}
                         </span>
                       ) : (

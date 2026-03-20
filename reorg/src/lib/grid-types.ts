@@ -53,6 +53,7 @@ export interface GridRow {
   isVariation: boolean;
   isParent: boolean;
   childRows?: GridRow[];
+  childRowsHydrated?: boolean;
   expanded?: boolean;
   alternateTitles?: { title: string; platform: Platform; listingId: string }[];
 
