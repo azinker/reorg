@@ -86,6 +86,18 @@ function getGraceMinutes(intervalMinutes: number) {
   return Math.max(15, Math.min(60, Math.round(intervalMinutes * 0.25)));
 }
 
+function isIntentionallyDeferredSync(planItem: SchedulerPlanItem) {
+  return (
+    planItem.reason.startsWith("Paused outside eBay business hours.") ||
+    planItem.reason.startsWith(
+      "Waiting for the eBay Trading API reset window based on live Analytics API usage data.",
+    ) ||
+    planItem.reason.startsWith(
+      "Cooling down after an eBay API usage-limit response before the next retry.",
+    )
+  );
+}
+
 function formatLabelList(labels: string[]) {
   if (labels.length <= 1) return labels.join("");
   if (labels.length === 2) return `${labels[0]} and ${labels[1]}`;
@@ -143,6 +155,22 @@ function getSyncHealthStatus(
   }
 
   const minutesSinceSync = minutesBetween(now, lastSyncAt) ?? 0;
+  if (
+    !planItem.running &&
+    !planItem.due &&
+    isIntentionallyDeferredSync(planItem)
+  ) {
+    return {
+      status: "healthy" as const,
+      syncStatus: "fresh" as const,
+      minutesSinceSync,
+      syncMessage:
+        planItem.reason.startsWith("Paused outside eBay business hours.")
+          ? "Pulls are paused outside the scheduled eBay business window."
+          : "Pulls are waiting for the next allowed eBay retry window.",
+    };
+  }
+
   const graceMinutes = getGraceMinutes(planItem.intervalMinutes);
   const delayedThreshold = planItem.intervalMinutes + graceMinutes;
   const attentionThreshold = planItem.intervalMinutes * 2 + graceMinutes;

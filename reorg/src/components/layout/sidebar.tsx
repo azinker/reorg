@@ -85,6 +85,7 @@ export function Sidebar({ mobile = false, onNavigate }: SidebarProps) {
 
   const attentionCount =
     (healthSummary?.attentionCount ?? 0) + (healthSummary?.delayedCount ?? 0);
+  const syncIssueCount = attentionCount;
 
   return (
     <aside
@@ -124,32 +125,6 @@ export function Sidebar({ mobile = false, onNavigate }: SidebarProps) {
           </button>
         )}
       </div>
-      {healthSummary && healthSummary.status !== "healthy" && !actuallyCollapsed && (
-        <div className="border-b border-sidebar-border px-3 py-2">
-          <div
-            className={cn(
-              "rounded-md border px-3 py-2 text-xs",
-              healthSummary.status === "attention"
-                ? "border-red-500/30 bg-red-500/10 text-red-300"
-                : "border-amber-500/30 bg-amber-500/10 text-amber-300",
-            )}
-          >
-            <div className="font-semibold">{healthSummary.headline}</div>
-            <div className="mt-1">
-              {attentionCount} store{attentionCount === 1 ? "" : "s"} need attention.
-            </div>
-            {healthSummary.affectedLabels.length > 0 ? (
-              <div className="mt-1 text-[11px] opacity-90">
-                Stores: {healthSummary.affectedLabels.join(", ")}
-              </div>
-            ) : null}
-            <div className="mt-1 text-[11px] opacity-90">
-              {healthSummary.recommendedAction}
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Nav Items */}
       <nav className="flex-1 overflow-y-auto p-2">
         <ul className="space-y-1">
@@ -175,8 +150,8 @@ export function Sidebar({ mobile = false, onNavigate }: SidebarProps) {
                   <Icon className="h-4 w-4 shrink-0 text-[#C43E3E]" />
                   {!actuallyCollapsed && <span>{item.label}</span>}
                   {!actuallyCollapsed &&
-                    item.href === "/errors" &&
-                    attentionCount > 0 && (
+                    item.href === "/sync" &&
+                    syncIssueCount > 0 && (
                       <span
                         className={cn(
                           "ml-auto inline-flex min-w-5 items-center justify-center rounded-full px-1.5 py-0.5 text-[10px] font-semibold",
@@ -185,12 +160,12 @@ export function Sidebar({ mobile = false, onNavigate }: SidebarProps) {
                             : "bg-amber-500/15 text-amber-300",
                         )}
                       >
-                        {attentionCount}
+                        {syncIssueCount}
                       </span>
                     )}
                   {actuallyCollapsed &&
-                    item.href === "/errors" &&
-                    attentionCount > 0 && (
+                    item.href === "/sync" &&
+                    syncIssueCount > 0 && (
                       <span
                         className={cn(
                           "ml-auto h-2 w-2 rounded-full",
