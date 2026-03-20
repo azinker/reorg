@@ -256,7 +256,11 @@ export function UpcCell({
         {showActions ? (
           <div className="mt-1 grid w-full grid-cols-3 gap-1">
             <button
-              onClick={() => onSave?.(normalizedDraft(), "stage")}
+              onClick={() => {
+                onSave?.(normalizedDraft(), "stage");
+                setEditing(false);
+                setShowActions(false);
+              }}
               className="inline-flex min-w-0 items-center justify-center rounded bg-[var(--staged)] px-1.5 py-1.5 text-[9px] font-bold leading-none text-[var(--staged-foreground)] hover:opacity-80 cursor-pointer"
             >
               {renderCompactButtonLabel("Stage")}
@@ -270,6 +274,8 @@ export function UpcCell({
                   setSelectorMode("review");
                   return;
                 }
+                setEditing(false);
+                setShowActions(false);
                 onSave?.(normalizedDraft(), "push");
               }}
               className="inline-flex min-w-0 items-center justify-center rounded bg-emerald-500 px-1.5 py-1.5 text-[9px] font-bold leading-none text-white hover:bg-emerald-600 cursor-pointer"
@@ -285,6 +291,8 @@ export function UpcCell({
                   setSelectorMode("fast");
                   return;
                 }
+                setEditing(false);
+                setShowActions(false);
                 onSave?.(normalizedDraft(), "fastPush");
               }}
               className="inline-flex min-w-0 items-center justify-center rounded bg-blue-500 px-1.5 py-1.5 text-[9px] font-bold leading-none text-white hover:bg-blue-600 cursor-pointer"
