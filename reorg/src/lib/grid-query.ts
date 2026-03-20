@@ -291,16 +291,13 @@ function buildUpcStageDetails(
     }
 
     const stagedChange = stageByListingId.get(listing.id);
-    if (!stagedChange) {
-      continue;
-    }
 
     upcPushTargets.push({
       platform: listing.integration.platform,
       listingId: listing.platformItemId,
       marketplaceListingId: listing.id,
       variantId: listing.platformVariantId ?? undefined,
-      stagedChangeId: stagedChange.id,
+      stagedChangeId: stagedChange?.id ?? null,
     });
   }
 
