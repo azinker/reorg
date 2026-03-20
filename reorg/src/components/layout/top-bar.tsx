@@ -23,7 +23,6 @@ import {
   LogOut,
   ShieldCheck,
   Sparkles,
-  BookOpen,
 } from "lucide-react";
 
 const PLATFORM_ORDER: Platform[] = ["TPP_EBAY", "TT_EBAY", "BIGCOMMERCE", "SHOPIFY"];
@@ -145,17 +144,6 @@ export function TopBar({ user, onOpenSidebar }: TopBarProps) {
             </div>
           )}
         </div>
-        {/* Tour: on the left so it never scrolls away behind density/theme/logout */}
-        <button
-          type="button"
-          onClick={handleTourClick}
-          className="ml-1 inline-flex h-9 shrink-0 items-center gap-1.5 rounded-md border-2 border-amber-500/60 bg-amber-500/15 px-2.5 text-amber-200 shadow-sm transition-colors hover:border-amber-400 hover:bg-amber-500/25 hover:text-amber-50 cursor-pointer"
-          title="Open dashboard tour (guided walkthrough)"
-          aria-label="Open dashboard tour"
-        >
-          <BookOpen className="h-4 w-4 shrink-0 text-amber-300" />
-          <span className="text-xs font-bold tracking-wide">Tour</span>
-        </button>
       </div>
       <div className="flex min-w-0 flex-shrink-0 flex-nowrap items-center justify-end gap-2 sm:gap-3">
         {user && (
@@ -231,7 +219,7 @@ export function TopBar({ user, onOpenSidebar }: TopBarProps) {
           type="button"
           onClick={handleTourClick}
           className="inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-md border border-primary/35 bg-primary/10 px-2.5 text-primary transition-colors hover:bg-primary/20 cursor-pointer"
-          title="Dashboard tour — same as the Tour button next to the title"
+          title="Dashboard tour — walk through search, filters, and the grid"
           aria-label="Dashboard tour"
         >
           <Sparkles className="h-3.5 w-3.5 shrink-0" />
