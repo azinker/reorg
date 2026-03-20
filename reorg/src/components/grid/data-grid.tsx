@@ -1289,44 +1289,49 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
         data-tour="dashboard-toolbar"
         className="flex items-center justify-between border-b border-border bg-card/30 px-4 py-1.5"
       >
-        <span className="text-xs text-muted-foreground">
+        <span data-tour="dashboard-row-count" className="text-xs text-muted-foreground">
           {flatRows.length} rows
           {flatRows.length !== gridRows.length && ` (${gridRows.length} total)`}
         </span>
         <div className="flex items-center gap-2">
           <button
+            data-tour="dashboard-global-price"
             onClick={() => { setGpSource(null); setGpDest(new Set()); setGpMode(null); setGlobalPriceOpen(true); }}
             className="flex items-center gap-1 rounded border border-primary/30 bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary transition-colors hover:bg-primary/20 cursor-pointer"
           >
             <RefreshCw className="h-3 w-3" />
             Global Price Update
           </button>
-          {stagedCount > 0 && (
-            <button
-              onClick={() => { setClearStagedInput(""); setClearStagedOpen(true); }}
-              className="flex items-center gap-1 rounded border border-amber-500/30 bg-amber-500/10 px-2.5 py-1 text-xs font-medium text-amber-400 transition-colors hover:bg-amber-500/20 cursor-pointer"
-            >
-              <Trash2 className="h-3 w-3" />
-              Clear Staged ({stagedCount})
+          <div data-tour="dashboard-staged-tools" className="flex items-center gap-2">
+            {stagedCount > 0 && (
+              <button
+                onClick={() => { setClearStagedInput(""); setClearStagedOpen(true); }}
+                className="flex items-center gap-1 rounded border border-amber-500/30 bg-amber-500/10 px-2.5 py-1 text-xs font-medium text-amber-400 transition-colors hover:bg-amber-500/20 cursor-pointer"
+              >
+                <Trash2 className="h-3 w-3" />
+                Clear Staged ({stagedCount})
+              </button>
+            )}
+            {failedPushCount > 0 && (
+              <button
+                onClick={() => {
+                  void loadFailedPushes();
+                  setFailedPushesOpen(true);
+                }}
+                className="flex items-center gap-1 rounded border border-red-500/30 bg-red-500/10 px-2.5 py-1 text-xs font-medium text-red-300 transition-colors hover:bg-red-500/20 cursor-pointer"
+              >
+                <AlertTriangle className="h-3 w-3" />
+                Pushes Failed ({failedPushCount})
+              </button>
+            )}
+          </div>
+          <div data-tour="dashboard-columns-export" className="flex items-center gap-2">
+            <ColumnManager columns={columns} onToggle={toggleColumn} />
+            <button className="flex items-center gap-1 rounded px-2 py-1 text-xs text-muted-foreground transition-colors hover:text-foreground cursor-pointer">
+              <Download className="h-3 w-3" />
+              Export
             </button>
-          )}
-          {failedPushCount > 0 && (
-            <button
-              onClick={() => {
-                void loadFailedPushes();
-                setFailedPushesOpen(true);
-              }}
-              className="flex items-center gap-1 rounded border border-red-500/30 bg-red-500/10 px-2.5 py-1 text-xs font-medium text-red-300 transition-colors hover:bg-red-500/20 cursor-pointer"
-            >
-              <AlertTriangle className="h-3 w-3" />
-              Pushes Failed ({failedPushCount})
-            </button>
-          )}
-          <ColumnManager columns={columns} onToggle={toggleColumn} />
-          <button className="flex items-center gap-1 rounded px-2 py-1 text-xs text-muted-foreground transition-colors hover:text-foreground cursor-pointer">
-            <Download className="h-3 w-3" />
-            Export
-          </button>
+          </div>
         </div>
       </div>
 
@@ -1342,9 +1347,15 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
           style={{ minWidth: totalMinWidth }}
         >
           {/* Frozen headers */}
-          <div className="sticky left-0 z-30 flex shrink-0 bg-card shadow-[2px_0_8px_-2px_rgba(0,0,0,0.15)]">
+          <div
+            data-tour="dashboard-header-frozen"
+            className="sticky left-0 z-30 flex shrink-0 bg-card shadow-[2px_0_8px_-2px_rgba(0,0,0,0.15)]"
+          >
             {/* Expand/collapse column — always visible, no header text */}
-            <div className={cn(COL_WIDTHS.expand, "flex items-center justify-center py-3")} />
+            <div
+              data-tour="dashboard-header-expand"
+              className={cn(COL_WIDTHS.expand, "flex items-center justify-center py-3")}
+            />
             {isColVisible("photo") && (
               <div className={cn(COL_WIDTHS.photo, "flex items-center gap-0.5 px-2 py-3")}>
                 <span>Photo</span>
@@ -1384,6 +1395,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
           <div className="flex">
             {isColVisible("qty") && (
               <button
+                data-tour="dashboard-header-qty"
                 onClick={() => toggleSort("inventory")}
                 className={cn(COL_WIDTHS.qty, "flex items-center justify-end gap-0.5 px-2 py-3 cursor-pointer hover:text-foreground")}
               >
@@ -1392,7 +1404,10 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
               </button>
             )}
             {isColVisible("salePrice") && (
-              <div className={cn(COL_WIDTHS.salePrice, "flex items-center gap-0.5 px-3 py-3")}>
+              <div
+                data-tour="dashboard-header-sale-price"
+                className={cn(COL_WIDTHS.salePrice, "flex items-center gap-0.5 px-3 py-3")}
+              >
                 <span>Sale Price</span>
               </div>
             )}
@@ -1417,7 +1432,10 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
               </div>
             )}
             {isColVisible("platformFees") && (
-              <div className={cn(COL_WIDTHS.platformFees, "flex items-center gap-0.5 px-3 py-3")}>
+              <div
+                data-tour="dashboard-header-platform-fees"
+                className={cn(COL_WIDTHS.platformFees, "flex items-center gap-0.5 px-3 py-3")}
+              >
                 <PlatformFeeHeader
                   feeRate={globalFeeRate}
                   onSave={(rate) => {
@@ -1429,12 +1447,18 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
               </div>
             )}
             {isColVisible("adRate") && (
-              <div className={cn(COL_WIDTHS.adRate, "flex items-center gap-0.5 px-3 py-3")}>
+              <div
+                data-tour="dashboard-header-ad-rate"
+                className={cn(COL_WIDTHS.adRate, "flex items-center gap-0.5 px-3 py-3")}
+              >
                 <span>Promoted General Ad Rate</span>
               </div>
             )}
             {isColVisible("profit") && (
-              <div className={cn(COL_WIDTHS.profit, "flex items-center gap-0.5 px-3 py-3")}>
+              <div
+                data-tour="dashboard-header-profit"
+                className={cn(COL_WIDTHS.profit, "flex items-center gap-0.5 px-3 py-3")}
+              >
                 <span>Profit</span>
               </div>
             )}

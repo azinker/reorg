@@ -25,6 +25,7 @@ interface TourOverlayProps {
 
 const PADDING = 10;
 const Z = 200;
+const TOOLTIP_MAX_W = 440;
 
 function queryTarget(tourId: string | null): HTMLElement | null {
   if (!tourId || typeof document === "undefined") return null;
@@ -61,7 +62,7 @@ export function TourOverlay({
       setTooltipPos({
         top: vh / 2,
         left: vw / 2,
-        maxWidth: Math.min(400, vw - 32),
+        maxWidth: Math.min(TOOLTIP_MAX_W, vw - 32),
       });
       return;
     }
@@ -74,7 +75,7 @@ export function TourOverlay({
       setTooltipPos({
         top: vh / 2,
         left: vw / 2,
-        maxWidth: Math.min(400, vw - 32),
+        maxWidth: Math.min(TOOLTIP_MAX_W, vw - 32),
       });
       return;
     }
@@ -87,7 +88,7 @@ export function TourOverlay({
       setTooltipPos({
         top: vh / 2,
         left: vw / 2,
-        maxWidth: Math.min(400, vw - 32),
+        maxWidth: Math.min(TOOLTIP_MAX_W, vw - 32),
       });
       return;
     }
@@ -101,8 +102,8 @@ export function TourOverlay({
 
     const vw = window.innerWidth;
     const vh = window.innerHeight;
-    const cardW = Math.min(360, vw - 24);
-    const cardH = 200;
+    const cardW = Math.min(TOOLTIP_MAX_W, vw - 24);
+    const cardH = 280;
     let left = padded.left + padded.width / 2 - cardW / 2;
     let top = padded.bottom + 16;
 
@@ -189,14 +190,17 @@ export function TourOverlay({
       <div
         id="tour-tooltip-card"
         className={cn(
-          "absolute rounded-xl border border-border bg-card p-4 shadow-2xl",
+          "absolute max-h-[min(72vh,560px)] overflow-y-auto rounded-xl border border-border bg-card p-4 shadow-2xl",
           step.target == null && rect == null && "-translate-x-1/2 -translate-y-1/2",
         )}
         style={{
           top: step.target == null && rect == null ? "50%" : tooltipPos.top,
           left: step.target == null && rect == null ? "50%" : tooltipPos.left,
           maxWidth: tooltipPos.maxWidth,
-          width: step.target == null && rect == null ? Math.min(400, tooltipPos.maxWidth) : tooltipPos.maxWidth,
+          width:
+            step.target == null && rect == null
+              ? Math.min(TOOLTIP_MAX_W, tooltipPos.maxWidth)
+              : tooltipPos.maxWidth,
           zIndex: Z + 10,
         }}
         onClick={(e) => e.stopPropagation()}
@@ -214,7 +218,10 @@ export function TourOverlay({
             <X className="h-4 w-4" />
           </button>
         </div>
-        <p id="tour-step-body" className="text-sm leading-relaxed text-muted-foreground">
+        <p
+          id="tour-step-body"
+          className="whitespace-pre-line text-sm leading-relaxed text-muted-foreground"
+        >
           {step.body}
         </p>
         <div className="mt-4 flex items-center justify-between gap-2 border-t border-border pt-3">
