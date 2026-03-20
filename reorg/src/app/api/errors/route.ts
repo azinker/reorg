@@ -13,6 +13,7 @@ import {
   getEbayCooldownUntilFromSnapshot,
   getEbayTradingRateLimitSnapshotForIntegration,
 } from "@/lib/services/ebay-analytics";
+import { getServerCachedValue } from "@/lib/server-cache";
 
 type Severity = "critical" | "warning" | "info";
 type ErrorCategory =
@@ -156,7 +157,7 @@ function getSeverityRank(severity: Severity) {
   return 2;
 }
 
-export async function GET() {
+async function buildErrorsData() {
   try {
     const [masterRows, syncJobs, shippingRates, integrations, automationHealth] = await Promise.all([
       db.masterRow.findMany({
@@ -510,17 +511,30 @@ export async function GET() {
       });
     }
 
-    return NextResponse.json({
-      data: entries.sort(
-        (a, b) => {
-          if (a.priority !== b.priority) return a.priority - b.priority;
-          if (getSeverityRank(a.severity) !== getSeverityRank(b.severity)) {
-            return getSeverityRank(a.severity) - getSeverityRank(b.severity);
-          }
-          return new Date(b.occurredAt).getTime() - new Date(a.occurredAt).getTime();
-        },
-      ),
+    return entries.sort(
+      (a, b) => {
+        if (a.priority !== b.priority) return a.priority - b.priority;
+        if (getSeverityRank(a.severity) !== getSeverityRank(b.severity)) {
+          return getSeverityRank(a.severity) - getSeverityRank(b.severity);
+        }
+        return new Date(b.occurredAt).getTime() - new Date(a.occurredAt).getTime();
+      },
+    );
+  } catch (error) {
+    console.error("[errors] Failed to fetch error summary", error);
+    throw error;
+  }
+}
+
+export async function GET() {
+  try {
+    const data = await getServerCachedValue({
+      key: "api:errors",
+      ttlMs: 60_000,
+      loader: buildErrorsData,
     });
+
+    return NextResponse.json({ data });
   } catch (error) {
     console.error("[errors] Failed to fetch error summary", error);
     return NextResponse.json(

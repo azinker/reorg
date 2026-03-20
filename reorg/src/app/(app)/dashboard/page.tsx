@@ -7,6 +7,7 @@ import { PAGE_TOUR_STEPS } from "@/components/onboarding/page-tour-steps";
 import { useDashboardConnection } from "@/contexts/dashboard-connection-context";
 import type { GridRow, Platform } from "@/lib/grid-types";
 import { MOCK_ROWS } from "@/lib/mock-data";
+import { usePageVisibility } from "@/lib/use-page-visibility";
 import { Loader2, RefreshCw } from "lucide-react";
 
 const GRID_VERSION_POLL_MS = 60_000;
@@ -100,6 +101,7 @@ function summarizeGrid(rows: GridRow[]) {
 }
 
 export default function DashboardPage() {
+  const isPageVisible = usePageVisibility();
   const [rows, setRows] = useState<GridRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [source, setSource] = useState<"db" | "mock" | null>(null);
@@ -201,9 +203,11 @@ export default function DashboardPage() {
     }, 180);
 
     const intervalId = window.setInterval(() => {
+      if (document.visibilityState !== "visible") return;
       void refreshGridIfChanged();
     }, GRID_VERSION_POLL_MS);
     const schedulerHealthTimer = window.setInterval(() => {
+      if (document.visibilityState !== "visible") return;
       void fetchSchedulerHealth()
         .then((health) => {
           if (!cancelled) setSchedulerHealth(health);
@@ -225,6 +229,17 @@ export default function DashboardPage() {
       document.removeEventListener("visibilitychange", handleVisibilityOrFocus);
     };
   }, []);
+
+  useEffect(() => {
+    if (!isPageVisible) return;
+    void fetchSchedulerHealth()
+      .then((health) => {
+        setSchedulerHealth(health);
+      })
+      .catch(() => {
+        setSchedulerHealth(null);
+      });
+  }, [isPageVisible]);
 
   const summary = useMemo(() => (rows ? summarizeGrid(rows) : null), [rows]);
   const { setConnectionInfo } = useDashboardConnection();

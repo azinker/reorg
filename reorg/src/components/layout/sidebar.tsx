@@ -21,6 +21,7 @@ import {
   X,
 } from "lucide-react";
 import { useEffect, useState } from "react";
+import { usePageVisibility } from "@/lib/use-page-visibility";
 
 const navItems = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
@@ -44,6 +45,7 @@ interface SidebarProps {
 
 export function Sidebar({ mobile = false, onNavigate }: SidebarProps) {
   const pathname = usePathname();
+  const isPageVisible = usePageVisibility();
   const [collapsed, setCollapsed] = useState(false);
   const [healthSummary, setHealthSummary] = useState<{
     status: "healthy" | "delayed" | "attention";
@@ -74,14 +76,29 @@ export function Sidebar({ mobile = false, onNavigate }: SidebarProps) {
 
     void loadHealth();
     const timer = window.setInterval(() => {
+      if (document.visibilityState !== "visible") return;
       void loadHealth();
-    }, 120_000);
+    }, 300_000);
 
     return () => {
       active = false;
       window.clearInterval(timer);
     };
   }, []);
+
+  useEffect(() => {
+    if (!isPageVisible) return;
+    void (async () => {
+      try {
+        const response = await fetch("/api/scheduler/status", { cache: "no-store" });
+        if (!response.ok) return;
+        const json = await response.json();
+        setHealthSummary(json.data?.healthSummary ?? null);
+      } catch {
+        setHealthSummary(null);
+      }
+    })();
+  }, [isPageVisible]);
 
   const attentionCount =
     (healthSummary?.attentionCount ?? 0) + (healthSummary?.delayedCount ?? 0);

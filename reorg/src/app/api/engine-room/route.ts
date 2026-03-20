@@ -1,10 +1,11 @@
-import { NextResponse } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
 import { db } from "@/lib/db";
 import { getIntegrationConfig } from "@/lib/integrations/runtime-config";
 import { buildAutomationHealthSnapshot } from "@/lib/services/automation-health";
 import { planScheduledSyncs } from "@/lib/services/sync-scheduler";
 import { getEbayTradingRateLimitSnapshotForIntegration } from "@/lib/services/ebay-analytics";
 import { classifyPushFailure } from "@/lib/push-failure";
+import { getServerCachedValue } from "@/lib/server-cache";
 
 const PLATFORM_LABEL: Record<string, string> = {
   TPP_EBAY: "eBay (TPP)",
@@ -104,7 +105,7 @@ function parsePushJobChangeEntries(value: unknown): PushJobChangeEntry[] {
   });
 }
 
-export async function GET() {
+async function buildEngineRoomData() {
   try {
     const [syncJobs, pushJobs, stagedChanges, auditLogs, globalLock, schedulerSettings, schedulerPlan, integrations] = await Promise.all([
       db.syncJob.findMany({
@@ -674,52 +675,68 @@ export async function GET() {
     ).length;
     const schedulerDueNow = dueQueue.filter((item) => item.due).length;
 
-    return NextResponse.json({
-      data: {
-        syncJobs: syncJobsPayload,
-        pushJobs: pushJobsPayload,
-        pushQueue: pushQueuePayload,
-        changeLog: changeLogPayload,
-        rawEvents: rawEventsPayload,
-        automationFeed,
-        dueQueue,
-        summary: {
-          activeSyncs,
-          queuedPushes,
-          recentErrors,
-          recentErrorDetail,
-          writeLockOn,
-          schedulerEnabled,
-          schedulerLastTickAt,
-          schedulerLastOutcome,
-          schedulerLastDueCount,
-          schedulerLastDispatchedCount,
-          schedulerLastError,
-          schedulerActiveJobs,
-          schedulerDueNow,
-          recentWebhookCount,
-          automationHealthStatus: automationHealth.summary.status,
-          automationHealthHeadline: automationHealth.summary.headline,
-          automationHealthDetail: automationHealth.summary.detail,
-          automationHealthAction: automationHealth.summary.recommendedAction,
-          delayedStores: automationHealth.summary.delayedCount,
-          attentionStores: automationHealth.summary.attentionCount,
-        },
-        integrationHealth: automationHealth.integrationHealth.map((item) => ({
-          ...item,
-          pendingBacklogCount:
-            integrationConfigById.get(item.integrationId)?.syncState.pendingIncrementalItemIds
-              .length ?? 0,
-          pendingBacklogWindowEndedAt:
-            integrationConfigById.get(item.integrationId)?.syncState.pendingIncrementalWindowEndedAt ??
-            null,
-          rateLimits:
-            item.platform === "TPP_EBAY" || item.platform === "TT_EBAY"
-              ? ebaySnapshotsByPlatform.get(item.platform) ?? null
-              : null,
-        })),
+    return {
+      syncJobs: syncJobsPayload,
+      pushJobs: pushJobsPayload,
+      pushQueue: pushQueuePayload,
+      changeLog: changeLogPayload,
+      rawEvents: rawEventsPayload,
+      automationFeed,
+      dueQueue,
+      summary: {
+        activeSyncs,
+        queuedPushes,
+        recentErrors,
+        recentErrorDetail,
+        writeLockOn,
+        schedulerEnabled,
+        schedulerLastTickAt,
+        schedulerLastOutcome,
+        schedulerLastDueCount,
+        schedulerLastDispatchedCount,
+        schedulerLastError,
+        schedulerActiveJobs,
+        schedulerDueNow,
+        recentWebhookCount,
+        automationHealthStatus: automationHealth.summary.status,
+        automationHealthHeadline: automationHealth.summary.headline,
+        automationHealthDetail: automationHealth.summary.detail,
+        automationHealthAction: automationHealth.summary.recommendedAction,
+        delayedStores: automationHealth.summary.delayedCount,
+        attentionStores: automationHealth.summary.attentionCount,
       },
-    });
+      integrationHealth: automationHealth.integrationHealth.map((item) => ({
+        ...item,
+        pendingBacklogCount:
+          integrationConfigById.get(item.integrationId)?.syncState.pendingIncrementalItemIds
+            .length ?? 0,
+        pendingBacklogWindowEndedAt:
+          integrationConfigById.get(item.integrationId)?.syncState.pendingIncrementalWindowEndedAt ??
+          null,
+        rateLimits:
+          item.platform === "TPP_EBAY" || item.platform === "TT_EBAY"
+            ? ebaySnapshotsByPlatform.get(item.platform) ?? null
+            : null,
+      })),
+    };
+  } catch (error) {
+    console.error("[engine-room] GET failed", error);
+    throw error;
+  }
+}
+
+export async function GET(request: NextRequest) {
+  try {
+    const forceRefresh = request.nextUrl.searchParams.get("refresh") === "1";
+    const data = forceRefresh
+      ? await buildEngineRoomData()
+      : await getServerCachedValue({
+          key: "api:engine-room",
+          ttlMs: 30_000,
+          loader: buildEngineRoomData,
+        });
+
+    return NextResponse.json({ data });
   } catch (error) {
     console.error("[engine-room] GET failed", error);
     return NextResponse.json({ error: "Failed to load engine room data" }, { status: 500 });
