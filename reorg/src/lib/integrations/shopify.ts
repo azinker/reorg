@@ -6,6 +6,7 @@ import type {
   InventoryMap,
   PriceUpdate,
   AdRateUpdate,
+  UpcUpdate,
   PushResult,
 } from "@/lib/integrations/types";
 import type { Platform } from "@prisma/client";
@@ -276,6 +277,41 @@ export class ShopifyAdapter implements MarketplaceAdapter {
   async pushAdRateUpdates(_updates: AdRateUpdate[]): Promise<PushResult> {
     // Shopify does not have promoted listing ad rates
     return { success: true, itemsUpdated: 0, errors: [] };
+  }
+
+  async pushUpcUpdates(updates: UpcUpdate[]): Promise<PushResult> {
+    const errors: PushResult["errors"] = [];
+    let itemsUpdated = 0;
+
+    for (const update of updates) {
+      try {
+        const variantId = update.platformVariantId ?? update.platformItemId;
+        const response = await this.apiCall(`/variants/${variantId}.json`, {
+          method: "PUT",
+          body: JSON.stringify({
+            variant: { barcode: update.newUpc },
+          }),
+        });
+
+        if (response.ok) {
+          itemsUpdated++;
+        } else {
+          errors.push({
+            platformItemId: update.platformItemId,
+            message: `UPC update failed: ${response.status}`,
+          });
+        }
+
+        await new Promise((resolve) => setTimeout(resolve, 600));
+      } catch (error) {
+        errors.push({
+          platformItemId: update.platformItemId,
+          message: error instanceof Error ? error.message : "Unknown error",
+        });
+      }
+    }
+
+    return { success: errors.length === 0, itemsUpdated, errors };
   }
 
   private mapVariantToListing(

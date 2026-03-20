@@ -22,6 +22,7 @@ const STEPS = [
 
 const SUPPORTED_FIELDS = [
   "sku",
+  "upc",
   "weight",
   "supplier_cost",
   "supplier_shipping_cost",
@@ -201,6 +202,10 @@ export default function ImportPage() {
                   </li>
                 ))}
               </ul>
+              <p className="mt-2 text-xs text-muted-foreground">
+                Imported <span className="font-medium text-foreground">UPC</span> values are staged for review and push.
+                They do not write directly to marketplaces during import.
+              </p>
             </div>
 
             <div className="rounded-lg border border-emerald-500/25 bg-emerald-500/5 px-4 py-3 text-sm text-muted-foreground">

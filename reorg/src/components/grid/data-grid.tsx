@@ -47,7 +47,7 @@ interface DataGridProps {
   rows: GridRow[];
 }
 
-type PushField = "salePrice" | "adRate";
+type PushField = "salePrice" | "adRate" | "upc";
 type PushLaunchMode = "review" | "fast";
 
 type FailedPushItem = PushItem & {
@@ -480,6 +480,10 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
     return `${rowId}:${platform}:${listingId}:${field}`;
   }
 
+  function getUpcQuickPushKey(rowId: string) {
+    return `${rowId}:upc`;
+  }
+
   function setQuickPushState(key: string, state: QuickPushState) {
     setQuickPushStates((prev) => ({ ...prev, [key]: state }));
   }
@@ -510,9 +514,31 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
     platform: string,
     listingId: string,
     field: PushField,
-    newValue?: number,
+    newValue?: number | string,
   ): PushItem | null {
     if (!row) return null;
+
+    if (field === "upc") {
+      const stagedUpc = typeof newValue === "string" ? newValue : row.stagedUpc ?? null;
+      const target = row.upcPushTargets?.find(
+        (entry) => entry.platform === platform && entry.listingId === listingId,
+      );
+      if (!target || !stagedUpc) return null;
+
+      return {
+        sku: row.sku,
+        title: row.title,
+        platform: platform as Platform,
+        listingId,
+        platformVariantId: target.variantId,
+        stagedChangeId: target.stagedChangeId ?? undefined,
+        masterRowId: row.id.startsWith("child-") ? row.id.replace(/^child-/, "") : row.id,
+        marketplaceListingId: target.marketplaceListingId ?? undefined,
+        field,
+        oldValue: row.upc,
+        newValue: stagedUpc,
+      };
+    }
 
     const sourceValues = field === "salePrice" ? row.salePrices : row.adRates;
     const value = sourceValues.find(
@@ -542,6 +568,16 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
       oldValue: liveValue,
       newValue: stagedValue,
     };
+  }
+
+  function buildUpcPushItems(row: GridRow | undefined): PushItem[] {
+    if (!row || row.isParent || !row.hasStagedUpc || !row.stagedUpc) return [];
+
+    return (row.upcPushTargets ?? [])
+      .map((target) =>
+        buildPushItem(row, target.platform, target.listingId, "upc", row.stagedUpc ?? undefined),
+      )
+      .filter((item): item is PushItem => Boolean(item));
   }
 
   async function submitPushRequest(items: PushItem[], dryRun: boolean, confirmedLivePush: boolean) {
@@ -579,9 +615,9 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
     platform: string,
     listingId: string,
     field: PushField,
-    newValue?: number,
+    newValue?: number | string,
   ) {
-    const key = getQuickPushKey(rowId, platform, listingId, field);
+    const key = field === "upc" ? getUpcQuickPushKey(rowId) : getQuickPushKey(rowId, platform, listingId, field);
     const row = findRow(rowId);
     const pushItem = buildPushItem(row, platform, listingId, field, newValue);
     if (!pushItem) {
@@ -614,9 +650,9 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
     platform: string,
     listingId: string,
     field: PushField,
-    newValue?: number,
+    newValue?: number | string,
   ) {
-    const key = getQuickPushKey(rowId, platform, listingId, field);
+    const key = field === "upc" ? getUpcQuickPushKey(rowId) : getQuickPushKey(rowId, platform, listingId, field);
     const row = findRow(rowId);
     const pushItem = buildPushItem(row, platform, listingId, field, newValue);
     if (!pushItem) {
@@ -658,6 +694,55 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
     }
   }
 
+  async function startInlineFastPushItems(key: string, items: PushItem[]) {
+    if (items.length === 0) {
+      showToast("No staged change was ready for fast push.");
+      return;
+    }
+
+    setQuickPushState(key, { phase: "dry-run", detail: "Running dry run inline..." });
+
+    try {
+      const dryRunResult = await submitPushRequest(items, true, false);
+      if (dryRunResult.status === "blocked") {
+        setQuickPushState(key, {
+          phase: "blocked",
+          detail: dryRunResult.blockedReason ?? dryRunResult.nextStep ?? dryRunResult.message,
+        });
+        return;
+      }
+
+      setQuickPushState(key, { phase: "pushing", detail: "Sending the live push..." });
+      const liveResult = await submitPushRequest(items, false, true);
+      if (liveResult.status === "blocked") {
+        setQuickPushState(key, {
+          phase: "blocked",
+          detail: liveResult.blockedReason ?? liveResult.nextStep ?? liveResult.message,
+        });
+        return;
+      }
+
+      applyPushOutcome(liveResult);
+      if (liveResult.summary.successfulChanges > 0) {
+        setQuickPushState(key, {
+          phase: "success",
+          detail: liveResult.postPushRefresh?.detail ?? "Push completed.",
+        });
+        scheduleQuickPushSuccessClear(key);
+      } else {
+        setQuickPushState(key, {
+          phase: "error",
+          detail: liveResult.nextStep ?? liveResult.message,
+        });
+      }
+    } catch (error) {
+      setQuickPushState(key, {
+        phase: "error",
+        detail: error instanceof Error ? error.message : "Live push failed.",
+      });
+    }
+  }
+
   function applyPushOutcome(result: PushApiData) {
     const successful = result.results.filter((entry) => entry.success);
     void loadFailedPushes();
@@ -672,6 +757,17 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
         entry,
       ]),
     );
+    const successfulUpcByMasterRow = new Map<string, string>();
+    const failedUpcByMasterRow = new Set<string>();
+
+    for (const entry of result.results.filter((item) => item.field === "upc")) {
+      if (!entry.masterRowId) continue;
+      if (entry.success) {
+        successfulUpcByMasterRow.set(entry.masterRowId, String(entry.newValue));
+      } else {
+        failedUpcByMasterRow.add(entry.masterRowId);
+      }
+    }
 
     function applyToRow(row: GridRow): GridRow {
       const salePrices = row.salePrices.map((entry) => {
@@ -689,8 +785,15 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
           : entry;
       });
       const childRows = row.childRows?.map((child) => applyToRow(child));
+      const masterRowId = row.id.startsWith("child-") ? row.id.replace(/^child-/, "") : row.id;
+      const upcCompleted =
+        successfulUpcByMasterRow.has(masterRowId) && !failedUpcByMasterRow.has(masterRowId);
       const updated = recalcRow({
         ...row,
+        upc: upcCompleted ? successfulUpcByMasterRow.get(masterRowId) ?? row.upc : row.upc,
+        stagedUpc: upcCompleted ? null : row.stagedUpc ?? null,
+        hasStagedUpc: upcCompleted ? false : row.hasStagedUpc ?? false,
+        upcPushTargets: upcCompleted ? [] : row.upcPushTargets,
         salePrices,
         adRates,
         childRows,
@@ -700,6 +803,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
         ...updated,
         childRows,
         hasStagedChanges:
+          Boolean(updated.hasStagedUpc) ||
           updated.salePrices.some((entry) => entry.stagedValue != null && entry.stagedValue !== entry.value) ||
           updated.adRates.some((entry) => entry.stagedValue != null && entry.stagedValue !== entry.value) ||
           hasChildStaged,
@@ -738,6 +842,9 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
   function valuesMatch(a: number | string | null | undefined, b: number | string | null | undefined) {
     if (a == null && b == null) return true;
     if (a == null || b == null) return false;
+    if (typeof a === "string" || typeof b === "string") {
+      return String(a) === String(b);
+    }
     return Math.abs(Number(a) - Number(b)) < 0.000001;
   }
 
@@ -772,11 +879,18 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
     }).catch((err) => console.error("Failed to persist edit:", err));
   }
 
-  function persistStageAction(sku: string, platform: string, listingId: string, action: string, newPrice?: number) {
+  function persistStageAction(
+    sku: string,
+    platform: string,
+    listingId: string,
+    action: string,
+    newPrice?: number,
+    field?: PushField,
+  ) {
     return fetch("/api/grid/stage", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action, sku, platform, listingId, newPrice }),
+      body: JSON.stringify({ action, sku, platform, listingId, newPrice, field }),
     }).catch((err) => console.error("Failed to persist stage action:", err));
   }
 
@@ -1045,6 +1159,128 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
     () => flattenForRender(sortedRows, expandedRows, filters.stockStatus, filters.stagedOnly),
     [sortedRows, expandedRows, filters.stockStatus, filters.stagedOnly]
   );
+
+  function handlePushStagedUpc(rowId: string, launchMode: PushLaunchMode = "review") {
+    const row = findRow(rowId);
+    if (!row || row.isParent || !row.hasStagedUpc || !row.stagedUpc) {
+      showToast("No staged UPC is ready to push on this row.");
+      return;
+    }
+
+    const pushItems = buildUpcPushItems(row);
+    if (pushItems.length === 0) {
+      showToast("This row has no supported marketplace UPC targets to push.");
+      return;
+    }
+
+    if (launchMode === "fast") {
+      clearQuickPushState(getUpcQuickPushKey(rowId));
+      void startInlineFastPushItems(getUpcQuickPushKey(rowId), pushItems);
+    } else {
+      queuePushReview(pushItems, "review");
+    }
+
+    showToast(
+      launchMode === "fast"
+        ? `Fast push started for staged UPC on SKU ${row.sku}.`
+        : `Reviewing staged UPC push for SKU ${row.sku}.`,
+    );
+  }
+
+  function handleDiscardStagedUpc(rowId: string) {
+    const row = findRow(rowId);
+    if (!row || !row.hasStagedUpc) {
+      showToast("No staged UPC is waiting on this row.");
+      return;
+    }
+
+    updateRowById(rowId, (current) => ({
+      ...current,
+      stagedUpc: null,
+      hasStagedUpc: false,
+      upcPushTargets: [],
+      hasStagedChanges:
+        current.salePrices.some((entry) => entry.stagedValue != null && entry.stagedValue !== entry.value) ||
+        current.adRates.some((entry) => entry.stagedValue != null && entry.stagedValue !== entry.value),
+    }));
+
+    for (const target of row.upcPushTargets ?? []) {
+      if (!target.marketplaceListingId) continue;
+      void persistStageAction(
+        row.sku,
+        target.platform,
+        target.listingId,
+        "discard",
+        undefined,
+        "upc",
+      );
+    }
+
+    clearQuickPushState(getUpcQuickPushKey(rowId));
+    showToast(`Staged UPC discarded for SKU ${row.sku}.`);
+  }
+
+  function persistUpcAction(sku: string, action: string, newUpc?: string) {
+    return fetch("/api/grid/stage", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action, sku, field: "upc", newValue: newUpc }),
+    }).catch((err) => console.error("Failed to persist UPC action:", err));
+  }
+
+  function handleUpcEdit(rowId: string, newUpc: string, mode: "stage" | "push" | "fastPush") {
+    const row = findRow(rowId);
+    if (!row || row.isParent) {
+      showToast("UPC can only be edited on a single row or child row.");
+      return;
+    }
+
+    const normalizedUpc = newUpc.trim();
+    const liveUpc = row.upc?.trim() ?? "";
+    const effectiveUpc = row.stagedUpc?.trim() ?? liveUpc;
+
+    if (!normalizedUpc) {
+      showToast(`UPC cannot be blank for SKU ${row.sku}.`);
+      return;
+    }
+
+    if (valuesMatch(effectiveUpc, normalizedUpc)) {
+      showToast(`No UPC change - SKU ${row.sku} is already ${normalizedUpc}.`);
+      return;
+    }
+
+    if (valuesMatch(liveUpc, normalizedUpc)) {
+      void handleDiscardStagedUpc(rowId);
+      return;
+    }
+
+    const pushItems = (row.upcPushTargets ?? [])
+      .map((target) => buildPushItem(row, target.platform, target.listingId, "upc", normalizedUpc))
+      .filter((item): item is PushItem => Boolean(item));
+
+    updateRowById(rowId, (current) => ({
+      ...current,
+      stagedUpc: normalizedUpc,
+      hasStagedUpc: true,
+      hasStagedChanges: true,
+    }));
+    void persistUpcAction(row.sku, "stage", normalizedUpc);
+
+    if (mode === "fastPush") {
+      clearQuickPushState(getUpcQuickPushKey(rowId));
+      void startInlineFastPushItems(getUpcQuickPushKey(rowId), pushItems);
+      showToast(`Fast push started - SKU ${row.sku} UPC from ${row.upc ?? "No UPC"} to ${normalizedUpc}`);
+      return;
+    }
+
+    if (mode === "push") {
+      queuePushReview(pushItems, "review");
+      showToast(`UPC staged for push review - SKU ${row.sku} from ${row.upc ?? "No UPC"} to ${normalizedUpc}`);
+      return;
+    }
+
+    showToast(`UPC Staged - SKU ${row.sku} from ${row.upc ?? "No UPC"} to ${normalizedUpc}`);
+  }
 
   useEffect(() => {
     const needsChildHydration =
@@ -1655,7 +1891,17 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
                   {isColVisible("upc") && (
                     <div className={cn(COL_WIDTHS.upc, "flex items-center px-2", cellPy)}>
                       <div className={cn("w-full min-w-0", isChild && "pl-4")}>
-                        <UpcCell upc={row.upc} />
+                        <UpcCell
+                          upc={row.upc}
+                          stagedUpc={row.stagedUpc}
+                          editable={!row.isParent && (row.upcPushTargets?.length ?? 0) > 0}
+                          canPush={!row.isParent && Boolean(row.hasStagedUpc) && (row.upcPushTargets?.length ?? 0) > 0}
+                          quickPushState={quickPushStates[getUpcQuickPushKey(row.id)]}
+                          onSave={(value, mode) => handleUpcEdit(row.id, value, mode)}
+                          onReviewPush={() => handlePushStagedUpc(row.id, "review")}
+                          onFastPush={() => handlePushStagedUpc(row.id, "fast")}
+                          onDiscard={() => handleDiscardStagedUpc(row.id)}
+                        />
                       </div>
                     </div>
                   )}

@@ -6,6 +6,7 @@ import type {
   InventoryMap,
   PriceUpdate,
   AdRateUpdate,
+  UpcUpdate,
   PushResult,
 } from "@/lib/integrations/types";
 import type { Platform } from "@prisma/client";
@@ -238,6 +239,40 @@ export class BigCommerceAdapter implements MarketplaceAdapter {
   async pushAdRateUpdates(_updates: AdRateUpdate[]): Promise<PushResult> {
     // BigCommerce does not have promoted listing ad rates
     return { success: true, itemsUpdated: 0, errors: [] };
+  }
+
+  async pushUpcUpdates(updates: UpcUpdate[]): Promise<PushResult> {
+    const errors: PushResult["errors"] = [];
+    let itemsUpdated = 0;
+
+    for (const update of updates) {
+      try {
+        const endpoint = update.platformVariantId
+          ? `/catalog/products/${update.platformItemId}/variants/${update.platformVariantId}`
+          : `/catalog/products/${update.platformItemId}`;
+
+        const response = await this.apiCall(endpoint, {
+          method: "PUT",
+          body: JSON.stringify({ upc: update.newUpc }),
+        });
+
+        if (response.ok) {
+          itemsUpdated++;
+        } else {
+          errors.push({
+            platformItemId: update.platformItemId,
+            message: `UPC update failed: ${response.status}`,
+          });
+        }
+      } catch (error) {
+        errors.push({
+          platformItemId: update.platformItemId,
+          message: error instanceof Error ? error.message : "Unknown error",
+        });
+      }
+    }
+
+    return { success: errors.length === 0, itemsUpdated, errors };
   }
 
   private mapProductToListing(

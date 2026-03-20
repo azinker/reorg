@@ -27,6 +27,12 @@ export interface AdRateUpdate {
   newAdRate: number;
 }
 
+export interface UpcUpdate {
+  platformItemId: string;
+  platformVariantId?: string;
+  newUpc: string;
+}
+
 export interface PushResult {
   success: boolean;
   itemsUpdated: number;
@@ -79,6 +85,8 @@ export interface MarketplaceAdapter {
   pushPriceUpdates(updates: PriceUpdate[]): Promise<PushResult>;
 
   pushAdRateUpdates(updates: AdRateUpdate[]): Promise<PushResult>;
+
+  pushUpcUpdates(updates: UpcUpdate[]): Promise<PushResult>;
 }
 
 export const PLATFORM_LABELS: Record<Platform, string> = {

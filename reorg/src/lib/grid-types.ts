@@ -37,11 +37,22 @@ export interface StoreValue {
   url?: string;
 }
 
+export interface UpcPushTarget {
+  platform: Platform;
+  listingId: string;
+  marketplaceListingId: string | null;
+  variantId?: string;
+  stagedChangeId?: string | null;
+}
+
 export interface GridRow {
   id: string;
   sku: string;
   title: string;
   upc: string | null;
+  stagedUpc?: string | null;
+  hasStagedUpc?: boolean;
+  upcPushTargets?: UpcPushTarget[];
   imageUrl: string | null;
   imageSource?: string;
   weight: string | null;

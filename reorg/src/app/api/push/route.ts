@@ -19,9 +19,9 @@ const pushSchema = z.object({
       title: z.string().optional(),
       platform: z.enum(["TPP_EBAY", "TT_EBAY", "BIGCOMMERCE", "SHOPIFY"]),
       listingId: z.string(),
-      field: z.enum(["salePrice", "adRate"]),
-      oldValue: z.number().nullable(),
-      newValue: z.number(),
+      field: z.enum(["salePrice", "adRate", "upc"]),
+      oldValue: z.union([z.number(), z.string(), z.null()]),
+      newValue: z.union([z.number(), z.string()]),
     })
   ),
   dryRun: z.boolean().default(true),
@@ -57,7 +57,7 @@ async function resolvePushChanges(
           ? await db.marketplaceListing.findUnique({
               where: { id: change.marketplaceListingId },
               include: {
-                masterRow: { select: { id: true, sku: true } },
+                masterRow: { select: { id: true, sku: true, upc: true } },
                 stagedChanges: {
                   where: { status: "STAGED", field: change.field },
                   orderBy: { createdAt: "desc" },
@@ -77,7 +77,7 @@ async function resolvePushChanges(
                     : {}),
               },
               include: {
-                masterRow: { select: { id: true, sku: true } },
+                masterRow: { select: { id: true, sku: true, upc: true } },
                 stagedChanges: {
                   where: { status: "STAGED", field: change.field },
                   orderBy: { createdAt: "desc" },
@@ -108,7 +108,11 @@ async function resolvePushChanges(
         field: change.field,
         oldValue:
           change.oldValue ??
-          (change.field === "adRate" ? listing.adRate : listing.salePrice) ??
+          (change.field === "adRate"
+            ? listing.adRate
+            : change.field === "salePrice"
+              ? listing.salePrice
+              : listing.masterRow.upc) ??
           null,
         newValue: change.newValue,
       };

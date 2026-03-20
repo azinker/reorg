@@ -1,6 +1,6 @@
 import { db } from "@/lib/db";
 import { checkWriteSafety } from "@/lib/safety";
-import type { MarketplaceAdapter, PriceUpdate, AdRateUpdate } from "@/lib/integrations/types";
+import type { MarketplaceAdapter, PriceUpdate, AdRateUpdate, UpcUpdate } from "@/lib/integrations/types";
 import type { Integration, Platform } from "@prisma/client";
 import {
   getEbayCooldownUntilFromSnapshot,
@@ -33,9 +33,9 @@ export interface PushChangeItem {
   platformVariantId?: string | null;
   platform: Platform;
   listingId: string;
-  field: "salePrice" | "adRate";
-  oldValue: number | null;
-  newValue: number;
+  field: "salePrice" | "adRate" | "upc";
+  oldValue: number | string | null;
+  newValue: number | string;
 }
 
 export interface PushExecutionResult {
@@ -54,7 +54,7 @@ export interface PushExecutionResult {
       platform: Platform;
       changes: number;
       distinctListings: number;
-      fields: Array<"salePrice" | "adRate">;
+      fields: Array<"salePrice" | "adRate" | "upc">;
     }>;
   };
   results: {
@@ -65,8 +65,8 @@ export interface PushExecutionResult {
     platform: Platform;
     listingId: string;
     field: string;
-    oldValue: number | null;
-    newValue: number;
+    oldValue: number | string | null;
+    newValue: number | string;
     success: boolean;
     error?: string;
   }[];
@@ -143,6 +143,10 @@ function matchesPushChange(
   }
 
   return true;
+}
+
+function matchesStringValue(a: string | null | undefined, b: string | null | undefined) {
+  return (a ?? null) === (b ?? null);
 }
 
 function buildPushSummary(byPlatform: Map<Platform, PushChangeItem[]>, results?: PushExecutionResult["results"]) {
@@ -1109,14 +1113,22 @@ export async function executePush(
       .map((c) => ({
         platformItemId: c.listingId,
         platformVariantId: c.platformVariantId ?? undefined,
-        newPrice: c.newValue,
+        newPrice: Number(c.newValue),
       }));
 
     const adRateUpdates: AdRateUpdate[] = changes
       .filter((c) => c.field === "adRate")
       .map((c) => ({
         platformItemId: c.listingId,
-        newAdRate: c.newValue,
+        newAdRate: Number(c.newValue),
+      }));
+
+    const upcUpdates: UpcUpdate[] = changes
+      .filter((c) => c.field === "upc")
+      .map((c) => ({
+        platformItemId: c.listingId,
+        platformVariantId: c.platformVariantId ?? undefined,
+        newUpc: String(c.newValue),
       }));
 
     if (priceUpdates.length > 0) {
@@ -1174,6 +1186,36 @@ export async function executePush(
         });
       }
     }
+
+    if (upcUpdates.length > 0) {
+      const upcResult = await adapter.pushUpcUpdates(upcUpdates);
+      for (const update of upcUpdates) {
+        const change = changes.find((entry) =>
+          matchesPushChange(
+            entry,
+            "upc",
+            update.platformItemId,
+            update.platformVariantId ?? null,
+          ),
+        );
+        const error = upcResult.errors.find(
+          (e) => e.platformItemId === update.platformItemId,
+        );
+        results.push({
+          platform,
+          listingId: update.platformItemId,
+          platformVariantId: change?.platformVariantId ?? update.platformVariantId ?? null,
+          field: "upc",
+          stagedChangeId: change?.stagedChangeId ?? null,
+          masterRowId: change?.masterRowId ?? "",
+          marketplaceListingId: change?.marketplaceListingId ?? "",
+          oldValue: change?.oldValue ?? null,
+          newValue: change?.newValue ?? update.newUpc,
+          success: !error,
+          error: error?.message,
+        });
+      }
+    }
   }
 
   // Update staged changes for successful pushes
@@ -1186,6 +1228,64 @@ export async function executePush(
     await db.stagedChange.updateMany({
       where: { id: { in: successfulStagedIds } },
       data: { status: "PUSHED", pushedAt: new Date() },
+    });
+  }
+
+  const upcChangesByMasterRow = new Map<
+    string,
+    { requestedValue: string; successful: boolean[] }
+  >();
+
+  for (const change of request.changes.filter((entry) => entry.field === "upc")) {
+    if (!change.masterRowId) continue;
+    const existing = upcChangesByMasterRow.get(change.masterRowId);
+    const successful = results.some(
+      (result) =>
+        result.success &&
+        result.field === "upc" &&
+        result.masterRowId === change.masterRowId &&
+        result.marketplaceListingId === change.marketplaceListingId &&
+        matchesStringValue(String(result.newValue), String(change.newValue)),
+    );
+
+    if (existing) {
+      existing.successful.push(successful);
+      continue;
+    }
+
+    upcChangesByMasterRow.set(change.masterRowId, {
+      requestedValue: String(change.newValue),
+      successful: [successful],
+    });
+  }
+
+  const completedUpcMasterRows = [...upcChangesByMasterRow.entries()]
+    .filter(([, value]) => value.successful.length > 0 && value.successful.every(Boolean))
+    .map(([masterRowId, value]) => ({
+      masterRowId,
+      requestedValue: value.requestedValue,
+    }));
+
+  if (completedUpcMasterRows.length > 0) {
+    await Promise.all(
+      completedUpcMasterRows.map(({ masterRowId, requestedValue }) =>
+        db.masterRow.update({
+          where: { id: masterRowId },
+          data: { upc: requestedValue },
+        }),
+      ),
+    );
+
+    await db.stagedChange.updateMany({
+      where: {
+        masterRowId: { in: completedUpcMasterRows.map((entry) => entry.masterRowId) },
+        field: "upc",
+        status: "STAGED",
+      },
+      data: {
+        status: "PUSHED",
+        pushedAt: new Date(),
+      },
     });
   }
 

@@ -6,6 +6,7 @@ import type {
   InventoryMap,
   PriceUpdate,
   AdRateUpdate,
+  UpcUpdate,
   PushResult,
 } from "@/lib/integrations/types";
 import type { Platform } from "@prisma/client";
@@ -264,6 +265,18 @@ export class EbayAdapter implements MarketplaceAdapter {
     }
 
     return { success: errors.length === 0, itemsUpdated, errors };
+  }
+
+  async pushUpcUpdates(updates: UpcUpdate[]): Promise<PushResult> {
+    return {
+      success: false,
+      itemsUpdated: 0,
+      errors: updates.map((update) => ({
+        platformItemId: update.platformItemId,
+        message:
+          "UPC push is not enabled for eBay yet because the safe field-isolated write path is still under review.",
+      })),
+    };
   }
 
   private mapToRawListing(item: Record<string, unknown>): RawListing {

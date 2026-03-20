@@ -12,8 +12,8 @@ type FailedResultRow = {
   platform: Platform;
   listingId: string;
   field: string;
-  oldValue: number | null;
-  newValue: number;
+  oldValue: number | string | null;
+  newValue: number | string;
   success: boolean;
   error?: string;
 };
@@ -21,13 +21,15 @@ type FailedResultRow = {
 function formatFieldLabel(field: string) {
   if (field === "salePrice") return "Sale Price";
   if (field === "adRate") return "Promoted General Ad Rate";
+  if (field === "upc") return "UPC";
   return field;
 }
 
-function formatValue(field: string, value: number | null) {
+function formatValue(field: string, value: number | string | null) {
   if (value == null) return "N/A";
-  if (field === "adRate") return `${(value * 100).toFixed(1)}%`;
-  return `$${value.toFixed(2)}`;
+  if (field === "upc") return String(value);
+  if (field === "adRate") return `${(Number(value) * 100).toFixed(1)}%`;
+  return `$${Number(value).toFixed(2)}`;
 }
 
 export async function GET() {

@@ -23,9 +23,9 @@ export interface PushItem {
   title: string;
   platform: Platform;
   listingId: string;
-  field: "salePrice" | "adRate";
-  oldValue: number | null;
-  newValue: number;
+  field: "salePrice" | "adRate" | "upc";
+  oldValue: number | string | null;
+  newValue: number | string;
 }
 
 type ChecklistItem = {
@@ -42,8 +42,8 @@ type PushResultItem = {
   platform: Platform;
   listingId: string;
   field: string;
-  oldValue: number | null;
-  newValue: number;
+  oldValue: number | string | null;
+  newValue: number | string;
   success: boolean;
   error?: string;
 };
@@ -64,7 +64,7 @@ export type PushApiData = {
       platform: Platform;
       changes: number;
       distinctListings: number;
-      fields: Array<"salePrice" | "adRate">;
+      fields: Array<"salePrice" | "adRate" | "upc">;
     }>;
   };
   results: PushResultItem[];
@@ -128,10 +128,11 @@ type ModalPhase =
   | "blocked"
   | "error";
 
-function formatValue(field: string, value: number | null): string {
+function formatValue(field: string, value: number | string | null): string {
   if (value == null) return "—";
-  if (field.toLowerCase().includes("rate")) return `${(value * 100).toFixed(1)}%`;
-  return `$${value.toFixed(2)}`;
+  if (field === "upc") return String(value);
+  if (field.toLowerCase().includes("rate")) return `${(Number(value) * 100).toFixed(1)}%`;
+  return `$${Number(value).toFixed(2)}`;
 }
 
 function getChecklistClasses(status: ChecklistItem["status"]) {

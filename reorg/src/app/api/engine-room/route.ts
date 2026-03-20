@@ -43,17 +43,17 @@ type PushJobChangeEntry = {
   platformVariantId: string | null;
   platform: string;
   listingId: string;
-  field: "salePrice" | "adRate";
-  oldValue: number | null;
-  newValue: number;
+  field: "salePrice" | "adRate" | "upc";
+  oldValue: number | string | null;
+  newValue: number | string;
   sku?: string;
   title?: string;
   success?: boolean;
   error?: string;
 };
 
-function isPushField(value: unknown): value is "salePrice" | "adRate" {
-  return value === "salePrice" || value === "adRate";
+function isPushField(value: unknown): value is "salePrice" | "adRate" | "upc" {
+  return value === "salePrice" || value === "adRate" || value === "upc";
 }
 
 function toNullableString(value: unknown) {
@@ -62,6 +62,12 @@ function toNullableString(value: unknown) {
 
 function toNullableNumber(value: unknown) {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function toNullablePushValue(value: unknown) {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") return value;
+  return null;
 }
 
 function parsePushJobChangeEntries(value: unknown): PushJobChangeEntry[] {
@@ -74,7 +80,7 @@ function parsePushJobChangeEntries(value: unknown): PushJobChangeEntry[] {
     const platform = typeof record.platform === "string" ? record.platform : null;
     const listingId = typeof record.listingId === "string" ? record.listingId : null;
     const field = isPushField(record.field) ? record.field : null;
-    const newValue = toNullableNumber(record.newValue);
+    const newValue = toNullablePushValue(record.newValue);
 
     if (!platform || !listingId || !field || newValue == null) return [];
 
@@ -87,7 +93,7 @@ function parsePushJobChangeEntries(value: unknown): PushJobChangeEntry[] {
         platform,
         listingId,
         field,
-        oldValue: toNullableNumber(record.oldValue),
+        oldValue: toNullablePushValue(record.oldValue),
         newValue,
         sku: typeof record.sku === "string" ? record.sku : undefined,
         title: typeof record.title === "string" ? record.title : undefined,
@@ -295,7 +301,14 @@ export async function GET() {
         PLATFORM_LABEL[sc.marketplaceListing?.integration?.platform ?? ""] ??
         sc.marketplaceListing?.integration?.platform ??
         "-";
-      const field = sc.field === "adRate" ? "Ad Rate" : sc.field === "salePrice" ? "Price" : sc.field;
+      const field =
+        sc.field === "adRate"
+          ? "Ad Rate"
+          : sc.field === "salePrice"
+            ? "Price"
+            : sc.field === "upc"
+              ? "UPC"
+              : sc.field;
 
       return {
         id: sc.id,

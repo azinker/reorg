@@ -71,6 +71,60 @@ function validateRow(
   };
 }
 
+async function getSystemUser() {
+  let user = await db.user.findFirst({ where: { role: "ADMIN" } });
+  if (!user) {
+    user = await db.user.create({
+      data: {
+        email: "system@reorg.internal",
+        name: "System",
+        role: "ADMIN",
+      },
+    });
+  }
+  return user;
+}
+
+async function stageImportedUpc(args: {
+  masterRowId: string;
+  importedUpc: string;
+  changedById: string;
+  listingIds: string[];
+}) {
+  await db.stagedChange.updateMany({
+    where: {
+      masterRowId: args.masterRowId,
+      field: "upc",
+      status: "STAGED",
+    },
+    data: { status: "CANCELLED" },
+  });
+
+  if (args.listingIds.length === 0) {
+    await db.stagedChange.create({
+      data: {
+        masterRowId: args.masterRowId,
+        field: "upc",
+        stagedValue: args.importedUpc,
+        liveValue: null,
+        changedById: args.changedById,
+      },
+    });
+    return;
+  }
+
+  await db.stagedChange.createMany({
+    data: args.listingIds.map((listingId) => ({
+      masterRowId: args.masterRowId,
+      marketplaceListingId: listingId,
+      field: "upc",
+      stagedValue: args.importedUpc,
+      liveValue: null,
+      changedById: args.changedById,
+    })),
+  });
+}
+
 export async function POST(request: NextRequest) {
   try {
     const formData = await request.formData();
@@ -132,6 +186,7 @@ export async function POST(request: NextRequest) {
     let created = 0;
     let updated = 0;
     const applyErrors: { row: number; error: string }[] = [];
+    const systemUser = await getSystemUser();
 
     for (const { index, fields } of validRows) {
       const sku = String(fields.sku ?? "").trim();
@@ -139,6 +194,14 @@ export async function POST(request: NextRequest) {
       try {
         const existing = await db.masterRow.findUnique({
           where: { sku },
+          include: {
+            listings: {
+              select: {
+                id: true,
+                integration: { select: { platform: true } },
+              },
+            },
+          },
         });
 
         const data: {
@@ -148,8 +211,11 @@ export async function POST(request: NextRequest) {
           supplierCost?: number;
           supplierShipping?: number;
           notes?: string;
-          upc?: string;
         } = {};
+        const importedUpc =
+          fields.upc != null && String(fields.upc).trim() !== ""
+            ? String(fields.upc).trim()
+            : null;
 
         if (fields.title != null && String(fields.title).trim() !== "") data.title = String(fields.title).trim();
         if (fields.weight != null && String(fields.weight).trim() !== "") data.weight = String(fields.weight).trim();
@@ -157,14 +223,49 @@ export async function POST(request: NextRequest) {
         if (typeof fields.supplierCost === "number" && Number.isFinite(fields.supplierCost)) data.supplierCost = fields.supplierCost;
         if (typeof fields.supplierShipping === "number" && Number.isFinite(fields.supplierShipping)) data.supplierShipping = fields.supplierShipping;
         if (fields.notes != null && String(fields.notes).trim() !== "") data.notes = String(fields.notes).trim();
-        if (fields.upc != null && String(fields.upc).trim() !== "") data.upc = String(fields.upc).trim();
 
         if (resolvedMode === "overwrite") {
-          await db.masterRow.upsert({
+          const masterRow = await db.masterRow.upsert({
             where: { sku },
             create: { sku, ...data },
             update: data,
+            include: {
+              listings: {
+                select: {
+                  id: true,
+                  integration: { select: { platform: true } },
+                },
+              },
+            },
           });
+
+          if (importedUpc) {
+            const liveUpc = masterRow.upc?.trim() || null;
+            if (liveUpc !== importedUpc) {
+              const supportedListingIds = masterRow.listings
+                .filter((listing) =>
+                  listing.integration.platform === "BIGCOMMERCE" ||
+                  listing.integration.platform === "SHOPIFY",
+                )
+                .map((listing) => listing.id);
+              await stageImportedUpc({
+                masterRowId: masterRow.id,
+                importedUpc,
+                changedById: systemUser.id,
+                listingIds: supportedListingIds,
+              });
+            } else {
+              await db.stagedChange.updateMany({
+                where: {
+                  masterRowId: masterRow.id,
+                  field: "upc",
+                  status: "STAGED",
+                },
+                data: { status: "CANCELLED" },
+              });
+            }
+          }
+
           if (existing) updated++; else created++;
         } else {
           if (existing) {
@@ -182,8 +283,35 @@ export async function POST(request: NextRequest) {
               await db.masterRow.update({ where: { sku }, data: patch });
               updated++;
             }
+
+            if (importedUpc) {
+              const liveUpc = existing.upc?.trim() || null;
+              if (!liveUpc) {
+                const supportedListingIds = existing.listings
+                  .filter((listing) =>
+                    listing.integration.platform === "BIGCOMMERCE" ||
+                    listing.integration.platform === "SHOPIFY",
+                  )
+                  .map((listing) => listing.id);
+                await stageImportedUpc({
+                  masterRowId: existing.id,
+                  importedUpc,
+                  changedById: systemUser.id,
+                  listingIds: supportedListingIds,
+                });
+                updated++;
+              }
+            }
           } else {
-            await db.masterRow.create({ data: { sku, ...data } });
+            const masterRow = await db.masterRow.create({ data: { sku, ...data } });
+            if (importedUpc) {
+              await stageImportedUpc({
+                masterRowId: masterRow.id,
+                importedUpc,
+                changedById: systemUser.id,
+                listingIds: [],
+              });
+            }
             created++;
           }
         }

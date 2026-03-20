@@ -1,7 +1,9 @@
 import { db } from "@/lib/db";
 import { calcProfit, calcFee } from "@/lib/grid-types";
-import type { GridRow, StoreValue, Platform } from "@/lib/grid-types";
+import type { GridRow, StoreValue, Platform, UpcPushTarget } from "@/lib/grid-types";
 import { Prisma } from "@prisma/client";
+
+const UPC_PUSH_PLATFORMS = new Set<Platform>(["BIGCOMMERCE", "SHOPIFY"]);
 
 const masterRowWithRelations = Prisma.validator<Prisma.MasterRowDefaultArgs>()({
   select: {
@@ -54,6 +56,7 @@ const masterRowWithRelations = Prisma.validator<Prisma.MasterRowDefaultArgs>()({
     stagedChanges: {
       where: { status: "STAGED" },
       select: {
+        id: true,
         marketplaceListingId: true,
         field: true,
         stagedValue: true,
@@ -90,6 +93,7 @@ const childMasterRowSnapshotSelect = Prisma.validator<Prisma.MasterRowDefaultArg
     stagedChanges: {
       where: { status: "STAGED" },
       select: {
+        id: true,
         marketplaceListingId: true,
         field: true,
         stagedValue: true,
@@ -130,6 +134,7 @@ const childMasterRowFullSelect = Prisma.validator<Prisma.MasterRowDefaultArgs>()
     stagedChanges: {
       where: { status: "STAGED" },
       select: {
+        id: true,
         marketplaceListingId: true,
         field: true,
         stagedValue: true,
@@ -235,16 +240,18 @@ function collectChildSkus(parentListings: DBMasterRow["listings"]): string[] {
 
 function buildChildStagedMap(
   stagedChanges: Array<{
+    id: string;
     marketplaceListingId: string | null;
     field: string;
     stagedValue: string;
     liveValue: string | null;
   }>,
 ) {
-  const childStagedMap = new Map<string, { field: string; stagedValue: string; liveValue: string | null }>();
+  const childStagedMap = new Map<string, { id: string; field: string; stagedValue: string; liveValue: string | null }>();
   for (const sc of stagedChanges) {
     if (sc.marketplaceListingId) {
       childStagedMap.set(`${sc.marketplaceListingId}-${sc.field}`, {
+        id: sc.id,
         field: sc.field,
         stagedValue: sc.stagedValue,
         liveValue: sc.liveValue,
@@ -252,6 +259,56 @@ function buildChildStagedMap(
     }
   }
   return childStagedMap;
+}
+
+function buildUpcStageDetails(
+  listings: Array<{
+    id: string;
+    platformItemId: string;
+    platformVariantId: string | null | undefined;
+    integration: { platform: Platform };
+  }>,
+  stagedChanges: Array<{
+    id: string;
+    marketplaceListingId: string | null;
+    field: string;
+    stagedValue: string;
+  }>,
+) {
+  const upcStages = stagedChanges.filter((change) => change.field === "upc");
+  const stagedUpc = upcStages[0]?.stagedValue ?? null;
+  const upcPushTargets: UpcPushTarget[] = [];
+
+  const stageByListingId = new Map(
+    upcStages
+      .filter((change) => change.marketplaceListingId)
+      .map((change) => [change.marketplaceListingId as string, change]),
+  );
+
+  for (const listing of listings) {
+    if (!UPC_PUSH_PLATFORMS.has(listing.integration.platform)) {
+      continue;
+    }
+
+    const stagedChange = stageByListingId.get(listing.id);
+    if (!stagedChange) {
+      continue;
+    }
+
+    upcPushTargets.push({
+      platform: listing.integration.platform,
+      listingId: listing.platformItemId,
+      marketplaceListingId: listing.id,
+      variantId: listing.platformVariantId ?? undefined,
+      stagedChangeId: stagedChange.id,
+    });
+  }
+
+  return {
+    stagedUpc: stagedUpc ?? null,
+    hasStagedUpc: upcStages.length > 0,
+    upcPushTargets,
+  };
 }
 
 async function fetchChildMasterSnapshots(parentListings: DBMasterRow["listings"]) {
@@ -279,6 +336,7 @@ function buildChildRowStubs(childMasters: DBChildMasterRowSnapshot[]): GridRow[]
 
   for (const cm of childMasters) {
     const childInv = cm.listings.find((l) => l.inventory != null)?.inventory ?? null;
+    const upcStage = buildUpcStageDetails(cm.listings, cm.stagedChanges);
     const itemNumberMap = new Map<string, StoreValue>();
     for (const listing of cm.listings) {
       appendItemNumber(itemNumberMap, listing);
@@ -289,6 +347,9 @@ function buildChildRowStubs(childMasters: DBChildMasterRowSnapshot[]): GridRow[]
       sku: cm.sku,
       title: cm.title ?? cm.sku,
       upc: cm.upc,
+      stagedUpc: upcStage.stagedUpc,
+      hasStagedUpc: upcStage.hasStagedUpc,
+      upcPushTargets: upcStage.upcPushTargets,
       imageUrl: cm.imageUrl,
       weight: null,
       supplierCost: null,
@@ -322,6 +383,7 @@ function buildFullChildRows(
 
   for (const cm of childMasters) {
     const childStagedMap = buildChildStagedMap(cm.stagedChanges);
+    const upcStage = buildUpcStageDetails(cm.listings, cm.stagedChanges);
 
     const childShipCost = cm.shippingCostOverride ?? lookupShipping(cm.weight, shippingRateMap);
 
@@ -384,6 +446,9 @@ function buildFullChildRows(
       sku: cm.sku,
       title: cm.title ?? cm.sku,
       upc: cm.upc,
+      stagedUpc: upcStage.stagedUpc,
+      hasStagedUpc: upcStage.hasStagedUpc,
+      upcPushTargets: upcStage.upcPushTargets,
       imageUrl: cm.imageUrl,
       weight: cm.weight,
       supplierCost: cm.supplierCost,
@@ -396,6 +461,7 @@ function buildFullChildRows(
       childRowsHydrated: true,
       alternateTitles: [],
       hasStagedChanges:
+        upcStage.hasStagedUpc ||
         childSalePrices.some((sp) => sp.stagedValue != null && sp.stagedValue !== sp.value)
         || childAdRates.some((ar) => ar.stagedValue != null && ar.stagedValue !== ar.value),
       itemNumbers: childItemNumbers,
@@ -456,6 +522,7 @@ async function buildGridRow(
 
   const hasStagedChanges = salePrices.some((sp) => sp.stagedValue != null && sp.stagedValue !== sp.value)
     || adRates.some((ar) => ar.stagedValue != null && ar.stagedValue !== ar.value);
+  const upcStage = buildUpcStageDetails(parentListings, master.stagedChanges);
 
   let inventory: number | null;
   if (isVariationParent) {
@@ -501,6 +568,9 @@ async function buildGridRow(
     sku: master.sku,
     title: master.title ?? master.sku,
     upc: master.upc,
+    stagedUpc: upcStage.stagedUpc,
+    hasStagedUpc: upcStage.hasStagedUpc,
+    upcPushTargets: upcStage.upcPushTargets,
     imageUrl: master.imageUrl,
     weight: master.weight,
     supplierCost: master.supplierCost,
@@ -512,7 +582,7 @@ async function buildGridRow(
     isParent: isVariationParent,
     childRowsHydrated: !isVariationParent,
     alternateTitles,
-    hasStagedChanges,
+    hasStagedChanges: hasStagedChanges || upcStage.hasStagedUpc,
     itemNumbers,
     salePrices: isVariationParent ? [] : salePrices,
     adRates,
