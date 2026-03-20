@@ -103,6 +103,7 @@ export function TopBar({ user, onOpenSidebar }: TopBarProps) {
           <Menu className="h-4 w-4" />
         </button>
         <div
+          data-tour="dashboard-connection"
           className="relative inline-block"
           onMouseEnter={() => hasTooltip && setTooltipOpen(true)}
           onMouseLeave={() => setTooltipOpen(false)}

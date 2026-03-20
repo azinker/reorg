@@ -1,7 +1,9 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useTheme } from "@/components/providers/theme-provider";
 import { useSettings } from "@/lib/use-settings";
+import { setLocalDashboardTourSeen } from "@/lib/onboarding-local";
 import type { Density, RowHeight, SortColumn } from "@/lib/settings-store";
 import { cn } from "@/lib/utils";
 import {
@@ -13,6 +15,7 @@ import {
   AlertTriangle,
   Shield,
   Crown,
+  Sparkles,
 } from "lucide-react";
 
 const TIMEZONES = [
@@ -55,8 +58,23 @@ function ToggleSwitch({
 }
 
 export default function SettingsPage() {
+  const router = useRouter();
   const { theme, setTheme } = useTheme();
   const { settings, update } = useSettings();
+
+  async function replayDashboardTour() {
+    setLocalDashboardTourSeen(false);
+    try {
+      await fetch("/api/onboarding", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "reset", page: "dashboard" }),
+      });
+    } catch {
+      /* offline / unauthenticated — local flag still cleared */
+    }
+    router.push("/dashboard?tour=replay");
+  }
 
   return (
     <div className="p-6">
@@ -339,6 +357,27 @@ export default function SettingsPage() {
               </span>
             </div>
           </div>
+        </section>
+
+        {/* Guided tour */}
+        <section className="rounded-lg border border-border bg-card p-6 shadow-sm">
+          <h2 className="mb-5 flex items-center gap-2 text-lg font-semibold">
+            <Sparkles className="h-5 w-5 text-muted-foreground" />
+            Guided tour
+          </h2>
+          <p className="mb-4 text-sm text-muted-foreground">
+            New users see a one-time walkthrough of the Dashboard (search, filters, grid, and
+            connection status). After you finish or exit, it won&apos;t show again unless you reset
+            it here.
+          </p>
+          <button
+            type="button"
+            onClick={() => void replayDashboardTour()}
+            className="inline-flex items-center gap-2 rounded-md border border-primary/40 bg-primary/10 px-4 py-2 text-sm font-medium text-primary transition-colors hover:bg-primary/20 cursor-pointer"
+          >
+            <Sparkles className="h-4 w-4" />
+            Replay Dashboard tour
+          </button>
         </section>
 
         {/* SECTION 3: Master Store (Danger Zone) */}

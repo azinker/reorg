@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { DataGrid } from "@/components/grid/data-grid";
+import { DashboardTour } from "@/components/onboarding/dashboard-tour";
 import { useDashboardConnection } from "@/contexts/dashboard-connection-context";
 import type { GridRow, Platform } from "@/lib/grid-types";
 import { MOCK_ROWS } from "@/lib/mock-data";
@@ -306,6 +307,9 @@ export default function DashboardPage() {
       <div className="min-h-0 min-w-0 flex-1 overflow-hidden">
         <DataGrid rows={rows} />
       </div>
+      <Suspense fallback={null}>
+        <DashboardTour gridReady />
+      </Suspense>
     </div>
   );
 }
