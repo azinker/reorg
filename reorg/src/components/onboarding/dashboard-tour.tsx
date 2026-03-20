@@ -8,6 +8,10 @@ import {
   getLocalDashboardTourSeen,
   setLocalDashboardTourSeen,
 } from "@/lib/onboarding-local";
+import { OPEN_DASHBOARD_TOUR_EVENT } from "@/lib/onboarding-events";
+
+/** Survives React Strict Mode remount when opening via ?tour=manual */
+const PENDING_MANUAL_TOUR_KEY = "reorg_pending_dashboard_tour";
 
 interface DashboardTourProps {
   /** When true, the grid has mounted and tour targets exist in the DOM */
@@ -25,6 +29,8 @@ export function DashboardTour({ gridReady }: DashboardTourProps) {
   const replayRef = useRef(false);
   /** User asked to replay via ?tour=replay — do not let GET overwrite tourSeen to true */
   const replayRequested = useRef(false);
+  /** Open once when landing with ?tour=manual (from TopBar on other pages) */
+  const manualOpenRef = useRef(false);
 
   const fetchSeen = useCallback(async () => {
     try {
@@ -67,8 +73,57 @@ export function DashboardTour({ gridReady }: DashboardTourProps) {
     router.replace(q ? `/dashboard?${q}` : "/dashboard", { scroll: false });
   }, [searchParams, router]);
 
+  /** ?tour=manual — open tour from TopBar without resetting “seen” in the database */
   useEffect(() => {
-    if (!loaded || !gridReady || tourSeen) return;
+    if (searchParams.get("tour") !== "manual") return;
+    manualOpenRef.current = true;
+    try {
+      sessionStorage.setItem(PENDING_MANUAL_TOUR_KEY, "1");
+    } catch {
+      /* private mode */
+    }
+    const params = new URLSearchParams(searchParams.toString());
+    params.delete("tour");
+    const q = params.toString();
+    router.replace(q ? `/dashboard?${q}` : "/dashboard", { scroll: false });
+  }, [searchParams, router]);
+
+  /** TopBar Tour button: toggle open/close (closing does not mark tour complete). */
+  useEffect(() => {
+    const onToggle = () => {
+      setOpen((prev) => {
+        if (prev) return false;
+        setStepIndex(0);
+        return true;
+      });
+    };
+    window.addEventListener(OPEN_DASHBOARD_TOUR_EVENT, onToggle);
+    return () => window.removeEventListener(OPEN_DASHBOARD_TOUR_EVENT, onToggle);
+  }, []);
+
+  /** Auto-start first visit + replay; also open when ?tour=manual once grid is ready */
+  useEffect(() => {
+    if (!loaded || !gridReady) return;
+
+    let pendingManual = false;
+    try {
+      pendingManual = sessionStorage.getItem(PENDING_MANUAL_TOUR_KEY) === "1";
+      if (pendingManual) sessionStorage.removeItem(PENDING_MANUAL_TOUR_KEY);
+    } catch {
+      /* */
+    }
+
+    if (pendingManual || manualOpenRef.current) {
+      manualOpenRef.current = false;
+      const id = window.requestAnimationFrame(() => {
+        setOpen(true);
+        setStepIndex(0);
+      });
+      return () => window.cancelAnimationFrame(id);
+    }
+
+    if (tourSeen) return;
+
     if (replayRef.current) {
       const id = window.requestAnimationFrame(() => {
         replayRef.current = false;

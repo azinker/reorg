@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { usePathname, useRouter } from "next/navigation";
 import { signOut } from "next-auth/react";
 import { useTheme } from "@/components/providers/theme-provider";
 import { useSettings } from "@/lib/use-settings";
@@ -10,7 +11,20 @@ import type { Density } from "@/lib/settings-store";
 import type { Platform } from "@/lib/grid-types";
 import { PLATFORM_SHORT } from "@/lib/grid-types";
 import { cn } from "@/lib/utils";
-import { Moon, Sun, Monitor, Rows3, Rows4, AlignJustify, Menu, LogOut, ShieldCheck, AlertTriangle } from "lucide-react";
+import { dispatchToggleDashboardTour } from "@/lib/onboarding-events";
+import {
+  Moon,
+  Sun,
+  Monitor,
+  Rows3,
+  Rows4,
+  AlignJustify,
+  Menu,
+  LogOut,
+  ShieldCheck,
+  AlertTriangle,
+  Sparkles,
+} from "lucide-react";
 
 const PLATFORM_ORDER: Platform[] = ["TPP_EBAY", "TT_EBAY", "BIGCOMMERCE", "SHOPIFY"];
 
@@ -31,6 +45,8 @@ interface TopBarProps {
 }
 
 export function TopBar({ user, onOpenSidebar }: TopBarProps) {
+  const pathname = usePathname();
+  const router = useRouter();
   const { theme, setTheme } = useTheme();
   const { settings, update } = useSettings();
   const { connectionInfo } = useDashboardConnection();
@@ -249,6 +265,22 @@ export function TopBar({ user, onOpenSidebar }: TopBarProps) {
             <Monitor className="h-3.5 w-3.5" />
           </button>
         </div>
+
+        <button
+          type="button"
+          onClick={() => {
+            if (pathname === "/dashboard") {
+              dispatchToggleDashboardTour();
+            } else {
+              router.push("/dashboard?tour=manual");
+            }
+          }}
+          className="flex h-9 shrink-0 items-center justify-center rounded-md border border-border bg-background px-2.5 text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground cursor-pointer"
+          title="Dashboard tour — walk through search, filters, and the grid"
+        >
+          <Sparkles className="h-3.5 w-3.5" />
+          <span className="ml-1.5 hidden text-xs font-medium sm:inline">Tour</span>
+        </button>
 
         {user && (
           <button

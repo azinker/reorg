@@ -366,9 +366,10 @@ export default function SettingsPage() {
             Guided tour
           </h2>
           <p className="mb-4 text-sm text-muted-foreground">
-            New users see a one-time walkthrough of the Dashboard (search, filters, grid, and
-            connection status). After you finish or exit, it won&apos;t show again unless you reset
-            it here.
+            New users get a one-time walkthrough of the Dashboard (search, filters, grid, and
+            connection status). You can open it anytime from the <strong>Tour</strong> button
+            (sparkles icon) in the top bar. After you finish or exit, it won&apos;t auto-start
+            again unless you reset it here.
           </p>
           <button
             type="button"
