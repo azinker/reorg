@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname } from "next/navigation";
 import { signOut } from "next-auth/react";
 import { useTheme } from "@/components/providers/theme-provider";
 import { useSettings } from "@/lib/use-settings";
@@ -46,7 +46,6 @@ interface TopBarProps {
 
 export function TopBar({ user, onOpenSidebar }: TopBarProps) {
   const pathname = usePathname();
-  const router = useRouter();
   const { theme, setTheme } = useTheme();
   const { settings, update } = useSettings();
   const { connectionInfo } = useDashboardConnection();
@@ -73,11 +72,8 @@ export function TopBar({ user, onOpenSidebar }: TopBarProps) {
 
   function handleTourClick() {
     const page = onboardingPageFromPathname(pathname);
-    if (page) {
-      dispatchTogglePageTour(page);
-    } else {
-      router.push("/dashboard?tour=manual");
-    }
+    if (!page) return;
+    dispatchTogglePageTour(page);
   }
 
   return (
@@ -221,8 +217,8 @@ export function TopBar({ user, onOpenSidebar }: TopBarProps) {
           type="button"
           onClick={handleTourClick}
           className="inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-md border border-primary/35 bg-primary/10 px-2.5 text-primary transition-colors hover:bg-primary/20 cursor-pointer"
-          title="Dashboard tour — walk through search, filters, and the grid"
-          aria-label="Dashboard tour"
+          title="Page tour — walkthrough for this page"
+          aria-label="Page tour"
         >
           <Sparkles className="h-3.5 w-3.5 shrink-0" />
           <span className="max-w-[4.5rem] truncate text-xs font-semibold sm:max-w-none">Tour</span>

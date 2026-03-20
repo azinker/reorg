@@ -31,7 +31,9 @@ export const PATH_TO_ONBOARDING_PAGE: Record<string, OnboardingPageKey> = {
 };
 
 export function onboardingPageFromPathname(pathname: string): OnboardingPageKey | null {
-  return PATH_TO_ONBOARDING_PAGE[pathname] ?? null;
+  const clean = pathname.split("?")[0].split("#")[0];
+  const normalized = clean !== "/" && clean.endsWith("/") ? clean.slice(0, -1) : clean;
+  return PATH_TO_ONBOARDING_PAGE[normalized] ?? null;
 }
 
 export function onboardingFlagKey(page: OnboardingPageKey): string {

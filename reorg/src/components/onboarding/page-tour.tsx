@@ -4,8 +4,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { TourOverlay } from "@/components/onboarding/tour-overlay";
 import { OPEN_PAGE_TOUR_EVENT } from "@/lib/onboarding-events";
-import { onboardingFlagKey, type OnboardingPageKey } from "@/lib/onboarding-pages";
-import { getLocalTourSeen, setLocalTourSeen } from "@/lib/onboarding-local";
+import type { OnboardingPageKey } from "@/lib/onboarding-pages";
+import { setLocalTourSeen } from "@/lib/onboarding-local";
 import type { TourStep } from "@/components/onboarding/tour-overlay";
 
 const PENDING_MANUAL_TOUR_KEY = "reorg_pending_page_tour";
@@ -16,42 +16,12 @@ interface PageTourProps {
   ready?: boolean;
 }
 
-type OnboardingState = Partial<Record<`${OnboardingPageKey}TourSeen`, boolean>>;
-
 export function PageTour({ page, steps, ready = true }: PageTourProps) {
   const pathname = usePathname();
   const router = useRouter();
-  const [loaded, setLoaded] = useState(false);
-  const [tourSeen, setTourSeen] = useState(true);
   const [open, setOpen] = useState(false);
   const [stepIndex, setStepIndex] = useState(0);
-  const replayRef = useRef(false);
   const manualOpenRef = useRef(false);
-
-  const fetchSeen = useCallback(async () => {
-    try {
-      const res = await fetch("/api/onboarding", { cache: "no-store" });
-      if (!res.ok) throw new Error(String(res.status));
-      const json = (await res.json()) as {
-        data: OnboardingState | null;
-        useLocalFallback?: boolean;
-      };
-      if (json.useLocalFallback) {
-        setTourSeen(getLocalTourSeen(page));
-      } else {
-        const key = onboardingFlagKey(page) as `${OnboardingPageKey}TourSeen`;
-        setTourSeen(Boolean(json.data?.[key]));
-      }
-    } catch {
-      setTourSeen(getLocalTourSeen(page));
-    } finally {
-      setLoaded(true);
-    }
-  }, [page]);
-
-  useEffect(() => {
-    void fetchSeen();
-  }, [fetchSeen]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -79,7 +49,7 @@ export function PageTour({ page, steps, ready = true }: PageTourProps) {
   }, [page]);
 
   useEffect(() => {
-    if (!loaded || !ready) return;
+    if (!ready) return;
 
     let pendingManual = false;
     try {
@@ -89,26 +59,17 @@ export function PageTour({ page, steps, ready = true }: PageTourProps) {
       /* */
     }
 
-    if (pendingManual || manualOpenRef.current || replayRef.current) {
+    if (pendingManual || manualOpenRef.current) {
       manualOpenRef.current = false;
-      replayRef.current = false;
       const id = window.requestAnimationFrame(() => {
         setOpen(true);
         setStepIndex(0);
       });
       return () => window.cancelAnimationFrame(id);
     }
-
-    if (tourSeen) return;
-    const id = window.setTimeout(() => {
-      setOpen(true);
-      setStepIndex(0);
-    }, 400);
-    return () => window.clearTimeout(id);
-  }, [loaded, ready, page, tourSeen]);
+  }, [ready, page]);
 
   const persistSeen = useCallback(async () => {
-    setTourSeen(true);
     setOpen(false);
     setLocalTourSeen(page, true);
     try {
