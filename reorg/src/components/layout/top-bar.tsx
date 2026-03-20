@@ -77,7 +77,7 @@ export function TopBar({ user, onOpenSidebar }: TopBarProps) {
   }
 
   return (
-    <header className="flex h-14 min-w-0 items-center justify-between gap-2 overflow-x-auto overflow-y-hidden border-b border-border bg-card px-4 sm:px-6">
+    <header className="flex h-14 min-w-0 items-center justify-between gap-2 overflow-x-auto overflow-y-visible border-b border-border bg-card px-4 sm:px-6">
       <div className="flex min-w-0 shrink-0 items-center gap-2">
         <button
           onClick={onOpenSidebar}
@@ -101,15 +101,14 @@ export function TopBar({ user, onOpenSidebar }: TopBarProps) {
               "text-sm font-medium",
               connectionInfo == null && "text-muted-foreground",
               isConnected && "text-emerald-500",
-              isNotConnected && "text-amber-500",
-              hasTooltip && "cursor-help"
+              isNotConnected && "text-amber-500"
             )}
           >
             {titleText}
           </span>
           {tooltipOpen && hasTooltip && summary && (
             <div
-              className="absolute left-0 top-full z-50 mt-1 w-[320px] rounded-lg border border-border bg-popover p-3 text-left text-popover-foreground shadow-xl"
+              className="absolute left-0 top-full z-[120] mt-1 w-[320px] rounded-lg border border-border bg-popover p-3 text-left text-popover-foreground shadow-xl"
               role="tooltip"
             >
               <p className="text-xs text-muted-foreground leading-snug">
