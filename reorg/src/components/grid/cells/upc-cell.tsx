@@ -310,12 +310,12 @@ export function UpcCell({
 
   function startEdit() {
     if (!editable) return;
-    const editChoices = liveChoices.filter((choice) => choice.editable);
-    if (editChoices.length > 1) {
+    if (liveChoices.length > 0) {
       setShowActions(false);
       setSelectorMode("edit");
       return;
     }
+    const editChoices = liveChoices.filter((choice) => choice.editable);
     const choice = editChoices[0];
     setDraft(choice?.value ?? stagedUpc ?? upc ?? "");
     setSelectedTarget(
@@ -376,12 +376,12 @@ export function UpcCell({
     if (liveLines.length === 0) {
       if (!upc) return null;
       return (
-        <div className="mt-1 flex items-center justify-center gap-1 font-mono text-[11px] font-semibold text-emerald-400">
-          <span className="inline-flex items-center rounded-sm bg-emerald-500/15 px-1 py-px text-[9px] font-bold text-emerald-300">
+        <div className="mt-1 flex items-center justify-start gap-1 font-mono text-[11px] font-semibold text-emerald-400 whitespace-nowrap">
+          <span className="inline-flex shrink-0 items-center rounded-sm bg-emerald-500/15 px-1 py-px text-[9px] font-bold text-emerald-300">
             TPP
           </span>
-          <span className="truncate">{upc}</span>
-          <span className="rounded-sm bg-emerald-500 px-1 py-px text-[9px] font-bold text-white">
+          <span className="font-mono text-[10px] tracking-tight leading-none">{upc}</span>
+          <span className="shrink-0 rounded-sm bg-emerald-500 px-1 py-px text-[9px] font-bold text-white">
             LIVE
           </span>
         </div>
@@ -389,29 +389,29 @@ export function UpcCell({
     }
 
     return (
-      <div className="mt-1 space-y-1">
+      <div className="mt-1 flex w-full flex-col items-start gap-1">
         {liveLines.map((line) =>
           line.kind === "all" ? (
             <div
               key={`all:${line.value}`}
-              className="flex items-center justify-center gap-1 font-mono text-[11px] font-semibold text-emerald-400"
+              className="flex items-center justify-start gap-1 font-mono text-[11px] font-semibold text-emerald-400 whitespace-nowrap"
             >
               <span className="inline-flex items-center rounded-sm bg-emerald-500/15 px-1 py-px text-[9px] font-bold uppercase text-emerald-300">
                 {line.label}
               </span>
-              <span className="font-mono text-[10px] tracking-tight">{line.value}</span>
-              <span className="rounded-sm bg-emerald-500 px-1 py-px text-[9px] font-bold text-white">
+              <span className="font-mono text-[10px] tracking-tight leading-none">{line.value}</span>
+              <span className="shrink-0 rounded-sm bg-emerald-500 px-1 py-px text-[9px] font-bold text-white">
                 LIVE
               </span>
             </div>
           ) : (
             <div
               key={`${line.platform}:${line.value}`}
-              className="flex items-center justify-center gap-1 font-mono text-[11px] font-semibold"
+              className="flex items-center justify-start gap-1 font-mono text-[11px] font-semibold whitespace-nowrap"
             >
               <span
                 className={cn(
-                  "inline-flex items-center gap-1 rounded-sm px-1 py-px text-[9px] font-bold uppercase",
+                  "inline-flex shrink-0 items-center gap-1 rounded-sm px-1 py-px text-[9px] font-bold uppercase",
                   PLATFORM_COLORS[line.platform],
                 )}
               >
@@ -420,7 +420,7 @@ export function UpcCell({
               </span>
               <span
                 className={cn(
-                  "font-mono text-[10px] tracking-tight",
+                  "font-mono text-[10px] tracking-tight leading-none",
                   line.platform === "TPP_EBAY" && "text-blue-400",
                   line.platform === "TT_EBAY" && "text-emerald-400",
                   line.platform === "BIGCOMMERCE" && "text-orange-400",
@@ -431,7 +431,7 @@ export function UpcCell({
               </span>
               <span
                 className={cn(
-                  "rounded-sm px-1 py-px text-[9px] font-bold text-white",
+                  "shrink-0 rounded-sm px-1 py-px text-[9px] font-bold text-white",
                   line.platform === "TPP_EBAY" && "bg-blue-500",
                   line.platform === "TT_EBAY" && "bg-emerald-500",
                   line.platform === "BIGCOMMERCE" && "bg-orange-500",
@@ -575,12 +575,12 @@ export function UpcCell({
 
       {displayedUpc ? (
         <div className="flex w-full items-start justify-center gap-1">
-          <div className="min-w-0 text-center">
+          <div className="min-w-0 text-left">
             {stagedUpc ? (
               <>
-                <div className="flex items-center justify-center gap-1 font-mono text-xs font-semibold text-amber-300">
-                  <span className="truncate">{stagedUpc}</span>
-                  <span className="rounded-sm bg-amber-500 px-1 py-px text-[9px] font-bold text-black">
+                <div className="flex items-center justify-start gap-1 font-mono text-xs font-semibold text-amber-300 whitespace-nowrap">
+                  <span className="font-mono text-[10px] tracking-tight leading-none">{stagedUpc}</span>
+                  <span className="shrink-0 rounded-sm bg-amber-500 px-1 py-px text-[9px] font-bold text-black">
                     STAGED
                   </span>
                 </div>

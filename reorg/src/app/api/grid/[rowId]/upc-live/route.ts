@@ -56,16 +56,96 @@ function extractEbayUpc(rawData: unknown): string | null {
   const raw = asRecord(rawData);
   if (!raw) return null;
 
+  const listingDetails = asRecord(raw.ProductListingDetails);
+  const listingDetailsUpc = firstString(
+    listingDetails?.UPC,
+    listingDetails?.EAN,
+    listingDetails?.GTIN,
+    listingDetails?.ISBN,
+  );
+  if (listingDetailsUpc && listingDetailsUpc !== "Does not apply" && listingDetailsUpc !== "N/A") {
+    return listingDetailsUpc;
+  }
+
+  const variationListingDetails = asRecord(raw.VariationProductListingDetails);
+  const variationUpc = firstString(
+    variationListingDetails?.UPC,
+    variationListingDetails?.EAN,
+    variationListingDetails?.GTIN,
+    variationListingDetails?.ISBN,
+  );
+  if (variationUpc && variationUpc !== "Does not apply" && variationUpc !== "N/A") {
+    return variationUpc;
+  }
+
   const product = asRecord(raw.product) ?? asRecord(raw.Product);
   const productUpc = firstString(product?.upc, product?.UPC, product?.EAN, product?.GTIN);
   if (productUpc) return productUpc;
 
+  const rawUpc = firstString(raw.upc, raw.UPC, raw.ean, raw.EAN, raw.gtin, raw.GTIN);
+  if (rawUpc && rawUpc !== "Does not apply" && rawUpc !== "N/A") {
+    return rawUpc;
+  }
+
   const specifics = raw.ItemSpecifics;
-  if (Array.isArray(specifics)) {
-    for (const entry of specifics) {
+  const nameValueList = Array.isArray(specifics)
+    ? specifics
+    : asRecord(specifics) && Array.isArray(asRecord(specifics)?.NameValueList)
+      ? (asRecord(specifics)?.NameValueList as unknown[])
+      : [];
+
+  for (const entry of nameValueList) {
+    const record = asRecord(entry);
+    const name = firstString(record?.Name, record?.name);
+    if (name && ["UPC", "EAN", "GTIN", "ISBN"].includes(name.toUpperCase())) {
+      const value = firstString(record?.Value, record?.value, record?.ValueLiteral);
+      if (value && value !== "Does not apply" && value !== "N/A") {
+        return value;
+      }
+    }
+  }
+
+  const variationSpecifics = asRecord(raw.VariationSpecifics);
+  const variationNameValueList = variationSpecifics && Array.isArray(variationSpecifics.NameValueList)
+    ? variationSpecifics.NameValueList
+    : [];
+  for (const entry of variationNameValueList) {
+    const record = asRecord(entry);
+    const name = firstString(record?.Name, record?.name);
+    if (name && ["UPC", "EAN", "GTIN", "ISBN"].includes(name.toUpperCase())) {
+      const value = firstString(record?.Value, record?.value, record?.ValueLiteral);
+      if (value && value !== "Does not apply" && value !== "N/A") {
+        return value;
+      }
+    }
+  }
+
+  const variations = asRecord(raw.Variations);
+  const variationList = variations && Array.isArray(variations.Variation)
+    ? variations.Variation
+    : [];
+  for (const variation of variationList) {
+    const variationRecord = asRecord(variation);
+    if (!variationRecord) continue;
+    const variationDetails = asRecord(variationRecord.VariationProductListingDetails);
+    const variationValue = firstString(
+      variationDetails?.UPC,
+      variationDetails?.EAN,
+      variationDetails?.GTIN,
+      variationDetails?.ISBN,
+    );
+    if (variationValue && variationValue !== "Does not apply" && variationValue !== "N/A") {
+      return variationValue;
+    }
+    const variationSpecificList =
+      asRecord(variationRecord.VariationSpecifics) &&
+      Array.isArray(asRecord(variationRecord.VariationSpecifics)?.NameValueList)
+        ? (asRecord(variationRecord.VariationSpecifics)?.NameValueList as unknown[])
+        : [];
+    for (const entry of variationSpecificList) {
       const record = asRecord(entry);
       const name = firstString(record?.Name, record?.name);
-      if (name && ["UPC", "EAN", "GTIN"].includes(name.toUpperCase())) {
+      if (name && ["UPC", "EAN", "GTIN", "ISBN"].includes(name.toUpperCase())) {
         const value = firstString(record?.Value, record?.value, record?.ValueLiteral);
         if (value) return value;
       }
