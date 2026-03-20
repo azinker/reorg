@@ -422,6 +422,23 @@ function EditableStoreBlock({
               </div>
             )}
           </>
+        ) : quickPhase !== "idle" ? (
+          <div className="flex flex-col items-start gap-1">
+            <span className={cn("font-medium leading-tight", isNegative(item.value) ? "text-red-400" : "text-emerald-400")}>{fmt(item.value)}</span>
+            <span
+              className={cn(
+                "inline-flex min-w-[72px] items-center justify-center gap-1 rounded px-2 py-1 text-[10px] font-bold leading-none text-white",
+                fastPushSucceeded
+                  ? "bg-emerald-500"
+                  : fastPushRetry
+                    ? "bg-amber-500"
+                    : "bg-blue-500",
+              )}
+              title={quickPushState?.detail ?? undefined}
+            >
+              {renderFastPushLabel()}
+            </span>
+          </div>
         ) : (
           <span className={cn("font-medium leading-tight", isNegative(item.value) ? "text-red-400" : "text-emerald-400")}>{fmt(item.value)}</span>
         )}
@@ -976,6 +993,23 @@ function EditableAdRateBlock({
               </div>
             )}
           </>
+        ) : quickPhase !== "idle" ? (
+          <div className="flex flex-col items-start gap-1">
+            <span className="font-medium leading-tight text-emerald-400">{fmtPercent(item.value)}</span>
+            <span
+              className={cn(
+                "inline-flex min-w-[72px] items-center justify-center gap-1 rounded px-2 py-1 text-[10px] font-bold leading-none text-white",
+                fastPushSucceeded
+                  ? "bg-emerald-500"
+                  : fastPushRetry
+                    ? "bg-amber-500"
+                    : "bg-blue-500",
+              )}
+              title={quickPushState?.detail ?? undefined}
+            >
+              {renderFastPushLabel()}
+            </span>
+          </div>
         ) : (
           <span className="font-medium leading-tight text-emerald-400">{fmtPercent(item.value)}</span>
         )}
