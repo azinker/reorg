@@ -3,6 +3,8 @@
 import { useState, useMemo, useEffect } from "react";
 import { Unlink, Filter, Search, Info, ExternalLink, Link2Off, Loader2, X } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { PageTour } from "@/components/onboarding/page-tour";
+import { PAGE_TOUR_STEPS } from "@/components/onboarding/page-tour-steps";
 
 const STORE_OPTIONS = [
   { value: "all", label: "All" },
@@ -175,7 +177,7 @@ export default function UnmatchedPage() {
   return (
     <div className="p-6">
       {/* Header */}
-      <div className="mb-6">
+      <div className="mb-6" data-tour="unmatched-header">
         <div className="flex items-center gap-2">
           <Unlink
             className="h-7 w-7 shrink-0 text-muted-foreground"
@@ -201,7 +203,7 @@ export default function UnmatchedPage() {
       </div>
 
       {/* Filter row */}
-      <div className="mb-6 flex flex-wrap items-center gap-4">
+      <div className="mb-6 flex flex-wrap items-center gap-4" data-tour="unmatched-filters">
         <div className="flex items-center gap-2">
           <Filter
             className="h-4 w-4 shrink-0 text-muted-foreground"
@@ -275,7 +277,7 @@ export default function UnmatchedPage() {
           </p>
         </div>
       ) : (
-        <div className="space-y-3">
+        <div className="space-y-3" data-tour="unmatched-list">
           {filtered.map((listing) => (
             <div
               key={listing.id}
@@ -380,6 +382,7 @@ export default function UnmatchedPage() {
           ))}
         </div>
       )}
+      <PageTour page="unmatched" steps={PAGE_TOUR_STEPS.unmatched} ready />
     </div>
   );
 }

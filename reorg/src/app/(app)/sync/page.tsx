@@ -14,6 +14,8 @@ import {
   TimerReset,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { PageTour } from "@/components/onboarding/page-tour";
+import { PAGE_TOUR_STEPS } from "@/components/onboarding/page-tour-steps";
 import {
   formatEbayAutoSyncSchedule,
   getNextEbayAutoSyncAt,
@@ -834,7 +836,7 @@ export default function SyncPage() {
 
   return (
     <div className="p-6">
-      <div className="mb-6">
+      <div className="mb-6" data-tour="sync-header">
         <h1 className="text-2xl font-bold tracking-tight text-foreground">Sync</h1>
         <p className="text-sm text-muted-foreground">
           Pull-only sync controls - fetch latest data from connected marketplaces
@@ -848,7 +850,7 @@ export default function SyncPage() {
         </p>
       </div>
 
-      <div className="mb-8">
+      <div className="mb-8" data-tour="sync-actions">
         <button
           type="button"
           disabled={syncAllRunning}
@@ -1215,7 +1217,7 @@ export default function SyncPage() {
         )}
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2">
+      <div className="grid gap-4 sm:grid-cols-2" data-tour="sync-stores">
         {stores.map((store) => {
           const theme = themeClasses[store.theme];
           const logoSrc = LOGO_MAP[store.platform];
@@ -1677,6 +1679,8 @@ export default function SyncPage() {
           );
         })}
       </div>
+      <div data-tour="sync-jobs" />
+      <PageTour page="sync" steps={PAGE_TOUR_STEPS.sync} ready />
     </div>
   );
 }

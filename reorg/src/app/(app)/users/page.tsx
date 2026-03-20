@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { Loader2, ShieldCheck, UserPlus, Save, Activity } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { PageTour } from "@/components/onboarding/page-tour";
+import { PAGE_TOUR_STEPS } from "@/components/onboarding/page-tour-steps";
 
 interface ManagedUser {
   id: string;
@@ -176,7 +178,7 @@ export default function UsersPage() {
 
   return (
     <div className="p-4 sm:p-6">
-      <div className="mb-6">
+      <div className="mb-6" data-tour="users-header">
         <h1 className="text-2xl font-bold tracking-tight text-foreground">Users</h1>
         <p className="text-sm text-muted-foreground">
           Manage user access, update your credentials, and review account activity.
@@ -210,7 +212,7 @@ export default function UsersPage() {
       ) : (
         <div className="space-y-6">
           <div className="grid gap-6 xl:grid-cols-[1.1fr,0.9fr]">
-            <section className="rounded-xl border border-border bg-card p-5">
+            <section className="rounded-xl border border-border bg-card p-5" data-tour="users-profile">
               <div className="mb-4 flex items-center gap-2">
                 <ShieldCheck className="h-5 w-5 text-[#C43E3E]" />
                 <div>
@@ -354,7 +356,7 @@ export default function UsersPage() {
             ) : null}
           </div>
 
-          <section className="rounded-xl border border-border bg-card p-5">
+          <section className="rounded-xl border border-border bg-card p-5" data-tour="users-manage">
             <h2 className="mb-4 text-base font-semibold text-foreground">Users</h2>
             <div className="overflow-x-auto">
               <table className="w-full min-w-[560px] text-sm">
@@ -447,6 +449,7 @@ export default function UsersPage() {
           </section>
         </div>
       )}
+      <PageTour page="users" steps={PAGE_TOUR_STEPS.users} ready />
     </div>
   );
 }

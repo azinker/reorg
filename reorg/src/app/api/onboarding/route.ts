@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
+import { ONBOARDING_PAGES, onboardingFlagKey, type OnboardingPageKey } from "@/lib/onboarding-pages";
 
 const ONBOARDING_KEY_PREFIX = "onboarding:";
 
@@ -9,10 +10,14 @@ function keyForUser(userId: string) {
   return `${ONBOARDING_KEY_PREFIX}${userId}`;
 }
 
+const pageEnum = z.enum(ONBOARDING_PAGES);
 const putSchema = z.discriminatedUnion("action", [
-  z.object({ action: z.literal("complete"), page: z.literal("dashboard") }),
-  z.object({ action: z.literal("reset"), page: z.literal("dashboard") }),
+  z.object({ action: z.literal("complete"), page: pageEnum }),
+  z.object({ action: z.literal("reset"), page: pageEnum }),
+  z.object({ action: z.literal("reset_all") }),
 ]);
+
+type OnboardingState = Partial<Record<`${OnboardingPageKey}TourSeen`, boolean>>;
 
 export async function GET() {
   try {
@@ -25,11 +30,14 @@ export async function GET() {
       where: { key: keyForUser(session.user.id) },
     });
 
-    const value = (row?.value as { dashboardTourSeen?: boolean } | null) ?? null;
+    const value = (row?.value as OnboardingState | null) ?? null;
+    const normalized: OnboardingState = {};
+    for (const p of ONBOARDING_PAGES) {
+      const key = onboardingFlagKey(p) as `${OnboardingPageKey}TourSeen`;
+      normalized[key] = Boolean(value?.[key]);
+    }
     return NextResponse.json({
-      data: {
-        dashboardTourSeen: Boolean(value?.dashboardTourSeen),
-      },
+      data: normalized,
       useLocalFallback: false,
     });
   } catch (error) {
@@ -56,13 +64,16 @@ export async function PUT(request: Request) {
 
     const key = keyForUser(session.user.id);
     const existing = await db.appSetting.findUnique({ where: { key } });
-    const prev = (existing?.value as { dashboardTourSeen?: boolean } | null) ?? {};
-
-    let next: { dashboardTourSeen: boolean };
-    if (parsed.data.action === "complete") {
-      next = { ...prev, dashboardTourSeen: true };
+    const prev = (existing?.value as OnboardingState | null) ?? {};
+    const next: OnboardingState = { ...prev };
+    if (parsed.data.action === "reset_all") {
+      for (const p of ONBOARDING_PAGES) {
+        const key = onboardingFlagKey(p) as `${OnboardingPageKey}TourSeen`;
+        next[key] = false;
+      }
     } else {
-      next = { ...prev, dashboardTourSeen: false };
+      const key = onboardingFlagKey(parsed.data.page) as `${OnboardingPageKey}TourSeen`;
+      next[key] = parsed.data.action === "complete";
     }
 
     await db.appSetting.upsert({

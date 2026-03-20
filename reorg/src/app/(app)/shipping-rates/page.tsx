@@ -4,6 +4,8 @@ import { useState } from "react";
 import { Weight, Save, Check, Info } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useShippingRates } from "@/lib/use-shipping-rates";
+import { PageTour } from "@/components/onboarding/page-tour";
+import { PAGE_TOUR_STEPS } from "@/components/onboarding/page-tour-steps";
 
 export default function ShippingRatesPage() {
   const { rates, updateRates } = useShippingRates();
@@ -37,7 +39,7 @@ export default function ShippingRatesPage() {
 
   return (
     <div className="p-6">
-      <div className="mb-6">
+      <div className="mb-6" data-tour="shipping-header">
         <div className="flex items-center gap-2">
           <Weight className="h-7 w-7 shrink-0 text-muted-foreground" aria-hidden />
           <h1 className="text-2xl font-bold tracking-tight text-foreground">
@@ -65,7 +67,7 @@ export default function ShippingRatesPage() {
         </div>
       </div>
 
-      <div className="mb-6 overflow-hidden rounded-lg border border-border bg-card">
+      <div className="mb-6 overflow-hidden rounded-lg border border-border bg-card" data-tour="shipping-table">
         <div className="overflow-x-auto">
           <table className="w-full min-w-[400px]">
             <thead>
@@ -108,7 +110,7 @@ export default function ShippingRatesPage() {
         </div>
       </div>
 
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-3" data-tour="shipping-save">
         <button
           type="button"
           onClick={handleSave}
@@ -132,6 +134,7 @@ export default function ShippingRatesPage() {
           </span>
         )}
       </div>
+      <PageTour page="shippingRates" steps={PAGE_TOUR_STEPS.shippingRates} ready />
     </div>
   );
 }

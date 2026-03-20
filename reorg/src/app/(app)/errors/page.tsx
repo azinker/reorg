@@ -13,6 +13,8 @@ import {
   X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { PageTour } from "@/components/onboarding/page-tour";
+import { PAGE_TOUR_STEPS } from "@/components/onboarding/page-tour-steps";
 
 const SEVERITY_OPTIONS = [
   { value: "all", label: "All" },
@@ -288,7 +290,7 @@ export default function ErrorsPage() {
 
   return (
     <div className="p-4 sm:p-6">
-      <div className="mb-6">
+      <div className="mb-6" data-tour="errors-header">
         <h1 className="text-2xl font-bold tracking-tight text-foreground">
           Errors
         </h1>
@@ -297,7 +299,7 @@ export default function ErrorsPage() {
         </p>
       </div>
 
-      <div className="mb-6 flex flex-wrap items-center gap-3">
+      <div className="mb-6 flex flex-wrap items-center gap-3" data-tour="errors-filters">
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
           <Filter className="h-4 w-4 shrink-0" aria-hidden />
           <span className="font-medium">Filters</span>
@@ -399,7 +401,7 @@ export default function ErrorsPage() {
           Loading error summaries...
         </div>
       ) : filteredErrors.length > 0 ? (
-        <div className="space-y-6">
+        <div className="space-y-6" data-tour="errors-list">
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
             <div className="rounded-lg border border-border bg-card px-4 py-3">
               <div className="text-[11px] uppercase tracking-wide text-muted-foreground">
@@ -487,6 +489,7 @@ export default function ErrorsPage() {
           </article>
         </div>
       )}
+      <PageTour page="errors" steps={PAGE_TOUR_STEPS.errors} ready />
     </div>
   );
 }

@@ -18,6 +18,8 @@ import {
   X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { PageTour } from "@/components/onboarding/page-tour";
+import { PAGE_TOUR_STEPS } from "@/components/onboarding/page-tour-steps";
 import {
   PushConfirmModal,
   type PushApiData,
@@ -1155,7 +1157,7 @@ export default function EngineRoomPage() {
   return (
     <div className="p-6">
       {/* Header */}
-      <div className="mb-6">
+      <div className="mb-6" data-tour="engine-header">
         <h1 className="text-2xl font-bold tracking-tight text-foreground">
           Engine Room
         </h1>
@@ -1513,6 +1515,7 @@ export default function EngineRoomPage() {
 
       {/* Tabbed section */}
       <div
+        data-tour="engine-tabs"
         className={cn(
           "rounded-lg border border-border bg-card",
           "ring-1 ring-border/30"
@@ -1549,6 +1552,7 @@ export default function EngineRoomPage() {
 
         {/* Tab panels */}
         <div
+          data-tour="engine-table"
           id={`panel-${activeTab}`}
           role="tabpanel"
           aria-labelledby={`tab-${activeTab}`}
@@ -1557,6 +1561,7 @@ export default function EngineRoomPage() {
           {renderPanel()}
         </div>
       </div>
+      <PageTour page="engineRoom" steps={PAGE_TOUR_STEPS.engineRoom} ready />
     </div>
   );
 }

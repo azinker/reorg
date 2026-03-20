@@ -1,7 +1,8 @@
-/** Dispatched from the TopBar to open/close the dashboard tour (toggle when already on /dashboard). */
-export const OPEN_DASHBOARD_TOUR_EVENT = "reorg:open-dashboard-tour";
+import type { OnboardingPageKey } from "@/lib/onboarding-pages";
 
-export function dispatchToggleDashboardTour() {
+export const OPEN_PAGE_TOUR_EVENT = "reorg:open-page-tour";
+
+export function dispatchTogglePageTour(page: OnboardingPageKey) {
   if (typeof window === "undefined") return;
-  window.dispatchEvent(new CustomEvent(OPEN_DASHBOARD_TOUR_EVENT));
+  window.dispatchEvent(new CustomEvent(OPEN_PAGE_TOUR_EVENT, { detail: { page } }));
 }

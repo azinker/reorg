@@ -11,6 +11,8 @@ import {
   Loader2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { PageTour } from "@/components/onboarding/page-tour";
+import { PAGE_TOUR_STEPS } from "@/components/onboarding/page-tour-steps";
 
 const STEPS = [
   { id: 1, label: "Download Template", icon: FileDown },
@@ -94,7 +96,7 @@ export default function ImportPage() {
   return (
     <div className="p-4 sm:p-6">
       {/* Header */}
-      <div className="mb-8">
+      <div className="mb-8" data-tour="import-header">
         <h1 className="text-2xl font-bold tracking-tight text-foreground">
           Import
         </h1>
@@ -105,7 +107,7 @@ export default function ImportPage() {
       </div>
 
       {/* Step progress bar */}
-      <div className="mb-8">
+      <div className="mb-8" data-tour="import-steps">
         <div className="flex items-center gap-0">
           {STEPS.map((step, index) => {
             const isActive = step.id === currentStep;
@@ -163,7 +165,7 @@ export default function ImportPage() {
       </div>
 
       {/* Step content */}
-      <div className="rounded-lg border border-border bg-card p-6">
+      <div className="rounded-lg border border-border bg-card p-6" data-tour="import-result">
         {currentStep === 1 && (
           <div className="space-y-6">
             <div>
@@ -383,6 +385,7 @@ export default function ImportPage() {
           </div>
         )}
       </div>
+      <PageTour page="import" steps={PAGE_TOUR_STEPS.import} ready />
     </div>
   );
 }

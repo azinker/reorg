@@ -3,7 +3,10 @@
 import { useRouter } from "next/navigation";
 import { useTheme } from "@/components/providers/theme-provider";
 import { useSettings } from "@/lib/use-settings";
-import { setLocalDashboardTourSeen } from "@/lib/onboarding-local";
+import { clearAllLocalTours, setLocalTourSeen } from "@/lib/onboarding-local";
+import { ONBOARDING_PAGES } from "@/lib/onboarding-pages";
+import { PageTour } from "@/components/onboarding/page-tour";
+import { PAGE_TOUR_STEPS } from "@/components/onboarding/page-tour-steps";
 import type { Density, RowHeight, SortColumn } from "@/lib/settings-store";
 import { cn } from "@/lib/utils";
 import {
@@ -63,7 +66,7 @@ export default function SettingsPage() {
   const { settings, update } = useSettings();
 
   async function replayDashboardTour() {
-    setLocalDashboardTourSeen(false);
+    setLocalTourSeen("dashboard", false);
     try {
       await fetch("/api/onboarding", {
         method: "PUT",
@@ -76,9 +79,25 @@ export default function SettingsPage() {
     router.push("/dashboard?tour=replay");
   }
 
+  async function resetAllTours() {
+    clearAllLocalTours();
+    for (const page of ONBOARDING_PAGES) {
+      setLocalTourSeen(page, false);
+    }
+    try {
+      await fetch("/api/onboarding", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "reset_all" }),
+      });
+    } catch {
+      /* local fallback done */
+    }
+  }
+
   return (
     <div className="p-6">
-      <div className="mb-8">
+      <div className="mb-8" data-tour="settings-header">
         <h1 className="text-2xl font-bold tracking-tight">Settings</h1>
         <p className="text-sm text-muted-foreground">
           Application preferences, display options, and safety controls.
@@ -88,7 +107,7 @@ export default function SettingsPage() {
 
       <div className="space-y-8">
         {/* SECTION 1: Display */}
-        <section className="rounded-lg border border-border bg-card p-6 shadow-sm">
+        <section className="rounded-lg border border-border bg-card p-6 shadow-sm" data-tour="settings-display">
           <h2 className="mb-5 flex items-center gap-2 text-lg font-semibold">
             <Monitor className="h-5 w-5 text-muted-foreground" />
             Display
@@ -296,6 +315,7 @@ export default function SettingsPage() {
 
         {/* SECTION 2: Safety Controls */}
         <section
+          data-tour="settings-safety"
           className={cn(
             "rounded-lg border p-6 shadow-sm",
             settings.globalWriteLock
@@ -360,7 +380,7 @@ export default function SettingsPage() {
         </section>
 
         {/* Guided tour */}
-        <section className="rounded-lg border border-border bg-card p-6 shadow-sm">
+        <section className="rounded-lg border border-border bg-card p-6 shadow-sm" data-tour="settings-tour">
           <h2 className="mb-5 flex items-center gap-2 text-lg font-semibold">
             <Sparkles className="h-5 w-5 text-muted-foreground" />
             Guided tour
@@ -378,6 +398,13 @@ export default function SettingsPage() {
           >
             <Sparkles className="h-4 w-4" />
             Replay Dashboard tour
+          </button>
+          <button
+            type="button"
+            onClick={() => void resetAllTours()}
+            className="ml-2 inline-flex items-center gap-2 rounded-md border border-border bg-background px-4 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground cursor-pointer"
+          >
+            Reset all page tours
           </button>
         </section>
 
@@ -411,6 +438,7 @@ export default function SettingsPage() {
           </div>
         </section>
       </div>
+      <PageTour page="settings" steps={PAGE_TOUR_STEPS.settings} ready />
     </div>
   );
 }

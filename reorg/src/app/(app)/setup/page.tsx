@@ -12,6 +12,8 @@ import { getIntegrationConfig } from "@/lib/integrations/runtime-config";
 import { hasConnectedCredentials } from "@/lib/integrations/factory";
 import { isLivePushEnabled, isSchedulerEnabled } from "@/lib/automation-settings";
 import type { Platform, Role } from "@prisma/client";
+import { PageTour } from "@/components/onboarding/page-tour";
+import { PAGE_TOUR_STEPS } from "@/components/onboarding/page-tour-steps";
 
 type StepStatus = "Not Started" | "In Progress" | "Complete" | "Needs Attention";
 
@@ -303,7 +305,7 @@ export default async function SetupPage() {
 
   return (
     <div className="p-4 sm:p-6">
-      <div className="mb-8">
+      <div className="mb-8" data-tour="setup-header">
         <div className="flex items-center gap-2">
           <ClipboardCheck
             className="h-7 w-7 shrink-0 text-muted-foreground"
@@ -318,7 +320,7 @@ export default async function SetupPage() {
         </p>
       </div>
 
-      <div className="space-y-0">
+      <div className="space-y-0" data-tour="setup-steps">
         {steps.map((step, index) => {
           const config = statusConfig[step.status];
           const Icon = config.icon;
@@ -356,6 +358,8 @@ export default async function SetupPage() {
           );
         })}
       </div>
+      <div data-tour="setup-priority" />
+      <PageTour page="setup" steps={PAGE_TOUR_STEPS.setup} ready />
     </div>
   );
 }

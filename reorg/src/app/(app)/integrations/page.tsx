@@ -14,6 +14,8 @@ import {
   Link2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { PageTour } from "@/components/onboarding/page-tour";
+import { PAGE_TOUR_STEPS } from "@/components/onboarding/page-tour-steps";
 
 const PLATFORM_TO_CARD: Record<string, string> = {
   TPP_EBAY: "tpp",
@@ -219,7 +221,7 @@ function IntegrationsContent() {
   return (
     <div className="p-6">
       {/* Header */}
-      <div className="mb-6">
+      <div className="mb-6" data-tour="integrations-header">
         <h1 className="text-2xl font-bold tracking-tight text-foreground">
           Integrations
         </h1>
@@ -272,7 +274,7 @@ function IntegrationsContent() {
       </div>
 
       {/* Integration cards grid */}
-      <div className="grid gap-4 sm:grid-cols-1 lg:grid-cols-2">
+      <div className="grid gap-4 sm:grid-cols-1 lg:grid-cols-2" data-tour="integrations-cards">
         {integrations.map((integration) => {
           const theme = themeClasses[integration.theme];
           const isLocked = writeLocks[integration.id];
@@ -475,6 +477,8 @@ function IntegrationsContent() {
           );
         })}
       </div>
+      <div data-tour="integrations-global-lock" />
+      <PageTour page="integrations" steps={PAGE_TOUR_STEPS.integrations} ready />
     </div>
   );
 }

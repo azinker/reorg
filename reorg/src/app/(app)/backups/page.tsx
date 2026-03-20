@@ -10,6 +10,8 @@ import {
   Loader2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { PageTour } from "@/components/onboarding/page-tour";
+import { PAGE_TOUR_STEPS } from "@/components/onboarding/page-tour-steps";
 
 type BackupType = "DAILY" | "MANUAL" | "PRE_PUSH";
 type BackupStatus = "PENDING" | "IN_PROGRESS" | "COMPLETED" | "FAILED";
@@ -107,7 +109,7 @@ export default function BackupsPage() {
   return (
     <div className="p-6">
       <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-        <div>
+        <div data-tour="backups-header">
           <h1 className="text-2xl font-bold tracking-tight text-foreground">
             Backups
           </h1>
@@ -115,7 +117,7 @@ export default function BackupsPage() {
             Disaster recovery - daily automated + manual backup management
           </p>
         </div>
-        <div className="flex flex-wrap justify-end gap-2">
+        <div className="flex flex-wrap justify-end gap-2" data-tour="backups-actions">
           <button
             type="button"
             disabled={backupLoading || fullBackupLoading}
@@ -176,7 +178,7 @@ export default function BackupsPage() {
         including fields useful for manual listing rebuilds.
       </div>
 
-      <div className="overflow-hidden rounded-lg border border-border bg-card">
+      <div className="overflow-hidden rounded-lg border border-border bg-card" data-tour="backups-list">
         <div className="overflow-x-auto">
           <table className="w-full min-w-[760px]">
             <thead>
@@ -370,6 +372,7 @@ export default function BackupsPage() {
           </table>
         </div>
       </div>
+      <PageTour page="backups" steps={PAGE_TOUR_STEPS.backups} ready />
     </div>
   );
 }

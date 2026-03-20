@@ -11,7 +11,8 @@ import type { Density } from "@/lib/settings-store";
 import type { Platform } from "@/lib/grid-types";
 import { PLATFORM_SHORT } from "@/lib/grid-types";
 import { cn } from "@/lib/utils";
-import { dispatchToggleDashboardTour } from "@/lib/onboarding-events";
+import { dispatchTogglePageTour } from "@/lib/onboarding-events";
+import { onboardingPageFromPathname } from "@/lib/onboarding-pages";
 import {
   Moon,
   Sun,
@@ -71,8 +72,9 @@ export function TopBar({ user, onOpenSidebar }: TopBarProps) {
         : "Marketplace Operations - Not Connected";
 
   function handleTourClick() {
-    if (pathname === "/dashboard") {
-      dispatchToggleDashboardTour();
+    const page = onboardingPageFromPathname(pathname);
+    if (page) {
+      dispatchTogglePageTour(page);
     } else {
       router.push("/dashboard?tour=manual");
     }

@@ -1,20 +1,37 @@
-const LOCAL_KEY = "reorg_onboarding_dashboard_tour";
+import type { OnboardingPageKey } from "@/lib/onboarding-pages";
 
-export function getLocalDashboardTourSeen(): boolean {
+function localKey(page: OnboardingPageKey) {
+  return `reorg_onboarding_${page}_tour`;
+}
+
+export function getLocalTourSeen(page: OnboardingPageKey): boolean {
   if (typeof window === "undefined") return false;
   try {
-    return localStorage.getItem(LOCAL_KEY) === "1";
+    return localStorage.getItem(localKey(page)) === "1";
   } catch {
     return false;
   }
 }
 
-export function setLocalDashboardTourSeen(seen: boolean) {
+export function setLocalTourSeen(page: OnboardingPageKey, seen: boolean) {
   if (typeof window === "undefined") return;
   try {
-    if (seen) localStorage.setItem(LOCAL_KEY, "1");
-    else localStorage.removeItem(LOCAL_KEY);
+    if (seen) localStorage.setItem(localKey(page), "1");
+    else localStorage.removeItem(localKey(page));
   } catch {
     /* quota */
+  }
+}
+
+export function clearAllLocalTours() {
+  if (typeof window === "undefined") return;
+  try {
+    for (const key of Object.keys(localStorage)) {
+      if (key.startsWith("reorg_onboarding_") && key.endsWith("_tour")) {
+        localStorage.removeItem(key);
+      }
+    }
+  } catch {
+    /* */
   }
 }
