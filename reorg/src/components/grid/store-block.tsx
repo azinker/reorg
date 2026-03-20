@@ -286,6 +286,18 @@ function EditableStoreBlock({
     return "Fast Push";
   }
 
+  function renderCompactButtonLabel(text: string) {
+    const parts = text.split(" ");
+    if (parts.length === 1) return <span>{text}</span>;
+    return (
+      <span className="flex flex-col items-center leading-[1.05]">
+        {parts.map((part) => (
+          <span key={part}>{part}</span>
+        ))}
+      </span>
+    );
+  }
+
   if (editing) {
     return (
       <div className={cn("w-full rounded border px-2.5 py-1.5 text-xs", colorClass, "ring-1 ring-ring")}>
@@ -304,41 +316,38 @@ function EditableStoreBlock({
             autoFocus
             onKeyDown={handleKeyDown}
           />
-          {!showActions ? (
-            <>
-              <button onClick={() => { if (hasDraftChange) setShowActions(true); else cancelEdit(); }} className="rounded p-0.5 text-emerald-400 hover:text-emerald-300 cursor-pointer" title="Confirm">
-                <Check className="h-3 w-3" />
-              </button>
-              <button onClick={cancelEdit} className="rounded p-0.5 text-muted-foreground hover:text-foreground cursor-pointer" title="Cancel">
-                <X className="h-3 w-3" />
-              </button>
-            </>
-          ) : (
-            <div className="ml-1 grid min-w-0 flex-1 grid-cols-3 gap-1">
-              <button
-                onClick={confirmStage}
-                className="inline-flex min-w-0 items-center justify-center rounded bg-[var(--staged)] px-2 py-1 text-[10px] font-bold leading-none text-[var(--staged-foreground)] hover:opacity-80 cursor-pointer"
-                title="Stage value to test profit before pushing"
-              >
-                Stage
-              </button>
-              <button
-                onClick={confirmPush}
-                className="inline-flex min-w-0 items-center justify-center rounded bg-emerald-500 px-2 py-1 text-[10px] font-bold leading-none text-white hover:bg-emerald-600 cursor-pointer"
-                title="Review the guarded live push flow for this value"
-              >
-                Review Push
-              </button>
-              <button
-                onClick={confirmFastPush}
-                className="inline-flex min-w-0 items-center justify-center gap-1 rounded bg-blue-500 px-2 py-1 text-[10px] font-bold leading-none text-white hover:bg-blue-600 cursor-pointer"
-                title="Run the guarded fast push for this one value"
-              >
-                Fast Push
-              </button>
-            </div>
-          )}
+          <button onClick={() => { if (hasDraftChange) setShowActions(true); else cancelEdit(); }} className="rounded p-0.5 text-emerald-400 hover:text-emerald-300 cursor-pointer" title="Confirm">
+            <Check className="h-3 w-3" />
+          </button>
+          <button onClick={cancelEdit} className="rounded p-0.5 text-muted-foreground hover:text-foreground cursor-pointer" title="Cancel">
+            <X className="h-3 w-3" />
+          </button>
         </div>
+        {showActions ? (
+          <div className="mt-1.5 grid grid-cols-3 gap-1">
+            <button
+              onClick={confirmStage}
+              className="inline-flex min-w-0 items-center justify-center rounded bg-[var(--staged)] px-1.5 py-1.5 text-[9px] font-bold leading-none text-[var(--staged-foreground)] hover:opacity-80 cursor-pointer"
+              title="Stage value to test profit before pushing"
+            >
+              {renderCompactButtonLabel("Stage")}
+            </button>
+            <button
+              onClick={confirmPush}
+              className="inline-flex min-w-0 items-center justify-center rounded bg-emerald-500 px-1.5 py-1.5 text-[9px] font-bold leading-none text-white hover:bg-emerald-600 cursor-pointer"
+              title="Review the guarded live push flow for this value"
+            >
+              {renderCompactButtonLabel("Review Push")}
+            </button>
+            <button
+              onClick={confirmFastPush}
+              className="inline-flex min-w-0 items-center justify-center rounded bg-blue-500 px-1.5 py-1.5 text-[9px] font-bold leading-none text-white hover:bg-blue-600 cursor-pointer"
+              title="Run the guarded fast push for this one value"
+            >
+              {renderCompactButtonLabel("Fast Push")}
+            </button>
+          </div>
+        ) : null}
       </div>
     );
   }
@@ -371,38 +380,47 @@ function EditableStoreBlock({
                 LIVE
               </span>
             </span>
-            <div className="mt-1 grid grid-cols-3 gap-1">
-              <button
-                onClick={() => onPush(rowId, item.platform, item.listingId, "review")}
-                className="inline-flex min-w-0 items-center justify-center rounded bg-emerald-500 px-2 py-1 text-[10px] font-bold leading-none text-white hover:bg-emerald-600 cursor-pointer"
-                title="Review the guarded live push flow for this staged price"
-              >
-                Review Push
-              </button>
-              <button
-                onClick={() => onPush(rowId, item.platform, item.listingId, "fast")}
-                disabled={fastPushBusy || fastPushSucceeded}
-                className={cn(
-                  "inline-flex min-w-0 items-center justify-center gap-1 rounded px-2 py-1 text-[10px] font-bold leading-none text-white cursor-pointer",
-                  fastPushSucceeded
-                    ? "bg-emerald-500 hover:bg-emerald-500"
-                    : fastPushRetry
-                      ? "bg-amber-500 hover:bg-amber-600"
-                      : "bg-blue-500 hover:bg-blue-600",
-                  (fastPushBusy || fastPushSucceeded) && "cursor-default",
-                )}
-                title={quickPushState?.detail ?? "Run the guarded fast push for this staged price"}
-              >
-                {renderFastPushLabel()}
-              </button>
-              <button
-                onClick={() => onDiscard(rowId, item.platform, item.listingId)}
-                className="inline-flex min-w-0 items-center justify-center rounded bg-muted px-2 py-1 text-[10px] font-medium leading-none text-muted-foreground hover:text-foreground cursor-pointer"
-                title="Discard staged price and revert to live"
-              >
-                Discard
-              </button>
-            </div>
+            {quickPhase !== "idle" ? (
+              <div className="mt-1">
+                <div
+                  className={cn(
+                    "inline-flex min-w-[88px] items-center justify-center gap-1 rounded px-2 py-1 text-[10px] font-bold leading-none text-white",
+                    fastPushSucceeded
+                      ? "bg-emerald-500"
+                      : fastPushRetry
+                        ? "bg-amber-500"
+                        : "bg-blue-500",
+                  )}
+                  title={quickPushState?.detail ?? undefined}
+                >
+                  {renderFastPushLabel()}
+                </div>
+              </div>
+            ) : (
+              <div className="mt-1 grid grid-cols-3 gap-1">
+                <button
+                  onClick={() => onPush(rowId, item.platform, item.listingId, "review")}
+                  className="inline-flex min-w-0 items-center justify-center rounded bg-emerald-500 px-1.5 py-1.5 text-[9px] font-bold leading-none text-white hover:bg-emerald-600 cursor-pointer"
+                  title="Review the guarded live push flow for this staged price"
+                >
+                  {renderCompactButtonLabel("Review Push")}
+                </button>
+                <button
+                  onClick={() => onPush(rowId, item.platform, item.listingId, "fast")}
+                  className="inline-flex min-w-0 items-center justify-center rounded bg-blue-500 px-1.5 py-1.5 text-[9px] font-bold leading-none text-white hover:bg-blue-600 cursor-pointer"
+                  title="Run the guarded fast push for this staged price"
+                >
+                  {renderCompactButtonLabel("Fast Push")}
+                </button>
+                <button
+                  onClick={() => onDiscard(rowId, item.platform, item.listingId)}
+                  className="inline-flex min-w-0 items-center justify-center rounded bg-muted px-1.5 py-1.5 text-[9px] font-medium leading-none text-muted-foreground hover:text-foreground cursor-pointer"
+                  title="Discard staged price and revert to live"
+                >
+                  {renderCompactButtonLabel("Discard")}
+                </button>
+              </div>
+            )}
           </>
         ) : (
           <span className={cn("font-medium leading-tight", isNegative(item.value) ? "text-red-400" : "text-emerald-400")}>{fmt(item.value)}</span>
@@ -704,6 +722,18 @@ function EditableAdRateBlock({
     return "Fast Push";
   }
 
+  function renderCompactButtonLabel(text: string) {
+    const parts = text.split(" ");
+    if (parts.length === 1) return <span>{text}</span>;
+    return (
+      <span className="flex flex-col items-center leading-[1.05]">
+        {parts.map((part) => (
+          <span key={part}>{part}</span>
+        ))}
+      </span>
+    );
+  }
+
   function fmtPercent(val: number | string | null): string {
     if (val == null) return "N/A";
     return `${(Number(val) * 100).toFixed(1)}%`;
@@ -819,7 +849,7 @@ function EditableAdRateBlock({
             {shortItemId && <span className="text-[8px] font-mono text-muted-foreground/60 leading-none mt-0.5">#{shortItemId}</span>}
           </div>
         </div>
-        <div className="flex flex-wrap items-center gap-1">
+        <div className="flex items-center gap-1">
           <input
             ref={inputRef}
             type="text"
@@ -834,51 +864,48 @@ function EditableAdRateBlock({
             className="w-14 shrink-0 rounded border bg-background px-1.5 py-0.5 text-xs font-mono text-foreground outline-none focus:ring-1 focus:ring-ring"
           />
           <span className="shrink-0 text-[10px] text-muted-foreground">%</span>
-          {!showActions ? (
-            <>
-              <button
-                onClick={() => {
-                  if (canConfirm) setShowActions(true);
-                }}
-                disabled={!canConfirm}
-                className={cn(
-                  "shrink-0 rounded p-0.5 cursor-pointer",
-                  canConfirm ? "text-emerald-400 hover:text-emerald-300" : "text-muted-foreground/30 cursor-not-allowed",
-                )}
-                title="Confirm"
-              >
-                <Check className="h-3 w-3" />
-              </button>
-              <button onClick={cancelEdit} className="shrink-0 rounded p-0.5 text-muted-foreground hover:text-foreground cursor-pointer" title="Cancel">
-                <X className="h-3 w-3" />
-              </button>
-            </>
-          ) : (
-            <div className="grid min-w-0 flex-1 grid-cols-3 gap-1">
-              <button
-                onClick={() => handleSave("stage")}
-                className="inline-flex min-w-0 items-center justify-center rounded bg-[var(--staged)] px-2 py-1 text-[10px] font-bold leading-none text-[var(--staged-foreground)] hover:opacity-80 cursor-pointer"
-                title="Stage ad rate to review before pushing"
-              >
-                Stage
-              </button>
-              <button
-                onClick={() => handleSave("push")}
-                className="inline-flex min-w-0 items-center justify-center rounded bg-emerald-500 px-2 py-1 text-[10px] font-bold leading-none text-white hover:bg-emerald-600 cursor-pointer"
-                title="Review the guarded live push flow for this ad rate"
-              >
-                Review Push
-              </button>
-              <button
-                onClick={handleFastPush}
-                className="inline-flex min-w-0 items-center justify-center gap-1 rounded bg-blue-500 px-2 py-1 text-[10px] font-bold leading-none text-white hover:bg-blue-600 cursor-pointer"
-                title="Run the guarded fast push for this one ad rate"
-              >
-                Fast Push
-              </button>
-            </div>
-          )}
+          <button
+            onClick={() => {
+              if (canConfirm) setShowActions(true);
+            }}
+            disabled={!canConfirm}
+            className={cn(
+              "shrink-0 rounded p-0.5 cursor-pointer",
+              canConfirm ? "text-emerald-400 hover:text-emerald-300" : "text-muted-foreground/30 cursor-not-allowed",
+            )}
+            title="Confirm"
+          >
+            <Check className="h-3 w-3" />
+          </button>
+          <button onClick={cancelEdit} className="shrink-0 rounded p-0.5 text-muted-foreground hover:text-foreground cursor-pointer" title="Cancel">
+            <X className="h-3 w-3" />
+          </button>
         </div>
+        {showActions ? (
+          <div className="mt-1.5 grid grid-cols-3 gap-1">
+            <button
+              onClick={() => handleSave("stage")}
+              className="inline-flex min-w-0 items-center justify-center rounded bg-[var(--staged)] px-1.5 py-1.5 text-[9px] font-bold leading-none text-[var(--staged-foreground)] hover:opacity-80 cursor-pointer"
+              title="Stage ad rate to review before pushing"
+            >
+              {renderCompactButtonLabel("Stage")}
+            </button>
+            <button
+              onClick={() => handleSave("push")}
+              className="inline-flex min-w-0 items-center justify-center rounded bg-emerald-500 px-1.5 py-1.5 text-[9px] font-bold leading-none text-white hover:bg-emerald-600 cursor-pointer"
+              title="Review the guarded live push flow for this ad rate"
+            >
+              {renderCompactButtonLabel("Review Push")}
+            </button>
+            <button
+              onClick={handleFastPush}
+              className="inline-flex min-w-0 items-center justify-center rounded bg-blue-500 px-1.5 py-1.5 text-[9px] font-bold leading-none text-white hover:bg-blue-600 cursor-pointer"
+              title="Run the guarded fast push for this one ad rate"
+            >
+              {renderCompactButtonLabel("Fast Push")}
+            </button>
+          </div>
+        ) : null}
       </div>
     );
   }
@@ -907,38 +934,47 @@ function EditableAdRateBlock({
               {fmtPercent(item.value)}
               <span className="inline-flex shrink-0 items-center rounded-sm bg-emerald-500 px-1 py-px text-[9px] font-bold text-white">LIVE</span>
             </span>
-            <div className="mt-1 grid grid-cols-3 gap-1">
-              <button
-                onClick={() => onPush(rowId, item.platform, item.listingId, "review")}
-                className="inline-flex min-w-0 items-center justify-center rounded bg-emerald-500 px-2 py-1 text-[10px] font-bold leading-none text-white hover:bg-emerald-600 cursor-pointer"
-                title="Review the guarded live push flow for this staged ad rate"
-              >
-                Review Push
-              </button>
-              <button
-                onClick={() => onPush(rowId, item.platform, item.listingId, "fast")}
-                disabled={fastPushBusy || fastPushSucceeded}
-                className={cn(
-                  "inline-flex min-w-0 items-center justify-center gap-1 rounded px-2 py-1 text-[10px] font-bold leading-none text-white cursor-pointer",
-                  fastPushSucceeded
-                    ? "bg-emerald-500 hover:bg-emerald-500"
-                    : fastPushRetry
-                      ? "bg-amber-500 hover:bg-amber-600"
-                      : "bg-blue-500 hover:bg-blue-600",
-                  (fastPushBusy || fastPushSucceeded) && "cursor-default",
-                )}
-                title={quickPushState?.detail ?? "Run the guarded fast push for this staged ad rate"}
-              >
-                {renderFastPushLabel()}
-              </button>
-              <button
-                onClick={() => onDiscard(rowId, item.platform, item.listingId)}
-                className="inline-flex min-w-0 items-center justify-center rounded bg-muted px-2 py-1 text-[10px] font-medium leading-none text-muted-foreground hover:text-foreground cursor-pointer"
-                title="Discard staged ad rate and revert to live"
-              >
-                Discard
-              </button>
-            </div>
+            {quickPhase !== "idle" ? (
+              <div className="mt-1">
+                <div
+                  className={cn(
+                    "inline-flex min-w-[88px] items-center justify-center gap-1 rounded px-2 py-1 text-[10px] font-bold leading-none text-white",
+                    fastPushSucceeded
+                      ? "bg-emerald-500"
+                      : fastPushRetry
+                        ? "bg-amber-500"
+                        : "bg-blue-500",
+                  )}
+                  title={quickPushState?.detail ?? undefined}
+                >
+                  {renderFastPushLabel()}
+                </div>
+              </div>
+            ) : (
+              <div className="mt-1 grid grid-cols-3 gap-1">
+                <button
+                  onClick={() => onPush(rowId, item.platform, item.listingId, "review")}
+                  className="inline-flex min-w-0 items-center justify-center rounded bg-emerald-500 px-1.5 py-1.5 text-[9px] font-bold leading-none text-white hover:bg-emerald-600 cursor-pointer"
+                  title="Review the guarded live push flow for this staged ad rate"
+                >
+                  {renderCompactButtonLabel("Review Push")}
+                </button>
+                <button
+                  onClick={() => onPush(rowId, item.platform, item.listingId, "fast")}
+                  className="inline-flex min-w-0 items-center justify-center rounded bg-blue-500 px-1.5 py-1.5 text-[9px] font-bold leading-none text-white hover:bg-blue-600 cursor-pointer"
+                  title="Run the guarded fast push for this staged ad rate"
+                >
+                  {renderCompactButtonLabel("Fast Push")}
+                </button>
+                <button
+                  onClick={() => onDiscard(rowId, item.platform, item.listingId)}
+                  className="inline-flex min-w-0 items-center justify-center rounded bg-muted px-1.5 py-1.5 text-[9px] font-medium leading-none text-muted-foreground hover:text-foreground cursor-pointer"
+                  title="Discard staged ad rate and revert to live"
+                >
+                  {renderCompactButtonLabel("Discard")}
+                </button>
+              </div>
+            )}
           </>
         ) : (
           <span className="font-medium leading-tight text-emerald-400">{fmtPercent(item.value)}</span>
