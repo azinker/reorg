@@ -91,6 +91,9 @@ type PushJobRow = {
     title: string;
     success: boolean | null;
     error: string | null;
+    failureCategory: string | null;
+    failureSummary: string | null;
+    recommendedAction: string | null;
   }>;
 };
 
@@ -149,7 +152,10 @@ type EngineRoomData = {
     due: boolean;
     nextDueAt: string | null;
     webhookExpected: boolean;
+    lastWebhookAt: string | null;
+    recentWebhookCount24h: number;
     lastWebhookTopic: string | null;
+    lastWebhookMessage: string | null;
     lastWebhookEventStatus: string | null;
     webhookMessage: string;
     webhookProofStatus: "none" | "before_last_pull" | "after_last_pull";
@@ -823,7 +829,22 @@ function PushJobDetailsModal({
                           )}
                         </td>
                         <td className="px-3 py-3 align-top text-xs text-muted-foreground">
-                          {change.error ?? (change.success ? "Push completed." : "No extra detail recorded.")}
+                          {change.success === false ? (
+                            <div className="space-y-2">
+                              {change.failureCategory ? (
+                                <span className="inline-flex rounded bg-amber-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-300">
+                                  {change.failureCategory.replace("-", " ")}
+                                </span>
+                              ) : null}
+                              <div>{change.failureSummary ?? "Push failed."}</div>
+                              {change.recommendedAction ? (
+                                <div className="text-amber-100">Next step: {change.recommendedAction}</div>
+                              ) : null}
+                              <div className="text-red-200">{change.error ?? "No extra detail recorded."}</div>
+                            </div>
+                          ) : (
+                            change.error ?? (change.success ? "Push completed." : "No extra detail recorded.")
+                          )}
                         </td>
                         <td className="px-3 py-3 align-top text-right">
                           {change.success === false ? (
@@ -1431,6 +1452,14 @@ export default function EngineRoomPage() {
                   {item.webhookExpected ? (
                     <div className="mt-2 rounded border border-border bg-muted/40 px-2 py-1 text-[11px] text-muted-foreground">
                       {item.webhookMessage}
+                    </div>
+                  ) : null}
+                  {item.webhookExpected ? (
+                    <div className="mt-2 rounded border border-border bg-background/40 px-2 py-1 text-[11px] text-muted-foreground">
+                      {item.recentWebhookCount24h > 0
+                        ? `${item.recentWebhookCount24h.toLocaleString()} marketplace notice${item.recentWebhookCount24h === 1 ? "" : "s"} recorded in the last 24h.`
+                        : "No marketplace notices recorded in the last 24h."}
+                      {item.lastWebhookMessage ? ` Latest result: ${item.lastWebhookMessage}` : ""}
                     </div>
                   ) : null}
                   {item.webhookExpected ? (

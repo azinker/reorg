@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { PLATFORM_FULL, PLATFORM_SHORT } from "@/lib/grid-types";
+import { classifyPushFailure } from "@/lib/push-failure";
 import type { Platform } from "@prisma/client";
 
 type FailedResultRow = {
@@ -125,6 +126,10 @@ export async function GET() {
     const sku = listing?.masterRow?.sku ?? listing?.sku ?? "Unknown SKU";
     const title = listing?.masterRow?.title ?? listing?.title ?? sku;
     const platformVariantId = listing?.platformVariantId ?? null;
+    const failureHelp = classifyPushFailure(
+      result.error ?? "Push failed.",
+      PLATFORM_FULL[result.platform] ?? PLATFORM_SHORT[result.platform] ?? result.platform,
+    );
 
     return [
       {
@@ -144,6 +149,9 @@ export async function GET() {
         oldDisplay: formatValue(result.field, result.oldValue),
         newDisplay: formatValue(result.field, result.newValue),
         error: result.error ?? "Push failed.",
+        failureCategory: failureHelp.category,
+        failureSummary: failureHelp.summary,
+        recommendedAction: failureHelp.recommendedAction,
         stagedChangeId: result.stagedChangeId,
         masterRowId: result.masterRowId || listing?.masterRowId || "",
         marketplaceListingId: result.marketplaceListingId,

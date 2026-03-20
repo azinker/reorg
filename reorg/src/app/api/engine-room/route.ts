@@ -4,6 +4,7 @@ import { getIntegrationConfig } from "@/lib/integrations/runtime-config";
 import { buildAutomationHealthSnapshot } from "@/lib/services/automation-health";
 import { planScheduledSyncs } from "@/lib/services/sync-scheduler";
 import { getEbayTradingRateLimitSnapshotForIntegration } from "@/lib/services/ebay-analytics";
+import { classifyPushFailure } from "@/lib/push-failure";
 
 const PLATFORM_LABEL: Record<string, string> = {
   TPP_EBAY: "eBay (TPP)",
@@ -372,6 +373,7 @@ export async function GET() {
             listing?.integration.label ??
             PLATFORM_LABEL[entry.platform] ??
             entry.platform;
+          const failureHelp = classifyPushFailure(entry.error ?? null, platformLabel);
 
           return {
             stagedChangeId: entry.stagedChangeId,
@@ -388,6 +390,9 @@ export async function GET() {
             title: entry.title ?? listing?.title ?? masterRow?.title ?? "-",
             success: entry.success ?? null,
             error: entry.error ?? null,
+            failureCategory: entry.success === false ? failureHelp.category : null,
+            failureSummary: entry.success === false ? failureHelp.summary : null,
+            recommendedAction: entry.success === false ? failureHelp.recommendedAction : null,
           };
         })
         .sort((a, b) => {

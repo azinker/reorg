@@ -59,6 +59,9 @@ type FailedPushItem = PushItem & {
   oldDisplay: string;
   newDisplay: string;
   error: string;
+  failureCategory: string;
+  failureSummary: string;
+  recommendedAction: string;
 };
 
 const DEFAULT_FILTERS: FilterState = {
@@ -1262,20 +1265,30 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
 
   return (
     <div className="grid h-full min-h-0 min-w-0 grid-rows-[auto_auto_auto_minmax(0,1fr)]">
-      {settings.searchBar && (
-        <StickySearch
-          rows={gridRows}
-          onResultSelect={scrollToRow}
-          visible={searchVisible}
-          onToggleVisibility={() => setSearchVisible(!searchVisible)}
+      <div data-tour="dashboard-search">
+        {settings.searchBar && (
+          <StickySearch
+            rows={gridRows}
+            onResultSelect={scrollToRow}
+            visible={searchVisible}
+            onToggleVisibility={() => setSearchVisible(!searchVisible)}
+          />
+        )}
+      </div>
+      <div data-tour="dashboard-filters">
+        <FilterBar
+          filters={filters}
+          onChange={(f) => {
+            setFilters(f);
+            parentRef.current?.scrollTo({ top: 0 });
+          }}
         />
-      )}
-      <FilterBar filters={filters} onChange={(f) => {
-        setFilters(f);
-        parentRef.current?.scrollTo({ top: 0 });
-      }} />
+      </div>
 
-      <div className="flex items-center justify-between border-b border-border bg-card/30 px-4 py-1.5">
+      <div
+        data-tour="dashboard-toolbar"
+        className="flex items-center justify-between border-b border-border bg-card/30 px-4 py-1.5"
+      >
         <span className="text-xs text-muted-foreground">
           {flatRows.length} rows
           {flatRows.length !== gridRows.length && ` (${gridRows.length} total)`}
@@ -1318,7 +1331,11 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
       </div>
 
       <div className="relative h-full min-h-0 min-w-0">
-      <div ref={parentRef} className="app-grid-scroll h-full min-h-0 min-w-0 overflow-scroll">
+      <div
+        ref={parentRef}
+        data-tour="dashboard-grid"
+        className="app-grid-scroll h-full min-h-0 min-w-0 overflow-scroll"
+      >
         {/* Header */}
         <div
           className="sticky top-0 z-20 flex border-b-2 border-border bg-card text-xs font-bold uppercase tracking-wide text-foreground/80"
@@ -1792,7 +1809,20 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
                       setFailedPushesOpen(false);
                       queuePushReview(
                         failedPushes.map(
-                          ({ retryKey: _retryKey, pushJobId: _pushJobId, failedAt: _failedAt, platformLabel: _platformLabel, fieldLabel: _fieldLabel, oldDisplay: _oldDisplay, newDisplay: _newDisplay, error: _error, ...item }) =>
+                          ({
+                            retryKey: _retryKey,
+                            pushJobId: _pushJobId,
+                            failedAt: _failedAt,
+                            platformLabel: _platformLabel,
+                            fieldLabel: _fieldLabel,
+                            oldDisplay: _oldDisplay,
+                            newDisplay: _newDisplay,
+                            error: _error,
+                            failureCategory: _failureCategory,
+                            failureSummary: _failureSummary,
+                            recommendedAction: _recommendedAction,
+                            ...item
+                          }) =>
                             item,
                         ),
                       );
@@ -1827,6 +1857,9 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
                       oldDisplay,
                       newDisplay,
                       error,
+                      failureCategory,
+                      failureSummary,
+                      recommendedAction,
                       ...pushItem
                     } = failure;
 
@@ -1844,6 +1877,12 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
                             <p className="mt-1 text-sm text-foreground">
                               {oldDisplay} changed to {newDisplay}
                             </p>
+                            <div className="mt-2 flex flex-wrap items-center gap-2">
+                              <span className="rounded bg-amber-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-300">
+                                {failureCategory.replace("-", " ")}
+                              </span>
+                              <span className="text-xs text-foreground/90">{failureSummary}</span>
+                            </div>
                             <p className="mt-1 text-xs text-muted-foreground">
                               {platformLabel} • Job {pushJobId.slice(0, 8)} • {new Date(failedAt).toLocaleString("en-US", {
                                 timeZone: "America/New_York",
@@ -1854,6 +1893,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
                                 minute: "2-digit",
                               })}
                             </p>
+                            <p className="mt-2 text-xs text-amber-100">Next step: {recommendedAction}</p>
                             <p className="mt-2 text-xs text-red-200">{error}</p>
                           </div>
                           <button

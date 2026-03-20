@@ -27,7 +27,9 @@ export interface IntegrationHealthSnapshot {
   nextDueAt: string | null;
   webhookExpected: boolean;
   lastWebhookAt: string | null;
+  recentWebhookCount24h: number;
   lastWebhookTopic: string | null;
+  lastWebhookMessage: string | null;
   lastWebhookEventStatus: string | null;
   minutesSinceWebhook: number | null;
   webhookStatus: WebhookMonitorStatus;
@@ -458,16 +460,23 @@ export async function buildAutomationHealthSnapshot(
   ]);
 
   const lastWebhookByPlatform = new Map<string, LatestWebhookSnapshot>();
+  const recentWebhookCountByPlatform = new Map<string, number>();
   for (const entry of recentWebhookEntries) {
     const details = (entry.details as Record<string, unknown>) ?? {};
     const platform = typeof details.platform === "string" ? details.platform : null;
-    if (!platform || lastWebhookByPlatform.has(platform)) continue;
-    lastWebhookByPlatform.set(platform, {
-      createdAt: entry.createdAt,
-      topic: typeof details.topic === "string" ? details.topic : null,
-      status: typeof details.status === "string" ? details.status : null,
-      message: typeof details.message === "string" ? details.message : null,
-    });
+    if (!platform) continue;
+    recentWebhookCountByPlatform.set(
+      platform,
+      (recentWebhookCountByPlatform.get(platform) ?? 0) + 1,
+    );
+    if (!lastWebhookByPlatform.has(platform)) {
+      lastWebhookByPlatform.set(platform, {
+        createdAt: entry.createdAt,
+        topic: typeof details.topic === "string" ? details.topic : null,
+        status: typeof details.status === "string" ? details.status : null,
+        message: typeof details.message === "string" ? details.message : null,
+      });
+    }
   }
 
   const integrationMap = new Map(integrations.map((integration) => [integration.id, integration]));
@@ -597,7 +606,9 @@ export async function buildAutomationHealthSnapshot(
         nextDueAt: item.nextDueAt,
         webhookExpected: webhook.webhookExpected,
         lastWebhookAt: lastWebhookAt?.toISOString() ?? null,
+        recentWebhookCount24h: recentWebhookCountByPlatform.get(integration.platform) ?? 0,
         lastWebhookTopic: latestWebhook?.topic ?? null,
+        lastWebhookMessage: latestWebhook?.message ?? null,
         lastWebhookEventStatus: latestWebhook?.status ?? null,
         minutesSinceWebhook: webhook.minutesSinceWebhook,
         webhookStatus: webhook.webhookStatus,

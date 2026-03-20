@@ -182,7 +182,9 @@ type SchedulerStatus = {
     nextDueAt: string | null;
     webhookExpected: boolean;
     lastWebhookAt: string | null;
+    recentWebhookCount24h: number;
     lastWebhookTopic: string | null;
+    lastWebhookMessage: string | null;
     lastWebhookEventStatus: string | null;
     minutesSinceWebhook: number | null;
     webhookStatus: "ok" | "quiet" | "missing" | "n/a";
@@ -1023,6 +1025,14 @@ export default function SyncPage() {
                       )}
                     >
                       {item.webhookMessage}
+                    </div>
+                  ) : null}
+                  {item.webhookExpected ? (
+                    <div className="mt-2 rounded border border-border bg-background/40 px-2 py-1 text-[11px] text-muted-foreground">
+                      {item.recentWebhookCount24h > 0
+                        ? `${item.recentWebhookCount24h.toLocaleString()} marketplace notice${item.recentWebhookCount24h === 1 ? "" : "s"} recorded in the last 24h.`
+                        : "No marketplace notices recorded in the last 24h."}
+                      {item.lastWebhookMessage ? ` Latest result: ${item.lastWebhookMessage}` : ""}
                     </div>
                   ) : null}
                   {item.webhookExpected ? (
