@@ -1939,6 +1939,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
                     <div className={cn(COL_WIDTHS.upc, "flex items-center px-2", cellPy)}>
                       <div className={cn("w-full min-w-0", isChild && "pl-4")}>
                         <UpcCell
+                          rowId={row.id}
                           upc={row.upc}
                           stagedUpc={row.stagedUpc}
                           editable={!row.isParent && (row.upcPushTargets?.length ?? 0) > 0}

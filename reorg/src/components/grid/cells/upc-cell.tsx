@@ -4,7 +4,25 @@ import { useEffect, useRef, useState } from "react";
 import JsBarcode from "jsbarcode";
 import { AlertTriangle, Check, Copy, Loader2, X } from "lucide-react";
 import { copySvgElementImage } from "@/lib/client-clipboard";
+import { PlatformIcon } from "@/components/grid/platform-icon";
+import type { Platform } from "@/lib/grid-types";
 import { cn } from "@/lib/utils";
+
+type LiveUpcLine =
+  | {
+      kind: "all";
+      label: string;
+      value: string;
+    }
+  | {
+      kind: "platform";
+      platform: Platform;
+      label: string;
+      value: string;
+    };
+
+const upcLiveCache = new Map<string, { expiresAt: number; value: LiveUpcLine[] }>();
+const upcLiveInflight = new Map<string, Promise<LiveUpcLine[]>>();
 
 type UpcQuickPushPhase =
   | "idle"
@@ -16,6 +34,7 @@ type UpcQuickPushPhase =
   | "blocked";
 
 interface UpcCellProps {
+  rowId: string;
   upc: string | null;
   stagedUpc?: string | null;
   editable?: boolean;
@@ -59,6 +78,7 @@ function renderCompactButtonLabel(text: string) {
 }
 
 export function UpcCell({
+  rowId,
   upc,
   stagedUpc = null,
   editable = false,
@@ -79,10 +99,79 @@ export function UpcCell({
   const [draft, setDraft] = useState("");
   const [showActions, setShowActions] = useState(false);
   const [selectorMode, setSelectorMode] = useState<"review" | "fast" | null>(null);
+  const [liveLines, setLiveLines] = useState<LiveUpcLine[]>([]);
   const quickPhase = quickPushState?.phase ?? "idle";
-  const displayedUpc = stagedUpc ?? upc;
-  const effectiveUpc = stagedUpc ?? upc ?? "";
+  const displayedUpc = stagedUpc ?? upc ?? liveLines[0]?.value ?? null;
+  const effectiveUpc = stagedUpc ?? upc ?? liveLines[0]?.value ?? "";
   const hasMultipleTargets = pushTargets.length > 1;
+
+  useEffect(() => {
+    let active = true;
+    const cached = upcLiveCache.get(rowId);
+    if (cached && cached.expiresAt > Date.now()) {
+      setLiveLines(cached.value);
+      return;
+    }
+
+    const existing = upcLiveInflight.get(rowId);
+    const request =
+      existing ??
+      fetch(`/api/grid/${rowId}/upc-live`)
+        .then(async (response) => {
+          if (!response.ok) {
+            throw new Error(`Failed to load live UPCs: ${response.status}`);
+          }
+          const payload = (await response.json()) as { data?: { lines?: LiveUpcLine[] } };
+          const lines = payload.data?.lines ?? [];
+          upcLiveCache.set(rowId, {
+            expiresAt: Date.now() + 60_000,
+            value: lines,
+          });
+          return lines;
+        })
+        .finally(() => {
+          upcLiveInflight.delete(rowId);
+        });
+
+    if (!existing) {
+      upcLiveInflight.set(rowId, request);
+    }
+
+    void request
+      .then((lines) => {
+        if (active) {
+          setLiveLines(lines);
+        }
+      })
+      .catch((error) => {
+        console.error("[upc-cell] failed to load live UPC lines", error);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [rowId]);
+
+  useEffect(() => {
+    if (quickPhase === "success") {
+      upcLiveCache.delete(rowId);
+      void fetch(`/api/grid/${rowId}/upc-live`)
+        .then(async (response) => {
+          if (!response.ok) return [];
+          const payload = (await response.json()) as { data?: { lines?: LiveUpcLine[] } };
+          const lines = payload.data?.lines ?? [];
+          upcLiveCache.set(rowId, {
+            expiresAt: Date.now() + 60_000,
+            value: lines,
+          });
+          setLiveLines(lines);
+          return lines;
+        })
+        .catch((error) => {
+          console.error("[upc-cell] failed to refresh live UPC lines", error);
+        });
+    }
+  }, [quickPhase, rowId]);
 
   useEffect(() => {
     if (!stagedUpc) {
@@ -218,6 +307,55 @@ export function UpcCell({
     );
   }
 
+  function renderLiveLines() {
+    if (liveLines.length === 0) {
+      if (!upc) return null;
+      return (
+        <div className="mt-1 flex items-center justify-center gap-1 font-mono text-[11px] font-semibold text-emerald-400">
+          <span className="inline-flex items-center rounded-sm bg-emerald-500/15 px-1 py-px text-[9px] font-bold text-emerald-300">
+            TPP
+          </span>
+          <span className="truncate">{upc}</span>
+          <span className="rounded-sm bg-emerald-500 px-1 py-px text-[9px] font-bold text-white">
+            LIVE
+          </span>
+        </div>
+      );
+    }
+
+    return (
+      <div className="mt-1 space-y-1">
+        {liveLines.map((line) =>
+          line.kind === "all" ? (
+            <div
+              key={`all:${line.value}`}
+              className="flex items-center justify-center gap-1 font-mono text-[11px] font-semibold text-emerald-400"
+            >
+              <span className="inline-flex items-center rounded-sm bg-emerald-500/15 px-1 py-px text-[9px] font-bold uppercase text-emerald-300">
+                {line.label}
+              </span>
+              <span className="truncate">{line.value}</span>
+              <span className="rounded-sm bg-emerald-500 px-1 py-px text-[9px] font-bold text-white">
+                LIVE
+              </span>
+            </div>
+          ) : (
+            <div
+              key={`${line.platform}:${line.value}`}
+              className="flex items-center justify-center gap-1 font-mono text-[11px] font-semibold text-emerald-400"
+            >
+              <span className="inline-flex items-center gap-1 rounded-sm bg-emerald-500/15 px-1 py-px text-[9px] font-bold uppercase text-emerald-300">
+                <PlatformIcon platform={line.platform} size={11} />
+                <span>{line.label}</span>
+              </span>
+              <span className="truncate">{line.value}</span>
+            </div>
+          ),
+        )}
+      </div>
+    );
+  }
+
   if (editing) {
     const valid = hasDraftChange();
     return (
@@ -332,20 +470,10 @@ export function UpcCell({
                     STAGED
                   </span>
                 </div>
-                <div className="mt-1 flex items-center justify-center gap-1 font-mono text-[11px] font-semibold text-emerald-400">
-                  <span className="truncate">{upc ?? "No live UPC"}</span>
-                  <span className="rounded-sm bg-emerald-500 px-1 py-px text-[9px] font-bold text-white">
-                    LIVE
-                  </span>
-                </div>
+                {renderLiveLines()}
               </>
             ) : (
-              <div className="flex items-center justify-center gap-1 font-mono text-xs font-semibold text-emerald-400">
-                <span className="truncate">{upc}</span>
-                <span className="rounded-sm bg-emerald-500 px-1 py-px text-[9px] font-bold text-white">
-                  LIVE
-                </span>
-              </div>
+              renderLiveLines()
             )}
           </div>
           <button
