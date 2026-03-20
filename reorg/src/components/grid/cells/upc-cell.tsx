@@ -20,6 +20,11 @@ interface UpcCellProps {
   stagedUpc?: string | null;
   editable?: boolean;
   canPush?: boolean;
+  pushTargets?: Array<{
+    platform: string;
+    label: string;
+    listingId: string;
+  }>;
   quickPushState?: {
     phase: UpcQuickPushPhase;
     detail?: string;
@@ -27,6 +32,8 @@ interface UpcCellProps {
   onSave?: (value: string, mode: "stage" | "push" | "fastPush") => void;
   onReviewPush?: () => void;
   onFastPush?: () => void;
+  onReviewPushTarget?: (platform: string, listingId: string) => void;
+  onFastPushTarget?: (platform: string, listingId: string) => void;
   onDiscard?: () => void;
 }
 
@@ -56,10 +63,13 @@ export function UpcCell({
   stagedUpc = null,
   editable = false,
   canPush = false,
+  pushTargets = [],
   quickPushState,
   onSave,
   onReviewPush,
   onFastPush,
+  onReviewPushTarget,
+  onFastPushTarget,
   onDiscard,
 }: UpcCellProps) {
   const svgRef = useRef<SVGSVGElement>(null);
@@ -68,9 +78,23 @@ export function UpcCell({
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
   const [showActions, setShowActions] = useState(false);
+  const [selectorMode, setSelectorMode] = useState<"review" | "fast" | null>(null);
   const quickPhase = quickPushState?.phase ?? "idle";
   const displayedUpc = stagedUpc ?? upc;
   const effectiveUpc = stagedUpc ?? upc ?? "";
+  const hasMultipleTargets = pushTargets.length > 1;
+
+  useEffect(() => {
+    if (!stagedUpc) {
+      setSelectorMode(null);
+    }
+  }, [stagedUpc]);
+
+  useEffect(() => {
+    if (quickPhase === "success") {
+      setSelectorMode(null);
+    }
+  }, [quickPhase]);
 
   useEffect(() => {
     if (!svgRef.current) return;
@@ -185,6 +209,14 @@ export function UpcCell({
     return normalizedDraft().length > 0 && normalizedDraft() !== effectiveUpc;
   }
 
+  function renderPushTargetLabel(label: string) {
+    return (
+      <span className="flex items-center justify-center gap-1">
+        <span>{label}</span>
+      </span>
+    );
+  }
+
   if (editing) {
     const valid = hasDraftChange();
     return (
@@ -230,13 +262,31 @@ export function UpcCell({
               {renderCompactButtonLabel("Stage")}
             </button>
             <button
-              onClick={() => onSave?.(normalizedDraft(), "push")}
+              onClick={() => {
+                if (hasMultipleTargets) {
+                  onSave?.(normalizedDraft(), "stage");
+                  setEditing(false);
+                  setShowActions(false);
+                  setSelectorMode("review");
+                  return;
+                }
+                onSave?.(normalizedDraft(), "push");
+              }}
               className="inline-flex min-w-0 items-center justify-center rounded bg-emerald-500 px-1.5 py-1.5 text-[9px] font-bold leading-none text-white hover:bg-emerald-600 cursor-pointer"
             >
               {renderCompactButtonLabel("Review Push")}
             </button>
             <button
-              onClick={() => onSave?.(normalizedDraft(), "fastPush")}
+              onClick={() => {
+                if (hasMultipleTargets) {
+                  onSave?.(normalizedDraft(), "stage");
+                  setEditing(false);
+                  setShowActions(false);
+                  setSelectorMode("fast");
+                  return;
+                }
+                onSave?.(normalizedDraft(), "fastPush");
+              }}
               className="inline-flex min-w-0 items-center justify-center rounded bg-blue-500 px-1.5 py-1.5 text-[9px] font-bold leading-none text-white hover:bg-blue-600 cursor-pointer"
             >
               {renderCompactButtonLabel("Fast Push")}
@@ -316,17 +366,68 @@ export function UpcCell({
           >
             {renderFastPushLabel()}
           </div>
+        ) : selectorMode ? (
+          <div className="mt-1 w-full space-y-1">
+            <div className="rounded border border-border bg-background/40 px-2 py-1 text-center text-[10px] font-medium text-muted-foreground">
+              Choose marketplace
+            </div>
+            <div className="grid grid-cols-2 gap-1">
+              {pushTargets.map((target) => (
+                <button
+                  key={`${target.platform}:${target.listingId}`}
+                  onClick={() => {
+                    if (selectorMode === "review") {
+                      onReviewPushTarget?.(target.platform, target.listingId);
+                    } else {
+                      onFastPushTarget?.(target.platform, target.listingId);
+                    }
+                    setSelectorMode(null);
+                  }}
+                  className="inline-flex min-w-0 items-center justify-center rounded bg-primary/15 px-1.5 py-1.5 text-[9px] font-bold leading-none text-primary hover:bg-primary/25 cursor-pointer"
+                  title={`Push UPC to ${target.label}`}
+                >
+                  {renderPushTargetLabel(target.label)}
+                </button>
+              ))}
+            </div>
+            <div className="grid grid-cols-2 gap-1">
+              <button
+                onClick={() => setSelectorMode(null)}
+                className="inline-flex min-w-0 items-center justify-center rounded bg-muted px-1.5 py-1.5 text-[9px] font-medium leading-none text-muted-foreground hover:text-foreground cursor-pointer"
+              >
+                {renderCompactButtonLabel("Back")}
+              </button>
+              <button
+                onClick={onDiscard}
+                className="inline-flex min-w-0 items-center justify-center rounded bg-muted px-1.5 py-1.5 text-[9px] font-medium leading-none text-muted-foreground hover:text-foreground cursor-pointer"
+              >
+                {renderCompactButtonLabel("Discard")}
+              </button>
+            </div>
+          </div>
         ) : (
-          <div className="mt-1 grid w-full grid-cols-3 gap-1">
+          <div className="mt-1 grid w-full grid-cols-2 gap-1">
             <button
-              onClick={onReviewPush}
+              onClick={() => {
+                if (hasMultipleTargets) {
+                  setSelectorMode("review");
+                  return;
+                }
+                onReviewPush?.();
+              }}
               className="inline-flex min-w-0 items-center justify-center rounded bg-emerald-500 px-1.5 py-1.5 text-[9px] font-bold leading-none text-white hover:bg-emerald-600 cursor-pointer"
               title="Review the guarded live push flow for this staged UPC"
             >
               {renderCompactButtonLabel("Review Push")}
             </button>
             <button
-              onClick={onFastPush}
+              onClick={() => {
+                if (hasMultipleTargets) {
+                  setSelectorMode("fast");
+                  return;
+                }
+                onFastPush?.();
+              }}
               className="inline-flex min-w-0 items-center justify-center rounded bg-blue-500 px-1.5 py-1.5 text-[9px] font-bold leading-none text-white hover:bg-blue-600 cursor-pointer"
               title="Run the guarded fast push for this staged UPC"
             >
@@ -334,7 +435,7 @@ export function UpcCell({
             </button>
             <button
               onClick={onDiscard}
-              className="inline-flex min-w-0 items-center justify-center rounded bg-muted px-1.5 py-1.5 text-[9px] font-medium leading-none text-muted-foreground hover:text-foreground cursor-pointer"
+              className="col-span-2 inline-flex min-w-0 items-center justify-center rounded bg-muted px-1.5 py-1.5 text-[9px] font-medium leading-none text-muted-foreground hover:text-foreground cursor-pointer"
               title="Discard staged UPC and revert to live"
             >
               {renderCompactButtonLabel("Discard")}

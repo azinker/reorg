@@ -242,7 +242,8 @@ function recalcRowStatic(row: GridRow, overrideFeeRate?: number): GridRow {
   });
 
   const hasStaged = row.salePrices.some((sp) => sp.stagedValue != null && sp.stagedValue !== sp.value)
-    || row.adRates.some((ar) => ar.stagedValue != null && ar.stagedValue !== ar.value);
+    || row.adRates.some((ar) => ar.stagedValue != null && ar.stagedValue !== ar.value)
+    || Boolean(row.stagedUpc && row.stagedUpc !== row.upc);
   return { ...row, platformFeeRate: ebayFeeRate, platformFees: newFees, profits: newProfits, hasStagedChanges: hasStaged };
 }
 
@@ -580,6 +581,25 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
       .filter((item): item is PushItem => Boolean(item));
   }
 
+  function buildUpcPushChoices(row: GridRow | undefined) {
+    if (!row || row.isParent) return [];
+
+    const counts = new Map<string, number>();
+    for (const target of row.upcPushTargets ?? []) {
+      counts.set(target.platform, (counts.get(target.platform) ?? 0) + 1);
+    }
+
+    return (row.upcPushTargets ?? []).map((target) => {
+      const short = PLATFORM_SHORT[target.platform];
+      const duplicatePlatform = (counts.get(target.platform) ?? 0) > 1;
+      return {
+        platform: target.platform,
+        listingId: target.listingId,
+        label: duplicatePlatform ? `${short} #${target.listingId.slice(-6)}` : short,
+      };
+    });
+  }
+
   async function submitPushRequest(items: PushItem[], dryRun: boolean, confirmedLivePush: boolean) {
     const response = await fetch("/api/push", {
       method: "POST",
@@ -793,7 +813,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
         upc: upcCompleted ? successfulUpcByMasterRow.get(masterRowId) ?? row.upc : row.upc,
         stagedUpc: upcCompleted ? null : row.stagedUpc ?? null,
         hasStagedUpc: upcCompleted ? false : row.hasStagedUpc ?? false,
-        upcPushTargets: upcCompleted ? [] : row.upcPushTargets,
+        upcPushTargets: row.upcPushTargets,
         salePrices,
         adRates,
         childRows,
@@ -1160,14 +1180,24 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
     [sortedRows, expandedRows, filters.stockStatus, filters.stagedOnly]
   );
 
-  function handlePushStagedUpc(rowId: string, launchMode: PushLaunchMode = "review") {
+  function handlePushStagedUpc(
+    rowId: string,
+    launchMode: PushLaunchMode = "review",
+    targetPlatform?: string,
+    targetListingId?: string,
+  ) {
     const row = findRow(rowId);
     if (!row || row.isParent || !row.hasStagedUpc || !row.stagedUpc) {
       showToast("No staged UPC is ready to push on this row.");
       return;
     }
 
-    const pushItems = buildUpcPushItems(row);
+    let pushItems = buildUpcPushItems(row);
+    if (targetPlatform && targetListingId) {
+      pushItems = pushItems.filter(
+        (item) => item.platform === targetPlatform && item.listingId === targetListingId,
+      );
+    }
     if (pushItems.length === 0) {
       showToast("This row has no supported marketplace UPC targets to push.");
       return;
@@ -1198,23 +1228,13 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
       ...current,
       stagedUpc: null,
       hasStagedUpc: false,
-      upcPushTargets: [],
+      upcPushTargets: current.upcPushTargets,
       hasStagedChanges:
         current.salePrices.some((entry) => entry.stagedValue != null && entry.stagedValue !== entry.value) ||
         current.adRates.some((entry) => entry.stagedValue != null && entry.stagedValue !== entry.value),
     }));
 
-    for (const target of row.upcPushTargets ?? []) {
-      if (!target.marketplaceListingId) continue;
-      void persistStageAction(
-        row.sku,
-        target.platform,
-        target.listingId,
-        "discard",
-        undefined,
-        "upc",
-      );
-    }
+    void persistUpcAction(row.sku, "discard");
 
     clearQuickPushState(getUpcQuickPushKey(rowId));
     showToast(`Staged UPC discarded for SKU ${row.sku}.`);
@@ -1410,6 +1430,9 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
       for (const ar of row.adRates) {
         if (ar.stagedValue != null && ar.stagedValue !== ar.value) count++;
       }
+      if (row.hasStagedUpc && row.stagedUpc && row.stagedUpc !== row.upc) {
+        count++;
+      }
       if (row.childRows) {
         for (const child of row.childRows) {
           for (const sp of child.salePrices) {
@@ -1417,6 +1440,9 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
           }
           for (const ar of child.adRates) {
             if (ar.stagedValue != null && ar.stagedValue !== ar.value) count++;
+          }
+          if (child.hasStagedUpc && child.stagedUpc && child.stagedUpc !== child.upc) {
+            count++;
           }
         }
       }
@@ -1434,10 +1460,31 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
           newChildren = newChildren.map((child) => {
             const cPrices = child.salePrices.map((sp) => ({ ...sp, stagedValue: undefined }));
             const cAdRates = child.adRates.map((ar) => ({ ...ar, stagedValue: undefined }));
-            return recalcRowStatic({ ...child, salePrices: cPrices, adRates: cAdRates, hasStagedChanges: false }, globalFeeRate);
+            return recalcRowStatic(
+              {
+                ...child,
+                salePrices: cPrices,
+                adRates: cAdRates,
+                stagedUpc: null,
+                hasStagedUpc: false,
+                hasStagedChanges: false,
+              },
+              globalFeeRate,
+            );
           });
         }
-        return recalcRowStatic({ ...row, salePrices: newSalePrices, adRates: newAdRates, hasStagedChanges: false, childRows: newChildren ?? row.childRows }, globalFeeRate);
+        return recalcRowStatic(
+          {
+            ...row,
+            salePrices: newSalePrices,
+            adRates: newAdRates,
+            stagedUpc: null,
+            hasStagedUpc: false,
+            hasStagedChanges: false,
+            childRows: newChildren ?? row.childRows,
+          },
+          globalFeeRate,
+        );
       })
     );
     setClearStagedOpen(false);
@@ -1896,10 +1943,17 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
                           stagedUpc={row.stagedUpc}
                           editable={!row.isParent && (row.upcPushTargets?.length ?? 0) > 0}
                           canPush={!row.isParent && Boolean(row.hasStagedUpc) && (row.upcPushTargets?.length ?? 0) > 0}
+                          pushTargets={buildUpcPushChoices(row)}
                           quickPushState={quickPushStates[getUpcQuickPushKey(row.id)]}
                           onSave={(value, mode) => handleUpcEdit(row.id, value, mode)}
                           onReviewPush={() => handlePushStagedUpc(row.id, "review")}
                           onFastPush={() => handlePushStagedUpc(row.id, "fast")}
+                          onReviewPushTarget={(platform, listingId) =>
+                            handlePushStagedUpc(row.id, "review", platform, listingId)
+                          }
+                          onFastPushTarget={(platform, listingId) =>
+                            handlePushStagedUpc(row.id, "fast", platform, listingId)
+                          }
                           onDiscard={() => handleDiscardStagedUpc(row.id)}
                         />
                       </div>
@@ -2130,7 +2184,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
             <h3 className="text-base font-bold text-foreground">Clear All Staged Values</h3>
             <p className="mt-2 text-sm text-muted-foreground">
               There {stagedCount === 1 ? "is" : "are"} <span className="font-bold text-amber-400">{stagedCount}</span> staged
-              {stagedCount === 1 ? " value" : " values"}. Clearing will discard all staged prices and restore live values.
+              {stagedCount === 1 ? " value" : " values"}. Clearing will discard all staged values and restore live values.
             </p>
             <p className="mt-3 text-sm text-muted-foreground">
               To confirm, type <span className="font-bold text-foreground">{stagedCount}</span> below and click confirm.
