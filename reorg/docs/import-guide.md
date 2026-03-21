@@ -1,6 +1,6 @@
 # Import Guide
 
-Use the Import feature to bulk-update internal data (SKU, weight, supplier cost, notes, etc.) without editing each row by hand. This guide explains how to prepare your file, upload it, and choose how it updates existing data.
+Use the Import feature to bulk-update internal data (SKU, UPC, weight, supplier cost, notes, etc.) without editing each row by hand. This guide explains how to prepare your file, upload it, and choose how it updates existing data.
 
 ---
 
@@ -19,12 +19,14 @@ The template has columns for the data reorG uses. Fill in the ones you need:
 | Column | Required | Description |
 |--------|----------|-------------|
 | **sku** | Yes | Product SKU. Must match exactly an existing listing in the master store, or a new row will be created |
+| **upc** | No | UPC to stage for review and push later. Blank UPC cells are ignored. |
 | **weight** | No | Weight in reorG format (see below) |
 | **supplier_cost** | No | Supplier cost per unit (number) |
 | **supplier_shipping_cost** | No | Supplier shipping cost per unit (number) |
-| **notes** | No | Free-text notes |
+| **notes** | No | Internal free-text notes stored on the master row in reorG |
 
 **Important:** SKU must be present. All other columns are optional.
+**Important:** Blank optional cells are ignored. They do not delete existing values.
 
 ---
 
@@ -90,8 +92,8 @@ When you confirm the import, you choose how it updates existing data:
 
 | Mode | Behavior |
 |------|----------|
-| **Fill blanks only** | Updates only empty fields. Existing values are not changed. |
-| **Overwrite all** | Replaces all imported fields, even if they already have values. |
+| **Fill blanks only** | Updates only empty fields. Existing values are not changed. Blank optional cells are ignored. |
+| **Overwrite all** | Replaces provided imported fields even if they already have values. Blank optional cells are still ignored. |
 
 **Recommendation:** Use **Fill blanks** for first imports or when adding data. Use **Overwrite all** when you’ve intentionally prepared a full refresh.
 

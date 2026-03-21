@@ -1,9 +1,44 @@
 import { NextResponse, type NextRequest } from "next/server";
 import * as XLSX from "xlsx";
 import { db } from "@/lib/db";
+import { Platform } from "@prisma/client";
 
 const VALID_MODES = ["preview", "fill_blanks", "overwrite"] as const;
 type ImportMode = (typeof VALID_MODES)[number];
+
+const IMPORT_FIELD_HEADERS = [
+  "sku",
+  "upc",
+  "weight",
+  "supplier_cost",
+  "supplier_shipping_cost",
+  "notes",
+] as const;
+
+type ImportDownloadRow = {
+  sku: string;
+  upc: string;
+  weight: string;
+  supplier_cost: string;
+  supplier_shipping_cost: string;
+  notes: string;
+  error_reason?: string;
+};
+
+type ImportFailure = {
+  row: number;
+  sku: string;
+  error: string;
+  fields: ImportDownloadRow;
+};
+
+type ImportSuccess = {
+  row: number;
+  sku: string;
+  outcome: "created" | "updated" | "no_changes";
+  summary: string;
+  changedFields: string[];
+};
 
 const COLUMN_MAP: Record<string, string> = {
   sku: "sku",
@@ -71,6 +106,36 @@ function validateRow(
   };
 }
 
+function buildDownloadRow(fields: Record<string, unknown>, errorReason?: string): ImportDownloadRow {
+  const row: ImportDownloadRow = {
+    sku: "",
+    upc: "",
+    weight: "",
+    supplier_cost: "",
+    supplier_shipping_cost: "",
+    notes: "",
+  };
+
+  row.sku = String(fields.sku ?? "").trim();
+  row.upc = String(fields.upc ?? "").trim();
+  row.weight = String(fields.weight ?? "").trim();
+  row.supplier_cost =
+    fields.supplierCost == null || String(fields.supplierCost).trim() === ""
+      ? ""
+      : String(fields.supplierCost);
+  row.supplier_shipping_cost =
+    fields.supplierShipping == null || String(fields.supplierShipping).trim() === ""
+      ? ""
+      : String(fields.supplierShipping);
+  row.notes = String(fields.notes ?? "").trim();
+
+  if (errorReason) {
+    row.error_reason = errorReason;
+  }
+
+  return row;
+}
+
 async function getSystemUser() {
   let user = await db.user.findFirst({ where: { role: "ADMIN" } });
   if (!user) {
@@ -123,6 +188,67 @@ async function stageImportedUpc(args: {
       changedById: args.changedById,
     })),
   });
+}
+
+function collectImportedData(fields: Record<string, unknown>) {
+  const data: {
+    title?: string;
+    weight?: string;
+    weightOz?: number;
+    supplierCost?: number;
+    supplierShipping?: number;
+    notes?: string;
+  } = {};
+
+  if (fields.title != null && String(fields.title).trim() !== "") data.title = String(fields.title).trim();
+  if (fields.weight != null && String(fields.weight).trim() !== "") data.weight = String(fields.weight).trim();
+  if (typeof fields.weightOz === "number" && Number.isFinite(fields.weightOz)) data.weightOz = fields.weightOz;
+  if (typeof fields.supplierCost === "number" && Number.isFinite(fields.supplierCost)) data.supplierCost = fields.supplierCost;
+  if (typeof fields.supplierShipping === "number" && Number.isFinite(fields.supplierShipping)) data.supplierShipping = fields.supplierShipping;
+  if (fields.notes != null && String(fields.notes).trim() !== "") data.notes = String(fields.notes).trim();
+
+  return data;
+}
+
+function fieldLabel(field: string): string {
+  switch (field) {
+    case "title":
+      return "Title";
+    case "weight":
+      return "Weight";
+    case "weightOz":
+      return "Weight Oz";
+    case "supplierCost":
+      return "Supplier Cost";
+    case "supplierShipping":
+      return "Supplier Shipping";
+    case "notes":
+      return "Notes";
+    case "upc":
+      return "UPC";
+    default:
+      return field;
+  }
+}
+
+function summarizeSuccess(args: {
+  created: boolean;
+  changedFields: string[];
+  upcStaged: boolean;
+}): ImportSuccess["summary"] {
+  const parts: string[] = [];
+
+  if (args.created) {
+    parts.push("Created row");
+  }
+  if (args.changedFields.length > 0) {
+    parts.push(`Updated ${args.changedFields.join(", ")}`);
+  }
+  if (args.upcStaged) {
+    parts.push("Staged UPC for review");
+  }
+
+  return parts.length > 0 ? parts.join(". ") : "No changes needed";
 }
 
 export async function POST(request: NextRequest) {
@@ -185,7 +311,15 @@ export async function POST(request: NextRequest) {
 
     let created = 0;
     let updated = 0;
+    let unchanged = 0;
     const applyErrors: { row: number; error: string }[] = [];
+    const successes: ImportSuccess[] = [];
+    const failures: ImportFailure[] = errorRows.map((row) => ({
+      row: row.index,
+      sku: String(row.fields.sku ?? "").trim(),
+      error: row.errors.join("; "),
+      fields: buildDownloadRow(row.fields, row.errors.join("; ")),
+    }));
     const systemUser = await getSystemUser();
 
     for (const { index, fields } of validRows) {
@@ -203,50 +337,70 @@ export async function POST(request: NextRequest) {
             },
           },
         });
-
-        const data: {
-          title?: string;
-          weight?: string;
-          weightOz?: number;
-          supplierCost?: number;
-          supplierShipping?: number;
-          notes?: string;
-        } = {};
+        const data = collectImportedData(fields);
         const importedUpc =
           fields.upc != null && String(fields.upc).trim() !== ""
             ? String(fields.upc).trim()
             : null;
+        let rowCreated = false;
+        let upcStaged = false;
+        const changedFields: string[] = [];
 
-        if (fields.title != null && String(fields.title).trim() !== "") data.title = String(fields.title).trim();
-        if (fields.weight != null && String(fields.weight).trim() !== "") data.weight = String(fields.weight).trim();
-        if (typeof fields.weightOz === "number" && Number.isFinite(fields.weightOz)) data.weightOz = fields.weightOz;
-        if (typeof fields.supplierCost === "number" && Number.isFinite(fields.supplierCost)) data.supplierCost = fields.supplierCost;
-        if (typeof fields.supplierShipping === "number" && Number.isFinite(fields.supplierShipping)) data.supplierShipping = fields.supplierShipping;
-        if (fields.notes != null && String(fields.notes).trim() !== "") data.notes = String(fields.notes).trim();
+        const supportedPlatforms = new Set<Platform>([
+          Platform.TPP_EBAY,
+          Platform.TT_EBAY,
+          Platform.BIGCOMMERCE,
+          Platform.SHOPIFY,
+        ]);
 
         if (resolvedMode === "overwrite") {
-          const masterRow = await db.masterRow.upsert({
-            where: { sku },
-            create: { sku, ...data },
-            update: data,
-            include: {
-              listings: {
-                select: {
-                  id: true,
-                  integration: { select: { platform: true } },
+          let masterRow;
+          if (existing) {
+            const patch: Record<string, string | number> = {};
+            for (const [key, value] of Object.entries(data)) {
+              if (value === undefined || value === null || value === "") continue;
+              const current = existing[key as keyof typeof existing];
+              if (current !== value) {
+                patch[key] = value as string | number;
+                changedFields.push(fieldLabel(key));
+              }
+            }
+
+            masterRow = Object.keys(patch).length > 0
+              ? await db.masterRow.update({
+                  where: { sku },
+                  data: patch,
+                  include: {
+                    listings: {
+                      select: {
+                        id: true,
+                        integration: { select: { platform: true } },
+                      },
+                    },
+                  },
+                })
+              : existing;
+          } else {
+            rowCreated = true;
+            changedFields.push(...Object.keys(data).map(fieldLabel));
+            masterRow = await db.masterRow.create({
+              data: { sku, ...data },
+              include: {
+                listings: {
+                  select: {
+                    id: true,
+                    integration: { select: { platform: true } },
+                  },
                 },
               },
-            },
-          });
+            });
+          }
 
           if (importedUpc) {
             const liveUpc = masterRow.upc?.trim() || null;
             if (liveUpc !== importedUpc) {
               const supportedListingIds = masterRow.listings
-                .filter((listing) =>
-                  listing.integration.platform === "BIGCOMMERCE" ||
-                  listing.integration.platform === "SHOPIFY",
-                )
+                .filter((listing) => supportedPlatforms.has(listing.integration.platform))
                 .map((listing) => listing.id);
               await stageImportedUpc({
                 masterRowId: masterRow.id,
@@ -254,6 +408,7 @@ export async function POST(request: NextRequest) {
                 changedById: systemUser.id,
                 listingIds: supportedListingIds,
               });
+              upcStaged = true;
             } else {
               await db.stagedChange.updateMany({
                 where: {
@@ -266,7 +421,13 @@ export async function POST(request: NextRequest) {
             }
           }
 
-          if (existing) updated++; else created++;
+          if (rowCreated) {
+            created++;
+          } else if (changedFields.length > 0 || upcStaged) {
+            updated++;
+          } else {
+            unchanged++;
+          }
         } else {
           if (existing) {
             const patch: Record<string, string | number | null> = {};
@@ -277,21 +438,20 @@ export async function POST(request: NextRequest) {
                 current === null ||
                 current === undefined ||
                 (typeof current === "string" && current.trim() === "");
-              if (isEmpty) patch[key] = value as string | number | null;
+              if (isEmpty) {
+                patch[key] = value as string | number | null;
+                changedFields.push(fieldLabel(key));
+              }
             }
             if (Object.keys(patch).length > 0) {
               await db.masterRow.update({ where: { sku }, data: patch });
-              updated++;
             }
 
             if (importedUpc) {
               const liveUpc = existing.upc?.trim() || null;
               if (!liveUpc) {
                 const supportedListingIds = existing.listings
-                  .filter((listing) =>
-                    listing.integration.platform === "BIGCOMMERCE" ||
-                    listing.integration.platform === "SHOPIFY",
-                  )
+                  .filter((listing) => supportedPlatforms.has(listing.integration.platform))
                   .map((listing) => listing.id);
                 await stageImportedUpc({
                   masterRowId: existing.id,
@@ -299,11 +459,19 @@ export async function POST(request: NextRequest) {
                   changedById: systemUser.id,
                   listingIds: supportedListingIds,
                 });
-                updated++;
+                upcStaged = true;
               }
+            }
+
+            if (changedFields.length > 0 || upcStaged) {
+              updated++;
+            } else {
+              unchanged++;
             }
           } else {
             const masterRow = await db.masterRow.create({ data: { sku, ...data } });
+            rowCreated = true;
+            changedFields.push(...Object.keys(data).map(fieldLabel));
             if (importedUpc) {
               await stageImportedUpc({
                 masterRowId: masterRow.id,
@@ -311,14 +479,37 @@ export async function POST(request: NextRequest) {
                 changedById: systemUser.id,
                 listingIds: [],
               });
+              upcStaged = true;
             }
             created++;
           }
         }
+
+        successes.push({
+          row: index,
+          sku,
+          outcome: rowCreated ? "created" : changedFields.length > 0 || upcStaged ? "updated" : "no_changes",
+          summary: summarizeSuccess({
+            created: rowCreated,
+            changedFields,
+            upcStaged,
+          }),
+          changedFields: [
+            ...changedFields,
+            ...(upcStaged ? ["UPC"] : []),
+          ],
+        });
       } catch (err) {
+        const message = err instanceof Error ? err.message : "Unknown error";
         applyErrors.push({
           row: index,
-          error: err instanceof Error ? err.message : "Unknown error",
+          error: message,
+        });
+        failures.push({
+          row: index,
+          sku,
+          error: message,
+          fields: buildDownloadRow(fields, message),
         });
       }
     }
@@ -332,7 +523,10 @@ export async function POST(request: NextRequest) {
         errorRows: errorRows.length,
         created,
         updated,
+        unchanged,
         applyErrors: applyErrors.slice(0, 100),
+        successes,
+        failures,
       },
     });
   } catch (error) {
