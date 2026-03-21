@@ -16,10 +16,12 @@ export async function GET() {
       },
     });
   } catch (error) {
-    console.error("[grid/version] Failed to fetch grid version", error);
     return NextResponse.json(
-      { error: "Failed to fetch grid version" },
-      { status: 500 },
+      {
+        data: {
+          version: null,
+        },
+      },
     );
   }
 }

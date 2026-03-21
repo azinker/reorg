@@ -95,6 +95,32 @@ const themeClasses = {
   },
 } as const;
 
+type IntegrationSnapshot = {
+  platform: string;
+  connected: boolean;
+  writeLocked: boolean;
+  lastSyncAt: string | null;
+  accountUserId: string | null;
+  accountStoreName: string | null;
+  accountSellerLevel: string | null;
+  storeHash: string | null;
+  storeDomain: string | null;
+  environment: string | null;
+};
+
+function formatLastSync(value: string | null): string {
+  if (!value) return "Never";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return "Never";
+  return parsed.toLocaleString("en-US", {
+    month: "numeric",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
 function IntegrationsContent() {
   const searchParams = useSearchParams();
   const [writeLocks, setWriteLocks] = useState<Record<string, boolean>>({
@@ -116,6 +142,7 @@ function IntegrationsContent() {
     bc: false,
     shpfy: false,
   });
+  const [integrationMeta, setIntegrationMeta] = useState<Record<string, IntegrationSnapshot>>({});
 
   useEffect(() => {
     fetch("/api/integrations")
@@ -123,15 +150,29 @@ function IntegrationsContent() {
       .then((json) => {
         const nextConnected: Record<string, boolean> = {};
         const nextLocks: Record<string, boolean> = {};
+        const nextMeta: Record<string, IntegrationSnapshot> = {};
         for (const i of json.data ?? []) {
           const id = PLATFORM_TO_CARD[i.platform];
           if (id) {
             nextConnected[id] = !!i.connected;
             nextLocks[id] = !!i.writeLocked;
+            nextMeta[id] = {
+              platform: i.platform,
+              connected: !!i.connected,
+              writeLocked: !!i.writeLocked,
+              lastSyncAt: typeof i.lastSyncAt === "string" ? i.lastSyncAt : null,
+              accountUserId: typeof i.accountUserId === "string" ? i.accountUserId : null,
+              accountStoreName: typeof i.accountStoreName === "string" ? i.accountStoreName : null,
+              accountSellerLevel: typeof i.accountSellerLevel === "string" ? i.accountSellerLevel : null,
+              storeHash: typeof i.storeHash === "string" ? i.storeHash : null,
+              storeDomain: typeof i.storeDomain === "string" ? i.storeDomain : null,
+              environment: typeof i.environment === "string" ? i.environment : null,
+            };
           }
         }
         setConnected((prev) => ({ ...prev, ...nextConnected }));
         setWriteLocks((prev) => ({ ...prev, ...nextLocks }));
+        setIntegrationMeta(nextMeta);
       })
       .catch(() => {});
   }, []);
@@ -159,6 +200,9 @@ function IntegrationsContent() {
   }, [searchParams]);
 
   const connectedCount = Object.values(connected).filter(Boolean).length;
+  const tppSeller = integrationMeta.tpp?.accountUserId?.trim().toLowerCase() ?? null;
+  const ttSeller = integrationMeta.tt?.accountUserId?.trim().toLowerCase() ?? null;
+  const hasDuplicateEbaySeller = !!tppSeller && !!ttSeller && tppSeller === ttSeller;
 
   const toggleWriteLock = async (id: string) => {
     const platform = CARD_TO_PLATFORM[id];
@@ -199,6 +243,26 @@ function IntegrationsContent() {
         : ok
           ? "Connection successful."
           : "Connection failed.";
+
+      if (ok && (platform === "TPP_EBAY" || platform === "TT_EBAY")) {
+        const seller = json.data?.seller;
+        setIntegrationMeta((prev) => ({
+          ...prev,
+          [id]: {
+            platform,
+            connected: true,
+            writeLocked: writeLocks[id] ?? true,
+            lastSyncAt: prev[id]?.lastSyncAt ?? null,
+            accountUserId: typeof seller?.userId === "string" ? seller.userId : prev[id]?.accountUserId ?? null,
+            accountStoreName: typeof seller?.storeName === "string" ? seller.storeName : prev[id]?.accountStoreName ?? null,
+            accountSellerLevel:
+              typeof seller?.sellerLevel === "string" ? seller.sellerLevel : prev[id]?.accountSellerLevel ?? null,
+            storeHash: prev[id]?.storeHash ?? null,
+            storeDomain: prev[id]?.storeDomain ?? null,
+            environment: prev[id]?.environment ?? null,
+          },
+        }));
+      }
 
       setBanner({
         type: ok ? "success" : "error",
@@ -273,6 +337,14 @@ function IntegrationsContent() {
         </div>
       </div>
 
+      {hasDuplicateEbaySeller && (
+        <div className="mb-6 rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+          TPP eBay and TT eBay are currently connected to the same seller account:{" "}
+          <span className="font-semibold">{integrationMeta.tpp?.accountUserId}</span>. Reconnect TT eBay with the real
+          Telitetech seller before trusting TT item IDs or UPCs.
+        </div>
+      )}
+
       {/* Integration cards grid */}
       <div className="grid gap-4 sm:grid-cols-1 lg:grid-cols-2" data-tour="integrations-cards">
         {integrations.map((integration) => {
@@ -283,6 +355,22 @@ function IntegrationsContent() {
           const isShopify = integration.id === "shpfy";
           const isTppEbay = integration.id === "tpp";
           const isTtEbay = integration.id === "tt";
+          const meta = integrationMeta[integration.id];
+          const identityRows = isTppEbay || isTtEbay
+            ? [
+                { label: "Seller ID", value: meta?.accountUserId ?? "Not detected yet" },
+                { label: "Store Name", value: meta?.accountStoreName ?? "No eBay Store name returned" },
+                { label: "eBay Env", value: meta?.environment ?? "PRODUCTION" },
+              ]
+            : integration.id === "bc"
+              ? [
+                  { label: "Store Hash", value: meta?.storeHash ?? "Not configured yet" },
+                  { label: "Connection", value: meta?.connected ? "BigCommerce connected" : "Waiting for credentials" },
+                ]
+              : [
+                  { label: "Store Domain", value: meta?.storeDomain ?? "Not configured yet" },
+                  { label: "Connection", value: meta?.connected ? "Shopify connected" : "Waiting for credentials" },
+                ];
 
           return (
             <article
@@ -360,6 +448,23 @@ function IntegrationsContent() {
                 )}
               </div>
 
+              <div className="mb-4 rounded-lg border border-border bg-background/40 p-3">
+                <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  Connection Identity
+                </div>
+                <div className="space-y-2">
+                  {identityRows.map((row) => (
+                    <div
+                      key={`${integration.id}-${row.label}`}
+                      className="flex items-start justify-between gap-3 text-sm"
+                    >
+                      <span className="shrink-0 text-muted-foreground">{row.label}</span>
+                      <span className="text-right font-medium text-foreground">{row.value}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
               {/* Write Lock toggle */}
               <div className="mb-4 flex items-center justify-between gap-3">
                 <span className="text-sm text-muted-foreground">
@@ -395,7 +500,7 @@ function IntegrationsContent() {
               {/* Last Sync */}
               <div className="mb-6 flex items-center gap-1.5 text-sm text-muted-foreground">
                 <span>Last Sync:</span>
-                <span>Never</span>
+                <span>{formatLastSync(meta?.lastSyncAt ?? null)}</span>
               </div>
 
               {/* Actions */}
@@ -403,6 +508,8 @@ function IntegrationsContent() {
                 {isTppEbay && !isConnected && (
                   <a
                     href="/api/ebay/connect?store=tpp"
+                    target="_blank"
+                    rel="noopener noreferrer"
                     className={cn(
                       "inline-flex cursor-pointer items-center gap-2 rounded-md border border-primary bg-primary px-4 py-2 text-sm font-medium text-primary-foreground",
                       "transition-colors hover:bg-primary/90",
@@ -417,6 +524,8 @@ function IntegrationsContent() {
                 {isTtEbay && !isConnected && (
                   <a
                     href="/api/ebay/connect?store=tt"
+                    target="_blank"
+                    rel="noopener noreferrer"
                     className={cn(
                       "inline-flex cursor-pointer items-center gap-2 rounded-md border border-primary bg-primary px-4 py-2 text-sm font-medium text-primary-foreground",
                       "transition-colors hover:bg-primary/90",
@@ -431,6 +540,8 @@ function IntegrationsContent() {
                 {isShopify && !isConnected && (
                   <a
                     href="/api/shopify/connect"
+                    target="_blank"
+                    rel="noopener noreferrer"
                     className={cn(
                       "inline-flex cursor-pointer items-center gap-2 rounded-md border border-primary bg-primary px-4 py-2 text-sm font-medium text-primary-foreground",
                       "transition-colors hover:bg-primary/90",
@@ -442,18 +553,65 @@ function IntegrationsContent() {
                     Connect Shopify
                   </a>
                 )}
-                <button
-                  type="button"
-                  className={cn(
-                    "inline-flex cursor-pointer items-center gap-2 rounded-md border border-border bg-background px-4 py-2 text-sm font-medium text-foreground",
-                    "transition-colors hover:bg-muted hover:text-foreground",
-                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
-                  )}
-                  aria-label={`Configure ${integration.name}`}
-                >
-                  <Settings2 className="h-4 w-4" aria-hidden />
-                  Configure
-                </button>
+                {isTppEbay ? (
+                  <a
+                    href="/api/ebay/connect?store=tpp"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className={cn(
+                      "inline-flex cursor-pointer items-center gap-2 rounded-md border border-border bg-background px-4 py-2 text-sm font-medium text-foreground",
+                      "transition-colors hover:bg-muted hover:text-foreground",
+                      "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+                    )}
+                    aria-label={`Configure ${integration.name}`}
+                  >
+                    <Settings2 className="h-4 w-4" aria-hidden />
+                    Configure
+                  </a>
+                ) : isTtEbay ? (
+                  <a
+                    href="/api/ebay/connect?store=tt"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className={cn(
+                      "inline-flex cursor-pointer items-center gap-2 rounded-md border border-border bg-background px-4 py-2 text-sm font-medium text-foreground",
+                      "transition-colors hover:bg-muted hover:text-foreground",
+                      "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+                    )}
+                    aria-label={`Configure ${integration.name}`}
+                  >
+                    <Settings2 className="h-4 w-4" aria-hidden />
+                    Configure
+                  </a>
+                ) : isShopify ? (
+                  <a
+                    href="/api/shopify/connect"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className={cn(
+                      "inline-flex cursor-pointer items-center gap-2 rounded-md border border-border bg-background px-4 py-2 text-sm font-medium text-foreground",
+                      "transition-colors hover:bg-muted hover:text-foreground",
+                      "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+                    )}
+                    aria-label={`Configure ${integration.name}`}
+                  >
+                    <Settings2 className="h-4 w-4" aria-hidden />
+                    Configure
+                  </a>
+                ) : (
+                  <button
+                    type="button"
+                    disabled
+                    className={cn(
+                      "inline-flex items-center gap-2 rounded-md border border-border bg-background px-4 py-2 text-sm font-medium text-muted-foreground",
+                      "cursor-not-allowed opacity-60"
+                    )}
+                    aria-label={`Configure ${integration.name}`}
+                  >
+                    <Settings2 className="h-4 w-4" aria-hidden />
+                    Configure
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={() => testConnection(integration.id)}

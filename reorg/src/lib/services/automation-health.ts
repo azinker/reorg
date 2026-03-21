@@ -167,7 +167,26 @@ function getSyncHealthStatus(
       syncMessage:
         planItem.reason.startsWith("Paused outside eBay business hours.")
           ? "Pulls are paused outside the scheduled eBay business window."
-          : "Pulls are waiting for the next allowed eBay retry window.",
+        : "Pulls are waiting for the next allowed eBay retry window.",
+    };
+  }
+
+  const nextDueAt = planItem.nextDueAt ? new Date(planItem.nextDueAt) : null;
+  const minutesPastDue = nextDueAt ? minutesBetween(now, nextDueAt) : null;
+  if (
+    (planItem.platform === "TPP_EBAY" || planItem.platform === "TT_EBAY") &&
+    planItem.due &&
+    !planItem.running &&
+    nextDueAt &&
+    lastSyncAt.getTime() < nextDueAt.getTime() &&
+    minutesPastDue !== null &&
+    minutesPastDue <= getGraceMinutes(planItem.intervalMinutes)
+  ) {
+    return {
+      status: "healthy" as const,
+      syncStatus: "fresh" as const,
+      minutesSinceSync,
+      syncMessage: "The next scheduled eBay pull is due now at the start of the current business window.",
     };
   }
 

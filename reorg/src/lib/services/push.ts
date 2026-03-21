@@ -19,6 +19,7 @@ import { createBackup } from "@/lib/services/backup";
 import { getMissingR2EnvVars, isR2Configured } from "@/lib/r2";
 import { runBigCommerceWebhookReconcile } from "@/lib/services/bigcommerce-sync";
 import { runShopifyWebhookReconcile } from "@/lib/services/shopify-sync";
+import type { PushError } from "@/lib/integrations/types";
 
 export interface PushRequest {
   userId: string;
@@ -147,6 +148,24 @@ function matchesPushChange(
 
 function matchesStringValue(a: string | null | undefined, b: string | null | undefined) {
   return (a ?? null) === (b ?? null);
+}
+
+function findPushError(
+  errors: PushError[],
+  platformItemId: string,
+  platformVariantId?: string | null,
+) {
+  return errors.find((entry) => {
+    if (entry.platformItemId !== platformItemId) {
+      return false;
+    }
+
+    if (platformVariantId != null) {
+      return (entry.platformVariantId ?? null) === platformVariantId;
+    }
+
+    return true;
+  });
 }
 
 function buildPushSummary(byPlatform: Map<Platform, PushChangeItem[]>, results?: PushExecutionResult["results"]) {
@@ -1143,8 +1162,10 @@ export async function executePush(
               update.platformVariantId ?? null,
             ),
         );
-        const error = priceResult.errors.find(
-          (e) => e.platformItemId === update.platformItemId
+        const error = findPushError(
+          priceResult.errors,
+          update.platformItemId,
+          update.platformVariantId ?? null,
         );
         results.push({
           platform,
@@ -1168,9 +1189,7 @@ export async function executePush(
         const change = changes.find(
           (entry) => matchesPushChange(entry, "adRate", update.platformItemId),
         );
-        const error = adResult.errors.find(
-          (e) => e.platformItemId === update.platformItemId
-        );
+        const error = findPushError(adResult.errors, update.platformItemId, null);
         results.push({
           platform,
           listingId: update.platformItemId,
@@ -1198,8 +1217,10 @@ export async function executePush(
             update.platformVariantId ?? null,
           ),
         );
-        const error = upcResult.errors.find(
-          (e) => e.platformItemId === update.platformItemId,
+        const error = findPushError(
+          upcResult.errors,
+          update.platformItemId,
+          update.platformVariantId ?? null,
         );
         results.push({
           platform,

@@ -770,14 +770,18 @@ export default function SyncPage() {
   }, [loadStoreStatus, pollSyncStatus]);
 
   const syncStore = useCallback(
-    async (apiPlatform: string) => {
+    async (apiPlatform: string, mode?: "full" | "incremental") => {
       setSyncing((prev) => ({ ...prev, [apiPlatform]: "syncing" }));
       setResults((prev) => ({ ...prev, [apiPlatform]: "" }));
       setLiveJobs((prev) => ({ ...prev, [apiPlatform]: null }));
       setErrorsExpanded((prev) => ({ ...prev, [apiPlatform]: false }));
 
       try {
-        const res = await fetch(`/api/sync/${apiPlatform}`, { method: "POST" });
+        const res = await fetch(`/api/sync/${apiPlatform}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: mode ? JSON.stringify({ mode }) : undefined,
+        });
         const text = await res.text();
         let json: {
           data?: Record<string, unknown>;
@@ -819,8 +823,9 @@ export default function SyncPage() {
           return;
         }
 
+        const modeLabel = mode === "full" ? "Full sync" : "Sync";
         const message = data
-          ? `Done - ${data.itemsProcessed ?? 0} processed, ${data.itemsCreated ?? 0} created, ${data.itemsUpdated ?? 0} updated`
+          ? `${modeLabel} done - ${data.itemsProcessed ?? 0} processed, ${data.itemsCreated ?? 0} created, ${data.itemsUpdated ?? 0} updated`
           : "Sync completed";
 
         setSyncing((prev) => ({ ...prev, [apiPlatform]: "done" }));
@@ -1667,26 +1672,42 @@ export default function SyncPage() {
               ) : null}
 
               <div className="flex flex-wrap items-center justify-between gap-3">
-                <button
-                  type="button"
-                  disabled={!connected || isSyncing || cooldownActive}
-                  onClick={() => syncStore(store.apiPlatform)}
-                  className={cn(
-                    "inline-flex cursor-pointer items-center gap-2 rounded-md border border-border bg-background px-4 py-2 text-sm font-medium text-foreground",
-                    "transition-colors hover:bg-muted hover:text-foreground",
-                    "disabled:cursor-not-allowed disabled:opacity-50",
-                  )}
-                  aria-label={`Sync ${store.name} now`}
-                >
-                  {isSyncing ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
-                  ) : cooldownActive ? (
-                    <TimerReset className="h-3.5 w-3.5" aria-hidden />
-                  ) : (
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    disabled={!connected || isSyncing || cooldownActive}
+                    onClick={() => syncStore(store.apiPlatform)}
+                    className={cn(
+                      "inline-flex cursor-pointer items-center gap-2 rounded-md border border-border bg-background px-4 py-2 text-sm font-medium text-foreground",
+                      "transition-colors hover:bg-muted hover:text-foreground",
+                      "disabled:cursor-not-allowed disabled:opacity-50",
+                    )}
+                    aria-label={`Sync ${store.name} now`}
+                  >
+                    {isSyncing ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+                    ) : cooldownActive ? (
+                      <TimerReset className="h-3.5 w-3.5" aria-hidden />
+                    ) : (
+                      <RefreshCw className="h-3.5 w-3.5" aria-hidden />
+                    )}
+                    {isSyncing ? "Syncing..." : cooldownActive ? "Cooling down" : "Sync Now"}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!connected || isSyncing || cooldownActive}
+                    onClick={() => syncStore(store.apiPlatform, "full")}
+                    className={cn(
+                      "inline-flex cursor-pointer items-center gap-2 rounded-md border border-primary/40 bg-primary/10 px-4 py-2 text-sm font-medium text-primary",
+                      "transition-colors hover:bg-primary/15",
+                      "disabled:cursor-not-allowed disabled:opacity-50",
+                    )}
+                    aria-label={`Run full sync for ${store.name}`}
+                  >
                     <RefreshCw className="h-3.5 w-3.5" aria-hidden />
-                  )}
-                  {isSyncing ? "Syncing..." : cooldownActive ? "Cooling down" : "Sync Now"}
-                </button>
+                    Full Sync
+                  </button>
+                </div>
                 <span className="text-xs text-muted-foreground">Pull-only</span>
               </div>
             </article>

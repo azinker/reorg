@@ -6,6 +6,13 @@ import { getServerCachedValue } from "@/lib/server-cache";
 export async function GET() {
   try {
     const version = await getGridVersion();
+    if (process.env.NODE_ENV !== "production") {
+      const rows = await getGridData();
+      return NextResponse.json({
+        data: { rows, total: rows.length, version },
+      });
+    }
+
     const data = await getServerCachedValue({
       key: "api:grid",
       ttlMs: 5 * 60 * 1000,

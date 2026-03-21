@@ -116,6 +116,7 @@ interface PushConfirmModalProps {
   onClose: () => void;
   onApplied?: (result: PushApiData) => void;
   items: PushItem[];
+  previewItems?: PushItem[];
   autoRunDryRun?: boolean;
 }
 
@@ -140,6 +141,13 @@ function getChecklistClasses(status: ChecklistItem["status"]) {
   if (status === "warning") return "border-amber-500/30 bg-amber-500/10 text-amber-300";
   if (status === "completed") return "border-emerald-500/30 bg-emerald-500/10 text-emerald-300";
   return "border-blue-500/30 bg-blue-500/10 text-blue-300";
+}
+
+function formatDisplayValue(field: string, value: number | string | null): string {
+  if (field === "upc") {
+    return value == null ? "No UPC" : String(value);
+  }
+  return formatValue(field, value);
 }
 
 function getBanner(phase: ModalPhase, result: PushApiData | null, errorMessage: string | null) {
@@ -214,6 +222,7 @@ export function PushConfirmModal({
   onClose,
   onApplied,
   items,
+  previewItems,
   autoRunDryRun = false,
 }: PushConfirmModalProps) {
   const [phase, setPhase] = useState<ModalPhase>("review");
@@ -231,14 +240,46 @@ export function PushConfirmModal({
     setAutoDryRunStarted(false);
   }, [open, items]);
 
+  const reviewItems = previewItems?.length ? previewItems : activeItems;
+
   const groupedByListing = useMemo(() => {
-    return activeItems.reduce<Record<string, PushItem[]>>((acc, item) => {
+    return reviewItems.reduce<Record<string, PushItem[]>>((acc, item) => {
       const key = `${item.platform}:${item.listingId}`;
       if (!acc[key]) acc[key] = [];
       acc[key].push(item);
       return acc;
     }, {});
-  }, [activeItems]);
+  }, [reviewItems]);
+  const previewSummaryByPlatform = useMemo(() => {
+    const summary = new Map<
+      Platform,
+      { platform: Platform; changes: number; listingIds: Set<string>; fields: Set<"salePrice" | "adRate" | "upc"> }
+    >();
+
+    for (const item of reviewItems) {
+      const existing = summary.get(item.platform) ?? {
+        platform: item.platform,
+        changes: 0,
+        listingIds: new Set<string>(),
+        fields: new Set<"salePrice" | "adRate" | "upc">(),
+      };
+      existing.changes += 1;
+      existing.listingIds.add(item.listingId);
+      existing.fields.add(item.field);
+      summary.set(item.platform, existing);
+    }
+
+    return [...summary.values()].map((entry) => ({
+      platform: entry.platform,
+      changes: entry.changes,
+      distinctListings: entry.listingIds.size,
+      fields: [...entry.fields],
+    }));
+  }, [reviewItems]);
+  const showingPreviewPlan = Boolean(previewItems?.length);
+  const plannedListingCount = Object.keys(groupedByListing).length;
+  const plannedChangeCount = reviewItems.length;
+  const impactByStoreEntries = showingPreviewPlan ? previewSummaryByPlatform : (result?.summary.byPlatform ?? []);
 
   const failedResults = result?.results.filter((entry) => !entry.success) ?? [];
   const retryFailedItems = useMemo(() => {
@@ -328,7 +369,7 @@ export function PushConfirmModal({
                 {autoRunDryRun ? "Fast Push Review" : "Review Push"}
               </h2>
               <p className="text-xs text-muted-foreground">
-                {activeItems.length} change{activeItems.length === 1 ? "" : "s"} across {Object.keys(groupedByListing).length} listing
+                {reviewItems.length} change{reviewItems.length === 1 ? "" : "s"} across {Object.keys(groupedByListing).length} listing
                 {Object.keys(groupedByListing).length === 1 ? "" : "s"}
               </p>
             </div>
@@ -358,13 +399,13 @@ export function PushConfirmModal({
             <div className="rounded-xl border border-border bg-background/50 p-4">
               <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Listings</div>
               <div className="mt-1 text-2xl font-semibold text-foreground">
-                {result?.summary.distinctListings ?? Object.keys(groupedByListing).length}
+                {showingPreviewPlan ? plannedListingCount : (result?.summary.distinctListings ?? plannedListingCount)}
               </div>
             </div>
             <div className="rounded-xl border border-border bg-background/50 p-4">
               <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Changes</div>
               <div className="mt-1 text-2xl font-semibold text-foreground">
-                {result?.summary.totalChanges ?? items.length}
+                {showingPreviewPlan ? plannedChangeCount : (result?.summary.totalChanges ?? plannedChangeCount)}
               </div>
             </div>
             <div className="rounded-xl border border-border bg-background/50 p-4">
@@ -422,16 +463,18 @@ export function PushConfirmModal({
             </section>
           ) : null}
 
-          {result?.summary.byPlatform?.length ? (
+          {impactByStoreEntries.length ? (
             <section className="mb-5">
               <div className="mb-2">
                 <h3 className="text-sm font-semibold text-foreground">Impact By Store</h3>
                 <p className="text-xs text-muted-foreground">
-                  Dry run and live results are grouped here so you can see the size of each store update.
+                  {showingPreviewPlan
+                    ? "This shows the full Match UPC plan across every marketplace in the review."
+                    : "Dry run and live results are grouped here so you can see the size of each store update."}
                 </p>
               </div>
               <div className="grid gap-3 md:grid-cols-2">
-                {result.summary.byPlatform.map((entry) => (
+                {impactByStoreEntries.map((entry) => (
                   <article key={entry.platform} className="rounded-xl border border-border bg-background/50 p-4">
                     <div className="flex items-center gap-2">
                       <span className={cn("rounded border px-2 py-0.5 text-[10px] font-semibold uppercase", PLATFORM_COLORS[entry.platform])}>
@@ -509,7 +552,7 @@ export function PushConfirmModal({
                       <span className="text-muted-foreground">{entry.field}</span>
                     </div>
                     <div className="mt-2 text-sm text-foreground">
-                      {formatValue(entry.field, entry.oldValue)} → {formatValue(entry.field, entry.newValue)}
+                      {formatDisplayValue(entry.field, entry.oldValue)} → {formatDisplayValue(entry.field, entry.newValue)}
                     </div>
                     <div className="mt-1 text-xs text-red-300">{entry.error ?? "Unknown push error."}</div>
                   </article>
@@ -545,11 +588,11 @@ export function PushConfirmModal({
                             {item.field}
                           </span>
                           <span className="text-muted-foreground line-through">
-                            {formatValue(item.field, item.oldValue)}
+                            {formatDisplayValue(item.field, item.oldValue)}
                           </span>
                           <RefreshCw className="h-3.5 w-3.5 text-muted-foreground/60" />
                           <span className="font-semibold text-foreground">
-                            {formatValue(item.field, item.newValue)}
+                            {formatDisplayValue(item.field, item.newValue)}
                           </span>
                         </div>
                       ))}

@@ -24,6 +24,7 @@ import {
   LogOut,
   ShieldCheck,
   Sparkles,
+  CheckCircle2,
 } from "lucide-react";
 
 const PLATFORM_ORDER: Platform[] = ["TPP_EBAY", "TT_EBAY", "BIGCOMMERCE", "SHOPIFY"];
@@ -63,12 +64,18 @@ export function TopBar({ user, onOpenSidebar }: TopBarProps) {
   const isNotConnected = connectionInfo?.source === "mock";
   const summary = connectionInfo?.summary ?? null;
   const hasTooltip = isConnected && summary != null;
-  const titleText =
-    connectionInfo == null
-      ? "Marketplace Operations"
-      : isConnected
-        ? "Marketplace Operations - Connected to Database"
-        : "Marketplace Operations - Not Connected";
+  const detailText =
+    summary == null
+      ? ""
+      : `${summary.actualProducts} actual products loaded from ${summary.masterGroups} TPP master SKU groups${
+          summary.variationParents > 0
+            ? ` (${summary.standaloneRows} single-SKU rows + ${summary.childRows} child SKUs inside ${summary.variationParents} parent containers)`
+            : ""
+        } • Related listings: ${PLATFORM_ORDER.map((platform) => {
+          const count = summary.listingCounts.get(platform)?.size ?? 0;
+          const label = PLATFORM_SHORT[platform];
+          return `${label} ${count}`;
+        }).join(" • ")}`;
 
   function handleTourClick() {
     const page = onboardingPageFromPathname(pathname);
@@ -96,27 +103,27 @@ export function TopBar({ user, onOpenSidebar }: TopBarProps) {
           role={hasTooltip ? "button" : undefined}
           tabIndex={hasTooltip ? 0 : undefined}
         >
-          <span
-            className={cn(
-              "text-sm font-medium",
-              connectionInfo == null && "text-muted-foreground",
-              isConnected && "text-emerald-500",
-              isNotConnected && "text-amber-500"
-            )}
-          >
-            {titleText}
-          </span>
+          {connectionInfo == null ? (
+            <span className="text-sm font-medium text-muted-foreground">
+              Marketplace Operations
+            </span>
+          ) : isConnected ? (
+            <span className="inline-flex items-center gap-2 text-sm font-medium text-emerald-500">
+              <CheckCircle2 className="h-4 w-4 shrink-0" />
+              <span>Connected to database</span>
+            </span>
+          ) : (
+            <span className="text-sm font-medium text-amber-500">
+              Not connected
+            </span>
+          )}
           {tooltipOpen && hasTooltip && summary && (
             <div
               className="absolute left-0 top-full z-[120] mt-1 w-[320px] rounded-lg border border-border bg-popover p-3 text-left text-popover-foreground shadow-xl"
               role="tooltip"
             >
               <p className="text-xs text-muted-foreground leading-snug">
-                {summary.actualProducts} actual products loaded from {summary.masterGroups} TPP master SKU groups
-                {summary.variationParents > 0
-                  ? ` (${summary.standaloneRows} single-SKU rows + ${summary.childRows} child SKUs inside ${summary.variationParents} parent containers)`
-                  : ""}
-                .
+                {detailText}
               </p>
               <p className="mt-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
                 Related listings

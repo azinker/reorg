@@ -707,14 +707,8 @@ function EditableAdRateBlock({
   const [showActions, setShowActions] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const livePercentValue = Math.round((item.value != null ? Number(item.value) : 0) * 1000) / 10;
-  const livePercent = ((item.value != null ? Number(item.value) : 0) * 100).toFixed(1);
   const effectivePercentValue = Math.round((hasStaged ? Number(item.stagedValue) : (item.value != null ? Number(item.value) : 0)) * 1000) / 10;
-  const effectivePercent = (() => {
-    const current = hasStaged ? Number(item.stagedValue) : (item.value != null ? Number(item.value) : 0);
-    return (current * 100).toFixed(1);
-  })();
   const quickPhase = quickPushState?.phase ?? "idle";
-  const fastPushBusy = quickPhase === "dry-run" || quickPhase === "pushing";
   const fastPushSucceeded = quickPhase === "success";
   const fastPushRetry = quickPhase === "error" || quickPhase === "blocked";
 
@@ -871,10 +865,11 @@ function EditableAdRateBlock({
 
   if (editing) {
     const parsedDraftPercent = parseDraftPercentValue(draftPercent);
-    const canConfirm = parsedDraftPercent != null && parsedDraftPercent !== livePercentValue;
+    const hasDraftChange = parsedDraftPercent != null && parsedDraftPercent !== effectivePercentValue;
+    const hasMeaningfulLiveChange = parsedDraftPercent != null && parsedDraftPercent !== livePercentValue;
 
     return (
-      <div className={cn("w-full min-w-0 rounded border px-2.5 py-1.5 text-xs", colorClass, "ring-1 ring-ring")}>
+      <div className={cn("relative z-10 w-full min-w-0 rounded border px-2.5 py-1.5 text-xs", colorClass, "ring-1 ring-ring")}>
         <div className="flex items-center gap-1 mb-1">
           <PlatformIcon platform={item.platform} className="h-3.5 w-3.5 shrink-0" />
           <div className="shrink-0 flex flex-col items-start">
@@ -890,21 +885,21 @@ function EditableAdRateBlock({
             value={draftPercent}
             onChange={(e) => setDraftPercent(normalizePercentInput(e.target.value))}
             onKeyDown={(e) => {
-              if (e.key === "Enter" && canConfirm) setShowActions(true);
+              if (e.key === "Enter" && hasMeaningfulLiveChange) setShowActions(true);
               if (e.key === "Escape") cancelEdit();
             }}
             maxLength={5}
-            className="w-14 shrink-0 rounded border bg-background px-1.5 py-0.5 text-xs font-mono text-foreground outline-none focus:ring-1 focus:ring-ring"
+            className="w-16 shrink-0 rounded border bg-background px-1.5 py-0.5 text-xs font-mono text-foreground outline-none focus:ring-1 focus:ring-ring"
           />
           <span className="shrink-0 text-[10px] text-muted-foreground">%</span>
           <button
             onClick={() => {
-              if (canConfirm) setShowActions(true);
+              if (hasMeaningfulLiveChange) setShowActions(true);
             }}
-            disabled={!canConfirm}
+            disabled={!hasMeaningfulLiveChange}
             className={cn(
               "shrink-0 rounded p-0.5 cursor-pointer",
-              canConfirm ? "text-emerald-400 hover:text-emerald-300" : "text-muted-foreground/30 cursor-not-allowed",
+              hasMeaningfulLiveChange ? "text-emerald-400 hover:text-emerald-300" : "text-muted-foreground/30 cursor-not-allowed",
             )}
             title="Confirm"
           >
@@ -917,21 +912,27 @@ function EditableAdRateBlock({
         {showActions ? (
           <div className="mt-1.5 grid grid-cols-3 gap-1">
             <button
-              onClick={() => handleSave("stage")}
+              onClick={() => {
+                if (hasDraftChange) handleSave("stage");
+              }}
               className="inline-flex min-w-0 items-center justify-center rounded bg-[var(--staged)] px-1.5 py-1.5 text-[9px] font-bold leading-none text-[var(--staged-foreground)] hover:opacity-80 cursor-pointer"
               title="Stage ad rate to review before pushing"
             >
               {renderCompactButtonLabel("Stage")}
             </button>
             <button
-              onClick={() => handleSave("push")}
+              onClick={() => {
+                if (hasDraftChange) handleSave("push");
+              }}
               className="inline-flex min-w-0 items-center justify-center rounded bg-emerald-500 px-1.5 py-1.5 text-[9px] font-bold leading-none text-white hover:bg-emerald-600 cursor-pointer"
               title="Review the guarded live push flow for this ad rate"
             >
               {renderCompactButtonLabel("Review Push")}
             </button>
             <button
-              onClick={handleFastPush}
+              onClick={() => {
+                if (hasDraftChange) handleFastPush();
+              }}
               className="inline-flex min-w-0 items-center justify-center rounded bg-blue-500 px-1.5 py-1.5 text-[9px] font-bold leading-none text-white hover:bg-blue-600 cursor-pointer"
               title="Run the guarded fast push for this one ad rate"
             >

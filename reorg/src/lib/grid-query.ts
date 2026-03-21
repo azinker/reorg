@@ -3,7 +3,7 @@ import { calcProfit, calcFee } from "@/lib/grid-types";
 import type { GridRow, StoreValue, Platform, UpcPushTarget } from "@/lib/grid-types";
 import { Prisma } from "@prisma/client";
 
-const UPC_PUSH_PLATFORMS = new Set<Platform>(["BIGCOMMERCE", "SHOPIFY"]);
+const UPC_PUSH_PLATFORMS = new Set<Platform>(["TPP_EBAY", "TT_EBAY", "BIGCOMMERCE", "SHOPIFY"]);
 
 const masterRowWithRelations = Prisma.validator<Prisma.MasterRowDefaultArgs>()({
   select: {
@@ -195,6 +195,32 @@ async function fetchMasterRows() {
   };
 }
 
+function buildStagedMap(
+  stagedChanges: Array<{
+    marketplaceListingId: string | null;
+    field: string;
+    stagedValue: string;
+    liveValue: string | null;
+  }>,
+) {
+  const stagedMap = new Map<
+    string,
+    { field: string; stagedValue: string; liveValue: string | null }
+  >();
+
+  for (const sc of stagedChanges) {
+    if (sc.marketplaceListingId) {
+      stagedMap.set(`${sc.marketplaceListingId}-${sc.field}`, {
+        field: sc.field,
+        stagedValue: sc.stagedValue,
+        liveValue: sc.liveValue,
+      });
+    }
+  }
+
+  return stagedMap;
+}
+
 async function fetchShippingRates(): Promise<Map<string, number>> {
   const rates = await db.shippingRate.findMany({ where: { cost: { not: null } } });
   const map = new Map<string, number>();
@@ -308,6 +334,34 @@ function buildUpcStageDetails(
   };
 }
 
+const ITEM_NUMBER_PLATFORM_ORDER: Record<Platform, number> = {
+  TPP_EBAY: 0,
+  TT_EBAY: 1,
+  SHOPIFY: 2,
+  BIGCOMMERCE: 3,
+};
+
+function sortItemNumbers(items: StoreValue[]): StoreValue[] {
+  return [...items].sort((a, b) => {
+    const platformDelta =
+      ITEM_NUMBER_PLATFORM_ORDER[a.platform] - ITEM_NUMBER_PLATFORM_ORDER[b.platform];
+    if (platformDelta !== 0) {
+      return platformDelta;
+    }
+
+    const listingDelta = String(a.listingId).localeCompare(String(b.listingId), undefined, {
+      numeric: true,
+    });
+    if (listingDelta !== 0) {
+      return listingDelta;
+    }
+
+    return String(a.variantId ?? "").localeCompare(String(b.variantId ?? ""), undefined, {
+      numeric: true,
+    });
+  });
+}
+
 async function fetchChildMasterSnapshots(parentListings: DBMasterRow["listings"]) {
   const childSkus = collectChildSkus(parentListings);
   if (childSkus.length === 0) return [];
@@ -359,7 +413,7 @@ function buildChildRowStubs(childMasters: DBChildMasterRowSnapshot[]): GridRow[]
       childRowsHydrated: true,
       alternateTitles: [],
       hasStagedChanges: cm.stagedChanges.length > 0,
-      itemNumbers: [...itemNumberMap.values()],
+      itemNumbers: sortItemNumbers([...itemNumberMap.values()]),
       salePrices: [],
       adRates: [],
       platformFees: [],
@@ -461,7 +515,7 @@ function buildFullChildRows(
         upcStage.hasStagedUpc ||
         childSalePrices.some((sp) => sp.stagedValue != null && sp.stagedValue !== sp.value)
         || childAdRates.some((ar) => ar.stagedValue != null && ar.stagedValue !== ar.value),
-      itemNumbers: childItemNumbers,
+      itemNumbers: sortItemNumbers(childItemNumbers),
       salePrices: childSalePrices,
       adRates: childAdRates,
       platformFees: childFees,
@@ -481,6 +535,7 @@ async function buildGridRow(
   const parentListings = master.listings.filter((l: DBListing) => !l.parentListingId);
   const totalChildListings = parentListings.reduce((sum: number, l: DBListing) => sum + (l.childListings?.length ?? 0), 0);
   const isVariationParent = totalChildListings > 0 || parentListings.some((l: DBListing) => l.isVariation && l.childListings.length > 0);
+  const hasVariationListings = parentListings.some((l: DBListing) => l.isVariation);
 
   const shippingCost = master.shippingCostOverride ?? lookupShipping(master.weight, shippingRateMap);
 
@@ -558,7 +613,7 @@ async function buildGridRow(
       appendItemNumber(itemNumberMap, item);
     }
   }
-  const itemNumbers: StoreValue[] = [...itemNumberMap.values()];
+  const itemNumbers: StoreValue[] = sortItemNumbers([...itemNumberMap.values()]);
 
   return {
     id: master.id,
@@ -575,7 +630,7 @@ async function buildGridRow(
     shippingCost: shippingCost,
     platformFeeRate: feeRate,
     inventory,
-    isVariation: isVariationParent,
+    isVariation: isVariationParent || hasVariationListings,
     isParent: isVariationParent,
     childRowsHydrated: !isVariationParent,
     alternateTitles,
@@ -587,6 +642,118 @@ async function buildGridRow(
     profits: isVariationParent ? [] : profits,
     childRows,
   };
+}
+
+function buildVariationFamilyKey(row: GridRow): string | null {
+  if (row.isParent || !row.isVariation || row.itemNumbers.length === 0) {
+    return null;
+  }
+
+  const platformItemPairs = [...new Set(
+    row.itemNumbers.map((item) => `${item.platform}:${item.listingId}`),
+  )].sort();
+
+  if (platformItemPairs.length === 0) {
+    return null;
+  }
+
+  return `${row.title}::${platformItemPairs.join("|")}`;
+}
+
+function buildSyntheticVariationParent(children: GridRow[], familyKey: string): GridRow {
+  const first = children[0];
+  const itemNumberMap = new Map<string, StoreValue>();
+  const alternateTitles: { title: string; platform: Platform; listingId: string }[] = [];
+
+  for (const child of children) {
+    for (const item of child.itemNumbers) {
+      appendItemNumber(itemNumberMap, item);
+    }
+    if (child.alternateTitles?.length) {
+      alternateTitles.push(...child.alternateTitles);
+    }
+  }
+
+  const inventoryValues = children
+    .map((child) => child.inventory)
+    .filter((value): value is number => value != null);
+
+  return {
+    id: `variation-parent:${familyKey}`,
+    sku: first.sku,
+    title: first.title,
+    upc: null,
+    stagedUpc: null,
+    hasStagedUpc: false,
+    upcPushTargets: [],
+    imageUrl: first.imageUrl,
+    imageSource: first.imageSource,
+    weight: first.weight,
+    supplierCost: first.supplierCost,
+    supplierShipping: first.supplierShipping,
+    shippingCost: first.shippingCost,
+    platformFeeRate: first.platformFeeRate,
+    inventory:
+      inventoryValues.length > 0
+        ? inventoryValues.reduce((sum, value) => sum + value, 0)
+        : null,
+    isVariation: true,
+    isParent: true,
+    childRows: children,
+    childRowsHydrated: true,
+    expanded: false,
+    alternateTitles,
+    itemNumbers: sortItemNumbers([...itemNumberMap.values()]),
+    salePrices: [],
+    adRates: [],
+    profits: [],
+    platformFees: [],
+    hasStagedChanges: children.some((child) => child.hasStagedChanges),
+  };
+}
+
+function consolidateStandaloneVariationRows(rows: GridRow[]): GridRow[] {
+  const groups = new Map<string, GridRow[]>();
+
+  for (const row of rows) {
+    const familyKey = buildVariationFamilyKey(row);
+    if (!familyKey) continue;
+    const existing = groups.get(familyKey);
+    if (existing) {
+      existing.push(row);
+    } else {
+      groups.set(familyKey, [row]);
+    }
+  }
+
+  if (![...groups.values()].some((group) => group.length > 1)) {
+    return rows;
+  }
+
+  const emittedFamilies = new Set<string>();
+  const groupedRowIds = new Set(
+    [...groups.entries()]
+      .filter(([, group]) => group.length > 1)
+      .flatMap(([, group]) => group.map((row) => row.id)),
+  );
+
+  const result: GridRow[] = [];
+  for (const row of rows) {
+    const familyKey = buildVariationFamilyKey(row);
+    if (!familyKey || !groupedRowIds.has(row.id)) {
+      result.push(row);
+      continue;
+    }
+
+    if (emittedFamilies.has(familyKey)) {
+      continue;
+    }
+
+    emittedFamilies.add(familyKey);
+    result.push(buildSyntheticVariationParent(groups.get(familyKey) ?? [row], familyKey));
+  }
+
+  return result;
 }
 
 
@@ -609,23 +776,13 @@ export async function getGridData(): Promise<GridRow[]> {
     });
 
     for (const master of parentRows) {
-      const stagedMap = new Map<string, { field: string; stagedValue: string; liveValue: string | null }>();
-      for (const sc of master.stagedChanges) {
-        if (sc.marketplaceListingId) {
-          stagedMap.set(`${sc.marketplaceListingId}-${sc.field}`, {
-            field: sc.field,
-            stagedValue: sc.stagedValue,
-            liveValue: sc.liveValue,
-          });
-        }
-      }
-
+      const stagedMap = buildStagedMap(master.stagedChanges);
       const gridRow = await buildGridRow(master, stagedMap, shippingRateMap, feeRate);
       rows.push(gridRow);
     }
   }
 
-  return rows;
+  return consolidateStandaloneVariationRows(rows);
 }
 
 export async function getGridChildRows(parentRowId: string): Promise<GridRow[]> {
@@ -645,6 +802,42 @@ export async function getGridChildRows(parentRowId: string): Promise<GridRow[]> 
   const feeRate = feeRateSetting?.value != null ? Number(feeRateSetting.value) : 0.136;
   const parentListings = master.listings.filter((listing: DBListing) => !listing.parentListingId);
   return buildChildRows(parentListings, shippingRateMap, feeRate);
+}
+
+export async function getGridRowById(rowId: string): Promise<GridRow | null> {
+  const isChildRow = rowId.startsWith("child-");
+  const normalizedRowId = isChildRow ? rowId.slice("child-".length) : rowId;
+
+  const [shippingRateMap, feeRateSetting] = await Promise.all([
+    fetchShippingRates(),
+    db.appSetting.findUnique({ where: { key: "platformFeeRate" } }),
+  ]);
+
+  const feeRate = feeRateSetting?.value != null ? Number(feeRateSetting.value) : 0.136;
+
+  if (isChildRow) {
+    const childMaster = await db.masterRow.findUnique({
+      where: { id: normalizedRowId },
+      ...childMasterRowFullSelect,
+    });
+
+    if (!childMaster) {
+      return null;
+    }
+
+    return buildFullChildRows([childMaster], shippingRateMap, feeRate)[0] ?? null;
+  }
+
+  const master = await db.masterRow.findUnique({
+    where: { id: normalizedRowId },
+    ...masterRowWithRelations,
+  });
+
+  if (!master) {
+    return null;
+  }
+
+  return buildGridRow(master, buildStagedMap(master.stagedChanges), shippingRateMap, feeRate);
 }
 
 async function buildChildRowsSnapshot(parentListings: DBMasterRow["listings"]): Promise<GridRow[]> {

@@ -1,6 +1,6 @@
 import { db } from "@/lib/db";
 
-async function removeMarketplaceListingsByIds(listingIds: string[]) {
+export async function removeMarketplaceListingsByIds(listingIds: string[]) {
   if (listingIds.length === 0) {
     return { deletedListings: 0, deletedMasterRows: 0 };
   }
@@ -58,6 +58,30 @@ async function removeMarketplaceListingsByIds(listingIds: string[]) {
     deletedListings: deletedListings.count,
     deletedMasterRows: orphanedIds.length,
   };
+}
+
+export async function removeMarketplaceListingsOlderThan(
+  integrationId: string,
+  cutoff: Date,
+) {
+  const listings = await db.marketplaceListing.findMany({
+    where: {
+      integrationId,
+      OR: [
+        { lastSyncedAt: null },
+        { lastSyncedAt: { lt: cutoff } },
+      ],
+    },
+    select: {
+      id: true,
+    },
+  });
+
+  if (listings.length === 0) {
+    return { deletedListings: 0, deletedMasterRows: 0 };
+  }
+
+  return removeMarketplaceListingsByIds(listings.map((listing) => listing.id));
 }
 
 export async function removeMarketplaceListingsByPlatformItemIds(

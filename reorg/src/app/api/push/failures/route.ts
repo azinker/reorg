@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
+import { isAuthBypassEnabled } from "@/lib/app-env";
 import { db } from "@/lib/db";
 import { PLATFORM_FULL, PLATFORM_SHORT } from "@/lib/grid-types";
 import { classifyPushFailure } from "@/lib/push-failure";
@@ -34,7 +35,7 @@ function formatValue(field: string, value: number | string | null) {
 
 export async function GET() {
   const session = await auth();
-  if (!session?.user?.id) {
+  if (!session?.user?.id && !isAuthBypassEnabled()) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 

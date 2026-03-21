@@ -20,7 +20,7 @@ export function CopyValue({ value, children, className }: CopyValueProps) {
   }
 
   return (
-    <span className={`group/copy relative inline-flex items-center gap-1 ${className ?? ""}`}>
+    <span className={`group/copy relative inline-flex min-w-0 items-center gap-1 ${className ?? ""}`}>
       {children}
       <button
         onClick={handleCopy}

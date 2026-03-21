@@ -28,6 +28,18 @@ export async function GET() {
         connected,
         incrementalReady: isIncrementalReady(i.platform),
         livePushEnabled,
+        accountUserId:
+          typeof config.accountUserId === "string" ? config.accountUserId : null,
+        accountStoreName:
+          typeof config.accountStoreName === "string" ? config.accountStoreName : null,
+        accountSellerLevel:
+          typeof config.accountSellerLevel === "string" ? config.accountSellerLevel : null,
+        storeHash:
+          typeof config.storeHash === "string" ? config.storeHash : null,
+        storeDomain:
+          typeof config.storeDomain === "string" ? config.storeDomain : null,
+        environment:
+          typeof config.environment === "string" ? config.environment : null,
         syncProfile: config.syncProfile,
         syncState: config.syncState,
       };

@@ -15,6 +15,7 @@ import {
   buildEbayIncrementalBudgetPlan,
   getPendingIncrementalWindow,
 } from "@/lib/services/ebay-sync-budget";
+import { removeMarketplaceListingsOlderThan } from "@/lib/services/listing-prune";
 
 const TRADING_API = "https://api.ebay.com/ws/api.dll";
 const SITE_ID = "0";
@@ -49,6 +50,7 @@ interface EbayConfig {
   refreshToken: string;
   accessToken?: string;
   accessTokenExpiresAt?: number;
+  accountUserId?: string | null;
 }
 
 interface SyncProgress {
@@ -88,7 +90,7 @@ class EbayTradingApiError extends Error {
   }
 }
 
-type UpsertResult = "created" | "updated" | "variation_parent";
+type UpsertResult = "created" | "updated" | "variation_parent" | "deleted";
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -97,6 +99,36 @@ function sleep(ms: number) {
 function clearAccessTokenCache(config: EbayConfig) {
   config.accessToken = undefined;
   config.accessTokenExpiresAt = undefined;
+}
+
+function extractSellerUserId(item: unknown): string | null {
+  const seller = obj(item, "Seller");
+  return seller ? str(seller, "UserID") ?? null : null;
+}
+
+function matchesConfiguredSeller(item: unknown, config: EbayConfig): boolean {
+  const expectedSellerId = config.accountUserId?.trim().toLowerCase();
+  if (!expectedSellerId) {
+    return true;
+  }
+
+  const actualSellerId = extractSellerUserId(item)?.trim().toLowerCase();
+  if (!actualSellerId) {
+    return true;
+  }
+
+  return actualSellerId === expectedSellerId;
+}
+
+async function removeForeignSellerListings(integrationId: string, itemId: string) {
+  await Promise.all([
+    db.marketplaceListing.deleteMany({
+      where: { integrationId, platformItemId: itemId },
+    }),
+    db.unmatchedListing.deleteMany({
+      where: { integrationId, platformItemId: itemId },
+    }),
+  ]);
 }
 
 function normalizeTradingErrors(rawErrors: unknown): Array<Record<string, unknown>> {
@@ -169,6 +201,8 @@ export async function runEbayTppSync(
     certId,
     refreshToken,
     accessToken: config.accessToken as string | undefined,
+    accountUserId:
+      typeof config.accountUserId === "string" ? config.accountUserId : null,
     accessTokenExpiresAt: config.accessTokenExpiresAt as number | undefined,
   };
 
@@ -336,6 +370,7 @@ export async function runEbayTppSync(
             const directResult = await tryApplyIncrementalQuantityFirstTppItem(
               incrementalEventItemsById?.[itemId],
               integration.id,
+              ebayConfig,
             );
             if (directResult) {
               directResults.set(itemId, directResult);
@@ -374,7 +409,7 @@ export async function runEbayTppSync(
 
               const fullItem = fetched.value;
               const result = fullItem
-                ? await upsertEbayItem(fullItem, integration.id)
+                ? await upsertEbayItem(fullItem, integration.id, ebayConfig)
                 : null;
 
               if (!result) {
@@ -463,6 +498,24 @@ export async function runEbayTppSync(
       }
 
       await runFullSync(integration.id, ebayConfig, syncJob.id, progress);
+      const stalePrune = await removeMarketplaceListingsOlderThan(
+        integration.id,
+        syncJob.startedAt ?? new Date(0),
+      );
+      if (stalePrune.deletedListings > 0 || stalePrune.deletedMasterRows > 0) {
+        console.log(
+          `[ebay-tpp-sync] Pruned ${stalePrune.deletedListings} stale TPP listings and ${stalePrune.deletedMasterRows} orphaned master rows after full sync`,
+        );
+      }
+      await db.unmatchedListing.deleteMany({
+        where: {
+          integrationId: integration.id,
+          OR: [
+            { lastSyncedAt: null },
+            { lastSyncedAt: { lt: syncJob.startedAt ?? new Date(0) } },
+          ],
+        },
+      });
     }
 
     progress.status = "COMPLETED";
@@ -639,7 +692,24 @@ async function runFullSync(
     page++;
 
     for (const item of items) {
-      const result = await upsertEbayItem(item, integrationId);
+      const itemId = str(item, "ItemID");
+      let itemForUpsert = item;
+
+      if (itemId && needsFullItemForUpc(item)) {
+        try {
+          itemForUpsert = (await fetchFullItem(integrationId, ebayConfig, itemId)) ?? item;
+        } catch (error) {
+          progress.errors.push({
+            sku: itemId,
+            message:
+              error instanceof Error
+                ? `GetItem UPC hydrate failed: ${error.message}`
+                : "GetItem UPC hydrate failed.",
+          });
+        }
+      }
+
+      const result = await upsertEbayItem(itemForUpsert, integrationId, ebayConfig);
       progress.itemsProcessed++;
       if (result === "created") progress.itemsCreated++;
       else if (result === "updated") progress.itemsUpdated++;
@@ -1033,6 +1103,17 @@ function extractVariationUpc(variation: unknown): string | null {
   return null;
 }
 
+function needsFullItemForUpc(item: unknown): boolean {
+  const variationsNode = obj(item, "Variations");
+  const variationList = variationsNode ? arr(variationsNode, "Variation") : [];
+
+  if (variationList.length === 0) {
+    return !extractUpc(item);
+  }
+
+  return variationList.some((variation) => !extractVariationUpc(variation));
+}
+
 function extractVariationImageUrl(
   variation: unknown,
   variationPictures: unknown,
@@ -1063,9 +1144,15 @@ function extractVariationImageUrl(
 async function upsertEbayItem(
   item: unknown,
   integrationId: string,
+  config: EbayConfig,
 ): Promise<UpsertResult> {
   const itemId = str(item, "ItemID");
   if (!itemId) throw new Error("Item has no ItemID");
+
+  if (!matchesConfiguredSeller(item, config)) {
+    await removeForeignSellerListings(integrationId, itemId);
+    return "deleted";
+  }
 
   const title = str(item, "Title");
   const imageUrl = extractImageUrl(item);
@@ -1215,7 +1302,10 @@ async function upsertEbayItem(
   const currentPrice = sellingStatus
     ? num(sellingStatus, "CurrentPrice")
     : undefined;
-  const quantity = sellingStatus ? (num(sellingStatus, "Quantity") ?? 0) : 0;
+  const quantity =
+    num(item, "Quantity") ??
+    (sellingStatus ? num(sellingStatus, "Quantity") : undefined) ??
+    0;
   const quantitySold = sellingStatus
     ? (num(sellingStatus, "QuantitySold") ?? 0)
     : 0;
@@ -1264,6 +1354,7 @@ async function upsertEbayItem(
 async function tryApplyIncrementalQuantityFirstTppItem(
   item: unknown,
   integrationId: string,
+  config: EbayConfig,
 ): Promise<UpsertResult | null> {
   if (!item || typeof item !== "object") {
     return null;
@@ -1272,6 +1363,11 @@ async function tryApplyIncrementalQuantityFirstTppItem(
   const itemId = str(item, "ItemID");
   if (!itemId) {
     return null;
+  }
+
+  if (!matchesConfiguredSeller(item, config)) {
+    await removeForeignSellerListings(integrationId, itemId);
+    return "deleted";
   }
 
   const title = str(item, "Title");

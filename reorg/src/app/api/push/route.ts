@@ -6,6 +6,7 @@ import { executePush } from "@/lib/services/push";
 import { buildAdapter } from "@/lib/integrations/factory";
 import { getIntegrationConfig } from "@/lib/integrations/runtime-config";
 import { isLivePushEnabled } from "@/lib/automation-settings";
+import { isAuthBypassEnabled } from "@/lib/app-env";
 import type { Platform } from "@prisma/client";
 
 const pushSchema = z.object({
@@ -134,8 +135,9 @@ export async function POST(request: NextRequest) {
 
     const { changes, dryRun, confirmedLivePush } = parsed.data;
     const session = await auth();
+    const actorUserId = session?.user?.id ?? ((isAuthBypassEnabled() ? (await getSystemUser()).id : null));
 
-    if (!session?.user?.id) {
+    if (!actorUserId) {
       return NextResponse.json(
         { error: "You must be signed in to run a push dry run." },
         { status: 401 },
@@ -188,7 +190,7 @@ export async function POST(request: NextRequest) {
     });
     const result = await executePush(
       {
-        userId: session.user.id,
+        userId: actorUserId,
         changes: resolvedChanges,
         dryRun,
       },
@@ -240,4 +242,18 @@ export async function POST(request: NextRequest) {
       { status: 500 }
     );
   }
+}
+
+async function getSystemUser() {
+  let user = await db.user.findFirst({ where: { role: "ADMIN" } });
+  if (!user) {
+    user = await db.user.create({
+      data: {
+        email: "system@reorg.internal",
+        name: "System",
+        role: "ADMIN",
+      },
+    });
+  }
+  return user;
 }

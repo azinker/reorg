@@ -2,6 +2,8 @@ import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { db } from "@/lib/db";
 
+const UPC_STAGEABLE_PLATFORMS = new Set(["TPP_EBAY", "TT_EBAY", "BIGCOMMERCE", "SHOPIFY"]);
+
 const stageSchema = z.object({
   action: z.enum(["stage", "push", "discard", "clear_all"]),
   sku: z.string().optional(),
@@ -60,14 +62,117 @@ export async function POST(request: NextRequest) {
     }
 
     if (targetField === "upc") {
-      const eligibleListings = master.listings.filter((entry) =>
-        entry.integration.platform === "BIGCOMMERCE" || entry.integration.platform === "SHOPIFY",
-      );
+      const isTargetedUpcAction = Boolean(platform && listingId);
+      const eligibleListings = master.listings.filter((entry) => {
+        const platformEligible = UPC_STAGEABLE_PLATFORMS.has(entry.integration.platform);
+        if (!platformEligible) return false;
+        if (platform && entry.integration.platform !== platform) return false;
+        if (listingId && entry.platformItemId !== listingId) return false;
+        return true;
+      });
 
       if (action === "stage") {
         const normalizedUpc = newValue?.trim() ?? "";
         if (!normalizedUpc) {
           return NextResponse.json({ error: "newValue required for UPC staging" }, { status: 400 });
+        }
+
+        if (isTargetedUpcAction && eligibleListings.length === 0) {
+          return NextResponse.json({ error: "Supported UPC listing not found" }, { status: 404 });
+        }
+
+        const liveValue = master.upc?.trim() || null;
+
+        if (isTargetedUpcAction) {
+          const targetListingIds = eligibleListings.map((listing) => listing.id);
+          const existingStages = await db.stagedChange.findMany({
+            where: {
+              masterRowId: master.id,
+              marketplaceListingId: { in: targetListingIds },
+              field: "upc",
+              status: "STAGED",
+            },
+          });
+
+          const allTargetsAlreadyStaged =
+            existingStages.length === targetListingIds.length &&
+            existingStages.every((change) => change.stagedValue?.trim() === normalizedUpc);
+
+          if (allTargetsAlreadyStaged) {
+            return NextResponse.json({
+              data: {
+                action: "noop",
+                reason: "unchanged",
+                sku,
+                platform,
+                listingId,
+                field: "upc",
+                newValue: normalizedUpc,
+              },
+            });
+          }
+
+          await db.stagedChange.updateMany({
+            where: {
+              masterRowId: master.id,
+              marketplaceListingId: { in: targetListingIds },
+              field: "upc",
+              status: "STAGED",
+            },
+            data: { status: "CANCELLED" },
+          });
+
+          const systemUser = await getSystemUser();
+          const createdStages = await Promise.all(
+            eligibleListings.map((listing) =>
+              db.stagedChange.create({
+                data: {
+                  masterRowId: master.id,
+                  marketplaceListingId: listing.id,
+                  field: "upc",
+                  stagedValue: normalizedUpc,
+                  liveValue: liveValue,
+                  changedById: systemUser.id,
+                },
+              }),
+            ),
+          );
+
+          await db.auditLog.create({
+            data: {
+              userId: systemUser.id,
+              action: "staged_change",
+              entityType: "StagedChange",
+              entityId: master.id,
+              details: {
+                sku: master.sku,
+                field: "upc",
+                oldValue: liveValue,
+                newValue: normalizedUpc,
+                platform,
+                listingId,
+                targetCount: eligibleListings.length,
+              },
+            },
+          });
+
+          return NextResponse.json({
+            data: {
+              action: "staged",
+              sku,
+              platform,
+              listingId,
+              field: "upc",
+              newValue: normalizedUpc,
+              targetCount: eligibleListings.length,
+              targets: eligibleListings.map((listing, index) => ({
+                platform: listing.integration.platform,
+                listingId: listing.platformItemId,
+                marketplaceListingId: listing.id,
+                stagedChangeId: createdStages[index]?.id ?? null,
+              })),
+            },
+          });
         }
 
         const existingStaged = await db.stagedChange.findFirst({
@@ -78,7 +183,6 @@ export async function POST(request: NextRequest) {
           },
           orderBy: { createdAt: "desc" },
         });
-        const liveValue = master.upc?.trim() || null;
         const effectiveValue = existingStaged?.stagedValue?.trim() || liveValue;
 
         if (effectiveValue === normalizedUpc) {
@@ -154,17 +258,33 @@ export async function POST(request: NextRequest) {
       }
 
       if (action === "discard") {
+        if (isTargetedUpcAction && eligibleListings.length === 0) {
+          return NextResponse.json({ error: "Supported UPC listing not found" }, { status: 404 });
+        }
+
         const discarded = await db.stagedChange.updateMany({
           where: {
             masterRowId: master.id,
             field: "upc",
             status: "STAGED",
+            ...(isTargetedUpcAction
+              ? {
+                  marketplaceListingId: { in: eligibleListings.map((listing) => listing.id) },
+                }
+              : {}),
           },
           data: { status: "CANCELLED" },
         });
 
         return NextResponse.json({
-          data: { action: "discarded", sku, field: "upc", count: discarded.count },
+          data: {
+            action: "discarded",
+            sku,
+            platform,
+            listingId,
+            field: "upc",
+            count: discarded.count,
+          },
         });
       }
 

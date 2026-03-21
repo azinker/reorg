@@ -3,11 +3,11 @@
 import { useState, useMemo, useRef, useEffect } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { cn } from "@/lib/utils";
-import type { GridRow, FilterState, ColumnConfig, StoreValue, Platform } from "@/lib/grid-types";
+import type { GridRow, FilterState, ColumnConfig, StoreValue, Platform, UpcPushTarget } from "@/lib/grid-types";
 import { DEFAULT_COLUMNS, PLATFORM_SHORT, PLATFORM_FULL, PLATFORM_COLORS, calcProfit, calcFee } from "@/lib/grid-types";
 import { StickySearch } from "@/components/grid/sticky-search";
 import { FilterBar } from "@/components/grid/filter-bar";
-import { UpcCell } from "@/components/grid/cells/upc-cell";
+import { UpcCell, type LiveUpcChoice } from "@/components/grid/cells/upc-cell";
 import { PhotoCell, PhotoOverlay } from "@/components/grid/cells/photo-cell";
 import { ItemNumberCell } from "@/components/grid/cells/item-number-cell";
 import {
@@ -31,8 +31,13 @@ import { useSettings } from "@/lib/use-settings";
 import { getDensityPadding, getRowHeightEstimate } from "@/lib/settings-store";
 import { usePlatformFee } from "@/lib/use-platform-fee";
 import {
+  GRID_INTERACTION_EVENT,
+  type GridInteractionDetail,
+} from "@/lib/grid-interaction-lock";
+import {
   Plus,
   Minus,
+  Check,
   AlertTriangle,
   Download,
   ArrowUpDown,
@@ -41,6 +46,7 @@ import {
   Trash2,
   ArrowRight,
   RefreshCw,
+  X,
 } from "lucide-react";
 
 interface DataGridProps {
@@ -49,6 +55,7 @@ interface DataGridProps {
 
 type PushField = "salePrice" | "adRate" | "upc";
 type PushLaunchMode = "review" | "fast";
+type RowRefreshPhase = "loading" | "success";
 
 type FailedPushItem = PushItem & {
   retryKey: string;
@@ -62,6 +69,50 @@ type FailedPushItem = PushItem & {
   failureCategory: string;
   failureSummary: string;
   recommendedAction: string;
+};
+
+type NormalizedLiveUpcChoice = LiveUpcChoice & {
+  normalizedValue: string;
+};
+
+type MatchUpcPlan = {
+  rowId: string;
+  sku: string;
+  title: string;
+  majorityUpc: string;
+  allowSingleSource: boolean;
+  sourceChoices: NormalizedLiveUpcChoice[];
+  mismatchChoices: NormalizedLiveUpcChoice[];
+  actionableMismatchChoices: NormalizedLiveUpcChoice[];
+  lockedMismatchChoices: NormalizedLiveUpcChoice[];
+  stageTargets: UpcPushTarget[];
+  previewItems: PushItem[];
+};
+
+type MatchUpcPlanResult =
+  | {
+      ok: true;
+      plan: MatchUpcPlan;
+    }
+  | {
+      ok: false;
+      message: string;
+      canMatchAnyway: boolean;
+    };
+
+type BulkMatchUpcCandidate = {
+  id: string;
+  sku: string;
+  title: string;
+  majorityUpc: string;
+  modeLabel: string;
+  sourceChoices: NormalizedLiveUpcChoice[];
+  mismatchChoices: NormalizedLiveUpcChoice[];
+  actionableCount: number;
+  previewCount: number;
+  lockedCount: number;
+  note: string | null;
+  plan: MatchUpcPlan;
 };
 
 const DEFAULT_FILTERS: FilterState = {
@@ -169,6 +220,9 @@ function flattenForRender(rows: GridRow[], expandedSet: Set<string>, stockFilter
 
     flat.push({ ...row, depth: 0 });
     if (row.isParent && row.childRows && isExpanded) {
+      if (!row.childRowsHydrated) {
+        continue;
+      }
       let children = row.childRows;
       if (stagedOnly) {
         children = children.filter((c) => c.hasStagedChanges);
@@ -186,11 +240,11 @@ function flattenForRender(rows: GridRow[], expandedSet: Set<string>, stockFilter
 }
 
 const COL_WIDTHS: Record<string, string> = {
-  expand: "w-[36px]",
+  expand: "w-[72px]",
   photo: "w-[112px]",
-  upc: "w-[180px]",
+  upc: "w-[240px]",
   itemIds: "w-[240px]",
-  sku: "w-[180px]",
+  sku: "w-[240px]",
   title: "w-[320px]",
   qty: "w-[100px]",
   salePrice: "w-[240px]",
@@ -199,9 +253,69 @@ const COL_WIDTHS: Record<string, string> = {
   suppShip: "w-[100px]",
   shipCost: "w-[90px]",
   platformFees: "w-[200px]",
-  adRate: "w-[200px]",
+  adRate: "w-[240px]",
   profit: "w-[240px]",
 };
+
+const ITEM_NUMBER_PLATFORM_ORDER: Record<Platform, number> = {
+  TPP_EBAY: 0,
+  TT_EBAY: 1,
+  SHOPIFY: 2,
+  BIGCOMMERCE: 3,
+};
+
+function sortItemNumbersForDisplay(items: StoreValue[]): StoreValue[] {
+  return [...items].sort((a, b) => {
+    const platformDelta =
+      ITEM_NUMBER_PLATFORM_ORDER[a.platform] - ITEM_NUMBER_PLATFORM_ORDER[b.platform];
+    if (platformDelta !== 0) {
+      return platformDelta;
+    }
+
+    const listingDelta = String(a.listingId).localeCompare(String(b.listingId), undefined, {
+      numeric: true,
+    });
+    if (listingDelta !== 0) {
+      return listingDelta;
+    }
+
+    return String(a.variantId ?? "").localeCompare(String(b.variantId ?? ""), undefined, {
+      numeric: true,
+    });
+  });
+}
+
+function rebuildParentFromChildren(parent: GridRow): GridRow {
+  if (!parent.isParent || !parent.childRows?.length) {
+    return parent;
+  }
+
+  const itemNumberMap = new Map<string, StoreValue>();
+  for (const child of parent.childRows) {
+    for (const item of child.itemNumbers) {
+      const key = `${item.platform}:${item.listingId}`;
+      if (!itemNumberMap.has(key)) {
+        itemNumberMap.set(key, item);
+      }
+    }
+  }
+
+  const inventoryValues = parent.childRows
+    .map((child) => child.inventory)
+    .filter((value): value is number => value != null);
+
+  return {
+    ...parent,
+    inventory:
+      inventoryValues.length > 0
+        ? inventoryValues.reduce((sum, value) => sum + value, 0)
+        : null,
+    itemNumbers: sortItemNumbersForDisplay([...itemNumberMap.values()]),
+    hasStagedChanges:
+      Boolean(parent.hasStagedUpc) || parent.childRows.some((child) => child.hasStagedChanges),
+    childRowsHydrated: true,
+  };
+}
 
 function applyShippingLookup(row: GridRow, lookup: (w: string | null) => number | null): GridRow {
   const shipCost = lookup(row.weight);
@@ -245,6 +359,25 @@ function recalcRowStatic(row: GridRow, overrideFeeRate?: number): GridRow {
     || row.adRates.some((ar) => ar.stagedValue != null && ar.stagedValue !== ar.value)
     || Boolean(row.stagedUpc && row.stagedUpc !== row.upc);
   return { ...row, platformFeeRate: ebayFeeRate, platformFees: newFees, profits: newProfits, hasStagedChanges: hasStaged };
+}
+
+function mergeIncomingRows(prevRows: GridRow[], nextRows: GridRow[]): GridRow[] {
+  const prevById = new Map(prevRows.map((row) => [row.id, row]));
+
+  return structuredClone(nextRows).map((row) => {
+    const prev = prevById.get(row.id);
+    if (!prev || !row.isParent) return row;
+
+    if (prev.childRowsHydrated && prev.childRows?.length) {
+      return {
+        ...row,
+        childRows: prev.childRows,
+        childRowsHydrated: true,
+      };
+    }
+
+    return row;
+  });
 }
 
 function PlatformFeeHeader({ feeRate, onSave }: { feeRate: number; onSave: (rate: number) => void }) {
@@ -335,10 +468,58 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
   const densityPad = getDensityPadding(settings.density);
   const rowEstimate = getRowHeightEstimate(settings.rowHeight);
   const [gridRows, setGridRows] = useState<GridRow[]>(() => structuredClone(initialRows));
+  const [activeGridInteractionIds, setActiveGridInteractionIds] = useState<Set<string>>(() => new Set());
+  const pendingInitialRowsRef = useRef<GridRow[] | null>(null);
+  const [pushModalOpen, setPushModalOpen] = useState(false);
+  const [pushModalItems, setPushModalItems] = useState<PushItem[]>([]);
+  const [pushModalPreviewItems, setPushModalPreviewItems] = useState<PushItem[]>([]);
+  const [pushModalLaunchMode, setPushModalLaunchMode] = useState<PushLaunchMode>("review");
+
+  function isInteractionLocked() {
+    return activeGridInteractionIds.size > 0 || pushModalOpen;
+  }
 
   useEffect(() => {
-    setGridRows(structuredClone(initialRows));
-  }, [initialRows]);
+    if (isInteractionLocked()) {
+      pendingInitialRowsRef.current = initialRows;
+      return;
+    }
+
+    setGridRows((prev) => mergeIncomingRows(prev, initialRows));
+  }, [activeGridInteractionIds, initialRows, pushModalOpen]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    function handleInteractionLock(event: Event) {
+      const customEvent = event as CustomEvent<GridInteractionDetail>;
+      const detail = customEvent.detail;
+      if (!detail?.sourceId) return;
+
+      setActiveGridInteractionIds((prev) => {
+        const next = new Set(prev);
+        if (detail.active) {
+          next.add(detail.sourceId);
+        } else {
+          next.delete(detail.sourceId);
+        }
+        return next;
+      });
+    }
+
+    window.addEventListener(GRID_INTERACTION_EVENT, handleInteractionLock as EventListener);
+    return () => {
+      window.removeEventListener(GRID_INTERACTION_EVENT, handleInteractionLock as EventListener);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (isInteractionLocked() || !pendingInitialRowsRef.current) return;
+
+    const pendingRows = pendingInitialRowsRef.current;
+    pendingInitialRowsRef.current = null;
+    setGridRows((prev) => mergeIncomingRows(prev, pendingRows));
+  }, [activeGridInteractionIds, pushModalOpen]);
 
   useEffect(() => {
     setGridRows((prev) =>
@@ -374,17 +555,16 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
   );
   const [highlightedRowId, setHighlightedRowId] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
-  const [pushModalOpen, setPushModalOpen] = useState(false);
-  const [pushModalItems, setPushModalItems] = useState<PushItem[]>([]);
-  const [pushModalLaunchMode, setPushModalLaunchMode] = useState<PushLaunchMode>("review");
   const [failedPushes, setFailedPushes] = useState<FailedPushItem[]>([]);
   const [failedPushesOpen, setFailedPushesOpen] = useState(false);
   const [failedPushesLoading, setFailedPushesLoading] = useState(false);
   const [quickPushStates, setQuickPushStates] = useState<Record<string, QuickPushState>>({});
   const [childRowsLoading, setChildRowsLoading] = useState<Record<string, boolean>>({});
+  const [rowRefreshStates, setRowRefreshStates] = useState<Record<string, RowRefreshPhase>>({});
   const [pendingScrollRowId, setPendingScrollRowId] = useState<string | null>(null);
   const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const quickPushTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const rowRefreshTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const childRowsLoadRef = useRef<Partial<Record<string, Promise<boolean>>>>({});
   const parentRef = useRef<HTMLDivElement>(null);
 
@@ -393,8 +573,225 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
     setTimeout(() => setToast(null), 4000);
   }
 
+  function setRowRefreshPhase(rowIds: string[], phase: RowRefreshPhase) {
+    setRowRefreshStates((prev) => {
+      const next = { ...prev };
+      for (const rowId of rowIds) {
+        next[rowId] = phase;
+      }
+      return next;
+    });
+  }
+
+  function clearRowRefreshPhase(rowIds: string[]) {
+    setRowRefreshStates((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      for (const rowId of rowIds) {
+        if (next[rowId]) {
+          delete next[rowId];
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }
+
+  function resetRowRefreshTimers(rowIds: string[]) {
+    for (const rowId of rowIds) {
+      if (rowRefreshTimersRef.current[rowId]) {
+        clearTimeout(rowRefreshTimersRef.current[rowId]);
+        delete rowRefreshTimersRef.current[rowId];
+      }
+    }
+  }
+
+  function scheduleRowRefreshReset(rowIds: string[]) {
+    for (const rowId of rowIds) {
+      rowRefreshTimersRef.current[rowId] = setTimeout(() => {
+        clearRowRefreshPhase([rowId]);
+        delete rowRefreshTimersRef.current[rowId];
+      }, 2400);
+    }
+  }
+
   function replaceParentRow(rowId: string, updater: (row: GridRow) => GridRow) {
     setGridRows((prev) => prev.map((row) => (row.id === rowId ? updater(row) : row)));
+  }
+
+  function applyRefreshedRowSnapshot(
+    rowId: string,
+    refreshedRow: GridRow,
+    parentRowId?: string,
+    refreshedChildRows?: GridRow[] | null,
+  ) {
+    setGridRows((prev) =>
+      prev.map((entry) => {
+        if (parentRowId) {
+          if (entry.id !== parentRowId) {
+            return entry;
+          }
+
+          const currentChildren = entry.childRows ?? [];
+          const nextChildren = currentChildren.map((child) =>
+            child.id === rowId ? refreshedRow : child,
+          );
+
+          return rebuildParentFromChildren({
+            ...entry,
+            childRows: nextChildren,
+          });
+        }
+
+        if (entry.id !== rowId) {
+          return entry;
+        }
+
+        if (refreshedChildRows) {
+          return {
+            ...refreshedRow,
+            childRows: refreshedChildRows,
+            childRowsHydrated: true,
+          };
+        }
+
+        if (entry.isParent && entry.childRowsHydrated && entry.childRows?.length) {
+          return {
+            ...refreshedRow,
+            childRows: entry.childRows,
+            childRowsHydrated: true,
+          };
+        }
+
+        return refreshedRow;
+      }),
+    );
+  }
+
+  async function handleRefreshRow(rowId: string, parentRowId?: string) {
+    const currentParentRow = parentRowId
+      ? gridRows.find((entry) => entry.id === parentRowId)
+      : null;
+    const currentRow = parentRowId
+      ? currentParentRow?.childRows?.find((child) => child.id === rowId) ?? null
+      : gridRows.find((entry) => entry.id === rowId) ?? null;
+
+    const refreshFamilyIds =
+      currentRow?.isParent && currentRow.childRows?.length
+        ? [rowId, ...currentRow.childRows.map((child) => child.id)]
+        : [rowId];
+
+    resetRowRefreshTimers(refreshFamilyIds);
+    setRowRefreshPhase(refreshFamilyIds, "loading");
+
+    try {
+      const shouldReloadChildren = Boolean(
+        !parentRowId && currentRow?.isParent && currentRow.childRowsHydrated,
+      );
+
+      if (currentRow?.isParent && rowId.startsWith("variation-parent:")) {
+        const childRows = currentRow.childRows ?? [];
+        if (childRows.length === 0) {
+          throw new Error("Variation parent has no child rows to refresh.");
+        }
+
+        const childResponses = await Promise.all(
+          childRows.map(async (child) => {
+            const response = await fetch(`/api/grid/${child.id}/refresh`, {
+              method: "POST",
+            });
+            const payload = await response.json().catch(() => ({}));
+            if (!response.ok) {
+              throw new Error(
+                payload?.error ?? `Failed to refresh child row ${child.sku} (${response.status})`,
+              );
+            }
+
+            const refreshedChild = (payload?.data?.row ?? null) as GridRow | null;
+            if (!refreshedChild) {
+              throw new Error(`Refresh completed, but child row ${child.sku} was missing its updated payload.`);
+            }
+
+            return {
+              childId: child.id,
+              childSku: child.sku,
+              row: refreshedChild,
+              message: payload?.data?.message as string | undefined,
+            };
+          }),
+        );
+
+        const refreshedChildrenById = new Map(
+          childResponses.map((result) => [result.childId, result.row]),
+        );
+        const refreshedChildren = childRows.map((child) =>
+          refreshedChildrenById.get(child.id) ?? child,
+        );
+
+        applyRefreshedRowSnapshot(
+          rowId,
+          rebuildParentFromChildren({
+            ...currentRow,
+            childRows: refreshedChildren,
+          }),
+          undefined,
+          refreshedChildren,
+        );
+
+        const successIds = [rowId, ...refreshedChildren.map((child) => child.id)];
+        setRowRefreshPhase(successIds, "success");
+        scheduleRowRefreshReset(successIds);
+        showToast(`Refreshed ${refreshedChildren.length} variation SKU${refreshedChildren.length === 1 ? "" : "s"}.`);
+        return;
+      }
+
+      const response = await fetch(`/api/grid/${rowId}/refresh`, {
+        method: "POST",
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload?.error ?? `Failed to refresh row (${response.status})`);
+      }
+
+      const refreshedRow = (payload?.data?.row ?? null) as GridRow | null;
+      if (!refreshedRow) {
+        throw new Error("Refresh completed, but the updated row payload was missing.");
+      }
+
+      let refreshedChildRows: GridRow[] | null = null;
+      if (shouldReloadChildren) {
+        const childResponse = await fetch(`/api/grid/${rowId}/children`, {
+          cache: "no-store",
+        });
+        const childPayload = await childResponse.json().catch(() => ({}));
+        if (!childResponse.ok) {
+          throw new Error(
+            childPayload?.error ??
+              `Failed to refresh variation rows (${childResponse.status})`,
+          );
+        }
+
+        refreshedChildRows = (childPayload?.data?.rows ?? []) as GridRow[];
+      }
+
+      applyRefreshedRowSnapshot(rowId, refreshedRow, parentRowId, refreshedChildRows);
+
+      const message =
+        typeof payload?.data?.message === "string" && payload.data.message.trim()
+          ? payload.data.message
+          : "Row refresh completed.";
+      setRowRefreshPhase(refreshFamilyIds, "success");
+      scheduleRowRefreshReset(refreshFamilyIds);
+      showToast(message);
+    } catch (error) {
+      console.error("[data-grid] failed to refresh row", error);
+      clearRowRefreshPhase(refreshFamilyIds);
+      showToast(
+        error instanceof Error
+          ? error.message
+          : "Failed to refresh row. Please try again.",
+      );
+    }
   }
 
   async function ensureChildRowsLoaded(rowId: string) {
@@ -464,15 +861,21 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
   useEffect(() => {
     return () => {
       Object.values(quickPushTimersRef.current).forEach((timer) => clearTimeout(timer));
+      Object.values(rowRefreshTimersRef.current).forEach((timer) => clearTimeout(timer));
     };
   }, []);
 
-  function queuePushReview(items: PushItem[], launchMode: PushLaunchMode = "review") {
+  function queuePushReview(
+    items: PushItem[],
+    launchMode: PushLaunchMode = "review",
+    previewItems?: PushItem[],
+  ) {
     if (items.length === 0) {
       showToast("No staged changes were ready to review for push.");
       return;
     }
     setPushModalItems(items);
+    setPushModalPreviewItems(previewItems ?? items);
     setPushModalLaunchMode(launchMode);
     setPushModalOpen(true);
   }
@@ -532,7 +935,10 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
         platform: platform as Platform,
         listingId,
         platformVariantId: target.variantId,
-        stagedChangeId: target.stagedChangeId ?? undefined,
+        stagedChangeId:
+          target.stagedChangeId && !isLocalUpcStageId(target.stagedChangeId)
+            ? target.stagedChangeId
+            : undefined,
         masterRowId: row.id.startsWith("child-") ? row.id.replace(/^child-/, "") : row.id,
         marketplaceListingId: target.marketplaceListingId ?? undefined,
         field,
@@ -571,10 +977,28 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
     };
   }
 
+  function buildLocalUpcStageId(platform: string, listingId: string) {
+    return `local:${platform}:${listingId}`;
+  }
+
+  function isLocalUpcStageId(value: string | null | undefined) {
+    return typeof value === "string" && value.startsWith("local:");
+  }
+
+  function getActiveUpcTargets(row: GridRow | undefined) {
+    if (!row || row.isParent) return [];
+
+    const allTargets = row.upcPushTargets ?? [];
+    const stagedTargets = allTargets.filter((target) => Boolean(target.stagedChangeId));
+    return stagedTargets.length > 0 ? stagedTargets : allTargets;
+  }
+
   function buildUpcPushItems(row: GridRow | undefined): PushItem[] {
     if (!row || row.isParent || !row.hasStagedUpc || !row.stagedUpc) return [];
 
-    return (row.upcPushTargets ?? [])
+    const activeTargets = getActiveUpcTargets(row);
+
+    return activeTargets
       .map((target) =>
         buildPushItem(row, target.platform, target.listingId, "upc", row.stagedUpc ?? undefined),
       )
@@ -584,12 +1008,13 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
   function buildUpcPushChoices(row: GridRow | undefined) {
     if (!row || row.isParent) return [];
 
+    const activeTargets = getActiveUpcTargets(row);
     const counts = new Map<string, number>();
-    for (const target of row.upcPushTargets ?? []) {
+    for (const target of activeTargets) {
       counts.set(target.platform, (counts.get(target.platform) ?? 0) + 1);
     }
 
-    return (row.upcPushTargets ?? []).map((target) => {
+    return activeTargets.map((target) => {
       const short = PLATFORM_SHORT[target.platform];
       const duplicatePlatform = (counts.get(target.platform) ?? 0) > 1;
       return {
@@ -598,6 +1023,294 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
         label: duplicatePlatform ? `${short} #${target.listingId.slice(-6)}` : short,
       };
     });
+  }
+
+  async function fetchLiveUpcChoices(rowId: string): Promise<LiveUpcChoice[]> {
+    let lastError: Error | null = null;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        const response = await fetch(`/api/grid/${rowId}/upc-live`, { cache: "no-store" });
+        if (!response.ok) {
+          throw new Error(`Failed to load live UPC summary (${response.status})`);
+        }
+        const payload = (await response.json()) as {
+          data?: {
+            choices?: LiveUpcChoice[];
+          };
+        };
+        return payload.data?.choices ?? [];
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error("Failed to load live UPC summary.");
+      }
+    }
+    throw lastError ?? new Error("Failed to load live UPC summary.");
+  }
+
+  async function fetchBulkLiveUpcChoices(rowIds: string[]) {
+    const choicesByRowId = new Map<string, LiveUpcChoice[]>();
+
+    for (let index = 0; index < rowIds.length; index += 250) {
+      const batch = rowIds.slice(index, index + 250);
+      const response = await fetch("/api/grid/upc-bulk", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        cache: "no-store",
+        body: JSON.stringify({ rowIds: batch }),
+      });
+
+      const payload = (await response.json().catch(() => ({}))) as {
+        data?: {
+          items?: Array<{
+            rowId?: string;
+            choices?: LiveUpcChoice[];
+          }>;
+        };
+        error?: string;
+      };
+
+      if (!response.ok) {
+        throw new Error(payload.error ?? `Failed to bulk load live UPC summaries (${response.status})`);
+      }
+
+      for (const item of payload.data?.items ?? []) {
+        if (!item.rowId) continue;
+        choicesByRowId.set(item.rowId, item.choices ?? []);
+      }
+    }
+
+    return choicesByRowId;
+  }
+
+  function buildMatchUpcPlan(
+    row: GridRow | undefined,
+    choices: LiveUpcChoice[],
+    options?: { allowSingleSource?: boolean },
+  ): MatchUpcPlanResult {
+    if (!row || row.isParent) {
+      return {
+        ok: false,
+        message: "Match UPC can only be used on a single row or child row.",
+        canMatchAnyway: false,
+      };
+    }
+
+    const normalizedChoices: NormalizedLiveUpcChoice[] = choices.map((choice) => ({
+      ...choice,
+      normalizedValue: choice.value?.trim() ?? "",
+    }));
+    const populatedChoices = normalizedChoices.filter((choice) => choice.normalizedValue.length > 0);
+
+    if (populatedChoices.length === 0) {
+      return {
+        ok: false,
+        message: `Match UPC needs at least one live UPC on SKU ${row.sku}.`,
+        canMatchAnyway: false,
+      };
+    }
+
+    const counts = new Map<string, number>();
+    for (const choice of populatedChoices) {
+      counts.set(choice.normalizedValue, (counts.get(choice.normalizedValue) ?? 0) + 1);
+    }
+
+    const rankedUpcs = [...counts.entries()].sort((a, b) => b[1] - a[1]);
+    const topCount = rankedUpcs[0]?.[1] ?? 0;
+    const leaders = rankedUpcs.filter(([, count]) => count === topCount);
+    const singleSourceCandidate =
+      populatedChoices.length === 1 &&
+      normalizedChoices.length > 1 &&
+      normalizedChoices.every(
+        (choice) =>
+          choice.normalizedValue.length === 0 ||
+          choice.normalizedValue === populatedChoices[0]?.normalizedValue,
+      );
+    const allowSingleSource = Boolean(options?.allowSingleSource && singleSourceCandidate);
+
+    if (leaders.length !== 1 || (topCount < 2 && !allowSingleSource)) {
+      return {
+        ok: false,
+        message:
+          singleSourceCandidate
+            ? "Only one marketplace has a UPC on this row. Use Match Anyway if you want the blank marketplaces to inherit that UPC."
+            : topCount < 2
+              ? "Match UPC needs at least two marketplaces sharing the same UPC before it can update the others."
+              : "Match UPC could not run because there is no majority UPC. The marketplaces are tied, so please choose the correct UPC manually.",
+        canMatchAnyway: singleSourceCandidate,
+      };
+    }
+
+    const majorityUpc =
+      allowSingleSource
+        ? (populatedChoices[0]?.normalizedValue ?? "")
+        : (leaders[0]?.[0] ?? "");
+    if (!majorityUpc) {
+      return {
+        ok: false,
+        message: `Match UPC could not determine the majority UPC for SKU ${row.sku}.`,
+        canMatchAnyway: false,
+      };
+    }
+
+    const sourceChoices = normalizedChoices.filter((choice) => choice.normalizedValue === majorityUpc);
+    const mismatchChoices = normalizedChoices.filter((choice) => choice.normalizedValue !== majorityUpc);
+    const actionableMismatchChoices = mismatchChoices.filter((choice) => choice.editable);
+    const lockedMismatchChoices = mismatchChoices.filter((choice) => !choice.editable);
+
+    if (actionableMismatchChoices.length === 0) {
+      return {
+        ok: false,
+        message:
+          mismatchChoices.length === 0
+            ? `All editable marketplaces already match UPC ${majorityUpc} on SKU ${row.sku}.`
+            : "The differing marketplaces are not available for UPC push from this row yet.",
+        canMatchAnyway: false,
+      };
+    }
+
+    const mismatchedPlatforms = new Set(actionableMismatchChoices.map((choice) => choice.platform));
+    const stageTargets = (row.upcPushTargets ?? []).filter((target) => mismatchedPlatforms.has(target.platform));
+    if (stageTargets.length === 0) {
+      return {
+        ok: false,
+        message: "Match UPC found the outlier UPC, but none of those marketplaces can be staged from this row.",
+        canMatchAnyway: false,
+      };
+    }
+
+    const previewItems: PushItem[] = mismatchChoices.map((choice) => {
+      const itemNumber = row.itemNumbers.find((item) => item.platform === choice.platform);
+      return {
+        sku: row.sku,
+        title: row.title,
+        platform: choice.platform,
+        listingId: itemNumber?.listingId ?? choice.label,
+        platformVariantId: itemNumber?.variantId,
+        masterRowId: row.id.startsWith("child-") ? row.id.replace(/^child-/, "") : row.id,
+        field: "upc",
+        oldValue: choice.value,
+        newValue: majorityUpc,
+      };
+    });
+
+    return {
+      ok: true,
+      plan: {
+        rowId: row.id,
+        sku: row.sku,
+        title: row.title,
+        majorityUpc,
+        allowSingleSource,
+        sourceChoices,
+        mismatchChoices,
+        actionableMismatchChoices,
+        lockedMismatchChoices,
+        stageTargets,
+        previewItems,
+      },
+    };
+  }
+
+  async function stageMatchUpcPlan(plan: MatchUpcPlan) {
+    const row = findRow(plan.rowId);
+    if (!row || row.isParent) {
+      return null;
+    }
+
+    const results = await Promise.allSettled(
+      plan.stageTargets.map((target) =>
+        persistUpcAction(row.sku, "stage", plan.majorityUpc, {
+          platform: target.platform,
+          listingId: target.listingId,
+        }),
+      ),
+    );
+
+    const successfulTargets = plan.stageTargets.filter((_, index) => results[index]?.status === "fulfilled");
+    if (successfulTargets.length === 0) {
+      return null;
+    }
+
+    const stagedTargetMeta = new Map<
+      string,
+      { stagedChangeId: string | null; marketplaceListingId: string | null; platform: Platform; listingId: string }
+    >();
+    for (const [index, result] of results.entries()) {
+      if (result.status !== "fulfilled") continue;
+      const payload = result.value as {
+        data?: {
+          targets?: Array<{
+            platform?: string;
+            listingId?: string;
+            marketplaceListingId?: string | null;
+            stagedChangeId?: string | null;
+          }>;
+        };
+      };
+      const targets = payload.data?.targets ?? [];
+      for (const target of targets) {
+        if (!target.platform || !target.listingId) continue;
+        stagedTargetMeta.set(`${target.platform}:${target.listingId}`, {
+          platform: target.platform as Platform,
+          listingId: target.listingId,
+          marketplaceListingId: target.marketplaceListingId ?? null,
+          stagedChangeId: target.stagedChangeId ?? null,
+        });
+      }
+
+      if (targets.length === 0) {
+        const fallbackTarget = plan.stageTargets[index];
+        if (!fallbackTarget) continue;
+        stagedTargetMeta.set(`${fallbackTarget.platform}:${fallbackTarget.listingId}`, {
+          platform: fallbackTarget.platform,
+          listingId: fallbackTarget.listingId,
+          marketplaceListingId: fallbackTarget.marketplaceListingId,
+          stagedChangeId: null,
+        });
+      }
+    }
+
+    const successfulKeys = new Set([...stagedTargetMeta.keys()]);
+    const choiceByPlatform = new Map(plan.mismatchChoices.map((choice) => [choice.platform, choice]));
+    const pushItems: PushItem[] = successfulTargets.map((target) => {
+      const meta = stagedTargetMeta.get(`${target.platform}:${target.listingId}`);
+      const liveChoice = choiceByPlatform.get(target.platform);
+      return {
+        sku: row.sku,
+        title: row.title,
+        platform: target.platform,
+        listingId: target.listingId,
+        platformVariantId: target.variantId,
+        stagedChangeId: meta?.stagedChangeId ?? undefined,
+        masterRowId: row.id.startsWith("child-") ? row.id.replace(/^child-/, "") : row.id,
+        marketplaceListingId: meta?.marketplaceListingId ?? target.marketplaceListingId ?? undefined,
+        field: "upc",
+        oldValue: liveChoice?.value ?? row.upc,
+        newValue: plan.majorityUpc,
+      };
+    });
+
+    updateRowById(plan.rowId, (current) => ({
+      ...current,
+      stagedUpc: plan.majorityUpc,
+      hasStagedUpc: true,
+      hasStagedChanges: true,
+      upcPushTargets: (current.upcPushTargets ?? []).map((target) => ({
+        ...target,
+        stagedChangeId: successfulKeys.has(`${target.platform}:${target.listingId}`)
+          ? (stagedTargetMeta.get(`${target.platform}:${target.listingId}`)?.stagedChangeId ??
+            buildLocalUpcStageId(target.platform, target.listingId))
+          : target.stagedChangeId ?? null,
+      })),
+    }));
+
+    return {
+      pushItems,
+      previewItems: plan.previewItems,
+      successfulTargets,
+      failedCount: results.length - successfulTargets.length,
+      majorityUpc: plan.majorityUpc,
+      rowSku: row.sku,
+    };
   }
 
   async function submitPushRequest(items: PushItem[], dryRun: boolean, confirmedLivePush: boolean) {
@@ -813,7 +1526,9 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
         upc: upcCompleted ? successfulUpcByMasterRow.get(masterRowId) ?? row.upc : row.upc,
         stagedUpc: upcCompleted ? null : row.stagedUpc ?? null,
         hasStagedUpc: upcCompleted ? false : row.hasStagedUpc ?? false,
-        upcPushTargets: row.upcPushTargets,
+        upcPushTargets: upcCompleted
+          ? row.upcPushTargets?.map((target) => ({ ...target, stagedChangeId: null }))
+          : row.upcPushTargets,
         salePrices,
         adRates,
         childRows,
@@ -1180,6 +1895,161 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
     [sortedRows, expandedRows, filters.stockStatus, filters.stagedOnly]
   );
 
+  function collectBulkUpcRows(rows: GridRow[]): GridRow[] {
+    const collected: GridRow[] = [];
+    for (const row of rows) {
+      if (!row.isParent) {
+        collected.push(row);
+      }
+      if (row.childRows?.length) {
+        collected.push(...collectBulkUpcRows(row.childRows));
+      }
+    }
+    return collected;
+  }
+
+  function closeBulkUpcModal() {
+    setBulkUpcOpen(false);
+    setBulkUpcLoading(false);
+    setBulkUpcSubmitting(null);
+    setBulkUpcCandidates([]);
+    setBulkUpcSelectedIds(new Set());
+  }
+
+  async function openBulkUpcModal() {
+    setBulkUpcOpen(true);
+    setBulkUpcLoading(true);
+    setBulkUpcSubmitting(null);
+    setBulkUpcCandidates([]);
+    setBulkUpcSelectedIds(new Set());
+
+    const rowsToScan = collectBulkUpcRows(filteredRows);
+    try {
+      const choicesByRowId = await fetchBulkLiveUpcChoices(rowsToScan.map((row) => row.id));
+      const results: Array<BulkMatchUpcCandidate | null> = [];
+      let skippedCount = 0;
+
+      for (const row of rowsToScan) {
+        const choices = choicesByRowId.get(row.id);
+        if (!choices) {
+          skippedCount += 1;
+          continue;
+        }
+
+        let planResult = buildMatchUpcPlan(row, choices);
+        if (!planResult.ok && planResult.canMatchAnyway) {
+          planResult = buildMatchUpcPlan(row, choices, { allowSingleSource: true });
+        }
+        if (!planResult.ok) {
+          continue;
+        }
+
+        const { plan } = planResult;
+        const note =
+          plan.lockedMismatchChoices.length > 0
+            ? `Locked now: ${plan.lockedMismatchChoices.map((choice) => choice.label).join(", ")}.`
+            : null;
+
+        results.push({
+          id: row.id,
+          sku: row.sku,
+          title: row.title,
+          majorityUpc: plan.majorityUpc,
+          modeLabel: plan.allowSingleSource ? "Fill blank UPCs" : "Match minority UPCs",
+          sourceChoices: plan.sourceChoices,
+          mismatchChoices: plan.mismatchChoices,
+          actionableCount: plan.stageTargets.length,
+          previewCount: plan.previewItems.length,
+          lockedCount: plan.lockedMismatchChoices.length,
+          note,
+          plan,
+        } satisfies BulkMatchUpcCandidate);
+      }
+
+      const candidates = results
+        .filter((candidate): candidate is BulkMatchUpcCandidate => Boolean(candidate))
+        .sort((a, b) => a.title.localeCompare(b.title) || a.sku.localeCompare(b.sku));
+
+      setBulkUpcCandidates(candidates);
+      setBulkUpcSelectedIds(new Set(candidates.map((candidate) => candidate.id)));
+      if (skippedCount > 0) {
+        showToast(`Bulk Match UPC skipped ${skippedCount} rows that could not be read right now.`);
+      }
+    } catch (error) {
+      showToast(
+        error instanceof Error
+          ? error.message
+          : "Bulk Match UPC could not load the current grid.",
+      );
+      setBulkUpcCandidates([]);
+      setBulkUpcSelectedIds(new Set());
+    } finally {
+      setBulkUpcLoading(false);
+    }
+  }
+
+  async function runBulkUpcAction(mode: "stage" | "review" | "fast") {
+    if (bulkUpcSelectedCandidates.length === 0) {
+      showToast("Select at least one row to bulk match UPCs.");
+      return;
+    }
+
+    setBulkUpcSubmitting(mode);
+    const allPushItems: PushItem[] = [];
+    const allPreviewItems: PushItem[] = [];
+    let stagedRows = 0;
+    let failedRows = 0;
+    let stagedTargets = 0;
+
+    for (const candidate of bulkUpcSelectedCandidates) {
+      const staged = await stageMatchUpcPlan(candidate.plan);
+      if (!staged) {
+        failedRows += 1;
+        continue;
+      }
+
+      stagedRows += 1;
+      stagedTargets += staged.successfulTargets.length;
+      allPushItems.push(...staged.pushItems);
+      allPreviewItems.push(...staged.previewItems);
+    }
+
+    setBulkUpcSubmitting(null);
+
+    if (allPushItems.length === 0) {
+      showToast("Bulk Match UPC could not stage any rows.");
+      return;
+    }
+
+    closeBulkUpcModal();
+
+    if (mode === "fast") {
+      void startInlineFastPushItems(`bulk-upc:${Date.now()}`, allPushItems);
+      showToast(
+        failedRows > 0
+          ? `Bulk Match UPC fast push started for ${stagedRows} rows. ${failedRows} rows could not be staged.`
+          : `Bulk Match UPC fast push started for ${stagedRows} rows.`,
+      );
+      return;
+    }
+
+    if (mode === "review") {
+      queuePushReview(allPushItems, "review", allPreviewItems);
+      showToast(
+        failedRows > 0
+          ? `Bulk Match UPC queued ${stagedTargets} staged marketplace changes for review. ${failedRows} rows could not be staged.`
+          : `Bulk Match UPC queued ${stagedTargets} staged marketplace changes for review.`,
+      );
+      return;
+    }
+
+    showToast(
+      failedRows > 0
+        ? `Bulk Match UPC staged ${stagedTargets} marketplace changes across ${stagedRows} rows. ${failedRows} rows could not be staged.`
+        : `Bulk Match UPC staged ${stagedTargets} marketplace changes across ${stagedRows} rows.`,
+    );
+  }
+
   function handlePushStagedUpc(
     rowId: string,
     launchMode: PushLaunchMode = "review",
@@ -1228,7 +2098,10 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
       ...current,
       stagedUpc: null,
       hasStagedUpc: false,
-      upcPushTargets: current.upcPushTargets,
+      upcPushTargets: (current.upcPushTargets ?? []).map((target) => ({
+        ...target,
+        stagedChangeId: null,
+      })),
       hasStagedChanges:
         current.salePrices.some((entry) => entry.stagedValue != null && entry.stagedValue !== entry.value) ||
         current.adRates.some((entry) => entry.stagedValue != null && entry.stagedValue !== entry.value),
@@ -1240,12 +2113,70 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
     showToast(`Staged UPC discarded for SKU ${row.sku}.`);
   }
 
-  function persistUpcAction(sku: string, action: string, newUpc?: string) {
+  function handleDiscardStagedUpcTarget(rowId: string, platform: string, listingId: string) {
+    const row = findRow(rowId);
+    if (!row || !row.hasStagedUpc) {
+      showToast("No staged UPC is waiting on this row.");
+      return;
+    }
+
+    const targetKey = `${platform}:${listingId}`;
+    updateRowById(rowId, (current) => {
+      const nextTargets = (current.upcPushTargets ?? []).map((target) =>
+        target.platform === platform && target.listingId === listingId
+          ? { ...target, stagedChangeId: null }
+          : target,
+      );
+      const hasRemainingStage = nextTargets.some((target) => Boolean(target.stagedChangeId));
+      return {
+        ...current,
+        stagedUpc: hasRemainingStage ? current.stagedUpc : null,
+        hasStagedUpc: hasRemainingStage,
+        hasStagedChanges:
+          hasRemainingStage ||
+          current.salePrices.some((entry) => entry.stagedValue != null && entry.stagedValue !== entry.value) ||
+          current.adRates.some((entry) => entry.stagedValue != null && entry.stagedValue !== entry.value),
+        upcPushTargets: nextTargets,
+      };
+    });
+
+    void persistUpcAction(row.sku, "discard", undefined, { platform, listingId });
+
+    clearQuickPushState(getUpcQuickPushKey(rowId));
+    showToast(`Staged UPC discarded for ${PLATFORM_SHORT[platform as Platform]} on SKU ${row.sku}.`);
+  }
+
+  function persistUpcAction(
+    sku: string,
+    action: string,
+    newUpc?: string,
+    target?: { platform?: string; listingId?: string },
+  ) {
     return fetch("/api/grid/stage", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action, sku, field: "upc", newValue: newUpc }),
-    }).catch((err) => console.error("Failed to persist UPC action:", err));
+      body: JSON.stringify({ action, sku, field: "upc", newValue: newUpc, ...target }),
+    })
+      .then(async (response) => {
+        const payload = (await response.json().catch(() => null)) as
+          | { error?: string }
+          | { data?: unknown }
+          | null;
+
+        if (!response.ok) {
+          const message =
+            payload && typeof payload === "object" && "error" in payload && typeof payload.error === "string"
+              ? payload.error
+              : `UPC ${action} request failed with status ${response.status}`;
+          throw new Error(message);
+        }
+
+        return payload;
+      })
+      .catch((err) => {
+        console.error("Failed to persist UPC action:", err);
+        throw err;
+      });
   }
 
   function handleUpcEdit(rowId: string, newUpc: string, mode: "stage" | "push" | "fastPush") {
@@ -1283,6 +2214,10 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
       stagedUpc: normalizedUpc,
       hasStagedUpc: true,
       hasStagedChanges: true,
+      upcPushTargets: (current.upcPushTargets ?? []).map((target) => ({
+        ...target,
+        stagedChangeId: buildLocalUpcStageId(target.platform, target.listingId),
+      })),
     }));
     void persistUpcAction(row.sku, "stage", normalizedUpc);
 
@@ -1300,6 +2235,55 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
     }
 
     showToast(`UPC Staged - SKU ${row.sku} from ${row.upc ?? "No UPC"} to ${normalizedUpc}`);
+  }
+
+  async function handleMatchUpc(
+    rowId: string,
+    choices: LiveUpcChoice[],
+    mode: "stage" | "push" | "fastPush",
+    options?: { allowSingleSource?: boolean },
+  ) {
+    const row = findRow(rowId);
+    if (!row || row.isParent) {
+      showToast("Match UPC can only be used on a single row or child row.");
+      return;
+    }
+    const planResult = buildMatchUpcPlan(row, choices, options);
+    if (!planResult.ok) {
+      showToast(planResult.message);
+      return;
+    }
+
+    const staged = await stageMatchUpcPlan(planResult.plan);
+    if (!staged) {
+      showToast(`Match UPC could not stage any UPC changes for SKU ${row.sku}.`);
+      return;
+    }
+
+    const failedCount = staged.failedCount;
+    const successLabel =
+      staged.successfulTargets.length === 1
+        ? "1 marketplace UPC"
+        : `${staged.successfulTargets.length} marketplace UPCs`;
+
+    if (mode === "fastPush") {
+      clearQuickPushState(getUpcQuickPushKey(rowId));
+      void startInlineFastPushItems(getUpcQuickPushKey(rowId), staged.pushItems);
+      showToast(`Match UPC fast push started for SKU ${row.sku} to ${staged.majorityUpc}.`);
+      return;
+    }
+
+    if (mode === "push") {
+      queuePushReview(staged.pushItems, "review", staged.previewItems);
+      showToast(`Match UPC staged and queued for push review on SKU ${row.sku} to ${staged.majorityUpc}.`);
+      return;
+    }
+
+    showToast(
+      failedCount > 0
+        ? `Match UPC staged ${successLabel} to ${staged.majorityUpc}, but ${failedCount} marketplace ${failedCount === 1 ? "request failed" : "requests failed"}.`
+        : `Match UPC staged ${successLabel} to ${staged.majorityUpc} for SKU ${row.sku}.`,
+    );
   }
 
   useEffect(() => {
@@ -1334,6 +2318,20 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
 
     void Promise.all(targetParents.map((row) => ensureChildRowsLoaded(row.id)));
   }, [filters.stagedOnly, filters.stockStatus, gridRows]);
+
+  useEffect(() => {
+    const expandedParentsNeedingHydration = gridRows.filter(
+      (row) =>
+        row.isParent &&
+        expandedRows.has(row.id) &&
+        !row.childRowsHydrated &&
+        Boolean(row.childRows?.length),
+    );
+
+    if (expandedParentsNeedingHydration.length === 0) return;
+
+    void Promise.all(expandedParentsNeedingHydration.map((row) => ensureChildRowsLoaded(row.id)));
+  }, [expandedRows, gridRows]);
 
   const rowVirtualizer = useVirtualizer({
     count: flatRows.length,
@@ -1503,6 +2501,25 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
   const [gpSource, setGpSource] = useState<Platform | null>(null);
   const [gpDest, setGpDest] = useState<Set<Platform>>(new Set());
   const [gpMode, setGpMode] = useState<"stage" | "push" | null>(null);
+  const [bulkUpcOpen, setBulkUpcOpen] = useState(false);
+  const [bulkUpcLoading, setBulkUpcLoading] = useState(false);
+  const [bulkUpcSubmitting, setBulkUpcSubmitting] = useState<"stage" | "review" | "fast" | null>(null);
+  const [bulkUpcCandidates, setBulkUpcCandidates] = useState<BulkMatchUpcCandidate[]>([]);
+  const [bulkUpcSelectedIds, setBulkUpcSelectedIds] = useState<Set<string>>(new Set());
+  const bulkUpcSelectedCandidates = useMemo(
+    () => bulkUpcCandidates.filter((candidate) => bulkUpcSelectedIds.has(candidate.id)),
+    [bulkUpcCandidates, bulkUpcSelectedIds],
+  );
+  const bulkUpcSelectedActionableCount = useMemo(
+    () =>
+      bulkUpcSelectedCandidates.reduce((sum, candidate) => sum + candidate.actionableCount, 0),
+    [bulkUpcSelectedCandidates],
+  );
+  const bulkUpcSelectedPreviewCount = useMemo(
+    () =>
+      bulkUpcSelectedCandidates.reduce((sum, candidate) => sum + candidate.previewCount, 0),
+    [bulkUpcSelectedCandidates],
+  );
 
   const gpAffectedCount = useMemo(() => {
     if (!gpSource || gpDest.size === 0) return 0;
@@ -1672,9 +2689,16 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
         </span>
         <div className="flex items-center gap-2">
           <button
+            onClick={() => void openBulkUpcModal()}
+            className="flex items-center gap-1 rounded border border-violet-500/30 bg-violet-500/10 px-2.5 py-1 text-xs font-medium text-violet-300 transition-colors hover:bg-violet-500/20 cursor-pointer"
+          >
+            <ArrowRight className="h-3 w-3" />
+            Bulk Match UPCs
+          </button>
+          <button
             data-tour="dashboard-global-price"
             onClick={() => { setGpSource(null); setGpDest(new Set()); setGpMode(null); setGlobalPriceOpen(true); }}
-            className="flex items-center gap-1 rounded border border-primary/30 bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary transition-colors hover:bg-primary/20 cursor-pointer"
+            className="flex items-center gap-1 rounded border border-violet-500/30 bg-violet-500/10 px-2.5 py-1 text-xs font-medium text-violet-300 transition-colors hover:bg-violet-500/20 cursor-pointer"
           >
             <RefreshCw className="h-3 w-3" />
             Global Price Update
@@ -1883,10 +2907,11 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
                   {/* Expand / Collapse — indent and hierarchy bar only in this column for children */}
                   <div className={cn(
                     COL_WIDTHS.expand,
-                    "flex items-center justify-center",
+                    "grid grid-cols-2 items-center gap-1 px-1.5",
                     cellPy
                   )}>
-                    {isParent && (
+                    <div className="flex items-center justify-center">
+                      {isParent && (
                       <button
                         onClick={() => toggleExpand(row.id)}
                         disabled={isChildLoading}
@@ -1918,6 +2943,38 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
                     {isChild && (
                       <span className="text-base font-semibold text-emerald-400">↳</span>
                     )}
+                    </div>
+                    <div className="flex items-center justify-center">
+                      <button
+                        onClick={() => void handleRefreshRow(row.id, row.parentId)}
+                        disabled={rowRefreshStates[row.id] === "loading"}
+                        className={cn(
+                          "flex h-7 w-7 items-center justify-center rounded-md border transition-colors cursor-pointer",
+                          rowRefreshStates[row.id] === "success"
+                            ? "border-emerald-500/40 bg-emerald-500/15 text-emerald-300"
+                            : "border-violet-500/35 bg-violet-500/15 text-violet-300",
+                          rowRefreshStates[row.id] === "loading"
+                            ? "cursor-wait opacity-80"
+                            : rowRefreshStates[row.id] === "success"
+                              ? "hover:border-emerald-500/40 hover:bg-emerald-500/15 hover:text-emerald-300"
+                              : "hover:border-violet-400/60 hover:bg-violet-500/25 hover:text-violet-200"
+                        )}
+                        title={
+                          rowRefreshStates[row.id] === "success"
+                            ? "Row refreshed"
+                            : "Refresh this row from linked marketplaces"
+                        }
+                      >
+                        {rowRefreshStates[row.id] === "success" ? (
+                          <Check className="h-3.5 w-3.5" strokeWidth={3} />
+                        ) : (
+                          <RefreshCw
+                            className={cn("h-3.5 w-3.5", rowRefreshStates[row.id] === "loading" && "animate-spin")}
+                            strokeWidth={2.4}
+                          />
+                        )}
+                      </button>
+                    </div>
                   </div>
 
                   {/* Photo */}
@@ -1941,6 +2998,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
                         <UpcCell
                           rowId={row.id}
                           upc={row.upc}
+                          disableLiveFetch={row.isParent && row.id.startsWith("variation-parent:")}
                           stagedUpc={row.stagedUpc}
                           editable={!row.isParent && (row.upcPushTargets?.length ?? 0) > 0}
                           canPush={!row.isParent && Boolean(row.hasStagedUpc) && (row.upcPushTargets?.length ?? 0) > 0}
@@ -1956,6 +3014,12 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
                             handlePushStagedUpc(row.id, "fast", platform, listingId)
                           }
                           onDiscard={() => handleDiscardStagedUpc(row.id)}
+                          onDiscardTarget={(platform, listingId) =>
+                            handleDiscardStagedUpcTarget(row.id, platform, listingId)
+                          }
+                          onMatchUpc={(choices, mode, options) =>
+                            void handleMatchUpc(row.id, choices, mode, options)
+                          }
                         />
                       </div>
                     </div>
@@ -1972,9 +3036,13 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
 
                   {/* SKU */}
                   {isColVisible("sku") && (
-                    <div className={cn(COL_WIDTHS.sku, "flex items-center px-3 overflow-hidden", cellPy)}>
+                    <div className={cn(COL_WIDTHS.sku, "flex items-center pl-3 pr-4 overflow-hidden", cellPy)}>
                       {isParent ? (
-                        <span className="inline-flex items-center gap-1.5 rounded-md bg-emerald-500/15 px-2 py-0.5 text-[11px] font-semibold text-emerald-400">
+                        <button
+                          onClick={() => void toggleExpand(row.id)}
+                          className="inline-flex items-center gap-1.5 rounded-md bg-emerald-500/15 px-2 py-0.5 text-[11px] font-semibold text-emerald-400 transition-colors hover:bg-emerald-500/20 cursor-pointer"
+                          title={isExpanded ? "Collapse variation listing" : "Expand variation listing"}
+                        >
                           <span>Variation Parent</span>
                           {row.childRows && (
                             <span className="rounded bg-emerald-500/20 px-1 text-[10px] tabular-nums">
@@ -1984,10 +3052,12 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
                           {isChildLoading && (
                             <RefreshCw className="h-3 w-3 animate-spin" strokeWidth={2.5} />
                           )}
-                        </span>
+                        </button>
                       ) : (
-                        <CopyValue value={row.sku}>
-                          <span className="scalable-text font-mono font-medium truncate block max-w-full">{row.sku}</span>
+                        <CopyValue value={row.sku} className="max-w-full gap-1.5">
+                          <span className="scalable-text block min-w-0 flex-1 whitespace-normal break-all font-mono font-medium leading-snug">
+                            {row.sku}
+                          </span>
                         </CopyValue>
                       )}
                     </div>
@@ -2003,14 +3073,18 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
                           </p>
                         </CopyValue>
                         {isParent && (
-                          <span className={cn(
-                            "inline-flex items-center gap-1 mt-0.5 text-[10px]",
-                            isExpanded ? "text-emerald-500" : "text-muted-foreground"
-                          )}>
+                          <button
+                            onClick={() => void toggleExpand(row.id)}
+                            className={cn(
+                              "inline-flex items-center gap-1 mt-0.5 text-[10px] cursor-pointer text-left hover:text-emerald-400",
+                              isExpanded ? "text-emerald-500" : "text-muted-foreground"
+                            )}
+                            title={isExpanded ? "Collapse variation listing" : "Expand variation listing"}
+                          >
                             <span className="font-semibold">Variation Listing</span>
                             {row.childRows ? ` · ${row.childRows.length} SKUs` : ""}
                             {!isExpanded && <span className="text-emerald-500 font-medium ml-0.5">(click + to expand)</span>}
-                          </span>
+                          </button>
                         )}
                         {settings.showAlternateTitles && row.alternateTitles && row.alternateTitles.length > 0 && (
                           <div className="mt-1 space-y-0.5">
@@ -2350,6 +3424,208 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
         </div>
       )}
 
+      {bulkUpcOpen && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/50">
+          <div className="flex w-full max-w-5xl flex-col rounded-xl border border-border bg-card p-6 shadow-2xl">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h3 className="text-base font-bold text-foreground">Bulk Match UPCs</h3>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Scan the current grid and preselect rows where reorG can normalize marketplace UPCs in bulk.
+                </p>
+              </div>
+              <button
+                onClick={closeBulkUpcModal}
+                aria-label="Close bulk Match UPCs"
+                className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-border/80 bg-background/50 text-muted-foreground transition-colors hover:border-border hover:bg-background/70 hover:text-foreground cursor-pointer"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="mt-4 flex items-center justify-between gap-3 rounded-lg border border-border bg-background/40 px-4 py-3">
+              <div className="text-sm text-muted-foreground">
+                {bulkUpcLoading ? (
+                  <span className="inline-flex items-center gap-2">
+                    <RefreshCw className="h-4 w-4 animate-spin" />
+                    Building UPC match queue from the current grid...
+                  </span>
+                ) : (
+                  <span>
+                    <span className="font-semibold text-foreground">{bulkUpcSelectedCandidates.length}</span> selected row
+                    {bulkUpcSelectedCandidates.length === 1 ? "" : "s"} ·{" "}
+                    <span className="font-semibold text-foreground">{bulkUpcSelectedActionableCount}</span> actionable marketplace
+                    {bulkUpcSelectedActionableCount === 1 ? " change" : " changes"} ·{" "}
+                    <span className="font-semibold text-foreground">{bulkUpcSelectedPreviewCount}</span> total marketplaces in review
+                  </span>
+                )}
+              </div>
+              {!bulkUpcLoading && bulkUpcCandidates.length > 0 ? (
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setBulkUpcSelectedIds(new Set(bulkUpcCandidates.map((candidate) => candidate.id)))}
+                    className="rounded border border-border/80 bg-background/50 px-3 py-1 text-xs font-medium text-muted-foreground transition-colors hover:border-border hover:bg-background/70 hover:text-foreground cursor-pointer"
+                  >
+                    Select All
+                  </button>
+                  <button
+                    onClick={() => setBulkUpcSelectedIds(new Set())}
+                    className="rounded border border-border/80 bg-background/50 px-3 py-1 text-xs font-medium text-muted-foreground transition-colors hover:border-border hover:bg-background/70 hover:text-foreground cursor-pointer"
+                  >
+                    Clear All
+                  </button>
+                </div>
+              ) : null}
+            </div>
+
+            <div className="mt-4 max-h-[58vh] overflow-y-auto rounded-xl border border-border bg-background/20 p-3">
+              {bulkUpcLoading ? (
+                <div className="flex min-h-[240px] items-center justify-center text-sm text-muted-foreground">
+                  <span className="inline-flex items-center gap-2">
+                    <RefreshCw className="h-4 w-4 animate-spin" />
+                    Checking each row&apos;s live UPCs...
+                  </span>
+                </div>
+              ) : bulkUpcCandidates.length === 0 ? (
+                <div className="flex min-h-[240px] items-center justify-center text-sm text-muted-foreground">
+                  No bulk Match UPC candidates are available in the current grid.
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {bulkUpcCandidates.map((candidate) => {
+                    const isSelected = bulkUpcSelectedIds.has(candidate.id);
+                    return (
+                      <label
+                        key={candidate.id}
+                        className={cn(
+                          "block cursor-pointer rounded-xl border p-4 transition-colors",
+                          isSelected
+                            ? "border-violet-500/40 bg-violet-500/5"
+                            : "border-border bg-background/30 hover:bg-background/50",
+                        )}
+                      >
+                        <div className="flex items-start gap-3">
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={() =>
+                              setBulkUpcSelectedIds((prev) => {
+                                const next = new Set(prev);
+                                if (next.has(candidate.id)) next.delete(candidate.id);
+                                else next.add(candidate.id);
+                                return next;
+                              })
+                            }
+                            className="mt-1 h-4 w-4 rounded border-border bg-background text-violet-400"
+                          />
+                          <div className="min-w-0 flex-1">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="font-mono text-sm font-semibold text-foreground">{candidate.sku}</span>
+                              <span className="rounded bg-violet-500/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-violet-300">
+                                {candidate.modeLabel}
+                              </span>
+                              <span className="rounded bg-emerald-500/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-emerald-300">
+                                {candidate.majorityUpc}
+                              </span>
+                            </div>
+                            <p className="mt-1 text-sm text-muted-foreground">{candidate.title}</p>
+
+                            <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
+                              <span className="text-muted-foreground">Source</span>
+                              {candidate.sourceChoices.map((choice) => (
+                                <span
+                                  key={`${candidate.id}:source:${choice.platform}`}
+                                  className={cn("inline-flex items-center gap-1 rounded border px-2 py-1 font-semibold", PLATFORM_COLORS[choice.platform])}
+                                >
+                                  <PlatformIcon platform={choice.platform} size={12} />
+                                  <span>{choice.label}</span>
+                                </span>
+                              ))}
+                              <ArrowRight className="h-3.5 w-3.5 text-muted-foreground" />
+                              <span className="text-muted-foreground">Update</span>
+                              {candidate.mismatchChoices.map((choice) => (
+                                <span
+                                  key={`${candidate.id}:target:${choice.platform}`}
+                                  className={cn("inline-flex items-center gap-1 rounded border px-2 py-1 font-semibold", PLATFORM_COLORS[choice.platform])}
+                                >
+                                  <PlatformIcon platform={choice.platform} size={12} />
+                                  <span>{choice.label}</span>
+                                </span>
+                              ))}
+                            </div>
+
+                            <div className="mt-3 grid gap-2 md:grid-cols-2">
+                              {candidate.mismatchChoices.map((choice) => (
+                                <div
+                                  key={`${candidate.id}:change:${choice.platform}`}
+                                  className="rounded-lg border border-border/70 bg-background/40 px-3 py-2 text-xs"
+                                >
+                                  <div className="flex items-center justify-between gap-2">
+                                    <span className="inline-flex items-center gap-1 font-semibold text-foreground">
+                                      <PlatformIcon platform={choice.platform} size={12} />
+                                      <span>{choice.label}</span>
+                                    </span>
+                                    <span className={choice.editable ? "text-emerald-300" : "text-amber-300"}>
+                                      {choice.editable ? "Selected" : "Locked now"}
+                                    </span>
+                                  </div>
+                                  <div className="mt-1 font-mono text-[11px] text-muted-foreground">
+                                    {(choice.value ?? "No UPC")} {"->"} {candidate.majorityUpc}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+
+                            {candidate.note ? (
+                              <p className="mt-3 text-xs text-amber-200">{candidate.note}</p>
+                            ) : null}
+                          </div>
+                        </div>
+                      </label>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            <div className="mt-4 flex items-center justify-between gap-3">
+              <p className="text-xs text-muted-foreground">
+                Locked marketplaces are shown for awareness only. They will not receive a live UPC until you unlock them and run Match UPC again.
+              </p>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={closeBulkUpcModal}
+                  className="rounded-md border border-border/80 bg-background/50 px-4 py-2 text-sm font-medium text-muted-foreground transition-colors hover:border-border hover:bg-background/70 hover:text-foreground cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => void runBulkUpcAction("stage")}
+                  disabled={bulkUpcLoading || bulkUpcSubmitting !== null || bulkUpcSelectedCandidates.length === 0}
+                  className="rounded-md bg-[var(--staged)] px-4 py-2 text-sm font-bold text-[var(--staged-foreground)] transition-opacity disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"
+                >
+                  {bulkUpcSubmitting === "stage" ? "Staging..." : "Stage Selected"}
+                </button>
+                <button
+                  onClick={() => void runBulkUpcAction("review")}
+                  disabled={bulkUpcLoading || bulkUpcSubmitting !== null || bulkUpcSelectedCandidates.length === 0}
+                  className="rounded-md bg-emerald-500 px-4 py-2 text-sm font-bold text-white transition-colors hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"
+                >
+                  {bulkUpcSubmitting === "review" ? "Preparing..." : "Review Push Selected"}
+                </button>
+                <button
+                  onClick={() => void runBulkUpcAction("fast")}
+                  disabled={bulkUpcLoading || bulkUpcSubmitting !== null || bulkUpcSelectedCandidates.length === 0}
+                  className="rounded-md bg-blue-500 px-4 py-2 text-sm font-bold text-white transition-colors hover:bg-blue-600 disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"
+                >
+                  {bulkUpcSubmitting === "fast" ? "Starting..." : "Fast Push Selected"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Global Sale Price Update */}
       {globalPriceOpen && (
         <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/50">
@@ -2467,9 +3743,11 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
         onClose={() => {
           setPushModalOpen(false);
           setPushModalItems([]);
+          setPushModalPreviewItems([]);
           setPushModalLaunchMode("review");
         }}
         items={pushModalItems}
+        previewItems={pushModalPreviewItems}
         autoRunDryRun={pushModalLaunchMode === "fast"}
         onApplied={(result) => {
           applyPushOutcome(result);

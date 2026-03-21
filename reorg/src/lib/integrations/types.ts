@@ -41,6 +41,7 @@ export interface PushResult {
 
 export interface PushError {
   platformItemId: string;
+  platformVariantId?: string;
   message: string;
   code?: string;
   rawError?: unknown;

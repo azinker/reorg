@@ -47,11 +47,14 @@ async function fetchGridData(): Promise<GridPayload> {
 }
 
 async function fetchGridVersion(): Promise<string | null> {
-  const res = await fetch("/api/grid/version", { cache: "no-store" });
-  if (!res.ok) {
-    throw new Error(`Version API returned ${res.status}`);
+  const res = await fetch("/api/grid/version", { cache: "no-store" }).catch(() => null);
+  if (!res) {
+    return null;
   }
-  const json = await res.json();
+  if (!res.ok) {
+    return null;
+  }
+  const json = await res.json().catch(() => null);
   return typeof json.data?.version === "string" ? json.data.version : null;
 }
 
@@ -168,9 +171,7 @@ export default function DashboardPage() {
         sourceRef.current = gridData.source;
         versionRef.current = nextVersion;
       } catch (err) {
-        if (!cancelled) {
-          console.error("[dashboard] background refresh failed", err);
-        }
+        void err;
       } finally {
         refreshInFlightRef.current = false;
         if (!cancelled) {

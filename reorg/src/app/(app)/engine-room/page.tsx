@@ -86,9 +86,9 @@ type PushJobRow = {
     platform: string;
     platformLabel: string;
     listingId: string;
-    field: "salePrice" | "adRate";
-    oldValue: number | null;
-    newValue: number;
+    field: "salePrice" | "adRate" | "upc";
+    oldValue: number | string | null;
+    newValue: number | string;
     sku: string;
     title: string;
     success: boolean | null;
@@ -239,13 +239,24 @@ function formatMode(mode: string): string {
 function formatPushField(field: string) {
   if (field === "salePrice") return "Sale Price";
   if (field === "adRate") return "Promoted General Ad Rate";
+  if (field === "upc") return "UPC";
   return field;
 }
 
-function formatPushValue(field: string, value: number | null) {
+function formatPushValue(field: string, value: number | string | null) {
   if (value == null) return "-";
-  if (field === "adRate") return `${(value * 100).toFixed(1)}%`;
-  return `$${value.toFixed(2)}`;
+  if (field === "upc") {
+    const normalized = typeof value === "string" ? value.trim() : String(value);
+    return normalized.length > 0 ? normalized : "-";
+  }
+
+  const numericValue = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(numericValue)) {
+    return typeof value === "string" && value.trim().length > 0 ? value : "-";
+  }
+
+  if (field === "adRate") return `${(numericValue * 100).toFixed(1)}%`;
+  return `$${numericValue.toFixed(2)}`;
 }
 
 function formatDueWindow(item: DueQueueRow): string {

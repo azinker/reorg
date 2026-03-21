@@ -20,6 +20,7 @@ import {
   matchListings,
   upsertMarketplaceListings,
 } from "@/lib/services/matching";
+import { removeMarketplaceListingsOlderThan } from "@/lib/services/listing-prune";
 
 const TRADING_API = "https://api.ebay.com/ws/api.dll";
 const MARKETING_API_BASE = "https://api.ebay.com/sell/marketing/v1";
@@ -54,6 +55,7 @@ interface EbayConfig {
   refreshToken: string;
   accessToken?: string;
   accessTokenExpiresAt?: number;
+  accountUserId?: string | null;
 }
 
 interface SyncProgress {
@@ -103,6 +105,36 @@ function sleep(ms: number) {
 function clearAccessTokenCache(config: EbayConfig) {
   config.accessToken = undefined;
   config.accessTokenExpiresAt = undefined;
+}
+
+function extractSellerUserId(item: unknown): string | null {
+  const seller = obj(item, "Seller");
+  return seller ? str(seller, "UserID") ?? null : null;
+}
+
+function matchesConfiguredSeller(item: unknown, config: EbayConfig): boolean {
+  const expectedSellerId = config.accountUserId?.trim().toLowerCase();
+  if (!expectedSellerId) {
+    return true;
+  }
+
+  const actualSellerId = extractSellerUserId(item)?.trim().toLowerCase();
+  if (!actualSellerId) {
+    return true;
+  }
+
+  return actualSellerId === expectedSellerId;
+}
+
+async function removeForeignSellerListings(integrationId: string, itemId: string) {
+  await Promise.all([
+    db.marketplaceListing.deleteMany({
+      where: { integrationId, platformItemId: itemId },
+    }),
+    db.unmatchedListing.deleteMany({
+      where: { integrationId, platformItemId: itemId },
+    }),
+  ]);
 }
 
 function normalizeTradingErrors(rawErrors: unknown): Array<Record<string, unknown>> {
@@ -182,6 +214,7 @@ export async function runEbayTtSync(
     certId,
     refreshToken,
     accessToken: getString(config.accessToken),
+    accountUserId: getString(config.accountUserId) ?? null,
     accessTokenExpiresAt:
       typeof config.accessTokenExpiresAt === "number"
         ? config.accessTokenExpiresAt
@@ -398,7 +431,7 @@ export async function runEbayTtSync(
                 continue;
               }
 
-              await applyTtItem(fullItem, integration.id, progress);
+              await applyTtItem(fullItem, integration.id, ebayConfig, progress);
             } catch (error) {
               if (isEbayUsageLimitError(error)) {
                 const remainingCurrentBatch = batch.slice(batchIndex);
@@ -473,6 +506,24 @@ export async function runEbayTtSync(
       }
 
       await runFullSync(integration.id, ebayConfig, syncJob.id, progress);
+      const stalePrune = await removeMarketplaceListingsOlderThan(
+        integration.id,
+        syncJob.startedAt ?? new Date(0),
+      );
+      if (stalePrune.deletedListings > 0 || stalePrune.deletedMasterRows > 0) {
+        console.log(
+          `[ebay-tt-sync] Pruned ${stalePrune.deletedListings} stale TT listings and ${stalePrune.deletedMasterRows} orphaned master rows after full sync`,
+        );
+      }
+      await db.unmatchedListing.deleteMany({
+        where: {
+          integrationId: integration.id,
+          OR: [
+            { lastSyncedAt: null },
+            { lastSyncedAt: { lt: syncJob.startedAt ?? new Date(0) } },
+          ],
+        },
+      });
       const adRatesUpdated = await fetchAndStorePromotedListingRates(
         integration.id,
         ebayConfig,
@@ -646,7 +697,24 @@ async function runFullSync(
 
     for (const item of items) {
       try {
-        await applyTtItem(item, integrationId, progress);
+        const itemId = str(item, "ItemID");
+        let itemForApply = item;
+
+        if (itemId && needsFullItemForUpc(item)) {
+          try {
+            itemForApply = (await fetchFullItem(integrationId, ebayConfig, itemId)) ?? item;
+          } catch (error) {
+            progress.errors.push({
+              sku: itemId,
+              message:
+                error instanceof Error
+                  ? `GetItem UPC hydrate failed: ${error.message}`
+                  : "GetItem UPC hydrate failed.",
+            });
+          }
+        }
+
+        await applyTtItem(itemForApply, integrationId, ebayConfig, progress);
       } catch (error) {
         progress.errors.push({
           sku: str(item, "ItemID") ?? "_item",
@@ -666,8 +734,19 @@ async function runFullSync(
 async function applyTtItem(
   item: unknown,
   integrationId: string,
+  config: EbayConfig,
   progress: SyncProgress,
 ) {
+  const itemId = str(item, "ItemID");
+  if (itemId && !matchesConfiguredSeller(item, config)) {
+    await removeForeignSellerListings(integrationId, itemId);
+    progress.errors.push({
+      sku: itemId,
+      message: `Skipped foreign-seller eBay item ${itemId}. It does not belong to ${config.accountUserId ?? "the connected seller"}.`,
+    });
+    return;
+  }
+
   const listings = extractListingsFromItem(item);
   if (listings.length === 0) {
     return;
@@ -709,6 +788,12 @@ async function tryApplyIncrementalQuantityFirstTtItem(
 
   const itemId = str(item, "ItemID");
   if (!itemId) {
+    return null;
+  }
+
+  // If the incremental event payload does not carry the UPC details, force the
+  // slower GetItem path so the dashboard stays truthful after direct eBay edits.
+  if (needsFullItemForUpc(item)) {
     return null;
   }
 
@@ -856,7 +941,10 @@ function extractListingsFromItem(item: unknown): RawListing[] {
   const imageUrl = extractImageUrl(item) ?? undefined;
   const sellingStatus = obj(item, "SellingStatus");
   const currentPrice = sellingStatus ? num(sellingStatus, "CurrentPrice") : undefined;
-  const quantity = sellingStatus ? num(sellingStatus, "Quantity") ?? 0 : 0;
+  const quantity =
+    num(item, "Quantity") ??
+    (sellingStatus ? num(sellingStatus, "Quantity") : undefined) ??
+    0;
   const quantitySold = sellingStatus ? num(sellingStatus, "QuantitySold") ?? 0 : 0;
   const available = Math.max(0, quantity - quantitySold);
   const itemSku = str(item, "SKU")?.trim() ?? "";
@@ -1463,4 +1551,15 @@ function extractVariationImageUrl(
   }
 
   return parentImageUrl;
+}
+
+function needsFullItemForUpc(item: unknown): boolean {
+  const variationsNode = obj(item, "Variations");
+  const variationList = variationsNode ? arr(variationsNode, "Variation") : [];
+
+  if (variationList.length === 0) {
+    return !extractUpc(item);
+  }
+
+  return variationList.some((variation) => !extractVariationUpc(variation));
 }

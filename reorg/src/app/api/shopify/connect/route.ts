@@ -1,12 +1,15 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 
 const SCOPES =
   "read_products,write_products,read_inventory,write_inventory";
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   const clientId = process.env.SHOPIFY_CLIENT_ID;
   const storeDomain = process.env.SHOPIFY_STORE_DOMAIN;
-  const baseUrl = process.env.AUTH_URL || process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+  const baseUrl =
+    process.env.AUTH_URL?.replace(/\/$/, "") ||
+    process.env.NEXT_PUBLIC_APP_URL?.replace(/\/$/, "") ||
+    request.nextUrl.origin;
 
   if (!clientId || !storeDomain) {
     return NextResponse.json(
@@ -22,7 +25,7 @@ export async function GET() {
     ? storeDomain
     : `${storeDomain}.myshopify.com`;
 
-  const redirectUri = `${baseUrl.replace(/\/$/, "")}/api/shopify/callback`;
+  const redirectUri = `${baseUrl}/api/shopify/callback`;
 
   const params = new URLSearchParams({
     client_id: clientId,

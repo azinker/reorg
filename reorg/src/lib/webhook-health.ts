@@ -21,6 +21,29 @@ export function getExpectedWebhookBaseUrl() {
   return baseUrl.replace(/\/$/, "");
 }
 
+function getAcceptedWebhookBaseUrls() {
+  const appEnv = getAppEnv();
+
+  if (appEnv === "production") {
+    return ["https://reorg.theperfectpart.net"];
+  }
+
+  if (appEnv === "staging") {
+    return ["https://stage.reorg.theperfectpart.net"];
+  }
+
+  const baseUrls = new Set<string>([
+    "https://reorg.theperfectpart.net",
+    "https://stage.reorg.theperfectpart.net",
+  ]);
+  const localBaseUrl = process.env.AUTH_URL?.trim();
+  if (localBaseUrl) {
+    baseUrls.add(localBaseUrl.replace(/\/$/, ""));
+  }
+
+  return [...baseUrls];
+}
+
 export function getExpectedWebhookDestination(platform: Platform) {
   switch (platform) {
     case "SHOPIFY":
@@ -35,8 +58,19 @@ export function getExpectedWebhookDestination(platform: Platform) {
 export function assessIntegrationWebhookHealth(
   integration: Pick<Integration, "platform" | "config">,
 ) {
+  const appEnv = getAppEnv();
   const config = getIntegrationConfig(integration);
   const expectedDestination = getExpectedWebhookDestination(integration.platform);
+  const acceptedDestinations = getAcceptedWebhookBaseUrls().map((baseUrl) => {
+    switch (integration.platform) {
+      case "SHOPIFY":
+        return `${baseUrl}/api/webhooks/shopify`;
+      case "BIGCOMMERCE":
+        return `${baseUrl}/api/webhooks/bigcommerce`;
+      default:
+        return null;
+    }
+  }).filter((value): value is string => Boolean(value));
   const currentDestination = config.webhookState.destination;
 
   if (!expectedDestination) {
@@ -54,6 +88,15 @@ export function assessIntegrationWebhookHealth(
       message: "Webhook destination has not been registered yet.",
       expectedDestination,
       currentDestination: null,
+    };
+  }
+
+  if (appEnv === "local" && acceptedDestinations.includes(currentDestination)) {
+    return {
+      status: "ok" as const,
+      message: "Webhook destination points to a deployed environment, which is expected while running locally.",
+      expectedDestination,
+      currentDestination,
     };
   }
 

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { Platform } from "@prisma/client";
+import { fetchEbaySellerProfile } from "@/lib/ebay-account";
 
 export async function GET(request: NextRequest) {
   const { searchParams } = request.nextUrl;
@@ -8,7 +9,7 @@ export async function GET(request: NextRequest) {
   const state = searchParams.get("state") || "tpp";
   const error = searchParams.get("error");
 
-  const baseUrl = process.env.AUTH_URL || "http://localhost:3000";
+  const baseUrl = process.env.AUTH_URL?.replace(/\/$/, "") || request.nextUrl.origin;
 
   if (error) {
     return NextResponse.redirect(
@@ -80,6 +81,8 @@ export async function GET(request: NextRequest) {
       );
     }
 
+    const sellerProfile = await fetchEbaySellerProfile(accessToken, "PRODUCTION").catch(() => null);
+
     await db.integration.update({
       where: { platform },
       data: {
@@ -92,6 +95,9 @@ export async function GET(request: NextRequest) {
           refreshToken,
           accessTokenExpiresAt: Date.now() + expiresIn * 1000,
           refreshTokenExpiresAt: Date.now() + refreshExpiresIn * 1000,
+          accountUserId: sellerProfile?.userId ?? null,
+          accountStoreName: sellerProfile?.storeName ?? null,
+          accountSellerLevel: sellerProfile?.sellerLevel ?? null,
           environment: "PRODUCTION",
         },
       },
