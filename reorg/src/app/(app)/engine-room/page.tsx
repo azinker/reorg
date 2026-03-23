@@ -1186,7 +1186,7 @@ export default function EngineRoomPage() {
             "ring-1 ring-border/50",
             "hover:border-border/80 hover:bg-card/95"
           )}
-          data-tour="engine-recent-errors"
+          data-tour="engine-active-syncs"
         >
           <div className="flex items-center gap-3">
             <div
@@ -1214,6 +1214,7 @@ export default function EngineRoomPage() {
             "ring-1 ring-border/50",
             "hover:border-border/80 hover:bg-card/95"
           )}
+          data-tour="engine-recent-errors"
         >
           <div className="flex items-center gap-3">
             <div

@@ -285,6 +285,7 @@ export default function DashboardPage() {
     <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
       {schedulerHealth && schedulerHealth.status !== "healthy" && source === "db" && (
         <div
+          data-tour="dashboard-health-banner"
           className={
             schedulerHealth.status === "attention"
               ? "border-b border-red-500/20 bg-red-500/5 px-4 py-2"
