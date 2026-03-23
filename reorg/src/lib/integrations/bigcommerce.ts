@@ -287,6 +287,7 @@ export class BigCommerceAdapter implements MarketplaceAdapter {
     return {
       platformItemId: String(product.id),
       platformVariantId: variant ? String(variant.id) : undefined,
+      parentPlatformItemId: variant ? String(product.id) : undefined,
       sku: (variant?.sku as string) ?? (product.sku as string) ?? "",
       title: (product.name as string) ?? "",
       imageUrl: images[0]?.url_standard as string | undefined,

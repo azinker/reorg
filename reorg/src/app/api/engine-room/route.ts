@@ -455,6 +455,22 @@ async function buildEngineRoomData() {
       } else if (entry.action === "sync_failed") {
         const d = details as { error?: string };
         detail = d.error ?? "Unknown error";
+      } else if (entry.action === "import_completed") {
+        const d = details as {
+          fileName?: string;
+          mode?: string;
+          created?: number;
+          updated?: number;
+          unchanged?: number;
+          failed?: number;
+        };
+        detail =
+          `${d.fileName ?? "Import file"} - ${d.mode ?? "unknown mode"} - ` +
+          `created ${d.created ?? 0}, updated ${d.updated ?? 0}, ` +
+          `unchanged ${d.unchanged ?? 0}, failed ${d.failed ?? 0}`;
+      } else if (entry.action === "import_failed") {
+        const d = details as { error?: string };
+        detail = d.error ?? "Import failed";
       } else if (entry.action === "edit_master") {
         const d = details as { field?: string; oldValue?: unknown; newValue?: unknown };
         detail = d.field ? `${String(d.oldValue ?? "")} -> ${String(d.newValue ?? "")}` : JSON.stringify(details);
@@ -473,6 +489,10 @@ async function buildEngineRoomData() {
           ? "Sync completed"
           : entry.action === "sync_failed"
             ? "Sync failed"
+            : entry.action === "import_completed"
+              ? "Import completed"
+              : entry.action === "import_failed"
+                ? "Import failed"
             : entry.action === "edit_master"
               ? "Master edit"
               : entry.action === "push_price"

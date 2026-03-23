@@ -1,7 +1,8 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import * as XLSX from "xlsx";
 import {
   CheckCircle,
   FileCheck,
@@ -66,10 +67,23 @@ const FAILURE_DOWNLOAD_HEADERS = [
 ] as const;
 
 type PreviewState = {
+  analysisMode: "fill_blanks" | "overwrite";
   validRows: number;
   errorRows: number;
   preview: Record<string, unknown>[];
   errors: { row: number; errors: string[] }[];
+  impacts: Array<{
+    row: number;
+    sku: string;
+    outcome: "created" | "updated" | "no_changes";
+    summary: string;
+    changedFields: string[];
+  }>;
+  impactCounts: {
+    created: number;
+    updated: number;
+    no_changes: number;
+  };
 };
 
 type ImportFailure = {
@@ -104,14 +118,6 @@ type ImportResult = {
   failures: ImportFailure[];
 };
 
-function csvEscape(value: unknown) {
-  const text = String(value ?? "");
-  if (/[",\r\n]/.test(text)) {
-    return `"${text.replace(/"/g, '""')}"`;
-  }
-  return text;
-}
-
 export default function ImportPage() {
   const [currentStep, setCurrentStep] = useState(1);
   const [file, setFile] = useState<File | null>(null);
@@ -121,21 +127,35 @@ export default function ImportPage() {
   const [result, setResult] = useState<ImportResult | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  async function runPreview() {
+  useEffect(() => {
+    if (currentStep >= 4 && file && preview) {
+      void runPreview(importMode);
+    }
+  }, [currentStep, file, importMode]);
+
+  async function runPreview(modeOverride: "fill_blanks" | "overwrite" = importMode) {
     if (!file) return;
     setLoading(true);
     try {
       const form = new FormData();
       form.append("file", file);
       form.append("mode", "preview");
+      form.append("analysisMode", modeOverride);
       const res = await fetch("/api/import", { method: "POST", body: form });
       const json = await res.json();
       if (res.ok && json.data) {
         setPreview({
+          analysisMode: json.data.analysisMode ?? modeOverride,
           validRows: json.data.validRows ?? 0,
           errorRows: json.data.errorRows ?? 0,
           preview: json.data.preview ?? [],
           errors: json.data.errors ?? [],
+          impacts: json.data.impacts ?? [],
+          impactCounts: json.data.impactCounts ?? {
+            created: 0,
+            updated: 0,
+            no_changes: 0,
+          },
         });
       }
     } finally {
@@ -175,24 +195,35 @@ export default function ImportPage() {
   function downloadFailedRows() {
     if (!result || result.failures.length === 0) return;
 
-    const csv = [
-      FAILURE_DOWNLOAD_HEADERS.join(","),
-      ...result.failures.map((failure) =>
-        FAILURE_DOWNLOAD_HEADERS.map((header) =>
-          csvEscape(failure.fields[header] ?? ""),
-        ).join(","),
-      ),
-    ].join("\r\n");
-
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
+    const workbook = XLSX.utils.book_new();
+    const rows = result.failures.map((failure) => ({
+      sku: failure.fields.sku ?? "",
+      upc: failure.fields.upc ?? "",
+      weight: failure.fields.weight ?? "",
+      supplier_cost: failure.fields.supplier_cost ?? "",
+      supplier_shipping_cost: failure.fields.supplier_shipping_cost ?? "",
+      notes: failure.fields.notes ?? "",
+      error_reason: failure.fields.error_reason ?? failure.error,
+    }));
+    const worksheet = XLSX.utils.json_to_sheet(rows, {
+      header: [...FAILURE_DOWNLOAD_HEADERS],
+    });
+    XLSX.utils.book_append_sheet(workbook, worksheet, "failed-rows");
+    const arrayBuffer = XLSX.write(workbook, {
+      type: "array",
+      bookType: "xlsx",
+    });
+    const blob = new Blob([arrayBuffer], {
+      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    });
+    const url = window.URL.createObjectURL(blob);
     const anchor = document.createElement("a");
     anchor.href = url;
-    anchor.download = "reorg-import-failures.csv";
+    anchor.download = "reorg-import-failures.xlsx";
     document.body.appendChild(anchor);
     anchor.click();
     document.body.removeChild(anchor);
-    URL.revokeObjectURL(url);
+    window.URL.revokeObjectURL(url);
   }
 
   function goToPreviousStep() {
@@ -429,7 +460,7 @@ export default function ImportPage() {
                 <button
                   type="button"
                   disabled={loading}
-                  onClick={runPreview}
+                  onClick={() => void runPreview(importMode)}
                   className="inline-flex items-center gap-2 rounded-lg border border-primary bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
                 >
                   {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileCheck className="h-4 w-4" />}
@@ -522,6 +553,80 @@ export default function ImportPage() {
               </label>
             </div>
 
+            {preview && (
+              <div className="space-y-4 rounded-lg border border-border/70 bg-background/30 p-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <h3 className="text-sm font-semibold text-foreground">Mode impact preview</h3>
+                    <p className="text-xs text-muted-foreground">
+                      reorG is analyzing this file in{" "}
+                      <span className="font-medium text-foreground">
+                        {preview.analysisMode === "overwrite" ? "Overwrite provided values" : "Fill blanks only"}
+                      </span>{" "}
+                      mode.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => void runPreview(importMode)}
+                    disabled={loading}
+                    className="inline-flex items-center gap-2 rounded-lg border border-border bg-background px-3 py-2 text-sm font-medium text-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileCheck className="h-4 w-4" />}
+                    Refresh preview
+                  </button>
+                </div>
+
+                <div className="grid gap-3 md:grid-cols-3">
+                  <div className="rounded-lg border border-border/70 bg-background/40 p-3">
+                    <p className="text-xs uppercase tracking-wide text-muted-foreground">Would Create</p>
+                    <p className="mt-1 text-xl font-semibold text-foreground">{preview.impactCounts.created}</p>
+                  </div>
+                  <div className="rounded-lg border border-border/70 bg-background/40 p-3">
+                    <p className="text-xs uppercase tracking-wide text-muted-foreground">Would Update</p>
+                    <p className="mt-1 text-xl font-semibold text-foreground">{preview.impactCounts.updated}</p>
+                  </div>
+                  <div className="rounded-lg border border-border/70 bg-background/40 p-3">
+                    <p className="text-xs uppercase tracking-wide text-muted-foreground">No Changes</p>
+                    <p className="mt-1 text-xl font-semibold text-foreground">{preview.impactCounts.no_changes}</p>
+                  </div>
+                </div>
+
+                <div className="max-h-80 space-y-2 overflow-y-auto rounded-lg border border-border/60 bg-muted/10 p-3">
+                  {preview.impacts.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">No import impact preview is available yet.</p>
+                  ) : (
+                    preview.impacts.map((impact) => (
+                      <div key={`impact-${impact.row}-${impact.sku}`} className="rounded-lg border border-border/60 bg-background/40 px-3 py-2">
+                        <div className="flex items-center justify-between gap-3">
+                          <p className="font-mono text-sm font-semibold text-foreground">{impact.sku}</p>
+                          <span
+                            className={cn(
+                              "rounded px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide",
+                              impact.outcome === "created"
+                                ? "bg-blue-500/15 text-blue-300"
+                                : impact.outcome === "updated"
+                                  ? "bg-emerald-500/15 text-emerald-300"
+                                  : "bg-muted text-muted-foreground",
+                            )}
+                          >
+                            {impact.outcome === "no_changes" ? "No Changes" : impact.outcome}
+                          </span>
+                        </div>
+                        <p className="mt-1 text-xs text-muted-foreground">Row {impact.row}</p>
+                        <p className="mt-1 text-sm text-foreground">{impact.summary}</p>
+                        {impact.changedFields.length > 0 && (
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            Fields: {impact.changedFields.join(", ")}
+                          </p>
+                        )}
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            )}
+
             <div className="flex items-center justify-between gap-3">
               <button
                 type="button"
@@ -572,7 +677,7 @@ export default function ImportPage() {
                       className="inline-flex items-center gap-2 rounded-lg border border-border bg-background px-3 py-2 text-sm font-medium text-foreground transition-colors hover:bg-muted cursor-pointer"
                     >
                       <FileDown className="h-4 w-4" />
-                      Download failed rows
+                      Download failed rows (.xlsx)
                     </button>
                   )}
                 </div>

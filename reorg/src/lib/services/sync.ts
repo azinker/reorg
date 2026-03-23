@@ -10,6 +10,7 @@ import {
   buildCompletedSyncConfigFromLatest,
   type SyncExecutionOptions,
 } from "@/lib/services/sync-control";
+import { repairVariationFamiliesForIntegration } from "@/lib/services/variation-repair";
 
 export interface SyncResult {
   syncJobId: string;
@@ -93,6 +94,8 @@ export async function runSync(
     }
 
     const completedAt = new Date();
+    await repairVariationFamiliesForIntegration(integrationId);
+
     await db.syncJob.update({
       where: { id: syncJob.id },
       data: {

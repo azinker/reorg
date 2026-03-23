@@ -123,6 +123,8 @@ export async function removeMarketplaceListingsMissingFromProductSet(
     select: {
       id: true,
       platformVariantId: true,
+      isVariation: true,
+      parentListingId: true,
     },
   });
 
@@ -136,6 +138,14 @@ export async function removeMarketplaceListingsMissingFromProductSet(
   const staleListingIds = listings
     .filter((listing) => {
       const variantKey = listing.platformVariantId?.trim() ?? "";
+      if (
+        variantKey === "" &&
+        listing.parentListingId === null &&
+        listing.isVariation &&
+        presentKeys.size > 0
+      ) {
+        return false;
+      }
       return !presentKeys.has(variantKey);
     })
     .map((listing) => listing.id);

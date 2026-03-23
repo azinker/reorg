@@ -45,6 +45,20 @@ interface EbayTokenCache {
   expiresAt: number;
 }
 
+interface EbayMarketingCampaign {
+  campaignId?: string;
+  campaignStatus?: string;
+  fundingStrategy?: {
+    fundingModel?: string;
+  };
+}
+
+interface EbayMarketingAd {
+  adId?: string;
+  listingId?: string;
+  bidPercentage?: string;
+}
+
 class EbayTradingApiError extends Error {
   constructor(
     message: string,
@@ -179,6 +193,66 @@ export class EbayAdapter implements MarketplaceAdapter {
     }
 
     return response;
+  }
+
+  private async getActiveCostPerSaleCampaignIds(): Promise<string[]> {
+    const response = await this.apiCall(
+      "/sell/marketing/v1/ad_campaign?funding_strategy=COST_PER_SALE&limit=100",
+    );
+
+    if (!response.ok) {
+      throw new Error(`Failed to load eBay promoted campaigns: ${response.status}`);
+    }
+
+    const data = (await response.json()) as {
+      campaigns?: EbayMarketingCampaign[];
+    };
+
+    return (data.campaigns ?? [])
+      .filter(
+        (campaign) =>
+          campaign.campaignId &&
+          campaign.fundingStrategy?.fundingModel === "COST_PER_SALE" &&
+          (campaign.campaignStatus === "RUNNING" || campaign.campaignStatus === "SCHEDULED"),
+      )
+      .map((campaign) => campaign.campaignId!)
+      .filter(Boolean);
+  }
+
+  private async findPromotedAdForListing(
+    listingId: string,
+  ): Promise<{ campaignId: string; adId: string } | null> {
+    const campaignIds = await this.getActiveCostPerSaleCampaignIds();
+
+    for (const campaignId of campaignIds) {
+      let offset = 0;
+      let hasMore = true;
+
+      while (hasMore) {
+        const response = await this.apiCall(
+          `/sell/marketing/v1/ad_campaign/${campaignId}/ad?limit=500&offset=${offset}`,
+        );
+
+        if (!response.ok) {
+          break;
+        }
+
+        const data = (await response.json()) as {
+          ads?: EbayMarketingAd[];
+          total?: number;
+        };
+        const ads = data.ads ?? [];
+        const matchingAd = ads.find((ad) => ad.listingId === listingId && ad.adId);
+        if (matchingAd?.adId) {
+          return { campaignId, adId: matchingAd.adId };
+        }
+
+        offset += ads.length;
+        hasMore = ads.length === 500 && (data.total == null || offset < data.total);
+      }
+    }
+
+    return null;
   }
 
   private async tradingApiCall(
@@ -359,18 +433,27 @@ export class EbayAdapter implements MarketplaceAdapter {
 
     for (const update of updates) {
       try {
+        const adReference = await this.findPromotedAdForListing(update.platformItemId);
+        if (!adReference) {
+          errors.push({
+            platformItemId: update.platformItemId,
+            message:
+              "Promoted ad not found for this eBay listing. Sync promoted listings first or confirm the listing is already enrolled in a CPS campaign.",
+          });
+          continue;
+        }
+
         const response = await this.apiCall(
-          "/sell/marketing/v1/ad_campaign/update_ad_rate_strategy",
+          `/sell/marketing/v1/ad_campaign/${adReference.campaignId}/ad/${adReference.adId}/update_bid`,
           {
             method: "POST",
             body: JSON.stringify({
-              listingId: update.platformItemId,
               bidPercentage: (update.newAdRate * 100).toFixed(1),
             }),
           },
         );
 
-        if (response.ok) {
+        if (response.status === 204 || response.ok) {
           itemsUpdated++;
         } else {
           const errData = await response.text();

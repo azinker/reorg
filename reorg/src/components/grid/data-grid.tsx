@@ -15,6 +15,7 @@ import {
   EditableStoreBlockGroup,
   EditableAdRateBlockGroup,
   type QuickPushState,
+  type FailedPushState,
 } from "@/components/grid/store-block";
 import { PlatformIcon } from "@/components/grid/platform-icon";
 import { CopyValue } from "@/components/grid/copy-value";
@@ -364,20 +365,108 @@ function recalcRowStatic(row: GridRow, overrideFeeRate?: number): GridRow {
 function mergeIncomingRows(prevRows: GridRow[], nextRows: GridRow[]): GridRow[] {
   const prevById = new Map(prevRows.map((row) => [row.id, row]));
 
-  return structuredClone(nextRows).map((row) => {
+  return normalizeGridRows(structuredClone(nextRows)).map((row) => {
     const prev = prevById.get(row.id);
     if (!prev || !row.isParent) return row;
 
     if (prev.childRowsHydrated && prev.childRows?.length) {
-      return {
+      return normalizeGridRow({
         ...row,
-        childRows: prev.childRows,
+        childRows: normalizeGridRows(prev.childRows),
         childRowsHydrated: true,
-      };
+      });
     }
 
     return row;
   });
+}
+
+function dedupeStoreValues(items: StoreValue[]): StoreValue[] {
+  const valuesByKey = new Map<string, StoreValue>();
+
+  for (const item of items) {
+    const key = `${item.platform}:${item.listingId}:${item.variantId ?? ""}`;
+    const existing = valuesByKey.get(key);
+
+    if (!existing) {
+      valuesByKey.set(key, item);
+      continue;
+    }
+
+    const existingHasStaged =
+      existing.stagedValue != null && existing.stagedValue !== existing.value;
+    const nextHasStaged = item.stagedValue != null && item.stagedValue !== item.value;
+    const existingHasValue = existing.value != null;
+    const nextHasValue = item.value != null;
+    const existingHasMarketplaceListingId = Boolean(existing.marketplaceListingId);
+    const nextHasMarketplaceListingId = Boolean(item.marketplaceListingId);
+
+    if (
+      (nextHasStaged && !existingHasStaged) ||
+      (nextHasValue && !existingHasValue) ||
+      (nextHasMarketplaceListingId && !existingHasMarketplaceListingId)
+    ) {
+      valuesByKey.set(key, item);
+    }
+  }
+
+  return [...valuesByKey.values()];
+}
+
+function dedupeUpcPushTargets(row: GridRow): GridRow {
+  const upcPushTargets = row.upcPushTargets
+    ? [...new Map(
+        row.upcPushTargets.map((target) => [
+          `${target.platform}:${target.listingId}:${target.variantId ?? ""}`,
+          target,
+        ]),
+      ).values()]
+    : row.upcPushTargets;
+
+  return {
+    ...row,
+    upcPushTargets,
+  };
+}
+
+function normalizeGridRow(row: GridRow): GridRow {
+  const normalizedChildren = row.childRows?.map((child) => normalizeGridRow(child));
+
+  return dedupeUpcPushTargets({
+    ...row,
+    itemNumbers: dedupeStoreValues(row.itemNumbers),
+    salePrices: dedupeStoreValues(row.salePrices),
+    adRates: dedupeStoreValues(row.adRates),
+    platformFees: dedupeStoreValues(row.platformFees),
+    profits: dedupeStoreValues(row.profits),
+    childRows: normalizedChildren,
+  });
+}
+
+function normalizeGridRows(rows: GridRow[]): GridRow[] {
+  return rows.map((row) => normalizeGridRow(row));
+}
+
+function buildPushResultLookupKeys(entry: {
+  marketplaceListingId?: string | null;
+  platform: Platform;
+  listingId: string;
+  variantId?: string | null;
+  field: string;
+}) {
+  const keys = new Set<string>();
+
+  if (entry.marketplaceListingId) {
+    keys.add(`${entry.marketplaceListingId}:${entry.field}`);
+  }
+
+  keys.add(`${entry.platform}:${entry.listingId}:${entry.field}`);
+
+  if (entry.variantId) {
+    keys.add(`${entry.platform}:${entry.listingId}:${entry.variantId}:${entry.field}`);
+  }
+
+  return [...keys];
 }
 
 function PlatformFeeHeader({ feeRate, onSave }: { feeRate: number; onSave: (rate: number) => void }) {
@@ -467,9 +556,13 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
   const { feeRate: globalFeeRate, setFeeRate: setGlobalFeeRate } = usePlatformFee();
   const densityPad = getDensityPadding(settings.density);
   const rowEstimate = getRowHeightEstimate(settings.rowHeight);
-  const [gridRows, setGridRows] = useState<GridRow[]>(() => structuredClone(initialRows));
+  const [gridRows, setGridRows] = useState<GridRow[]>(() =>
+    normalizeGridRows(structuredClone(initialRows))
+  );
+  const [upcLiveRefreshRevisions, setUpcLiveRefreshRevisions] = useState<Record<string, number>>({});
   const [activeGridInteractionIds, setActiveGridInteractionIds] = useState<Set<string>>(() => new Set());
   const pendingInitialRowsRef = useRef<GridRow[] | null>(null);
+  const lastMergedInitialRowsRef = useRef<GridRow[] | null>(initialRows);
   const [pushModalOpen, setPushModalOpen] = useState(false);
   const [pushModalItems, setPushModalItems] = useState<PushItem[]>([]);
   const [pushModalPreviewItems, setPushModalPreviewItems] = useState<PushItem[]>([]);
@@ -479,14 +572,37 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
     return activeGridInteractionIds.size > 0 || pushModalOpen;
   }
 
+  function bumpUpcLiveRefresh(rowIds: string[]) {
+    if (rowIds.length === 0) return;
+
+    setUpcLiveRefreshRevisions((prev) => {
+      const next = { ...prev };
+      for (const rowId of rowIds) {
+        next[rowId] = (next[rowId] ?? 0) + 1;
+      }
+      return next;
+    });
+  }
+
   useEffect(() => {
     if (isInteractionLocked()) {
-      pendingInitialRowsRef.current = initialRows;
+      if (initialRows !== lastMergedInitialRowsRef.current) {
+        pendingInitialRowsRef.current = initialRows;
+      }
+      return;
+    }
+
+    if (initialRows === lastMergedInitialRowsRef.current) {
       return;
     }
 
     setGridRows((prev) => mergeIncomingRows(prev, initialRows));
-  }, [activeGridInteractionIds, initialRows, pushModalOpen]);
+    lastMergedInitialRowsRef.current = initialRows;
+  }, [activeGridInteractionIds, initialRows]);
+
+  useEffect(() => {
+    setGridRows((prev) => normalizeGridRows(prev));
+  }, []);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -518,7 +634,12 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
 
     const pendingRows = pendingInitialRowsRef.current;
     pendingInitialRowsRef.current = null;
+    if (pendingRows === lastMergedInitialRowsRef.current) {
+      return;
+    }
+
     setGridRows((prev) => mergeIncomingRows(prev, pendingRows));
+    lastMergedInitialRowsRef.current = pendingRows;
   }, [activeGridInteractionIds, pushModalOpen]);
 
   useEffect(() => {
@@ -666,6 +787,11 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
         return refreshedRow;
       }),
     );
+
+    bumpUpcLiveRefresh([
+      rowId,
+      ...(refreshedChildRows?.map((child) => child.id) ?? []),
+    ]);
   }
 
   async function handleRefreshRow(rowId: string, parentRowId?: string) {
@@ -970,6 +1096,8 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
       title: row.title,
       platform: platform as Platform,
       listingId,
+      masterRowId: row.id.startsWith("child-") ? row.id.replace(/^child-/, "") : row.id,
+      marketplaceListingId: value.marketplaceListingId ?? undefined,
       platformVariantId: value.variantId,
       field,
       oldValue: liveValue,
@@ -1008,7 +1136,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
   function buildUpcPushChoices(row: GridRow | undefined) {
     if (!row || row.isParent) return [];
 
-    const activeTargets = getActiveUpcTargets(row);
+    const activeTargets = row.upcPushTargets ?? [];
     const counts = new Map<string, number>();
     for (const target of activeTargets) {
       counts.set(target.platform, (counts.get(target.platform) ?? 0) + 1);
@@ -1021,6 +1149,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
         platform: target.platform,
         listingId: target.listingId,
         label: duplicatePlatform ? `${short} #${target.listingId.slice(-6)}` : short,
+        stagedChangeId: target.stagedChangeId ?? null,
       };
     });
   }
@@ -1484,12 +1613,12 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
       return;
     }
 
-    const successMap = new Map(
-      successful.map((entry) => [
-        `${entry.platform}:${entry.listingId}:${entry.field}`,
-        entry,
-      ]),
-    );
+    const successMap = new Map<string, (typeof successful)[number]>();
+    for (const entry of successful) {
+      for (const key of buildPushResultLookupKeys(entry)) {
+        successMap.set(key, entry);
+      }
+    }
     const successfulUpcByMasterRow = new Map<string, string>();
     const failedUpcByMasterRow = new Set<string>();
 
@@ -1504,15 +1633,25 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
 
     function applyToRow(row: GridRow): GridRow {
       const salePrices = row.salePrices.map((entry) => {
-        const key = `${entry.platform}:${entry.listingId}:salePrice`;
-        const pushed = successMap.get(key);
+        const pushed = buildPushResultLookupKeys({
+          marketplaceListingId: entry.marketplaceListingId,
+          platform: entry.platform,
+          listingId: entry.listingId,
+          variantId: entry.variantId,
+          field: "salePrice",
+        }).map((key) => successMap.get(key)).find(Boolean);
         return pushed
           ? { ...entry, value: pushed.newValue, stagedValue: undefined }
           : entry;
       });
       const adRates = row.adRates.map((entry) => {
-        const key = `${entry.platform}:${entry.listingId}:adRate`;
-        const pushed = successMap.get(key);
+        const pushed = buildPushResultLookupKeys({
+          marketplaceListingId: entry.marketplaceListingId,
+          platform: entry.platform,
+          listingId: entry.listingId,
+          variantId: entry.variantId,
+          field: "adRate",
+        }).map((key) => successMap.get(key)).find(Boolean);
         return pushed
           ? { ...entry, value: pushed.newValue, stagedValue: undefined }
           : entry;
@@ -1545,7 +1684,16 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
       };
     }
 
+    const affectedRowIds = [...new Set(
+      successful
+        .map((entry) => entry.masterRowId)
+        .filter((value): value is string => Boolean(value)),
+    )];
     setGridRows((prev) => prev.map((row) => applyToRow(row)));
+    bumpUpcLiveRefresh(affectedRowIds);
+    if (affectedRowIds.length > 0) {
+      void Promise.allSettled(affectedRowIds.map((rowId) => reloadRowSnapshot(rowId)));
+    }
 
     if (result.status === "partial") {
       showToast(
@@ -1568,6 +1716,30 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
       }
     }
     return undefined;
+  }
+
+  function findParentRowId(rowId: string): string | undefined {
+    for (const row of gridRows) {
+      if (row.childRows?.some((child) => child.id === rowId)) {
+        return row.id;
+      }
+    }
+    return undefined;
+  }
+
+  async function reloadRowSnapshot(rowId: string) {
+    const response = await fetch(`/api/grid/${rowId}?ts=${Date.now()}`, { cache: "no-store" });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(payload?.error ?? `Failed to reload row ${rowId} (${response.status})`);
+    }
+
+    const refreshedRow = (payload?.data?.row ?? null) as GridRow | null;
+    if (!refreshedRow) {
+      throw new Error(`Row snapshot for ${rowId} was missing from the response.`);
+    }
+
+    applyRefreshedRowSnapshot(rowId, refreshedRow, findParentRowId(rowId));
   }
 
   function fmtDollar(v: number | null): string {
@@ -1684,6 +1856,16 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
     }
 
     if (mode === "fastPush") {
+      updateRowById(rowId, (r) => {
+        const newSalePrices = r.salePrices.map((sp) =>
+          sp.platform === platform && sp.listingId === listingId
+            ? { ...sp, stagedValue: newPrice }
+            : sp,
+        );
+        const updated = { ...r, salePrices: newSalePrices };
+        return recalcRow(updated);
+      });
+      void persistStageAction(sku, platform, listingId, "stage", newPrice);
       clearQuickPushState(getQuickPushKey(rowId, platform, listingId, "salePrice"));
       void startInlineFastPush(rowId, platform, listingId, "salePrice", newPrice);
       showToast(`Fast push started - SKU ${sku} (${platLabel}) from ${oldVal} to ${fmtDollar(newPrice)}`);
@@ -1717,6 +1899,69 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
     showToast(`Price Staged — SKU ${sku} (${platLabel}) from ${oldVal} to ${fmtDollar(newPrice)}`);
   }
 
+  function handleSalePriceBulkEdit(rowId: string, newPrice: number, mode: "stage" | "push") {
+    const row = findRow(rowId);
+    if (!row) return;
+
+    const sku = row.sku;
+    const actionableEntries = row.salePrices.filter((entry) => !valuesMatch(entry.value, newPrice));
+    const stageWrites: Array<{ platform: string; listingId: string; newPrice: number }> = [];
+    const discardWrites: Array<{ platform: string; listingId: string }> = [];
+
+    updateRowById(rowId, (current) => {
+      const nextSalePrices = current.salePrices.map((entry) => {
+        const liveValue = entry.value != null ? Number(entry.value) : null;
+        const stagedValue = entry.stagedValue != null ? Number(entry.stagedValue) : null;
+
+        if (valuesMatch(liveValue, newPrice)) {
+          if (stagedValue != null && !valuesMatch(stagedValue, liveValue)) {
+            discardWrites.push({ platform: entry.platform, listingId: entry.listingId });
+            return { ...entry, stagedValue: undefined };
+          }
+          return entry;
+        }
+
+        if (!valuesMatch(stagedValue, newPrice)) {
+          stageWrites.push({ platform: entry.platform, listingId: entry.listingId, newPrice });
+        }
+
+        return { ...entry, stagedValue: newPrice };
+      });
+
+      return recalcRow({ ...current, salePrices: nextSalePrices });
+    });
+
+    void Promise.allSettled([
+      ...stageWrites.map((item) =>
+        persistStageAction(sku, item.platform, item.listingId, "stage", item.newPrice),
+      ),
+      ...discardWrites.map((item) =>
+        persistStageAction(sku, item.platform, item.listingId, "discard"),
+      ),
+    ]);
+
+    const pushItems = actionableEntries
+      .map((entry) => buildPushItem(row, entry.platform, entry.listingId, "salePrice", newPrice))
+      .filter((item): item is PushItem => Boolean(item));
+
+    if (pushItems.length === 0) {
+      showToast(`No sale price changes were needed for SKU ${sku}.`);
+      return;
+    }
+
+    if (mode === "push") {
+      queuePushReview(pushItems, "review");
+      showToast(
+        `Sale price review ready â€” SKU ${sku} across ${pushItems.length} marketplace${pushItems.length === 1 ? "" : "s"}.`,
+      );
+      return;
+    }
+
+    showToast(
+      `Sale price staged â€” SKU ${sku} across ${pushItems.length} marketplace${pushItems.length === 1 ? "" : "s"}.`,
+    );
+  }
+
   function handleAdRateEdit(rowId: string, platform: string, listingId: string, newRate: number, mode: "stage" | "push" | "fastPush") {
     const row = findRow(rowId);
     const sku = row?.sku ?? rowId;
@@ -1748,6 +1993,16 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
     }
 
     if (mode === "fastPush") {
+      updateRowById(rowId, (r) => {
+        const newAdRates = r.adRates.map((ar) =>
+          ar.platform === platform && ar.listingId === listingId
+            ? { ...ar, stagedValue: newRate }
+            : ar,
+        );
+        const updated = { ...r, adRates: newAdRates };
+        return recalcRow(updated);
+      });
+      void persistAdRateAction(sku, platform, listingId, "stage", newRate);
       clearQuickPushState(getQuickPushKey(rowId, platform, listingId, "adRate"));
       void startInlineFastPush(rowId, platform, listingId, "adRate", newRate);
       showToast(`Fast push started - SKU ${sku} (${platLabel}) from ${oldVal} to ${fmtPct(newRate)}`);
@@ -1801,7 +2056,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
     );
   }
 
-  function handleDiscardStagedAdRate(rowId: string, platform: string, listingId: string) {
+  async function handleDiscardStagedAdRate(rowId: string, platform: string, listingId: string) {
     const row = findRow(rowId);
     const sku = row?.sku ?? rowId;
     const platLabel = PLATFORM_SHORT[platform as keyof typeof PLATFORM_SHORT] ?? platform;
@@ -1819,7 +2074,15 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
       return recalcRow({ ...r, adRates: newAdRates });
     });
 
-    persistAdRateAction(sku, platform, listingId, "discard");
+    try {
+      await persistAdRateAction(sku, platform, listingId, "discard");
+      await reloadRowSnapshot(rowId);
+    } catch (error) {
+      console.error("Failed to discard staged ad rate:", error);
+      showToast(`Discard failed — SKU ${sku} (${platLabel}) could not be reloaded.`);
+      return;
+    }
+
     clearQuickPushState(getQuickPushKey(rowId, platform, listingId, "adRate"));
     showToast(`Staged Ad Rate Discarded — SKU ${sku} (${platLabel}) reverted from ${stagedVal} to ${liveVal}`);
   }
@@ -1852,7 +2115,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
     );
   }
 
-  function handleDiscardStaged(rowId: string, platform: string, listingId: string) {
+  async function handleDiscardStaged(rowId: string, platform: string, listingId: string) {
     const row = findRow(rowId);
     const sku = row?.sku ?? rowId;
     const platLabel = PLATFORM_SHORT[platform as keyof typeof PLATFORM_SHORT] ?? platform;
@@ -1869,7 +2132,16 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
       const updated = { ...r, salePrices: newSalePrices };
       return recalcRow(updated);
     });
-    persistStageAction(sku, platform, listingId, "discard");
+
+    try {
+      await persistStageAction(sku, platform, listingId, "discard");
+      await reloadRowSnapshot(rowId);
+    } catch (error) {
+      console.error("Failed to discard staged price:", error);
+      showToast(`Discard failed — SKU ${sku} (${platLabel}) could not be reloaded.`);
+      return;
+    }
+
     clearQuickPushState(getQuickPushKey(rowId, platform, listingId, "salePrice"));
     showToast(`Staged Price Discarded — SKU ${sku} (${platLabel}) reverted from ${stagedVal} to ${liveVal}`);
   }
@@ -2179,7 +2451,12 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
       });
   }
 
-  function handleUpcEdit(rowId: string, newUpc: string, mode: "stage" | "push" | "fastPush") {
+  function handleUpcEdit(
+    rowId: string,
+    newUpc: string,
+    mode: "stage" | "push" | "fastPush",
+    targetSelection?: { platform: string; listingId: string; currentValue?: string | null },
+  ) {
     const row = findRow(rowId);
     if (!row || row.isParent) {
       showToast("UPC can only be edited on a single row or child row.");
@@ -2187,13 +2464,32 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
     }
 
     const normalizedUpc = newUpc.trim();
-    const liveUpc = row.upc?.trim() ?? "";
-    const effectiveUpc = row.stagedUpc?.trim() ?? liveUpc;
+    const liveUpc = targetSelection
+      ? (targetSelection.currentValue?.trim() ?? "")
+      : (row.upc?.trim() ?? "");
 
     if (!normalizedUpc) {
       showToast(`UPC cannot be blank for SKU ${row.sku}.`);
       return;
     }
+
+    const selectedTargets = (row.upcPushTargets ?? []).filter((target) => {
+      if (!targetSelection) return true;
+      return (
+        target.platform === targetSelection.platform &&
+        target.listingId === targetSelection.listingId
+      );
+    });
+
+    if (targetSelection && selectedTargets.length === 0) {
+      showToast(`No supported ${targetSelection.platform} UPC target was found for SKU ${row.sku}.`);
+      return;
+    }
+
+    const hasTargetStage = targetSelection
+      ? selectedTargets.some((target) => Boolean(target.stagedChangeId))
+      : Boolean(row.hasStagedUpc);
+    const effectiveUpc = hasTargetStage ? (row.stagedUpc?.trim() ?? liveUpc) : liveUpc;
 
     if (valuesMatch(effectiveUpc, normalizedUpc)) {
       showToast(`No UPC change - SKU ${row.sku} is already ${normalizedUpc}.`);
@@ -2201,11 +2497,15 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
     }
 
     if (valuesMatch(liveUpc, normalizedUpc)) {
-      void handleDiscardStagedUpc(rowId);
+      if (targetSelection) {
+        void handleDiscardStagedUpcTarget(rowId, targetSelection.platform, targetSelection.listingId);
+      } else {
+        void handleDiscardStagedUpc(rowId);
+      }
       return;
     }
 
-    const pushItems = (row.upcPushTargets ?? [])
+    const pushItems = selectedTargets
       .map((target) => buildPushItem(row, target.platform, target.listingId, "upc", normalizedUpc))
       .filter((item): item is PushItem => Boolean(item));
 
@@ -2216,10 +2516,16 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
       hasStagedChanges: true,
       upcPushTargets: (current.upcPushTargets ?? []).map((target) => ({
         ...target,
-        stagedChangeId: buildLocalUpcStageId(target.platform, target.listingId),
+        stagedChangeId:
+          selectedTargets.some(
+            (selected) =>
+              selected.platform === target.platform && selected.listingId === target.listingId,
+          )
+            ? buildLocalUpcStageId(target.platform, target.listingId)
+            : null,
       })),
     }));
-    void persistUpcAction(row.sku, "stage", normalizedUpc);
+    void persistUpcAction(row.sku, "stage", normalizedUpc, targetSelection);
 
     if (mode === "fastPush") {
       clearQuickPushState(getUpcQuickPushKey(rowId));
@@ -2418,6 +2724,77 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
   const [clearStagedOpen, setClearStagedOpen] = useState(false);
   const [clearStagedInput, setClearStagedInput] = useState("");
   const failedPushCount = failedPushes.length;
+  const failedPushStates = useMemo(() => {
+    const failuresByComposite = new Map<string, FailedPushItem[]>();
+    for (const failure of failedPushes) {
+      const compositeKey = `${failure.masterRowId}:${failure.platform}:${failure.listingId}:${failure.field}`;
+      const existing = failuresByComposite.get(compositeKey) ?? [];
+      existing.push(failure);
+      failuresByComposite.set(compositeKey, existing);
+    }
+
+    const storeStates: Record<string, FailedPushState | undefined> = {};
+    const upcStates: Record<string, Record<string, FailedPushState | undefined>> = {};
+
+    function collect(row: GridRow) {
+      const masterRowId = row.id.startsWith("child-") ? row.id.replace(/^child-/, "") : row.id;
+
+      for (const item of row.salePrices) {
+        if (item.stagedValue == null || valuesMatch(item.stagedValue, item.value)) continue;
+        const match = (failuresByComposite.get(`${masterRowId}:${item.platform}:${item.listingId}:salePrice`) ?? []).find(
+          (failure) => valuesMatch(failure.newValue, item.stagedValue),
+        );
+        if (match) {
+          storeStates[getQuickPushKey(row.id, item.platform, item.listingId, "salePrice")] = {
+            summary: match.failureSummary,
+            error: match.error,
+          };
+        }
+      }
+
+      for (const item of row.adRates) {
+        if (item.stagedValue == null || valuesMatch(item.stagedValue, item.value)) continue;
+        const match = (failuresByComposite.get(`${masterRowId}:${item.platform}:${item.listingId}:adRate`) ?? []).find(
+          (failure) => valuesMatch(failure.newValue, item.stagedValue),
+        );
+        if (match) {
+          storeStates[getQuickPushKey(row.id, item.platform, item.listingId, "adRate")] = {
+            summary: match.failureSummary,
+            error: match.error,
+          };
+        }
+      }
+
+      if (row.hasStagedUpc && row.stagedUpc && row.upcPushTargets?.length) {
+        const rowUpcStates: Record<string, FailedPushState | undefined> = {};
+        for (const target of row.upcPushTargets) {
+          if (!target.stagedChangeId) continue;
+          const match = (failuresByComposite.get(`${masterRowId}:${target.platform}:${target.listingId}:upc`) ?? []).find(
+            (failure) => valuesMatch(failure.newValue, row.stagedUpc),
+          );
+          if (match) {
+            rowUpcStates[`${target.platform}:${target.listingId}`] = {
+              summary: match.failureSummary,
+              error: match.error,
+            };
+          }
+        }
+        if (Object.keys(rowUpcStates).length > 0) {
+          upcStates[row.id] = rowUpcStates;
+        }
+      }
+
+      for (const child of row.childRows ?? []) {
+        collect(child);
+      }
+    }
+
+    for (const row of gridRows) {
+      collect(row);
+    }
+
+    return { storeStates, upcStates };
+  }, [failedPushes, gridRows]);
 
   const stagedCount = useMemo(() => {
     let count = 0;
@@ -2564,15 +2941,10 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
               updated++;
               stageWrites.push({ sku: r.sku, platform: sp.platform, listingId: sp.listingId, newPrice: sourcePrice });
               if (mode === "push") {
-                pushItems.push({
-                  sku: r.sku,
-                  title: r.title,
-                  platform: sp.platform as Platform,
-                  listingId: sp.listingId,
-                  field: "salePrice",
-                  oldValue: sp.value != null && typeof sp.value === "number" ? Number(sp.value) : null,
-                  newValue: sourcePrice,
-                });
+                const pushItem = buildPushItem(r, sp.platform, sp.listingId, "salePrice", sourcePrice);
+                if (pushItem) {
+                  pushItems.push(pushItem);
+                }
               }
               if (mode === "push") return { ...sp, stagedValue: sourcePrice };
               return { ...sp, stagedValue: sourcePrice };
@@ -2688,6 +3060,18 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
           {flatRows.length !== gridRows.length && ` (${gridRows.length} total)`}
         </span>
         <div className="flex items-center gap-2">
+          {failedPushCount > 0 && (
+            <button
+              onClick={() => {
+                void loadFailedPushes();
+                setFailedPushesOpen(true);
+              }}
+              className="flex items-center gap-1 rounded border border-red-500/30 bg-red-500/10 px-2.5 py-1 text-xs font-medium text-red-300 transition-colors hover:bg-red-500/20 cursor-pointer"
+            >
+              <AlertTriangle className="h-3 w-3" />
+              Push Alerts ({failedPushCount})
+            </button>
+          )}
           <button
             onClick={() => void openBulkUpcModal()}
             className="flex items-center gap-1 rounded border border-violet-500/30 bg-violet-500/10 px-2.5 py-1 text-xs font-medium text-violet-300 transition-colors hover:bg-violet-500/20 cursor-pointer"
@@ -2711,18 +3095,6 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
               >
                 <Trash2 className="h-3 w-3" />
                 Clear Staged ({stagedCount})
-              </button>
-            )}
-            {failedPushCount > 0 && (
-              <button
-                onClick={() => {
-                  void loadFailedPushes();
-                  setFailedPushesOpen(true);
-                }}
-                className="flex items-center gap-1 rounded border border-red-500/30 bg-red-500/10 px-2.5 py-1 text-xs font-medium text-red-300 transition-colors hover:bg-red-500/20 cursor-pointer"
-              >
-                <AlertTriangle className="h-3 w-3" />
-                Pushes Failed ({failedPushCount})
               </button>
             )}
           </div>
@@ -2883,7 +3255,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
 
             return (
               <div
-                key={row.id}
+                key={row.parentId ? `${row.parentId}:${row.id}` : row.id}
                 data-index={virtualRow.index}
                 ref={rowVirtualizer.measureElement}
                 className={cn(
@@ -2998,13 +3370,15 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
                         <UpcCell
                           rowId={row.id}
                           upc={row.upc}
+                          liveFetchRevision={upcLiveRefreshRevisions[row.id] ?? 0}
                           disableLiveFetch={row.isParent && row.id.startsWith("variation-parent:")}
                           stagedUpc={row.stagedUpc}
                           editable={!row.isParent && (row.upcPushTargets?.length ?? 0) > 0}
                           canPush={!row.isParent && Boolean(row.hasStagedUpc) && (row.upcPushTargets?.length ?? 0) > 0}
                           pushTargets={buildUpcPushChoices(row)}
                           quickPushState={quickPushStates[getUpcQuickPushKey(row.id)]}
-                          onSave={(value, mode) => handleUpcEdit(row.id, value, mode)}
+                          failedPushTargets={failedPushStates.upcStates[row.id]}
+                          onSave={(value, mode, target) => handleUpcEdit(row.id, value, mode, target)}
                           onReviewPush={() => handlePushStagedUpc(row.id, "review")}
                           onFastPush={() => handlePushStagedUpc(row.id, "fast")}
                           onReviewPushTarget={(platform, listingId) =>
@@ -3146,9 +3520,11 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
                         items={row.salePrices}
                         rowId={row.id}
                         onSave={handleSalePriceEdit}
+                        onBulkSave={handleSalePriceBulkEdit}
                         onPush={handlePushStaged}
                         onDiscard={handleDiscardStaged}
                         quickPushStates={quickPushStates}
+                        failedPushStates={failedPushStates.storeStates}
                       />
                     </div>
                   )}
@@ -3223,6 +3599,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
                           onPush={handlePushStagedAdRate}
                           onDiscard={handleDiscardStagedAdRate}
                           quickPushStates={quickPushStates}
+                          failedPushStates={failedPushStates.storeStates}
                         />
                       )}
                     </div>

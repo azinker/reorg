@@ -35,11 +35,18 @@ export function StickySearch({
 
   function flattenRows(rows: GridRow[]): GridRow[] {
     const flat: GridRow[] = [];
+    const seenChildIds = new Set<string>();
     for (const row of rows) {
       if (!row.isParent) {
         flat.push(row);
       }
-      if (row.childRows) flat.push(...row.childRows);
+      if (row.childRows) {
+        for (const child of row.childRows) {
+          if (seenChildIds.has(child.id)) continue;
+          seenChildIds.add(child.id);
+          flat.push(child);
+        }
+      }
     }
     return flat;
   }
@@ -168,7 +175,7 @@ export function StickySearch({
         >
           {results.map((result, i) => (
             <button
-              key={result.rowId}
+              key={`${result.rowId}:${result.matchField}:${i}`}
               onClick={() => handleSelect(result.rowId)}
               className={cn(
                 "flex w-full items-center gap-3 px-4 py-2.5 text-left text-sm transition-colors cursor-pointer",

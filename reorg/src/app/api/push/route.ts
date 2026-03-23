@@ -1,8 +1,8 @@
-import { NextResponse, type NextRequest } from "next/server";
+import { NextResponse, after, type NextRequest } from "next/server";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { executePush } from "@/lib/services/push";
+import { executePush, finalizeDeferredPostPushRefresh } from "@/lib/services/push";
 import { buildAdapter } from "@/lib/integrations/factory";
 import { getIntegrationConfig } from "@/lib/integrations/runtime-config";
 import { isLivePushEnabled } from "@/lib/automation-settings";
@@ -195,37 +195,51 @@ export async function POST(request: NextRequest) {
         dryRun,
       },
       adapters,
+      { deferPostPushRefresh: !dryRun },
     );
+    const { deferredPostPushRefreshTask, ...publicResult } = result;
+    if (deferredPostPushRefreshTask) {
+      after(async () => {
+        try {
+          await finalizeDeferredPostPushRefresh(deferredPostPushRefreshTask);
+        } catch (error) {
+          console.error(
+            "[push] Failed to finalize deferred post-push refresh",
+            error,
+          );
+        }
+      });
+    }
     const firstLivePush = priorLivePushCount === 0;
 
     const nextStep =
-      result.status === "blocked"
-          ? result.blockedReason ?? "Resolve the blocker before retrying this push."
+      publicResult.status === "blocked"
+          ? publicResult.blockedReason ?? "Resolve the blocker before retrying this push."
           : dryRun
             ? "Review the dry-run summary, go-live checklist, and post-push refresh readiness before confirming a live push."
-            : result.status === "partial"
+            : publicResult.status === "partial"
               ? "Review the failed listings, then retry only the remaining staged changes after checking Engine Room."
-          : result.postPushRefresh?.status === "completed"
+          : publicResult.postPushRefresh?.status === "completed"
             ? "Review Engine Room or Sync if you want to inspect the targeted post-push refresh jobs."
-            : result.postPushRefresh?.status === "warning"
+            : publicResult.postPushRefresh?.status === "warning"
               ? "Review Sync or Engine Room to confirm the targeted refresh finishes cleanly."
               : "Review Engine Room or Sync if you need to inspect the live push and follow-up refresh.";
 
     const message =
-      result.status === "blocked"
+      publicResult.status === "blocked"
         ? "Push blocked by a safety rule."
         : dryRun
           ? "Dry run completed. Review the impact summary, batch guardrails, and live-push readiness before confirming anything."
-          : result.status === "partial"
+          : publicResult.status === "partial"
             ? "Live push partially completed. Some listings updated, and some still need attention before you retry."
-          : result.prePushBackup?.status === "completed"
+          : publicResult.prePushBackup?.status === "completed"
             ? "Live push completed through the write safety chain, including the automatic pre-push backup."
             : "Live push completed through the write safety chain.";
 
     return NextResponse.json(
       {
         data: {
-          ...result,
+          ...publicResult,
           firstLivePush,
           operatorChecklist: firstLivePush ? FIRST_LIVE_PUSH_CHECKLIST : [],
           changes: changes.length,
@@ -233,7 +247,7 @@ export async function POST(request: NextRequest) {
           nextStep,
         },
       },
-      { status: result.status === "blocked" ? 409 : 200 },
+      { status: publicResult.status === "blocked" ? 409 : 200 },
     );
   } catch (error) {
     console.error("[push] Failed to process push request", error);

@@ -40,6 +40,32 @@ type ImportSuccess = {
   changedFields: string[];
 };
 
+type ImportImpact = {
+  row: number;
+  sku: string;
+  outcome: "created" | "updated" | "no_changes";
+  summary: string;
+  changedFields: string[];
+};
+
+type ExistingImportRow = {
+  id: string;
+  sku: string;
+  title: string | null;
+  upc: string | null;
+  weight: string | null;
+  weightOz: number | null;
+  supplierCost: number | null;
+  supplierShipping: number | null;
+  notes: string | null;
+  listings: Array<{
+    id: string;
+    integration: {
+      platform: Platform;
+    };
+  }>;
+};
+
 const COLUMN_MAP: Record<string, string> = {
   sku: "sku",
   title: "title",
@@ -104,6 +130,29 @@ function validateRow(
     valid: errors.length === 0,
     errors,
   };
+}
+
+function markDuplicateSkuErrors(
+  rows: Array<{ index: number; fields: Record<string, unknown>; valid: boolean; errors: string[] }>
+) {
+  const firstSeenRowBySku = new Map<string, number>();
+
+  for (const row of rows) {
+    if (!row.valid) continue;
+
+    const sku = String(row.fields.sku ?? "").trim();
+    if (!sku) continue;
+
+    const normalizedSku = sku.toLowerCase();
+    const firstSeenRow = firstSeenRowBySku.get(normalizedSku);
+    if (firstSeenRow != null) {
+      row.valid = false;
+      row.errors.push(`Duplicate SKU in import file. First seen on row ${firstSeenRow}.`);
+      continue;
+    }
+
+    firstSeenRowBySku.set(normalizedSku, row.index);
+  }
 }
 
 function buildDownloadRow(fields: Record<string, unknown>, errorReason?: string): ImportDownloadRow {
@@ -251,11 +300,114 @@ function summarizeSuccess(args: {
   return parts.length > 0 ? parts.join(". ") : "No changes needed";
 }
 
+function computeImportImpact(args: {
+  existing: ExistingImportRow | null;
+  data: ReturnType<typeof collectImportedData>;
+  importedUpc: string | null;
+  mode: Exclude<ImportMode, "preview">;
+}) {
+  const changedFields: string[] = [];
+  let rowCreated = false;
+  let upcStaged = false;
+
+  if (args.existing) {
+    if (args.mode === "overwrite") {
+      for (const [key, value] of Object.entries(args.data)) {
+        if (value === undefined || value === null || value === "") continue;
+        const current = args.existing[key as keyof ExistingImportRow];
+        if (current !== value) {
+          changedFields.push(fieldLabel(key));
+        }
+      }
+
+      const liveUpc = args.existing.upc?.trim() || null;
+      if (args.importedUpc && liveUpc !== args.importedUpc) {
+        upcStaged = true;
+      }
+    } else {
+      for (const [key, value] of Object.entries(args.data)) {
+        if (value === undefined || value === null || value === "") continue;
+        const current = args.existing[key as keyof ExistingImportRow];
+        const isEmpty =
+          current === null ||
+          current === undefined ||
+          (typeof current === "string" && current.trim() === "");
+        if (isEmpty) {
+          changedFields.push(fieldLabel(key));
+        }
+      }
+
+      const liveUpc = args.existing.upc?.trim() || null;
+      if (args.importedUpc && !liveUpc) {
+        upcStaged = true;
+      }
+    }
+  } else {
+    rowCreated = true;
+    changedFields.push(...Object.keys(args.data).map(fieldLabel));
+    if (args.importedUpc) {
+      upcStaged = true;
+    }
+  }
+
+  return {
+    rowCreated,
+    upcStaged,
+    changedFields,
+    outcome: rowCreated
+      ? ("created" as const)
+      : changedFields.length > 0 || upcStaged
+        ? ("updated" as const)
+        : ("no_changes" as const),
+    summary: summarizeSuccess({
+      created: rowCreated,
+      changedFields,
+      upcStaged,
+    }),
+  };
+}
+
+async function loadExistingRowsBySku(skus: string[]) {
+  if (skus.length === 0) {
+    return new Map<string, ExistingImportRow>();
+  }
+
+  const rows = await db.masterRow.findMany({
+    where: {
+      sku: { in: skus },
+    },
+    select: {
+      id: true,
+      sku: true,
+      title: true,
+      upc: true,
+      weight: true,
+      weightOz: true,
+      supplierCost: true,
+      supplierShipping: true,
+      notes: true,
+      listings: {
+        select: {
+          id: true,
+          integration: {
+            select: {
+              platform: true,
+            },
+          },
+        },
+      },
+    },
+  });
+
+  return new Map(rows.map((row) => [row.sku, row]));
+}
+
 export async function POST(request: NextRequest) {
   try {
     const formData = await request.formData();
     const file = formData.get("file") as File | null;
     const mode = (formData.get("mode") as string) || "preview";
+    const analysisMode = (formData.get("analysisMode") as string) || "fill_blanks";
 
     if (!file) {
       return NextResponse.json(
@@ -287,23 +439,80 @@ export async function POST(request: NextRequest) {
       rows.push({ index: i + 1, fields, valid, errors });
     }
 
+    markDuplicateSkuErrors(rows);
+
     const validRows = rows.filter((r) => r.valid);
     const errorRows = rows.filter((r) => !r.valid);
 
     const resolvedMode: ImportMode = VALID_MODES.includes(mode as ImportMode)
       ? (mode as ImportMode)
       : "preview";
+    const resolvedAnalysisMode: Exclude<ImportMode, "preview"> =
+      analysisMode === "overwrite" ? "overwrite" : "fill_blanks";
+    const existingRowsBySku = await loadExistingRowsBySku(
+      [...new Set(validRows.map((row) => String(row.fields.sku ?? "").trim()).filter(Boolean))],
+    );
 
     if (resolvedMode === "preview") {
+      const impacts: ImportImpact[] = validRows.slice(0, 50).map((row) => {
+        const sku = String(row.fields.sku ?? "").trim();
+        const data = collectImportedData(row.fields);
+        const importedUpc =
+          row.fields.upc != null && String(row.fields.upc).trim() !== ""
+            ? String(row.fields.upc).trim()
+            : null;
+        const impact = computeImportImpact({
+          existing: existingRowsBySku.get(sku) ?? null,
+          data,
+          importedUpc,
+          mode: resolvedAnalysisMode,
+        });
+
+        return {
+          row: row.index,
+          sku,
+          outcome: impact.outcome,
+          summary: impact.summary,
+          changedFields: [
+            ...impact.changedFields,
+            ...(impact.upcStaged ? ["UPC"] : []),
+          ],
+        };
+      });
+
+      const impactCounts = validRows.reduce(
+        (counts, row) => {
+          const sku = String(row.fields.sku ?? "").trim();
+          const data = collectImportedData(row.fields);
+          const importedUpc =
+            row.fields.upc != null && String(row.fields.upc).trim() !== ""
+              ? String(row.fields.upc).trim()
+              : null;
+          const impact = computeImportImpact({
+            existing: existingRowsBySku.get(sku) ?? null,
+            data,
+            importedUpc,
+            mode: resolvedAnalysisMode,
+          });
+
+          counts[impact.outcome] += 1;
+          return counts;
+        },
+        { created: 0, updated: 0, no_changes: 0 },
+      );
+
       return NextResponse.json({
         data: {
           fileName: file.name,
           size: file.size,
           mode: "preview",
           status: "preview",
+          analysisMode: resolvedAnalysisMode,
           validRows: validRows.length,
           errorRows: errorRows.length,
           preview: validRows.slice(0, 20).map((r) => ({ row: r.index, ...r.fields })),
+          impacts,
+          impactCounts,
           errors: errorRows.slice(0, 50).map((r) => ({ row: r.index, errors: r.errors })),
         },
       });
@@ -326,25 +535,21 @@ export async function POST(request: NextRequest) {
       const sku = String(fields.sku ?? "").trim();
       if (!sku) continue;
       try {
-        const existing = await db.masterRow.findUnique({
-          where: { sku },
-          include: {
-            listings: {
-              select: {
-                id: true,
-                integration: { select: { platform: true } },
-              },
-            },
-          },
-        });
+        let existing = existingRowsBySku.get(sku) ?? null;
         const data = collectImportedData(fields);
         const importedUpc =
           fields.upc != null && String(fields.upc).trim() !== ""
             ? String(fields.upc).trim()
             : null;
-        let rowCreated = false;
+        const impact = computeImportImpact({
+          existing,
+          data,
+          importedUpc,
+          mode: resolvedMode,
+        });
+        let rowCreated = impact.rowCreated;
         let upcStaged = false;
-        const changedFields: string[] = [];
+        const changedFields = [...impact.changedFields];
 
         const supportedPlatforms = new Set<Platform>([
           Platform.TPP_EBAY,
@@ -380,6 +585,7 @@ export async function POST(request: NextRequest) {
                   },
                 })
               : existing;
+            existingRowsBySku.set(sku, masterRow);
           } else {
             rowCreated = true;
             changedFields.push(...Object.keys(data).map(fieldLabel));
@@ -394,6 +600,7 @@ export async function POST(request: NextRequest) {
                 },
               },
             });
+            existingRowsBySku.set(sku, masterRow);
           }
 
           if (importedUpc) {
@@ -416,7 +623,7 @@ export async function POST(request: NextRequest) {
                   field: "upc",
                   status: "STAGED",
                 },
-                data: { status: "CANCELLED" },
+              data: { status: "CANCELLED" },
               });
             }
           }
@@ -444,7 +651,28 @@ export async function POST(request: NextRequest) {
               }
             }
             if (Object.keys(patch).length > 0) {
-              await db.masterRow.update({ where: { sku }, data: patch });
+              existing = await db.masterRow.update({
+                where: { sku },
+                data: patch,
+                select: {
+                  id: true,
+                  sku: true,
+                  title: true,
+                  upc: true,
+                  weight: true,
+                  weightOz: true,
+                  supplierCost: true,
+                  supplierShipping: true,
+                  notes: true,
+                  listings: {
+                    select: {
+                      id: true,
+                      integration: { select: { platform: true } },
+                    },
+                  },
+                },
+              });
+              existingRowsBySku.set(sku, existing);
             }
 
             if (importedUpc) {
@@ -481,6 +709,18 @@ export async function POST(request: NextRequest) {
               });
               upcStaged = true;
             }
+            existingRowsBySku.set(sku, {
+              id: masterRow.id,
+              sku: masterRow.sku,
+              title: masterRow.title,
+              upc: masterRow.upc,
+              weight: masterRow.weight,
+              weightOz: masterRow.weightOz,
+              supplierCost: masterRow.supplierCost,
+              supplierShipping: masterRow.supplierShipping,
+              notes: masterRow.notes,
+              listings: [],
+            });
             created++;
           }
         }
@@ -514,6 +754,34 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    await db.auditLog.create({
+      data: {
+        userId: systemUser.id,
+        action: "import_completed",
+        entityType: "import",
+        entityId: file.name,
+        details: {
+          fileName: file.name,
+          mode: resolvedMode,
+          validRows: validRows.length,
+          invalidRows: errorRows.length,
+          created,
+          updated,
+          unchanged,
+          failed: failures.length,
+          duplicateSkuFailures: failures.filter((failure) =>
+            failure.error.toLowerCase().includes("duplicate sku"),
+          ).length,
+          successPreview: successes.slice(0, 20),
+          failurePreview: failures.slice(0, 20).map((failure) => ({
+            row: failure.row,
+            sku: failure.sku,
+            error: failure.error,
+          })),
+        } as const,
+      },
+    });
+
     return NextResponse.json({
       data: {
         fileName: file.name,
@@ -531,6 +799,15 @@ export async function POST(request: NextRequest) {
     });
   } catch (error) {
     console.error("[import] Failed to process import", error);
+    await db.auditLog.create({
+      data: {
+        action: "import_failed",
+        entityType: "import",
+        details: {
+          error: error instanceof Error ? error.message : "Failed to process import",
+        },
+      },
+    }).catch(() => undefined);
     return NextResponse.json(
       { error: "Failed to process import" },
       { status: 500 }

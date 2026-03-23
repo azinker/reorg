@@ -119,6 +119,19 @@ export interface PushExecutionResult {
       targetedCount: number;
     }>;
   };
+  deferredPostPushRefreshTask?: DeferredPostPushRefreshTask;
+}
+
+export interface DeferredPostPushRefreshTask {
+  pushJobId: string;
+  writeSafetyDetail: string;
+  batchSafety: NonNullable<PushExecutionResult["batchSafety"]>;
+  prePushBackup: NonNullable<PushExecutionResult["prePushBackup"]>;
+  results: PushExecutionResult["results"];
+}
+
+interface ExecutePushOptions {
+  deferPostPushRefresh?: boolean;
 }
 
 const EBAY_PUSH_PLATFORMS = new Set<Platform>(["TPP_EBAY", "TT_EBAY"]);
@@ -310,6 +323,29 @@ function buildGoLiveChecklist(args: {
       detail: args.postPushRefresh.detail,
     },
   ];
+}
+
+function buildDeferredPostPushRefreshState(
+  planned?: PushExecutionResult["postPushRefresh"],
+): NonNullable<PushExecutionResult["postPushRefresh"]> {
+  return {
+    status: "warning",
+    detail:
+      "Live push completed. Post-push targeted readback is running in the background; review Sync or Engine Room for completion.",
+    retryAt: planned?.retryAt ?? null,
+    requiredCalls: planned?.requiredCalls ?? null,
+    availableCalls: planned?.availableCalls ?? null,
+    results: planned?.results ?? [],
+  };
+}
+
+function asPushJobResult(
+  value: unknown,
+): Partial<PushExecutionResult> & Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+  return value as Partial<PushExecutionResult> & Record<string, unknown>;
 }
 
 function evaluatePrePushBackupNeed(
@@ -549,7 +585,7 @@ async function evaluatePostPushRefreshHeadroom(
 async function executePostPushTargetedRefresh(args: {
   pushJobId: string;
   results: PushExecutionResult["results"];
-}): Promise<PushExecutionResult["postPushRefresh"]> {
+}): Promise<NonNullable<PushExecutionResult["postPushRefresh"]>> {
   const targetedByPlatform = new Map<Platform, Set<string>>();
   const targetedReadbackByPlatform = new Map<
     Platform,
@@ -787,6 +823,74 @@ function buildBlockedResult(args: {
   };
 }
 
+export async function finalizeDeferredPostPushRefresh(
+  task: DeferredPostPushRefreshTask,
+): Promise<NonNullable<PushExecutionResult["postPushRefresh"]>> {
+  const completedPostPushRefresh = await executePostPushTargetedRefresh({
+    pushJobId: task.pushJobId,
+    results: task.results,
+  });
+
+  const pushJob = await db.pushJob.findUnique({
+    where: { id: task.pushJobId },
+    select: { result: true },
+  });
+
+  const existingResult = asPushJobResult(pushJob?.result);
+  const summary =
+    (existingResult.summary as PushExecutionResult["summary"] | undefined) ?? undefined;
+  const results =
+    (Array.isArray(existingResult.results)
+      ? (existingResult.results as PushExecutionResult["results"])
+      : task.results) ?? task.results;
+  const batchSafety =
+    (existingResult.batchSafety as PushExecutionResult["batchSafety"] | undefined) ??
+    task.batchSafety;
+  const prePushBackup =
+    (existingResult.prePushBackup as PushExecutionResult["prePushBackup"] | undefined) ??
+    task.prePushBackup;
+  const goLiveChecklist =
+    summary && batchSafety && prePushBackup
+      ? buildGoLiveChecklist({
+          dryRun: false,
+          writeSafetyDetail: task.writeSafetyDetail,
+          writeSafetyStatus: "ready",
+          batchSafety,
+          prePushBackup,
+          confirmationStatus: "completed",
+          postPushRefresh: completedPostPushRefresh,
+        })
+      : (existingResult.goLiveChecklist as PushExecutionResult["goLiveChecklist"] | undefined);
+
+  await db.pushJob.update({
+    where: { id: task.pushJobId },
+    data: {
+      result: {
+        ...existingResult,
+        summary,
+        results,
+        batchSafety,
+        prePushBackup,
+        postPushRefresh: completedPostPushRefresh,
+        goLiveChecklist,
+      } as unknown as object,
+    },
+  });
+
+  await db.auditLog.create({
+    data: {
+      action: "push_post_refresh_completed",
+      entityType: "push_job",
+      entityId: task.pushJobId,
+      details: {
+        postPushRefresh: completedPostPushRefresh,
+      },
+    },
+  });
+
+  return completedPostPushRefresh;
+}
+
 /**
  * Execute a push operation through the full safety chain:
  * 1. Check global write lock
@@ -800,7 +904,8 @@ function buildBlockedResult(args: {
  */
 export async function executePush(
   request: PushRequest,
-  adapters: Map<Platform, MarketplaceAdapter>
+  adapters: Map<Platform, MarketplaceAdapter>,
+  options: ExecutePushOptions = {},
 ): Promise<PushExecutionResult> {
   const results: PushExecutionResult["results"] = [];
 
@@ -1252,6 +1357,27 @@ export async function executePush(
     });
   }
 
+  const successfulLiveListingUpdates = results.filter(
+    (result): result is typeof result & { marketplaceListingId: string } =>
+      result.success &&
+      Boolean(result.marketplaceListingId) &&
+      (result.field === "salePrice" || result.field === "adRate"),
+  );
+
+  if (successfulLiveListingUpdates.length > 0) {
+    await Promise.all(
+      successfulLiveListingUpdates.map((result) =>
+        db.marketplaceListing.update({
+          where: { id: result.marketplaceListingId },
+          data:
+            result.field === "salePrice"
+              ? { salePrice: Number(result.newValue) }
+              : { adRate: Number(result.newValue) },
+        }),
+      ),
+    );
+  }
+
   const upcChangesByMasterRow = new Map<
     string,
     { requestedValue: string; successful: boolean[] }
@@ -1316,13 +1442,27 @@ export async function executePush(
       ? "partial"
       : "failed";
   const finalSummary = buildPushSummary(byPlatform, results);
+  const shouldDeferPostPushRefresh =
+    Boolean(options.deferPostPushRefresh) &&
+    (status === "completed" || status === "partial");
   const completedPostPushRefresh =
-    status === "completed" || status === "partial"
+    shouldDeferPostPushRefresh
+      ? buildDeferredPostPushRefreshState(postPushRefresh)
+      : status === "completed" || status === "partial"
       ? await executePostPushTargetedRefresh({
           pushJobId: pushJob.id,
           results,
         })
       : postPushRefresh;
+  const deferredPostPushRefreshTask = shouldDeferPostPushRefresh
+    ? {
+        pushJobId: pushJob.id,
+        writeSafetyDetail: writeSafetyMessages.join(" "),
+        batchSafety,
+        prePushBackup: completedPrePushBackup ?? prePushBackupPlan,
+        results,
+      }
+    : undefined;
 
   await db.pushJob.update({
     where: { id: pushJob.id },
@@ -1369,6 +1509,7 @@ export async function executePush(
         batchSafety,
         prePushBackup: completedPrePushBackup ?? null,
         postPushRefresh: completedPostPushRefresh ?? null,
+        deferredPostPushRefresh: Boolean(deferredPostPushRefreshTask),
       },
     },
   });
@@ -1397,5 +1538,6 @@ export async function executePush(
     }),
     prePushBackup: completedPrePushBackup,
     postPushRefresh: completedPostPushRefresh,
+    deferredPostPushRefreshTask,
   };
 }

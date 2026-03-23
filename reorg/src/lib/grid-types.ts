@@ -31,6 +31,7 @@ export const PLATFORM_COLORS_LIGHT: Record<Platform, string> = {
 export interface StoreValue {
   platform: Platform;
   listingId: string;
+  marketplaceListingId?: string | null;
   variantId?: string;
   value: number | string | null;
   stagedValue?: number | string | null;

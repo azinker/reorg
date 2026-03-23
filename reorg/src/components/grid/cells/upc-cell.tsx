@@ -74,6 +74,7 @@ type UpcQuickPushPhase =
 interface UpcCellProps {
   rowId: string;
   upc: string | null;
+  liveFetchRevision?: number;
   disableLiveFetch?: boolean;
   stagedUpc?: string | null;
   editable?: boolean;
@@ -82,12 +83,18 @@ interface UpcCellProps {
     platform: string;
     label: string;
     listingId: string;
+    stagedChangeId?: string | null;
   }>;
   quickPushState?: {
     phase: UpcQuickPushPhase;
     detail?: string;
   };
-  onSave?: (value: string, mode: "stage" | "push" | "fastPush") => void;
+  failedPushTargets?: Record<string, { summary: string; error: string } | undefined>;
+  onSave?: (
+    value: string,
+    mode: "stage" | "push" | "fastPush",
+    target?: { platform: string; listingId: string; currentValue?: string | null },
+  ) => void;
   onReviewPush?: () => void;
   onFastPush?: () => void;
   onReviewPushTarget?: (platform: string, listingId: string) => void;
@@ -125,12 +132,14 @@ function renderCompactButtonLabel(text: string) {
 export function UpcCell({
   rowId,
   upc,
+  liveFetchRevision = 0,
   disableLiveFetch = false,
   stagedUpc = null,
   editable = false,
   canPush = false,
   pushTargets = [],
   quickPushState,
+  failedPushTargets = {},
   onSave,
   onReviewPush,
   onFastPush,
@@ -160,9 +169,10 @@ export function UpcCell({
     cachedUiState?.selectedTarget ?? null,
   );
   const quickPhase = quickPushState?.phase ?? "idle";
+  const canUseStoredUpcFallback = disableLiveFetch;
   const firstLiveValue = liveLines.find((line) => line.value)?.value ?? null;
-  const displayedUpc = stagedUpc ?? firstLiveValue ?? upc ?? null;
-  const effectiveUpc = stagedUpc ?? firstLiveValue ?? upc ?? "";
+  const displayedUpc = stagedUpc ?? firstLiveValue ?? (canUseStoredUpcFallback ? upc : null);
+  const effectiveUpc = stagedUpc ?? firstLiveValue ?? (canUseStoredUpcFallback ? upc ?? "" : "");
   const hasMultipleTargets = pushTargets.length > 1;
   const interactionActive = editing || selectorMode !== null || showActions;
 
@@ -214,7 +224,7 @@ export function UpcCell({
     const existing = upcLiveInflight.get(rowId);
     const request =
       existing ??
-      fetch(`/api/grid/${rowId}/upc-live`)
+      fetch(`/api/grid/${rowId}/upc-live`, { cache: "no-store" })
         .then(async (response) => {
           if (!response.ok) {
             throw new Error(`Failed to load live UPCs: ${response.status}`);
@@ -261,7 +271,7 @@ export function UpcCell({
     if (quickPhase === "success") {
       upcLiveCache.delete(rowId);
       upcChoiceCache.delete(rowId);
-      void fetch(`/api/grid/${rowId}/upc-live`)
+      void fetch(`/api/grid/${rowId}/upc-live`, { cache: "no-store" })
         .then(async (response) => {
           if (!response.ok) return [];
           const payload = (await response.json()) as { data?: { lines?: LiveUpcLine[]; choices?: LiveUpcChoice[] } };
@@ -324,7 +334,7 @@ export function UpcCell({
     return () => {
       active = false;
     };
-  }, [disableLiveFetch, rowId, stagedUpc, upc]);
+  }, [disableLiveFetch, liveFetchRevision, rowId, stagedUpc, upc]);
 
   useEffect(() => {
     if (editing) return;
@@ -479,7 +489,7 @@ export function UpcCell({
       selectedTarget
         ? liveChoices.find((choice) => choice.platform === selectedTarget.platform)
         : null;
-    const baseline = selectedChoice?.value ?? effectiveUpc;
+    const baseline = selectedChoice ? (selectedChoice.value ?? "") : effectiveUpc;
     return normalizedDraft().length > 0 && normalizedDraft() !== baseline;
   }
 
@@ -511,6 +521,25 @@ export function UpcCell({
           target.platform === selectedTarget.platform &&
           (!selectedTarget.listingId || target.listingId === selectedTarget.listingId),
       ) ?? null
+    );
+  }
+
+  function saveDraft(mode: "stage" | "push" | "fastPush") {
+    const activeTarget = getActivePushTarget();
+    const activeChoice =
+      activeTarget
+        ? liveChoices.find((choice) => choice.platform === activeTarget.platform)
+        : null;
+    onSave?.(
+      normalizedDraft(),
+      mode,
+      activeTarget
+        ? {
+            platform: activeTarget.platform,
+            listingId: activeTarget.listingId,
+            currentValue: activeChoice?.value ?? null,
+          }
+        : undefined,
     );
   }
 
@@ -621,10 +650,21 @@ export function UpcCell({
 
     const normalizedStagedUpc = stagedUpc?.trim() ?? "";
     const liveChoice = liveChoices.find((choice) => choice.platform === line.platform);
+    const hasActiveStageForLine = Boolean(
+      pushTargets.find(
+        (target) => target.platform === line.platform && Boolean(target.stagedChangeId),
+      ),
+    );
+    const actionableTarget = pushTargets.find((target) => target.platform === line.platform);
     const stagedTarget =
       Boolean(normalizedStagedUpc) &&
+      hasActiveStageForLine &&
       !dismissedPlatforms.includes(line.platform) &&
       ((liveChoice?.value?.trim() ?? "") !== normalizedStagedUpc);
+    const failedPushTarget =
+      actionableTarget
+        ? failedPushTargets[`${actionableTarget.platform}:${actionableTarget.listingId}`]
+        : undefined;
     if (stagedTarget && stagedUpc) {
       return (
         <div key={`${line.platform}:staged:${line.value ?? "none"}`} className="flex w-full items-start gap-1">
@@ -642,8 +682,14 @@ export function UpcCell({
               <span className="block min-w-0 truncate pr-1 font-mono text-[10px] font-semibold leading-none tracking-tight text-amber-300">
                 {stagedUpc}
               </span>
-              <span className="inline-flex min-h-[18px] min-w-[22px] items-center justify-center rounded-sm bg-amber-500 px-0.5 text-[6px] font-bold leading-none text-black">
-                NEW
+              <span
+                className={cn(
+                  "inline-flex min-h-[18px] min-w-[22px] items-center justify-center rounded-sm px-0.5 text-[6px] font-bold leading-none",
+                  failedPushTarget ? "bg-red-500 text-white" : "bg-amber-500 text-black",
+                )}
+                title={failedPushTarget?.error}
+              >
+                {failedPushTarget ? "FAILED" : "NEW"}
               </span>
             </div>
             <div className="mt-1 grid min-h-[26px] min-w-0 grid-cols-[46px_minmax(0,1fr)_34px] items-center gap-1.5">
@@ -675,6 +721,14 @@ export function UpcCell({
                 {line.value ? "LIVE" : "NONE"}
               </span>
             </div>
+            {failedPushTarget ? (
+              <div
+                className="mt-1 truncate text-[9px] font-medium leading-none text-red-300"
+                title={failedPushTarget.error}
+              >
+                {failedPushTarget.summary}
+              </div>
+            ) : null}
             {renderInlineUpcActions(line)}
           </div>
           {renderCopyButton(stagedUpc, `${line.label} staged UPC`)}
@@ -726,17 +780,7 @@ export function UpcCell({
 
   function renderLiveLines() {
     if (liveLines.length === 0) {
-      if (!upc) return null;
-      return (
-        <div className="mt-1 flex w-full flex-col items-center gap-1">
-          {renderUpcLine({
-            kind: "platform",
-            platform: "TPP_EBAY",
-            label: "TPP",
-            value: upc,
-          })}
-        </div>
-      );
+      return null;
     }
 
     return (
@@ -1142,7 +1186,7 @@ export function UpcCell({
           <div className="mt-1 grid w-full grid-cols-3 gap-1">
             <button
               onClick={() => {
-                onSave?.(normalizedDraft(), "stage");
+                saveDraft("stage");
                 setEditing(false);
                 setShowActions(false);
               }}
@@ -1154,14 +1198,13 @@ export function UpcCell({
               onClick={() => {
                 const activeTarget = getActivePushTarget();
                 if (activeTarget) {
-                  onSave?.(normalizedDraft(), "stage");
+                  saveDraft("push");
                   setEditing(false);
                   setShowActions(false);
-                  onReviewPushTarget?.(activeTarget.platform, activeTarget.listingId);
                   return;
                 }
                 if (hasMultipleTargets) {
-                  onSave?.(normalizedDraft(), "stage");
+                  saveDraft("stage");
                   setEditing(false);
                   setShowActions(false);
                   setSelectorMode("review");
@@ -1169,7 +1212,7 @@ export function UpcCell({
                 }
                 setEditing(false);
                 setShowActions(false);
-                onSave?.(normalizedDraft(), "push");
+                saveDraft("push");
               }}
               className="inline-flex min-w-0 items-center justify-center rounded bg-emerald-500 px-1.5 py-1.5 text-[9px] font-bold leading-none text-white hover:bg-emerald-600 cursor-pointer"
             >
@@ -1179,14 +1222,13 @@ export function UpcCell({
               onClick={() => {
                 const activeTarget = getActivePushTarget();
                 if (activeTarget) {
-                  onSave?.(normalizedDraft(), "stage");
+                  saveDraft("fastPush");
                   setEditing(false);
                   setShowActions(false);
-                  onFastPushTarget?.(activeTarget.platform, activeTarget.listingId);
                   return;
                 }
                 if (hasMultipleTargets) {
-                  onSave?.(normalizedDraft(), "stage");
+                  saveDraft("stage");
                   setEditing(false);
                   setShowActions(false);
                   setSelectorMode("fast");
@@ -1194,7 +1236,7 @@ export function UpcCell({
                 }
                 setEditing(false);
                 setShowActions(false);
-                onSave?.(normalizedDraft(), "fastPush");
+                saveDraft("fastPush");
               }}
               className="inline-flex min-w-0 items-center justify-center rounded bg-blue-500 px-1.5 py-1.5 text-[9px] font-bold leading-none text-white hover:bg-blue-600 cursor-pointer"
             >

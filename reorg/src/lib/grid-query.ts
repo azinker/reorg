@@ -1,6 +1,7 @@
 import { db } from "@/lib/db";
 import { calcProfit, calcFee } from "@/lib/grid-types";
 import type { GridRow, StoreValue, Platform, UpcPushTarget } from "@/lib/grid-types";
+import { maybeRepairDuplicateSingletonMarketplaceListings } from "@/lib/services/marketplace-listing-dedupe";
 import { Prisma } from "@prisma/client";
 
 const UPC_PUSH_PLATFORMS = new Set<Platform>(["TPP_EBAY", "TT_EBAY", "BIGCOMMERCE", "SHOPIFY"]);
@@ -177,7 +178,12 @@ async function fetchMasterRows() {
     async *[Symbol.asyncIterator]() {
       while (true) {
         const batch = await db.masterRow.findMany({
-          where: { isActive: true },
+          where: {
+            isActive: true,
+            listings: {
+              some: {},
+            },
+          },
           ...masterRowWithRelations,
           orderBy: { title: "asc" },
           skip,
@@ -243,12 +249,13 @@ function lookupShipping(weight: string | null, rateMap: Map<string, number>): nu
   return null;
 }
 
-type ListingLike = Pick<DBListing, "integration" | "platformItemId" | "platformVariantId" | "salePrice" | "adRate">;
+type ListingLike = Pick<DBListing, "id" | "integration" | "platformItemId" | "platformVariantId" | "salePrice" | "adRate">;
 
 function listingToStoreValue(listing: ListingLike, field: "salePrice" | "adRate"): StoreValue {
   return {
     platform: listing.integration.platform as Platform,
     listingId: listing.platformItemId,
+    marketplaceListingId: listing.id,
     variantId: listing.platformVariantId || undefined,
     value: listing[field],
   };
@@ -262,6 +269,27 @@ function collectChildSkus(parentListings: DBMasterRow["listings"]): string[] {
     }
   }
   return [...childSkus];
+}
+
+async function fetchBatchChildMasterSnapshotsBySku(masters: DBMasterRow[]) {
+  const childSkus = new Set<string>();
+
+  for (const master of masters) {
+    for (const childSku of collectChildSkus(master.listings)) {
+      childSkus.add(childSku);
+    }
+  }
+
+  if (childSkus.size === 0) {
+    return new Map<string, DBChildMasterRowSnapshot>();
+  }
+
+  const childMasters = await db.masterRow.findMany({
+    where: { sku: { in: [...childSkus] } },
+    ...childMasterRowSnapshotSelect,
+  });
+
+  return new Map(childMasters.map((childMaster) => [childMaster.sku, childMaster]));
 }
 
 function buildChildStagedMap(
@@ -359,16 +387,6 @@ function sortItemNumbers(items: StoreValue[]): StoreValue[] {
     return String(a.variantId ?? "").localeCompare(String(b.variantId ?? ""), undefined, {
       numeric: true,
     });
-  });
-}
-
-async function fetchChildMasterSnapshots(parentListings: DBMasterRow["listings"]) {
-  const childSkus = collectChildSkus(parentListings);
-  if (childSkus.length === 0) return [];
-
-  return db.masterRow.findMany({
-    where: { sku: { in: childSkus } },
-    ...childMasterRowSnapshotSelect,
   });
 }
 
@@ -526,13 +544,21 @@ function buildFullChildRows(
   return rows;
 }
 
-async function buildGridRow(
+function buildGridRow(
   master: DBMasterRow,
   stagedMap: Map<string, { field: string; stagedValue: string; liveValue: string | null }>,
   shippingRateMap: Map<string, number>,
   feeRate: number,
-): Promise<GridRow> {
+  childMasterSnapshotsBySku: Map<string, DBChildMasterRowSnapshot>,
+): GridRow | null {
+  if (master.listings.length === 0) {
+    return null;
+  }
+
   const parentListings = master.listings.filter((l: DBListing) => !l.parentListingId);
+  if (parentListings.length === 0 && !master.listings.some((listing: DBListing) => listing.parentListingId)) {
+    return null;
+  }
   const totalChildListings = parentListings.reduce((sum: number, l: DBListing) => sum + (l.childListings?.length ?? 0), 0);
   const isVariationParent = totalChildListings > 0 || parentListings.some((l: DBListing) => l.isVariation && l.childListings.length > 0);
   const hasVariationListings = parentListings.some((l: DBListing) => l.isVariation);
@@ -598,7 +624,7 @@ async function buildGridRow(
   }
 
   const childRows: GridRow[] | undefined = isVariationParent
-    ? await buildChildRowsSnapshot(parentListings)
+    ? buildChildRowsSnapshot(parentListings, childMasterSnapshotsBySku)
     : undefined;
 
   const itemNumberMap = new Map<string, StoreValue>();
@@ -660,6 +686,19 @@ function buildVariationFamilyKey(row: GridRow): string | null {
   return `${row.title}::${platformItemPairs.join("|")}`;
 }
 
+function buildParentVariationFamilyKey(row: GridRow): string | null {
+  if (!row.isParent || !row.childRows?.length) {
+    return null;
+  }
+
+  const childIds = [...new Set(row.childRows.map((child) => child.id))].sort();
+  if (childIds.length === 0) {
+    return null;
+  }
+
+  return childIds.join("|");
+}
+
 function buildSyntheticVariationParent(children: GridRow[], familyKey: string): GridRow {
   const first = children[0];
   const itemNumberMap = new Map<string, StoreValue>();
@@ -712,6 +751,112 @@ function buildSyntheticVariationParent(children: GridRow[], familyKey: string): 
   };
 }
 
+function pickRepresentativeVariationParent(rows: GridRow[]): GridRow {
+  const priority = (row: GridRow) => {
+    if (row.sku?.startsWith("TPP-")) return 0;
+    if (row.sku?.startsWith("TT-")) return 1;
+    if (row.sku?.startsWith("SHPFY-")) return 2;
+    if (row.sku?.startsWith("BC-")) return 3;
+    return 4;
+  };
+
+  return [...rows].sort((a, b) => priority(a) - priority(b))[0] ?? rows[0];
+}
+
+function mergeVariationParents(rows: GridRow[], familyKey: string): GridRow {
+  const representative = pickRepresentativeVariationParent(rows);
+  const childRowMap = new Map<string, GridRow>();
+  const itemNumberMap = new Map<string, StoreValue>();
+  const adRateMap = new Map<string, StoreValue>();
+  const alternateTitles: { title: string; platform: Platform; listingId: string }[] = [];
+
+  for (const row of rows) {
+    for (const item of row.itemNumbers) {
+      appendItemNumber(itemNumberMap, item);
+    }
+    for (const adRate of row.adRates) {
+      const key = `${adRate.platform}:${adRate.listingId}:${adRate.variantId ?? ""}`;
+      if (!adRateMap.has(key)) {
+        adRateMap.set(key, adRate);
+      }
+    }
+    if (row.alternateTitles?.length) {
+      alternateTitles.push(...row.alternateTitles);
+    }
+    for (const child of row.childRows ?? []) {
+      if (!childRowMap.has(child.id)) {
+        childRowMap.set(child.id, child);
+      }
+    }
+  }
+
+  const childRows = [...childRowMap.values()];
+  const inventoryValues = childRows
+    .map((child) => child.inventory)
+    .filter((value): value is number => value != null);
+
+  return {
+    ...representative,
+    id: `variation-parent:${familyKey}`,
+    inventory:
+      inventoryValues.length > 0
+        ? inventoryValues.reduce((sum, value) => sum + value, 0)
+        : null,
+    itemNumbers: sortItemNumbers([...itemNumberMap.values()]),
+    adRates: [...adRateMap.values()],
+    alternateTitles,
+    childRows,
+    childRowsHydrated: true,
+    hasStagedChanges:
+      rows.some((row) => row.hasStagedChanges) ||
+      childRows.some((child) => child.hasStagedChanges),
+  };
+}
+
+function consolidateVariationParentRows(rows: GridRow[]): GridRow[] {
+  const groups = new Map<string, GridRow[]>();
+
+  for (const row of rows) {
+    const familyKey = buildParentVariationFamilyKey(row);
+    if (!familyKey) continue;
+    const existing = groups.get(familyKey);
+    if (existing) {
+      existing.push(row);
+    } else {
+      groups.set(familyKey, [row]);
+    }
+  }
+
+  if (![...groups.values()].some((group) => group.length > 1)) {
+    return rows;
+  }
+
+  const emittedFamilies = new Set<string>();
+  const groupedRowIds = new Set(
+    [...groups.entries()]
+      .filter(([, group]) => group.length > 1)
+      .flatMap(([, group]) => group.map((row) => row.id)),
+  );
+
+  const result: GridRow[] = [];
+  for (const row of rows) {
+    const familyKey = buildParentVariationFamilyKey(row);
+    if (!familyKey || !groupedRowIds.has(row.id)) {
+      result.push(row);
+      continue;
+    }
+
+    if (emittedFamilies.has(familyKey)) {
+      continue;
+    }
+
+    emittedFamilies.add(familyKey);
+    result.push(mergeVariationParents(groups.get(familyKey) ?? [row], familyKey));
+  }
+
+  return result;
+}
+
 function consolidateStandaloneVariationRows(rows: GridRow[]): GridRow[] {
   const groups = new Map<string, GridRow[]>();
 
@@ -758,6 +903,8 @@ function consolidateStandaloneVariationRows(rows: GridRow[]): GridRow[] {
 
 
 export async function getGridData(): Promise<GridRow[]> {
+  await maybeRepairDuplicateSingletonMarketplaceListings();
+
   const [masterRowBatches, shippingRateMap, feeRateSetting] = await Promise.all([
     fetchMasterRows(),
     fetchShippingRates(),
@@ -774,18 +921,29 @@ export async function getGridData(): Promise<GridRow[]> {
       const hasAnyChildListing = mr.listings.some((l: DBListing) => l.parentListingId);
       return !hasAnyChildListing;
     });
+    const childMasterSnapshotsBySku = await fetchBatchChildMasterSnapshotsBySku(parentRows);
 
     for (const master of parentRows) {
       const stagedMap = buildStagedMap(master.stagedChanges);
-      const gridRow = await buildGridRow(master, stagedMap, shippingRateMap, feeRate);
-      rows.push(gridRow);
+      const gridRow = buildGridRow(
+        master,
+        stagedMap,
+        shippingRateMap,
+        feeRate,
+        childMasterSnapshotsBySku,
+      );
+      if (gridRow) {
+        rows.push(gridRow);
+      }
     }
   }
 
-  return consolidateStandaloneVariationRows(rows);
+  return consolidateStandaloneVariationRows(consolidateVariationParentRows(rows));
 }
 
 export async function getGridChildRows(parentRowId: string): Promise<GridRow[]> {
+  await maybeRepairDuplicateSingletonMarketplaceListings();
+
   const [master, shippingRateMap, feeRateSetting] = await Promise.all([
     db.masterRow.findUnique({
       where: { id: parentRowId },
@@ -805,6 +963,8 @@ export async function getGridChildRows(parentRowId: string): Promise<GridRow[]> 
 }
 
 export async function getGridRowById(rowId: string): Promise<GridRow | null> {
+  await maybeRepairDuplicateSingletonMarketplaceListings();
+
   const isChildRow = rowId.startsWith("child-");
   const normalizedRowId = isChildRow ? rowId.slice("child-".length) : rowId;
 
@@ -837,11 +997,25 @@ export async function getGridRowById(rowId: string): Promise<GridRow | null> {
     return null;
   }
 
-  return buildGridRow(master, buildStagedMap(master.stagedChanges), shippingRateMap, feeRate);
+  const childMasterSnapshotsBySku = await fetchBatchChildMasterSnapshotsBySku([master]);
+
+  return buildGridRow(
+    master,
+    buildStagedMap(master.stagedChanges),
+    shippingRateMap,
+    feeRate,
+    childMasterSnapshotsBySku,
+  );
 }
 
-async function buildChildRowsSnapshot(parentListings: DBMasterRow["listings"]): Promise<GridRow[]> {
-  const childMasters = await fetchChildMasterSnapshots(parentListings);
+function buildChildRowsSnapshot(
+  parentListings: DBMasterRow["listings"],
+  childMasterSnapshotsBySku: Map<string, DBChildMasterRowSnapshot>,
+): GridRow[] {
+  const childMasters = collectChildSkus(parentListings)
+    .map((sku) => childMasterSnapshotsBySku.get(sku))
+    .filter((childMaster): childMaster is DBChildMasterRowSnapshot => childMaster != null);
+
   return buildChildRowStubs(childMasters);
 }
 

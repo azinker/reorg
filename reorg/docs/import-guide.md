@@ -1,135 +1,128 @@
 # Import Guide
 
-Use the Import feature to bulk-update internal data (SKU, UPC, weight, supplier cost, notes, etc.) without editing each row by hand. This guide explains how to prepare your file, upload it, and choose how it updates existing data.
+Use the Import feature to bulk-update internal data such as SKU, UPC, weight, supplier cost, supplier shipping cost, and notes without editing each row one by one.
 
----
+## Step 1: Download The Template
 
-## Step 1: Download the Template
-
-1. Go to **Import** in the sidebar
-2. Click **Download Template**
-3. Open the file in Excel, Google Sheets, or another spreadsheet tool
-
----
+1. Go to **Import** in the sidebar.
+2. Click **Download template**.
+3. Open the file in Excel, Google Sheets, or another spreadsheet tool.
 
 ## Step 2: Fill In Your Data
 
-The template has columns for the data reorG uses. Fill in the ones you need:
+The template includes these supported columns:
 
 | Column | Required | Description |
 |--------|----------|-------------|
-| **sku** | Yes | Product SKU. Must match exactly an existing listing in the master store, or a new row will be created |
-| **upc** | No | UPC to stage for review and push later. Blank UPC cells are ignored. |
-| **weight** | No | Weight in reorG format (see below) |
-| **supplier_cost** | No | Supplier cost per unit (number) |
-| **supplier_shipping_cost** | No | Supplier shipping cost per unit (number) |
-| **notes** | No | Internal free-text notes stored on the master row in reorG |
+| `sku` | Yes | Used to match the import row to the correct product row in reorG |
+| `upc` | No | Optional. Blank UPC cells are ignored. Filled UPC values are staged for review, not pushed live automatically |
+| `weight` | No | Optional. Use reorG weight format |
+| `supplier_cost` | No | Optional. Internal supplier cost used for profit calculations |
+| `supplier_shipping_cost` | No | Optional. Internal supplier shipping cost used for profit calculations |
+| `notes` | No | Optional. Internal free-text notes stored on the master row inside reorG |
 
-**Important:** SKU must be present. All other columns are optional.
-**Important:** Blank optional cells are ignored. They do not delete existing values.
+Important rules:
 
----
+- `sku` is the only required field.
+- Blank optional cells are ignored.
+- Blank optional cells do **not** delete existing values in the table.
+- Only one row per SKU is allowed in each import file.
 
 ## Weight Format Rules
 
-reorG uses a specific format for weight. Use one of these:
+Use one of these formats:
 
-### Ounces (1–16 oz)
+- `1` through `16` for ounces
+- `2LBS` through `10LBS` for pounds
 
-- Use a number from **1** to **16**
-- Examples: `5` = 5 oz, `12` = 12 oz
-- reorG may display these as `5oz`, `12oz` in the UI
+Examples:
 
-### Pounds (2–10 lbs)
+- `5` = 5 ounces
+- `16` = 16 ounces
+- `2LBS` = 2 pounds
+- `5LBS` = 5 pounds
 
-- Use the format **2LBS** through **10LBS** (no space, uppercase optional)
-- Examples: `2LBS` = 2 pounds, `5LBS` = 5 pounds, `10LBS` = 10 pounds
-- Do not use `1LBS` — use `16` for 1 pound (16 oz)
+Invalid examples:
 
-### Valid Examples
+- `17`
+- `1LBS`
+- `11LBS`
+- `5 oz`
+- `2 lbs`
 
-| Input | Meaning |
-|-------|---------|
-| `5` | 5 ounces |
-| `16` | 16 ounces (1 pound) |
-| `2LBS` | 2 pounds |
-| `5LBS` | 5 pounds |
-| `10LBS` | 10 pounds |
+## Step 3: Upload The File
 
-### Invalid Examples
+1. Save the file as **XLSX** or **CSV**.
+2. On the Import page, choose the file.
+3. Use the **Next** button to move to the validation step.
 
-| Input | Why Invalid |
-|-------|-------------|
-| `17` | Ounces must be 1–16 |
-| `1LBS` | Use `16` for 1 pound |
-| `11LBS` | Pounds must be 2–10 |
-| `5 oz` | No spaces in pound format; for ounces use `5` |
-| `2 lbs` | Use `2LBS` (no space) |
+## Step 4: Preview And Validate
 
----
+reorG parses the file and shows:
 
-## Step 3: Upload the File
+- how many rows are valid
+- how many rows have errors
+- which rows would be created, updated, or left unchanged in the selected mode
 
-1. Save your spreadsheet as **XLSX** or **CSV**
-2. On the Import page, click **Choose File** or drag the file into the upload area
-3. Click **Upload** (or equivalent)
+If rows fail:
 
----
+- the page shows the SKU and the exact reason
+- duplicate SKUs in the same file are flagged as errors
+- you can download the failed rows as an editable `.xlsx` file
 
-## Step 4: Preview
-
-1. reorG will parse the file and show a preview
-2. Check:
-   - **Valid rows** — how many rows passed validation
-   - **Error rows** — how many had problems (missing SKU, bad weight, etc.)
-3. If there are errors, download the error report, fix those rows, and upload again
-
----
-
-## Step 5: Choose Overwrite Mode
-
-When you confirm the import, you choose how it updates existing data:
+## Step 5: Choose Import Mode
 
 | Mode | Behavior |
 |------|----------|
-| **Fill blanks only** | Updates only empty fields. Existing values are not changed. Blank optional cells are ignored. |
-| **Overwrite all** | Replaces provided imported fields even if they already have values. Blank optional cells are still ignored. |
+| `Fill blanks only` | Updates only empty internal fields. Existing values stay in place. Blank optional cells are ignored |
+| `Overwrite provided values only` | Updates only the fields you actually filled in. Blank optional cells are still ignored |
 
-**Recommendation:** Use **Fill blanks** for first imports or when adding data. Use **Overwrite all** when you’ve intentionally prepared a full refresh.
+reorG updates the impact preview when you switch modes, so you can see what would happen before running the import.
 
----
+## Step 6: Run The Import
 
-## Step 6: Confirm
+1. Click **Run import**.
+2. Wait for the result screen.
+3. Review:
+   - successful rows
+   - failed rows
+   - what changed for each SKU
+   - why any row failed
+4. If needed, download the failed rows workbook, fix it, and re-upload only those rows.
 
-1. Review the preview again
-2. Click **Confirm Import**
-3. Wait for the import to finish
-4. Check the Dashboard to verify the data
+## What Happens With UPC Imports
 
----
+- Imported UPCs are staged for review.
+- Importing a UPC does not push it live automatically.
+- If the UPC cell is blank in your file, reorG ignores it and leaves the current UPC alone.
+
+## What The Notes Field Means
+
+`notes` is an internal reorG field stored on the master row. It does not push to marketplaces.
 
 ## Quick Checklist
 
 - [ ] Downloaded the template
-- [ ] SKU column filled for every row
-- [ ] Weight format correct (1–16 for oz, 2LBS–10LBS for lbs)
-- [ ] Numeric columns use numbers, not text
-- [ ] File saved as XLSX or CSV
-- [ ] Chose Fill blanks or Overwrite
-- [ ] Confirmed import
-
----
+- [ ] Filled in `sku` for every row
+- [ ] Used valid weight format
+- [ ] Kept only one row per SKU
+- [ ] Saved as XLSX or CSV
+- [ ] Checked the impact preview
+- [ ] Reviewed any failed rows before re-uploading
 
 ## Troubleshooting
 
-**"Invalid file type"**  
-Use XLSX or CSV. Avoid older formats like XLS.
+**"Invalid file type"**
+Use XLSX or CSV.
 
-**"SKU required"**  
-Every row must have a value in the SKU column.
+**"SKU is required"**
+Every row must have a SKU.
 
-**"Invalid weight format"**  
-Check the weight rules. Use `5` for 5 oz, `2LBS` for 2 lbs.
+**"Duplicate SKU in import file"**
+Keep only one row per SKU in each import.
 
-**"Row skipped" or "No match"**  
-SKU must match exactly. No fuzzy matching. Check for extra spaces or typos.
+**"Invalid weight format"**
+Use `5` for 5 ounces or `2LBS` for 2 pounds.
+
+**"No changes needed"**
+The row matched an existing SKU, but the selected import mode did not need to update anything.

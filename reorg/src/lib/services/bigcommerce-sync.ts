@@ -17,6 +17,7 @@ import {
   recordWebhookReconcileCompleted,
   recordWebhookReconcileFailed,
 } from "@/lib/services/webhook-reconcile-audit";
+import { repairVariationFamiliesForIntegration } from "@/lib/services/variation-repair";
 
 function getStringConfig(
   config: Record<string, unknown>,
@@ -103,7 +104,10 @@ export async function runBigCommerceWebhookReconcile(
   try {
     for (const productId of productIds) {
       const listings = await adapter.fetchListingsByProductId(productId);
-      const presentVariantIds = listings.map((listing) => listing.platformVariantId ?? "");
+      const presentVariantIds = [
+        ...(listings.some((listing) => listing.isVariation) ? [""] : []),
+        ...listings.map((listing) => listing.platformVariantId ?? ""),
+      ];
       const targetedListings =
         changedVariantIdSet.size > 0
           ? listings.filter((listing) => {
@@ -151,6 +155,8 @@ export async function runBigCommerceWebhookReconcile(
     }
 
     const completedAt = new Date();
+    await repairVariationFamiliesForIntegration(integration.id);
+
     await db.syncJob.update({
       where: { id: syncJob.id },
       data: {

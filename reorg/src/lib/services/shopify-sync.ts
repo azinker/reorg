@@ -14,6 +14,11 @@ import {
   recordWebhookReconcileCompleted,
   recordWebhookReconcileFailed,
 } from "@/lib/services/webhook-reconcile-audit";
+import {
+  normalizePlatformVariantId,
+  reconcileMarketplaceListingIdentity,
+} from "@/lib/services/marketplace-listing-dedupe";
+import { repairVariationFamiliesForIntegration } from "@/lib/services/variation-repair";
 
 interface SyncProgress {
   jobId: string;
@@ -63,6 +68,152 @@ function createSyncProgress(jobId: string): SyncProgress {
   };
 }
 
+function getShopifyVariationParentSku(parentPlatformItemId: string) {
+  return `SHPFY-${parentPlatformItemId}`;
+}
+
+async function resolveShopifyParentMasterRowId(args: {
+  integrationId: string;
+  childMasterRowId: string;
+  parentPlatformItemId: string;
+  title: string | null;
+  imageUrl: string | null;
+}) {
+  const linkedParent = await db.marketplaceListing.findFirst({
+    where: {
+      masterRowId: args.childMasterRowId,
+      parentListingId: { not: null },
+    },
+    select: {
+      parentListing: {
+        select: {
+          masterRowId: true,
+        },
+      },
+    },
+  });
+
+  if (linkedParent?.parentListing?.masterRowId) {
+    return linkedParent.parentListing.masterRowId;
+  }
+
+  const existingShopifyParent = await db.marketplaceListing.findFirst({
+    where: {
+      integrationId: args.integrationId,
+      platformItemId: args.parentPlatformItemId,
+      OR: [{ platformVariantId: null }, { platformVariantId: "" }],
+    },
+    select: {
+      masterRowId: true,
+    },
+    orderBy: { createdAt: "asc" },
+  });
+
+  if (existingShopifyParent?.masterRowId) {
+    return existingShopifyParent.masterRowId;
+  }
+
+  const parentSku = getShopifyVariationParentSku(args.parentPlatformItemId);
+  const existingParentMaster = await db.masterRow.findUnique({
+    where: { sku: parentSku },
+  });
+
+  if (existingParentMaster) {
+    const patch: Prisma.MasterRowUpdateInput = {};
+    if (!existingParentMaster.title && args.title) patch.title = args.title;
+    if (!existingParentMaster.imageUrl && args.imageUrl) {
+      patch.imageUrl = args.imageUrl;
+      patch.imageSource = "SHOPIFY";
+    }
+    if (Object.keys(patch).length > 0) {
+      await db.masterRow.update({
+        where: { id: existingParentMaster.id },
+        data: patch,
+      });
+    }
+    return existingParentMaster.id;
+  }
+
+  const createdParentMaster = await db.masterRow.create({
+    data: {
+      sku: parentSku,
+      title: args.title,
+      imageUrl: args.imageUrl,
+      imageSource: "SHOPIFY",
+    },
+  });
+
+  return createdParentMaster.id;
+}
+
+async function ensureShopifyParentListing(args: {
+  integrationId: string;
+  parentMasterRowId: string;
+  parentMasterSku: string;
+  parentPlatformItemId: string;
+  title: string | null;
+  imageUrl: string | null;
+  rawData: Record<string, unknown>;
+  inventory: number | null;
+  status: "ACTIVE" | "OUT_OF_STOCK";
+}) {
+  const existingParents = await db.marketplaceListing.findMany({
+    where: {
+      integrationId: args.integrationId,
+      platformItemId: args.parentPlatformItemId,
+      OR: [{ platformVariantId: null }, { platformVariantId: "" }],
+    },
+    orderBy: { createdAt: "asc" },
+    select: { id: true },
+  });
+
+  let parentListing = existingParents[0] ?? null;
+
+  if (existingParents.length > 1) {
+    const duplicateIds = existingParents.slice(1).map((listing) => listing.id);
+    await db.marketplaceListing.updateMany({
+      where: { parentListingId: { in: duplicateIds } },
+      data: { parentListingId: existingParents[0].id },
+    });
+    await db.marketplaceListing.deleteMany({
+      where: { id: { in: duplicateIds } },
+    });
+  }
+
+  const data = {
+    masterRowId: args.parentMasterRowId,
+    integrationId: args.integrationId,
+    platformItemId: args.parentPlatformItemId,
+    platformVariantId: null,
+    sku: args.parentMasterSku,
+    title: args.title,
+    imageUrl: args.imageUrl,
+    salePrice: null,
+    adRate: null,
+    inventory: args.inventory,
+    status: args.status,
+    isVariation: true,
+    parentListingId: null,
+    rawData: JSON.parse(JSON.stringify(args.rawData ?? {})),
+    lastSyncedAt: new Date(),
+  };
+
+  if (parentListing) {
+    await db.marketplaceListing.update({
+      where: { id: parentListing.id },
+      data,
+    });
+    return parentListing.id;
+  }
+
+  const createdParent = await db.marketplaceListing.create({
+    data,
+    select: { id: true },
+  });
+
+  return createdParent.id;
+}
+
 export async function runShopifySync(
   options: SyncExecutionOptions = {},
 ): Promise<SyncProgress> {
@@ -87,7 +238,9 @@ export async function runShopifySync(
         try {
           const result = await upsertListing(listing, integration.id);
           if (result) {
-            seenListingIds.add(result.id);
+            for (const seenId of result.ids) {
+              seenListingIds.add(seenId);
+            }
             if (result.status === "created") progress.itemsCreated++;
             if (result.status === "updated") progress.itemsUpdated++;
           }
@@ -126,6 +279,7 @@ export async function runShopifySync(
     progress.status = "COMPLETED";
 
     const completedAt = new Date();
+    await repairVariationFamiliesForIntegration(integration.id);
     await db.syncJob.update({
       where: { id: syncJob.id },
       data: {
@@ -204,7 +358,10 @@ export async function runShopifyWebhookReconcile(
   try {
     for (const productId of productIds) {
       const listings = await adapter.fetchListingsByProductId(productId);
-      const presentVariantIds = listings.map((listing) => listing.platformVariantId ?? "");
+      const presentVariantIds = [
+        ...(listings.some((listing) => listing.isVariation) ? [""] : []),
+        ...listings.map((listing) => listing.platformVariantId ?? ""),
+      ];
       const targetedListings =
         changedVariantIdSet.size > 0
           ? listings.filter((listing) => {
@@ -249,6 +406,7 @@ export async function runShopifyWebhookReconcile(
     progress.status = "COMPLETED";
 
     const completedAt = new Date();
+    await repairVariationFamiliesForIntegration(integration.id);
     await db.syncJob.update({
       where: { id: syncJob.id },
       data: {
@@ -334,7 +492,7 @@ export async function runShopifyWebhookReconcile(
 async function upsertListing(
   listing: RawListing,
   integrationId: string,
-): Promise<{ id: string; status: "created" | "updated" } | null> {
+): Promise<{ ids: string[]; status: "created" | "updated" } | null> {
   const sku = listing.sku?.trim();
   if (!sku) return null;
 
@@ -366,23 +524,50 @@ async function upsertListing(
     }
   }
 
-  const existing = await db.marketplaceListing.findFirst({
-    where: {
-      integrationId,
-      platformItemId: String(listing.platformItemId),
-      platformVariantId: listing.platformVariantId
-        ? String(listing.platformVariantId)
-        : null,
-    },
+  const normalizedVariantId = normalizePlatformVariantId(listing.platformVariantId);
+  const { canonical: existing } = await reconcileMarketplaceListingIdentity({
+    integrationId,
+    platformItemId: String(listing.platformItemId),
+    platformVariantId: normalizedVariantId,
+    preferredMasterRowId: masterRow.id,
   });
+
+  let parentListingId: string | null = null;
+  let parentRecordId: string | null = null;
+  if (listing.isVariation && listing.parentPlatformItemId) {
+    const parentMasterRowId = await resolveShopifyParentMasterRowId({
+      integrationId,
+      childMasterRowId: masterRow.id,
+      parentPlatformItemId: String(listing.parentPlatformItemId),
+      title: listing.title || null,
+      imageUrl: listing.imageUrl || null,
+    });
+    const parentMaster = await db.masterRow.findUnique({
+      where: { id: parentMasterRowId },
+      select: { id: true, sku: true },
+    });
+    if (!parentMaster) {
+      throw new Error(`Shopify parent master row ${parentMasterRowId} not found`);
+    }
+    parentRecordId = await ensureShopifyParentListing({
+      integrationId,
+      parentMasterRowId: parentMaster.id,
+      parentMasterSku: parentMaster.sku,
+      parentPlatformItemId: String(listing.parentPlatformItemId),
+      title: listing.title || null,
+      imageUrl: listing.imageUrl || null,
+      rawData: listing.rawData ?? {},
+      inventory: listing.inventory ?? null,
+      status: listing.inventory && listing.inventory > 0 ? "ACTIVE" : "OUT_OF_STOCK",
+    });
+    parentListingId = parentRecordId;
+  }
 
   const listingData = {
     masterRowId: masterRow.id,
     integrationId,
     platformItemId: String(listing.platformItemId),
-    platformVariantId: listing.platformVariantId
-      ? String(listing.platformVariantId)
-      : null,
+    platformVariantId: normalizedVariantId,
     sku,
     title: listing.title || null,
     imageUrl: listing.imageUrl || null,
@@ -391,6 +576,7 @@ async function upsertListing(
     inventory: listing.inventory ?? null,
     status: listing.inventory && listing.inventory > 0 ? "ACTIVE" as const : "OUT_OF_STOCK" as const,
     isVariation: listing.isVariation,
+    parentListingId,
     rawData: JSON.parse(JSON.stringify(listing.rawData ?? {})),
     lastSyncedAt: new Date(),
   };
@@ -400,12 +586,12 @@ async function upsertListing(
       where: { id: existing.id },
       data: listingData,
     });
-    return { id: existing.id, status: "updated" };
+    return { ids: [existing.id, ...(parentRecordId ? [parentRecordId] : [])], status: "updated" };
   } else {
     const created = await db.marketplaceListing.create({
       data: listingData,
     });
-    return { id: created.id, status: "created" };
+    return { ids: [created.id, ...(parentRecordId ? [parentRecordId] : [])], status: "created" };
   }
 }
 

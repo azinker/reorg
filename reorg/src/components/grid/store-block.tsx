@@ -150,6 +150,7 @@ interface EditableStoreBlockProps {
   onPush: (rowId: string, platform: string, listingId: string, mode?: "review" | "fast") => void;
   onDiscard: (rowId: string, platform: string, listingId: string) => void;
   quickPushState?: QuickPushState;
+  failedPushState?: FailedPushState;
   showItemId?: boolean;
 }
 
@@ -167,6 +168,11 @@ export interface QuickPushState {
   detail?: string;
 }
 
+export interface FailedPushState {
+  summary: string;
+  error: string;
+}
+
 function EditableStoreBlock({
   item,
   rowId,
@@ -174,6 +180,7 @@ function EditableStoreBlock({
   onPush,
   onDiscard,
   quickPushState,
+  failedPushState,
   showItemId = false,
 }: EditableStoreBlockProps) {
   const label = PLATFORM_SHORT[item.platform];
@@ -251,6 +258,7 @@ function EditableStoreBlock({
   const fastPushBusy = quickPhase === "dry-run" || quickPhase === "pushing";
   const fastPushSucceeded = quickPhase === "success";
   const fastPushRetry = quickPhase === "error" || quickPhase === "blocked";
+  const hasFailedStage = hasStaged && Boolean(failedPushState);
 
   function renderFastPushLabel() {
     if (quickPhase === "dry-run") {
@@ -382,8 +390,16 @@ function EditableStoreBlock({
           <>
             <span className={cn("flex items-center gap-1 font-semibold leading-tight whitespace-nowrap", isNegative(item.stagedValue) ? "text-red-400" : "text-emerald-400")}>
               {fmt(item.stagedValue!)}
-              <span className="inline-flex shrink-0 items-center rounded-sm bg-[var(--staged)] px-1 py-px text-[9px] font-bold text-[var(--staged-foreground)]">
-                STAGED
+              <span
+                className={cn(
+                  "inline-flex shrink-0 items-center rounded-sm px-1 py-px text-[9px] font-bold",
+                  hasFailedStage
+                    ? "bg-red-500/90 text-white"
+                    : "bg-[var(--staged)] text-[var(--staged-foreground)]",
+                )}
+                title={hasFailedStage ? failedPushState?.error : "Staged value"}
+              >
+                {hasFailedStage ? "FAILED" : "STAGED"}
               </span>
             </span>
             <span className={cn("mt-1 flex items-center gap-1 font-semibold leading-tight whitespace-nowrap", isNegative(item.value) ? "text-red-400" : "text-emerald-400")}>
@@ -392,6 +408,14 @@ function EditableStoreBlock({
                 LIVE
               </span>
             </span>
+            {hasFailedStage ? (
+              <span
+                className="mt-1 block truncate text-[9px] font-medium leading-none text-red-300"
+                title={failedPushState?.error}
+              >
+                {failedPushState?.summary ?? "Fast push failed"}
+              </span>
+            ) : null}
             {quickPhase !== "idle" ? (
               <div className="mt-1">
                 <div
@@ -471,18 +495,22 @@ interface EditableStoreBlockGroupProps {
   items: StoreValue[];
   rowId: string;
   onSave: (rowId: string, platform: string, listingId: string, newPrice: number, mode: "stage" | "push" | "fastPush") => void;
+  onBulkSave?: (rowId: string, newPrice: number, mode: "stage" | "push") => void;
   onPush: (rowId: string, platform: string, listingId: string, mode?: "review" | "fast") => void;
   onDiscard: (rowId: string, platform: string, listingId: string) => void;
   quickPushStates?: Record<string, QuickPushState>;
+  failedPushStates?: Record<string, FailedPushState | undefined>;
 }
 
 export function EditableStoreBlockGroup({
   items,
   rowId,
   onSave,
+  onBulkSave,
   onPush,
   onDiscard,
   quickPushStates,
+  failedPushStates,
 }: EditableStoreBlockGroupProps) {
   const [bulkOpen, setBulkOpen] = useState(false);
   const [bulkCents, setBulkCents] = useState(0);
@@ -521,6 +549,11 @@ export function EditableStoreBlockGroup({
   function applyBulk(mode: "stage" | "push") {
     const price = bulkCents / 100;
     if (price <= 0) return;
+    if (onBulkSave) {
+      onBulkSave(rowId, price, mode);
+      closeBulk();
+      return;
+    }
     for (const item of items) {
       onSave(rowId, item.platform, item.listingId, price, mode);
     }
@@ -666,6 +699,7 @@ export function EditableStoreBlockGroup({
           onPush={onPush}
           onDiscard={onDiscard}
           quickPushState={quickPushStates?.[`${rowId}:${item.platform}:${item.listingId}:salePrice`]}
+          failedPushState={failedPushStates?.[`${rowId}:${item.platform}:${item.listingId}:salePrice`]}
           showItemId={hasDuplicatePlatforms && (platformCounts.get(item.platform) ?? 0) > 1}
         />
       ))}
@@ -684,6 +718,7 @@ interface EditableAdRateBlockProps {
   onPush: (rowId: string, platform: string, listingId: string, mode?: "review" | "fast") => void;
   onDiscard: (rowId: string, platform: string, listingId: string) => void;
   quickPushState?: QuickPushState;
+  failedPushState?: FailedPushState;
   showItemId?: boolean;
 }
 
@@ -694,6 +729,7 @@ function EditableAdRateBlock({
   onPush,
   onDiscard,
   quickPushState,
+  failedPushState,
   showItemId = false,
 }: EditableAdRateBlockProps) {
   const label = PLATFORM_SHORT[item.platform];
@@ -711,6 +747,7 @@ function EditableAdRateBlock({
   const quickPhase = quickPushState?.phase ?? "idle";
   const fastPushSucceeded = quickPhase === "success";
   const fastPushRetry = quickPhase === "error" || quickPhase === "blocked";
+  const hasFailedStage = hasStaged && Boolean(failedPushState);
 
   function renderFastPushLabel() {
     if (quickPhase === "dry-run") {
@@ -962,12 +999,30 @@ function EditableAdRateBlock({
           <>
             <span className="flex items-center gap-1 font-semibold leading-tight whitespace-nowrap text-emerald-400">
               {fmtPercent(item.stagedValue!)}
-              <span className="inline-flex shrink-0 items-center rounded-sm bg-[var(--staged)] px-1 py-px text-[9px] font-bold text-[var(--staged-foreground)]">STAGED</span>
+              <span
+                className={cn(
+                  "inline-flex shrink-0 items-center rounded-sm px-1 py-px text-[9px] font-bold",
+                  hasFailedStage
+                    ? "bg-red-500/90 text-white"
+                    : "bg-[var(--staged)] text-[var(--staged-foreground)]",
+                )}
+                title={hasFailedStage ? failedPushState?.error : "Staged value"}
+              >
+                {hasFailedStage ? "FAILED" : "STAGED"}
+              </span>
             </span>
             <span className="mt-1 flex items-center gap-1 font-semibold leading-tight whitespace-nowrap text-emerald-400">
               {fmtPercent(item.value)}
               <span className="inline-flex shrink-0 items-center rounded-sm bg-emerald-500 px-1 py-px text-[9px] font-bold text-white">LIVE</span>
             </span>
+            {hasFailedStage ? (
+              <span
+                className="mt-1 block truncate text-[9px] font-medium leading-none text-red-300"
+                title={failedPushState?.error}
+              >
+                {failedPushState?.summary ?? "Fast push failed"}
+              </span>
+            ) : null}
             {quickPhase !== "idle" ? (
               <div className="mt-1">
                 <div
@@ -1049,6 +1104,7 @@ interface EditableAdRateBlockGroupProps {
   onPush: (rowId: string, platform: string, listingId: string, mode?: "review" | "fast") => void;
   onDiscard: (rowId: string, platform: string, listingId: string) => void;
   quickPushStates?: Record<string, QuickPushState>;
+  failedPushStates?: Record<string, FailedPushState | undefined>;
 }
 
 export function EditableAdRateBlockGroup({
@@ -1058,6 +1114,7 @@ export function EditableAdRateBlockGroup({
   onPush,
   onDiscard,
   quickPushStates,
+  failedPushStates,
 }: EditableAdRateBlockGroupProps) {
   if (items.length === 0) {
     return <span className="text-xs text-muted-foreground">—</span>;
@@ -1080,6 +1137,7 @@ export function EditableAdRateBlockGroup({
           onPush={onPush}
           onDiscard={onDiscard}
           quickPushState={quickPushStates?.[`${rowId}:${item.platform}:${item.listingId}:adRate`]}
+          failedPushState={failedPushStates?.[`${rowId}:${item.platform}:${item.listingId}:adRate`]}
           showItemId={hasDuplicatePlatforms && (platformCounts.get(item.platform) ?? 0) > 1}
         />
       ))}

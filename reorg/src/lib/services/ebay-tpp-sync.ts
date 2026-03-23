@@ -16,6 +16,7 @@ import {
   getPendingIncrementalWindow,
 } from "@/lib/services/ebay-sync-budget";
 import { removeMarketplaceListingsOlderThan } from "@/lib/services/listing-prune";
+import { repairVariationFamiliesForIntegration } from "@/lib/services/variation-repair";
 
 const TRADING_API = "https://api.ebay.com/ws/api.dll";
 const SITE_ID = "0";
@@ -106,18 +107,49 @@ function extractSellerUserId(item: unknown): string | null {
   return seller ? str(seller, "UserID") ?? null : null;
 }
 
+function normalizeSellerIdentity(value: string | null | undefined): string | null {
+  const normalized = value?.trim().toLowerCase();
+  return normalized ? normalized : null;
+}
+
+function extractStorefrontSellerId(item: unknown): string | null {
+  const storefront = obj(item, "Storefront");
+  const storefrontUrl = storefront ? str(storefront, "StoreURL") : null;
+  if (!storefrontUrl) {
+    return null;
+  }
+
+  try {
+    const url = new URL(storefrontUrl);
+    const segments = url.pathname
+      .split("/")
+      .map((segment) => segment.trim().toLowerCase())
+      .filter(Boolean);
+    const sellerSegment = segments.at(-1);
+    return sellerSegment || null;
+  } catch {
+    const match = storefrontUrl.match(/\/(?:str|usr)\/([^/?#]+)/i);
+    return normalizeSellerIdentity(match?.[1]);
+  }
+}
+
 function matchesConfiguredSeller(item: unknown, config: EbayConfig): boolean {
-  const expectedSellerId = config.accountUserId?.trim().toLowerCase();
+  const expectedSellerId = normalizeSellerIdentity(config.accountUserId);
   if (!expectedSellerId) {
     return true;
   }
 
-  const actualSellerId = extractSellerUserId(item)?.trim().toLowerCase();
-  if (!actualSellerId) {
+  const actualSellerId = normalizeSellerIdentity(extractSellerUserId(item));
+  const storefrontSellerId = normalizeSellerIdentity(extractStorefrontSellerId(item));
+  const knownSellerIds = [actualSellerId, storefrontSellerId].filter(
+    (value): value is string => Boolean(value),
+  );
+
+  if (knownSellerIds.length === 0) {
     return true;
   }
 
-  return actualSellerId === expectedSellerId;
+  return knownSellerIds.every((sellerId) => sellerId === expectedSellerId);
 }
 
 async function removeForeignSellerListings(integrationId: string, itemId: string) {
@@ -127,6 +159,55 @@ async function removeForeignSellerListings(integrationId: string, itemId: string
     }),
     db.unmatchedListing.deleteMany({
       where: { integrationId, platformItemId: itemId },
+    }),
+  ]);
+}
+
+async function purgeForeignSellerListingsForIntegration(
+  integrationId: string,
+  config: EbayConfig,
+) {
+  const listings = await db.marketplaceListing.findMany({
+    where: { integrationId },
+    select: {
+      id: true,
+      platformItemId: true,
+      rawData: true,
+    },
+  });
+
+  const foreignItemIds = [
+    ...new Set(
+      listings
+        .filter((listing) => {
+          const rawData =
+            listing.rawData && typeof listing.rawData === "object"
+              ? (listing.rawData as Record<string, unknown>)
+              : null;
+          const item = rawData?.item ?? rawData;
+          return item && !matchesConfiguredSeller(item, config);
+        })
+        .map((listing) => listing.platformItemId)
+        .filter((itemId): itemId is string => Boolean(itemId)),
+    ),
+  ];
+
+  if (foreignItemIds.length === 0) {
+    return;
+  }
+
+  await Promise.all([
+    db.marketplaceListing.deleteMany({
+      where: {
+        integrationId,
+        platformItemId: { in: foreignItemIds },
+      },
+    }),
+    db.unmatchedListing.deleteMany({
+      where: {
+        integrationId,
+        platformItemId: { in: foreignItemIds },
+      },
     }),
   ]);
 }
@@ -205,6 +286,8 @@ export async function runEbayTppSync(
       typeof config.accountUserId === "string" ? config.accountUserId : null,
     accessTokenExpiresAt: config.accessTokenExpiresAt as number | undefined,
   };
+
+  await purgeForeignSellerListingsForIntegration(integration.id, ebayConfig);
 
   const syncJob = await db.syncJob.create({
     data: {
@@ -520,6 +603,7 @@ export async function runEbayTppSync(
 
     progress.status = "COMPLETED";
     const completedAt = new Date();
+    await repairVariationFamiliesForIntegration(integration.id);
 
     await db.syncJob.update({
       where: { id: syncJob.id },
