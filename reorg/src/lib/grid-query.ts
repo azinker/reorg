@@ -70,39 +70,6 @@ type DBMasterRow = Prisma.MasterRowGetPayload<typeof masterRowWithRelations>;
 type DBListing = DBMasterRow["listings"][number];
 type DBListingRef = Pick<DBListing, "integration" | "platformItemId" | "platformVariantId">;
 
-const childMasterRowSnapshotSelect = Prisma.validator<Prisma.MasterRowDefaultArgs>()({
-  select: {
-    id: true,
-    sku: true,
-    title: true,
-    imageUrl: true,
-    upc: true,
-    listings: {
-      select: {
-        id: true,
-        platformItemId: true,
-        platformVariantId: true,
-        inventory: true,
-        integration: {
-          select: {
-            platform: true,
-          },
-        },
-      },
-    },
-    stagedChanges: {
-      where: { status: "STAGED" },
-      select: {
-        id: true,
-        marketplaceListingId: true,
-        field: true,
-        stagedValue: true,
-        liveValue: true,
-      },
-    },
-  },
-});
-
 const childMasterRowFullSelect = Prisma.validator<Prisma.MasterRowDefaultArgs>()({
   select: {
     id: true,
@@ -144,7 +111,6 @@ const childMasterRowFullSelect = Prisma.validator<Prisma.MasterRowDefaultArgs>()
   },
 });
 
-type DBChildMasterRowSnapshot = Prisma.MasterRowGetPayload<typeof childMasterRowSnapshotSelect>;
 type DBChildMasterRowFull = Prisma.MasterRowGetPayload<typeof childMasterRowFullSelect>;
 
 function appendItemNumber(
@@ -270,7 +236,7 @@ function collectChildSkus(parentListings: DBMasterRow["listings"]): string[] {
   return [...childSkus];
 }
 
-async function fetchBatchChildMasterSnapshotsBySku(masters: DBMasterRow[]) {
+async function fetchBatchChildMasterRowsBySku(masters: DBMasterRow[]) {
   const childSkus = new Set<string>();
 
   for (const master of masters) {
@@ -280,12 +246,12 @@ async function fetchBatchChildMasterSnapshotsBySku(masters: DBMasterRow[]) {
   }
 
   if (childSkus.size === 0) {
-    return new Map<string, DBChildMasterRowSnapshot>();
+    return new Map<string, DBChildMasterRowFull>();
   }
 
   const childMasters = await db.masterRow.findMany({
     where: { sku: { in: [...childSkus] } },
-    ...childMasterRowSnapshotSelect,
+    ...childMasterRowFullSelect,
   });
 
   return new Map(childMasters.map((childMaster) => [childMaster.sku, childMaster]));
@@ -399,48 +365,6 @@ async function fetchChildMasterRows(parentListings: DBMasterRow["listings"]) {
   });
 }
 
-function buildChildRowStubs(childMasters: DBChildMasterRowSnapshot[]): GridRow[] {
-  const rows: GridRow[] = [];
-
-  for (const cm of childMasters) {
-    const childInv = cm.listings.find((l) => l.inventory != null)?.inventory ?? null;
-    const upcStage = buildUpcStageDetails(cm.listings, cm.stagedChanges);
-    const itemNumberMap = new Map<string, StoreValue>();
-    for (const listing of cm.listings) {
-      appendItemNumber(itemNumberMap, listing);
-    }
-
-    rows.push({
-      id: `child-${cm.id}`,
-      sku: cm.sku,
-      title: cm.title ?? cm.sku,
-      upc: cm.upc,
-      stagedUpc: upcStage.stagedUpc,
-      hasStagedUpc: upcStage.hasStagedUpc,
-      upcPushTargets: upcStage.upcPushTargets,
-      imageUrl: cm.imageUrl,
-      weight: null,
-      supplierCost: null,
-      supplierShipping: null,
-      shippingCost: null,
-      platformFeeRate: 0,
-      inventory: childInv,
-      isVariation: true,
-      isParent: false,
-      childRowsHydrated: true,
-      alternateTitles: [],
-      hasStagedChanges: cm.stagedChanges.length > 0,
-      itemNumbers: sortItemNumbers([...itemNumberMap.values()]),
-      salePrices: [],
-      adRates: [],
-      platformFees: [],
-      profits: [],
-    });
-  }
-
-  return rows;
-}
-
 function buildFullChildRows(
   childMasters: DBChildMasterRowFull[],
   shippingRateMap: Map<string, number>,
@@ -548,7 +472,7 @@ function buildGridRow(
   stagedMap: Map<string, { field: string; stagedValue: string; liveValue: string | null }>,
   shippingRateMap: Map<string, number>,
   feeRate: number,
-  childMasterSnapshotsBySku: Map<string, DBChildMasterRowSnapshot>,
+  childMasterRowsBySku: Map<string, DBChildMasterRowFull>,
 ): GridRow | null {
   if (master.listings.length === 0) {
     return null;
@@ -623,7 +547,7 @@ function buildGridRow(
   }
 
   const childRows: GridRow[] | undefined = isVariationParent
-    ? buildChildRowsSnapshot(parentListings, childMasterSnapshotsBySku)
+    ? buildBatchChildRows(parentListings, childMasterRowsBySku, shippingRateMap, feeRate)
     : undefined;
 
   const itemNumberMap = new Map<string, StoreValue>();
@@ -918,7 +842,7 @@ export async function getGridData(): Promise<GridRow[]> {
       const hasAnyChildListing = mr.listings.some((l: DBListing) => l.parentListingId);
       return !hasAnyChildListing;
     });
-    const childMasterSnapshotsBySku = await fetchBatchChildMasterSnapshotsBySku(parentRows);
+    const childMasterRowsBySku = await fetchBatchChildMasterRowsBySku(parentRows);
 
     for (const master of parentRows) {
       const stagedMap = buildStagedMap(master.stagedChanges);
@@ -927,7 +851,7 @@ export async function getGridData(): Promise<GridRow[]> {
         stagedMap,
         shippingRateMap,
         feeRate,
-        childMasterSnapshotsBySku,
+        childMasterRowsBySku,
       );
       if (gridRow) {
         rows.push(gridRow);
@@ -990,26 +914,15 @@ export async function getGridRowById(rowId: string): Promise<GridRow | null> {
     return null;
   }
 
-  const childMasterSnapshotsBySku = await fetchBatchChildMasterSnapshotsBySku([master]);
+  const childMasterRowsBySku = await fetchBatchChildMasterRowsBySku([master]);
 
   return buildGridRow(
     master,
     buildStagedMap(master.stagedChanges),
     shippingRateMap,
     feeRate,
-    childMasterSnapshotsBySku,
+    childMasterRowsBySku,
   );
-}
-
-function buildChildRowsSnapshot(
-  parentListings: DBMasterRow["listings"],
-  childMasterSnapshotsBySku: Map<string, DBChildMasterRowSnapshot>,
-): GridRow[] {
-  const childMasters = collectChildSkus(parentListings)
-    .map((sku) => childMasterSnapshotsBySku.get(sku))
-    .filter((childMaster): childMaster is DBChildMasterRowSnapshot => childMaster != null);
-
-  return buildChildRowStubs(childMasters);
 }
 
 async function buildChildRows(
@@ -1018,5 +931,18 @@ async function buildChildRows(
   feeRate: number,
 ): Promise<GridRow[]> {
   const childMasters = await fetchChildMasterRows(parentListings);
+  return buildFullChildRows(childMasters, shippingRateMap, feeRate);
+}
+
+function buildBatchChildRows(
+  parentListings: DBMasterRow["listings"],
+  childMasterRowsBySku: Map<string, DBChildMasterRowFull>,
+  shippingRateMap: Map<string, number>,
+  feeRate: number,
+): GridRow[] {
+  const childMasters = collectChildSkus(parentListings)
+    .map((sku) => childMasterRowsBySku.get(sku))
+    .filter((childMaster): childMaster is DBChildMasterRowFull => childMaster != null);
+
   return buildFullChildRows(childMasters, shippingRateMap, feeRate);
 }
