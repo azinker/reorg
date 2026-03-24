@@ -66,7 +66,14 @@ export async function planScheduledSyncs(now = new Date()) {
     db.integration.findMany({ orderBy: { platform: "asc" } }),
     db.syncJob.findMany({
       where: { status: "RUNNING" },
-      select: { id: true, integrationId: true, createdAt: true, startedAt: true, errors: true },
+      select: {
+        id: true,
+        integrationId: true,
+        createdAt: true,
+        startedAt: true,
+        itemsProcessed: true,
+        errors: true,
+      },
     }),
   ]);
 

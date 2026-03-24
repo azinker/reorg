@@ -1,19 +1,27 @@
 import { db } from "@/lib/db";
 
-// Larger full catalog pulls can legitimately exceed 45 minutes while still
-// making progress, especially on BigCommerce. Keep the guardrail, but avoid
-// auto-failing healthy long-running jobs too aggressively.
+// Keep a reasonably aggressive stale-job guard for jobs that never really got
+// going, but give large in-flight catalog pulls more room once they've already
+// processed a substantial amount of data.
 const STALE_RUNNING_JOB_MS = 90 * 60 * 1000;
+const STALE_RUNNING_ACTIVE_JOB_MS = 4 * 60 * 60 * 1000;
+const LARGE_PROGRESS_ITEM_THRESHOLD = 1000;
 
 export function isRunningJobStale(
   job: {
     startedAt: Date | null;
     createdAt: Date;
+    itemsProcessed?: number | null;
   },
   now = new Date(),
 ) {
   const startedAt = job.startedAt ?? job.createdAt;
-  return now.getTime() - startedAt.getTime() >= STALE_RUNNING_JOB_MS;
+  const staleThresholdMs =
+    (job.itemsProcessed ?? 0) >= LARGE_PROGRESS_ITEM_THRESHOLD
+      ? STALE_RUNNING_ACTIVE_JOB_MS
+      : STALE_RUNNING_JOB_MS;
+
+  return now.getTime() - startedAt.getTime() >= staleThresholdMs;
 }
 
 export async function failStaleRunningJob(

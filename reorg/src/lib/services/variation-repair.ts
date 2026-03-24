@@ -242,10 +242,57 @@ export async function repairVariationFamiliesForIntegration(
     throw new Error(`Integration ${integrationId} not found for variation repair`);
   }
 
-  const listings = await db.marketplaceListing.findMany({
+  // Full syncs were previously loading nearly every listing for an integration
+  // because most non-variation rows also have a null platformVariantId. That
+  // made post-sync repair much heavier than it needed to be and pushed large
+  // Shopify/BigCommerce jobs into the stale-running guard. First find actual
+  // child variation rows, then only load families for those platform item IDs.
+  const possibleChildListings = await db.marketplaceListing.findMany({
     where: {
       integrationId,
-      OR: [{ isVariation: true }, { platformVariantId: null }],
+      platformVariantId: { not: null },
+    },
+    select: {
+      id: true,
+      masterRowId: true,
+      platformItemId: true,
+      platformVariantId: true,
+      parentListingId: true,
+      sku: true,
+      title: true,
+      imageUrl: true,
+      inventory: true,
+      status: true,
+      rawData: true,
+      createdAt: true,
+    },
+    orderBy: [{ platformItemId: "asc" }, { createdAt: "asc" }],
+  });
+
+  const familyPlatformItemIds = [
+    ...new Set(
+      possibleChildListings
+        .filter((listing) => (listing.platformVariantId?.trim() ?? "").length > 0)
+        .map((listing) => listing.platformItemId),
+    ),
+  ];
+
+  const result: VariationRepairResult = {
+    familiesChecked: 0,
+    familiesRepaired: 0,
+    parentsCreated: 0,
+    duplicateParentsRemoved: 0,
+    childrenRelinked: 0,
+  };
+
+  if (familyPlatformItemIds.length === 0) {
+    return result;
+  }
+
+  const familyListings = await db.marketplaceListing.findMany({
+    where: {
+      integrationId,
+      platformItemId: { in: familyPlatformItemIds },
     },
     select: {
       id: true,
@@ -265,7 +312,7 @@ export async function repairVariationFamiliesForIntegration(
   });
 
   const families = new Map<string, VariationListingRecord[]>();
-  for (const listing of listings) {
+  for (const listing of familyListings) {
     const family = families.get(listing.platformItemId);
     if (family) {
       family.push(listing);
@@ -273,14 +320,6 @@ export async function repairVariationFamiliesForIntegration(
       families.set(listing.platformItemId, [listing]);
     }
   }
-
-  const result: VariationRepairResult = {
-    familiesChecked: 0,
-    familiesRepaired: 0,
-    parentsCreated: 0,
-    duplicateParentsRemoved: 0,
-    childrenRelinked: 0,
-  };
 
   for (const [platformItemId, familyListings] of families) {
     const childListings = familyListings.filter((listing) => {
