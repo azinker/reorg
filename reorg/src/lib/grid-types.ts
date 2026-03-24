@@ -7,6 +7,20 @@ export const PLATFORM_SHORT: Record<Platform, string> = {
   SHOPIFY: "SHPFY",
 };
 
+export const PLATFORM_DISPLAY_ORDER: Platform[] = [
+  "TPP_EBAY",
+  "TT_EBAY",
+  "SHOPIFY",
+  "BIGCOMMERCE",
+];
+
+export const PLATFORM_DISPLAY_INDEX: Record<Platform, number> = {
+  TPP_EBAY: 0,
+  TT_EBAY: 1,
+  SHOPIFY: 2,
+  BIGCOMMERCE: 3,
+};
+
 export const PLATFORM_FULL: Record<Platform, string> = {
   TPP_EBAY: "The Perfect Part (eBay)",
   TT_EBAY: "Telitetech (eBay)",
@@ -116,6 +130,28 @@ export const HEADER_TOOLTIPS: Record<string, string> = {
   adRate: "Promoted listing general ad rate per marketplace. eBay only in v1; BC/Shopify show N/A.",
   profit: "Net profit = Sale Price − Supplier Cost − Supplier Shipping − Shipping Cost − Platform Fees − Ad Spend.",
 };
+
+export function sortStoreValuesForDisplay<T extends Pick<StoreValue, "platform" | "listingId" | "variantId">>(
+  items: T[],
+): T[] {
+  return [...items].sort((a, b) => {
+    const platformDelta = PLATFORM_DISPLAY_INDEX[a.platform] - PLATFORM_DISPLAY_INDEX[b.platform];
+    if (platformDelta !== 0) {
+      return platformDelta;
+    }
+
+    const listingDelta = String(a.listingId).localeCompare(String(b.listingId), undefined, {
+      numeric: true,
+    });
+    if (listingDelta !== 0) {
+      return listingDelta;
+    }
+
+    return String(a.variantId ?? "").localeCompare(String(b.variantId ?? ""), undefined, {
+      numeric: true,
+    });
+  });
+}
 
 export interface ColumnConfig {
   id: string;

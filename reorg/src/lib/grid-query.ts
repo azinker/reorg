@@ -247,7 +247,11 @@ function listingToStoreValue(listing: ListingLike, field: "salePrice" | "adRate"
 
 function collectChildSkus(parentListings: DBMasterRow["listings"]): string[] {
   const childSkus = new Set<string>();
-  for (const p of parentListings) {
+  const sortedParents = [...parentListings].sort((a, b) => {
+    return ITEM_NUMBER_PLATFORM_ORDER[a.integration.platform as Platform] - ITEM_NUMBER_PLATFORM_ORDER[b.integration.platform as Platform];
+  });
+
+  for (const p of sortedParents) {
     for (const cl of p.childListings ?? []) {
       childSkus.add(cl.sku);
     }
@@ -378,10 +382,15 @@ async function fetchChildMasterRows(parentListings: DBMasterRow["listings"]) {
   const childSkus = collectChildSkus(parentListings);
   if (childSkus.length === 0) return [];
 
-  return db.masterRow.findMany({
+  const childMasters = await db.masterRow.findMany({
     where: { sku: { in: [...childSkus] } },
     ...childMasterRowFullSelect,
   });
+
+  const childMasterBySku = new Map(childMasters.map((childMaster) => [childMaster.sku, childMaster]));
+  return childSkus
+    .map((sku) => childMasterBySku.get(sku))
+    .filter((childMaster): childMaster is DBChildMasterRowFull => childMaster != null);
 }
 
 function buildFullChildRows(

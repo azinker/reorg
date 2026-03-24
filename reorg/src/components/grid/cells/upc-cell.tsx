@@ -21,7 +21,7 @@ type LiveUpcLine =
       platform: Platform;
       label: string;
       value: string | null;
-      state: "live" | "missing" | "pending_refresh";
+      state: "live" | "missing" | "pending_refresh" | "not_found";
     };
 
 export type LiveUpcChoice = {
@@ -29,7 +29,7 @@ export type LiveUpcChoice = {
   label: string;
   value: string | null;
   editable: boolean;
-  state?: "live" | "missing" | "pending_refresh";
+  state?: "live" | "missing" | "pending_refresh" | "not_found";
 };
 
 const upcLiveCache = new Map<string, { expiresAt: number; value: LiveUpcLine[] }>();
@@ -139,6 +139,9 @@ function getLiveUpcText(line: LiveUpcLine): string {
   if (line.kind === "platform" && line.state === "pending_refresh") {
     return "Waiting on eBay detail";
   }
+  if (line.kind === "platform" && line.state === "not_found") {
+    return "Listing not found";
+  }
   return "No UPC";
 }
 
@@ -148,6 +151,9 @@ function getLiveUpcBadge(line: LiveUpcLine): string {
   }
   if (line.kind === "platform" && line.state === "pending_refresh") {
     return "WAIT";
+  }
+  if (line.kind === "platform" && line.state === "not_found") {
+    return "MISS";
   }
   return "NONE";
 }
@@ -740,6 +746,8 @@ export function UpcCell({
                           : "bg-lime-500 text-black"
                     : line.state === "pending_refresh"
                       ? "bg-amber-500 text-black"
+                      : line.state === "not_found"
+                        ? "bg-muted text-muted-foreground"
                       : "bg-muted text-muted-foreground",
                 )}
               >
@@ -794,6 +802,8 @@ export function UpcCell({
                         : "bg-lime-500 text-black"
                   : line.state === "pending_refresh"
                     ? "bg-amber-500 text-black"
+                    : line.state === "not_found"
+                      ? "bg-muted text-muted-foreground"
                     : "bg-muted text-muted-foreground",
               )}
             >
@@ -1290,13 +1300,17 @@ export function UpcCell({
         aria-label={displayedUpc ? `UPC barcode: ${displayedUpc}` : "No UPC available"}
       />
 
-      {displayedUpc ? (
-        <div className="w-full">
-          {showInlineEditSelector ? renderSelector() : showMatchSelector ? renderMatchSelector() : renderLiveLines()}
-        </div>
-      ) : (
-        <span className="text-[10px] font-medium text-muted-foreground/40 italic">No UPC</span>
-      )}
+      <div className="w-full">
+        {showInlineEditSelector ? (
+          renderSelector()
+        ) : showMatchSelector ? (
+          renderMatchSelector()
+        ) : liveLines.length > 0 ? (
+          renderLiveLines()
+        ) : displayedUpc ? null : (
+          <span className="text-[10px] font-medium text-muted-foreground/40 italic">No UPC</span>
+        )}
+      </div>
 
       {showInlineEditSelector || showMatchSelector ? null : showActionSelector ? (
         renderSelector()

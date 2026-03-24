@@ -146,6 +146,29 @@ function getSyncHealthStatus(
   lastSyncAt: Date | null,
   now: Date,
 ) {
+  const graceMinutes = getGraceMinutes(planItem.intervalMinutes);
+  const delayedThreshold = planItem.intervalMinutes + graceMinutes;
+  const attentionThreshold = planItem.intervalMinutes * 2 + graceMinutes;
+
+  if (planItem.running) {
+    if (!lastSyncAt) {
+      return {
+        status: "delayed" as const,
+        syncStatus: "delayed" as const,
+        minutesSinceSync: null,
+        syncMessage: "A pull is running now. No completed pull has been recorded yet.",
+      };
+    }
+
+    const minutesSinceSync = minutesBetween(now, lastSyncAt) ?? 0;
+    return {
+      status: minutesSinceSync > attentionThreshold ? "delayed" as const : "healthy" as const,
+      syncStatus: minutesSinceSync > delayedThreshold ? "delayed" as const : "fresh" as const,
+      minutesSinceSync,
+      syncMessage: "A fresh pull is running now.",
+    };
+  }
+
   if (!lastSyncAt) {
     return {
       status: "attention" as const,
@@ -191,10 +214,6 @@ function getSyncHealthStatus(
     };
   }
 
-  const graceMinutes = getGraceMinutes(planItem.intervalMinutes);
-  const delayedThreshold = planItem.intervalMinutes + graceMinutes;
-  const attentionThreshold = planItem.intervalMinutes * 2 + graceMinutes;
-
   if (minutesSinceSync > attentionThreshold) {
     return {
       status: "attention" as const,
@@ -217,9 +236,7 @@ function getSyncHealthStatus(
     status: "healthy" as const,
     syncStatus: "fresh" as const,
     minutesSinceSync,
-    syncMessage: planItem.running
-      ? "A fresh pull is running now."
-      : `Last completed pull was ${formatMinutesLabel(minutesSinceSync)} ago.`,
+    syncMessage: `Last completed pull was ${formatMinutesLabel(minutesSinceSync)} ago.`,
   };
 }
 
@@ -590,6 +607,7 @@ export async function buildAutomationHealthSnapshot(
             );
       const failedAfterLastSuccess =
         recentFailure &&
+        !item.running &&
         (!lastSyncAt || recentFailure.failedAt.getTime() > lastSyncAt.getTime());
       const syncMonitorBase = failedAfterLastSuccess
         ? {

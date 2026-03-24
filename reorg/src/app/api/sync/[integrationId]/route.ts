@@ -68,6 +68,10 @@ function getWebhookProofStatus(lastSyncAt: Date | null, receivedAt: Date | null)
     : "before_last_pull";
 }
 
+function buildDispatchUrl(request: NextRequest, integrationId: string) {
+  return new URL(`/api/sync/${integrationId}/execute`, request.nextUrl.origin);
+}
+
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ integrationId: string }> }
@@ -192,19 +196,42 @@ export async function POST(
       }
     }
 
-    after(async () => {
-      try {
-        await startIntegrationSync(
+    const payload = parsed.data?.mode ? { mode: parsed.data.mode } : {};
+    const dispatchUrl = buildDispatchUrl(request, integration.platform);
+    const cronSecret = process.env.CRON_SECRET;
+
+    after(() => {
+      if (!cronSecret) {
+        void startIntegrationSync(
           integration,
           {
             requestedMode: modes.requestedMode,
             triggerSource: "manual",
           },
           "inline",
-        );
-      } catch (error) {
-        console.error(`[sync] deferred ${integration.platform} sync failed`, error);
+        ).catch((error) => {
+          console.error(`[sync] deferred ${integration.platform} sync failed`, error);
+        });
+        return;
       }
+
+      void fetch(dispatchUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${cronSecret}`,
+        },
+        body: JSON.stringify(payload),
+        cache: "no-store",
+      }).then(async (response) => {
+        if (response.ok) return;
+        const text = await response.text().catch(() => "");
+        console.error(
+          `[sync] dispatch ${integration.platform} returned ${response.status}: ${text || response.statusText}`,
+        );
+      }).catch((error) => {
+        console.error(`[sync] dispatch ${integration.platform} failed`, error);
+      });
     });
 
     return NextResponse.json({

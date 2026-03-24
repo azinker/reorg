@@ -1590,8 +1590,15 @@ export default function SyncPage() {
                 <div className="mb-4 rounded-md border border-blue-500/30 bg-blue-500/10 px-3 py-2.5">
                   <div className="flex items-center gap-2">
                     <Loader2 className="h-3.5 w-3.5 animate-spin text-blue-400" />
-                    <span className="text-xs font-medium text-blue-400">Syncing...</span>
+                    <span className="text-xs font-medium text-blue-400">
+                      {liveJob.itemsProcessed === 0 ? "Starting pull..." : "Syncing..."}
+                    </span>
                   </div>
+                  {liveJob.itemsProcessed === 0 ? (
+                    <div className="mt-1 text-[11px] text-blue-300/90">
+                      Connected and waiting for the first batch to finish so progress can be shown.
+                    </div>
+                  ) : null}
                   <div className="mt-1.5 grid grid-cols-3 gap-2 text-xs tabular-nums">
                     <div>
                       <span className="text-muted-foreground">Processed</span>

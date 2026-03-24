@@ -5,8 +5,10 @@ import { cn } from "@/lib/utils";
 import { Copy, Check, Pencil, X, Upload, Undo2, DollarSign, Loader2, AlertTriangle } from "lucide-react";
 import { CurrencyInput, type CurrencyInputHandle } from "@/components/grid/cells/currency-input";
 import {
+  PLATFORM_DISPLAY_ORDER,
   PLATFORM_SHORT,
   PLATFORM_COLORS,
+  sortStoreValuesForDisplay,
   type Platform,
   type StoreValue,
 } from "@/lib/grid-types";
@@ -17,6 +19,7 @@ interface StoreBlockProps {
   format?: "currency" | "percent" | "text" | "link";
   showStaged?: boolean;
   showItemId?: boolean;
+  compact?: boolean;
 }
 
 function CopyButton({ text }: { text: string }) {
@@ -49,7 +52,13 @@ function isNegative(val: number | string | null | undefined): boolean {
   return Number(val) < 0;
 }
 
-export function StoreBlock({ item, format = "text", showStaged = true, showItemId = false }: StoreBlockProps) {
+export function StoreBlock({
+  item,
+  format = "text",
+  showStaged = true,
+  showItemId = false,
+  compact = false,
+}: StoreBlockProps) {
   const label = PLATFORM_SHORT[item.platform];
   const colorClass = PLATFORM_COLORS[item.platform];
   const hasStaged = showStaged && item.stagedValue != null && item.stagedValue !== item.value;
@@ -68,14 +77,15 @@ export function StoreBlock({ item, format = "text", showStaged = true, showItemI
   return (
     <div
       className={cn(
-        "flex w-full items-center gap-1.5 rounded border px-2.5 py-1.5 text-xs",
+        "flex w-full items-center rounded border",
+        compact ? "gap-1 px-2 py-1 text-[11px]" : "gap-1.5 px-2.5 py-1.5 text-xs",
         colorClass,
         hasStaged && "ring-1 ring-[var(--staged)]"
       )}
     >
-      <PlatformIcon platform={item.platform} className="h-3.5 w-3.5 shrink-0" />
+      <PlatformIcon platform={item.platform} className={cn("shrink-0", compact ? "h-3 w-3" : "h-3.5 w-3.5")} />
       <div className="shrink-0 flex flex-col items-start">
-        <span className="w-10 text-[10px] font-extrabold uppercase text-foreground leading-none">
+        <span className={cn("font-extrabold uppercase text-foreground leading-none", compact ? "w-8 text-[9px]" : "w-10 text-[10px]")}>
           {label}
         </span>
         {shortItemId && (
@@ -113,10 +123,83 @@ interface StoreBlockGroupProps {
   items: StoreValue[];
   format?: "currency" | "percent" | "text" | "link";
   showStaged?: boolean;
+  includeMissingPlatforms?: boolean;
+  missingLabel?: string;
+  compact?: boolean;
 }
 
-export function StoreBlockGroup({ items, format = "text", showStaged = true }: StoreBlockGroupProps) {
-  if (items.length === 0) {
+function MissingStoreBlock({
+  platform,
+  missingLabel = "Listing not found",
+  compact = false,
+}: {
+  platform: Platform;
+  missingLabel?: string;
+  compact?: boolean;
+}) {
+  const label = PLATFORM_SHORT[platform];
+  const colorClass = PLATFORM_COLORS[platform];
+
+  return (
+    <div
+      className={cn(
+        "flex w-full items-center rounded border opacity-70",
+        compact ? "gap-1 px-2 py-1 text-[11px]" : "gap-1.5 px-2.5 py-1.5 text-xs",
+        colorClass,
+      )}
+    >
+      <PlatformIcon platform={platform} className={cn("shrink-0", compact ? "h-3 w-3" : "h-3.5 w-3.5")} />
+      <div className="shrink-0 flex flex-col items-start">
+        <span className={cn("font-extrabold uppercase text-foreground leading-none", compact ? "w-8 text-[9px]" : "w-10 text-[10px]")}>
+          {label}
+        </span>
+      </div>
+      <div className="min-w-0 flex-1">
+        <span className="block truncate font-medium leading-tight text-muted-foreground" title={missingLabel}>
+          {missingLabel}
+        </span>
+      </div>
+      <span className="inline-flex shrink-0 items-center rounded-sm bg-muted px-1 py-px text-[9px] font-bold text-muted-foreground">
+        MISS
+      </span>
+    </div>
+  );
+}
+
+function buildDisplayEntries(items: StoreValue[], includeMissingPlatforms: boolean) {
+  const sorted = sortStoreValuesForDisplay(items);
+  if (!includeMissingPlatforms) {
+    return sorted.map((item) => ({ kind: "item" as const, item }));
+  }
+
+  const entries: Array<
+    | { kind: "item"; item: StoreValue }
+    | { kind: "missing"; platform: Platform }
+  > = [];
+
+  for (const platform of PLATFORM_DISPLAY_ORDER) {
+    const matches = sorted.filter((item) => item.platform === platform);
+    if (matches.length === 0) {
+      entries.push({ kind: "missing", platform });
+      continue;
+    }
+    for (const item of matches) {
+      entries.push({ kind: "item", item });
+    }
+  }
+
+  return entries;
+}
+
+export function StoreBlockGroup({
+  items,
+  format = "text",
+  showStaged = true,
+  includeMissingPlatforms = false,
+  missingLabel = "Listing not found",
+  compact = false,
+}: StoreBlockGroupProps) {
+  if (items.length === 0 && !includeMissingPlatforms) {
     return <span className="text-xs text-muted-foreground">—</span>;
   }
 
@@ -125,18 +208,29 @@ export function StoreBlockGroup({ items, format = "text", showStaged = true }: S
     platformCounts.set(item.platform, (platformCounts.get(item.platform) ?? 0) + 1);
   }
   const hasDuplicatePlatforms = [...platformCounts.values()].some((c) => c > 1);
+  const displayEntries = buildDisplayEntries(items, includeMissingPlatforms);
 
   return (
     <div className="flex w-full flex-col gap-1">
-      {items.map((item, i) => (
-        <StoreBlock
-          key={`${item.platform}-${item.listingId}-${i}`}
-          item={item}
-          format={format}
-          showStaged={showStaged}
-          showItemId={hasDuplicatePlatforms && (platformCounts.get(item.platform) ?? 0) > 1}
-        />
-      ))}
+      {displayEntries.map((entry, i) =>
+        entry.kind === "item" ? (
+          <StoreBlock
+            key={`${entry.item.platform}-${entry.item.listingId}-${entry.item.variantId ?? ""}-${i}`}
+            item={entry.item}
+            format={format}
+            showStaged={showStaged}
+            showItemId={hasDuplicatePlatforms && (platformCounts.get(entry.item.platform) ?? 0) > 1}
+            compact={compact}
+          />
+        ) : (
+          <MissingStoreBlock
+            key={`missing-${entry.platform}-${i}`}
+            platform={entry.platform}
+            missingLabel={missingLabel}
+            compact={compact}
+          />
+        ),
+      )}
     </div>
   );
 }
@@ -500,6 +594,8 @@ interface EditableStoreBlockGroupProps {
   onDiscard: (rowId: string, platform: string, listingId: string) => void;
   quickPushStates?: Record<string, QuickPushState>;
   failedPushStates?: Record<string, FailedPushState | undefined>;
+  includeMissingPlatforms?: boolean;
+  missingLabel?: string;
 }
 
 export function EditableStoreBlockGroup({
@@ -511,6 +607,8 @@ export function EditableStoreBlockGroup({
   onDiscard,
   quickPushStates,
   failedPushStates,
+  includeMissingPlatforms = false,
+  missingLabel = "Listing not found",
 }: EditableStoreBlockGroupProps) {
   const [bulkOpen, setBulkOpen] = useState(false);
   const [bulkCents, setBulkCents] = useState(0);
@@ -575,8 +673,9 @@ export function EditableStoreBlockGroup({
     platformCounts.set(it.platform, (platformCounts.get(it.platform) ?? 0) + 1);
   }
   const hasDuplicatePlatforms = [...platformCounts.values()].some((c) => c > 1);
+  const displayEntries = buildDisplayEntries(items, includeMissingPlatforms);
 
-  if (items.length === 0) {
+  if (items.length === 0 && !includeMissingPlatforms) {
     return <span className="text-xs text-muted-foreground">—</span>;
   }
 
@@ -690,19 +789,27 @@ export function EditableStoreBlockGroup({
           )}
         </div>
       )}
-      {items.map((item, i) => (
-        <EditableStoreBlock
-          key={`${item.platform}-${item.listingId}-${i}`}
-          item={item}
-          rowId={rowId}
-          onSave={onSave}
-          onPush={onPush}
-          onDiscard={onDiscard}
-          quickPushState={quickPushStates?.[`${rowId}:${item.platform}:${item.listingId}:salePrice`]}
-          failedPushState={failedPushStates?.[`${rowId}:${item.platform}:${item.listingId}:salePrice`]}
-          showItemId={hasDuplicatePlatforms && (platformCounts.get(item.platform) ?? 0) > 1}
-        />
-      ))}
+      {displayEntries.map((entry, i) =>
+        entry.kind === "item" ? (
+          <EditableStoreBlock
+            key={`${entry.item.platform}-${entry.item.listingId}-${entry.item.variantId ?? ""}-${i}`}
+            item={entry.item}
+            rowId={rowId}
+            onSave={onSave}
+            onPush={onPush}
+            onDiscard={onDiscard}
+            quickPushState={quickPushStates?.[`${rowId}:${entry.item.platform}:${entry.item.listingId}:salePrice`]}
+            failedPushState={failedPushStates?.[`${rowId}:${entry.item.platform}:${entry.item.listingId}:salePrice`]}
+            showItemId={hasDuplicatePlatforms && (platformCounts.get(entry.item.platform) ?? 0) > 1}
+          />
+        ) : (
+          <MissingStoreBlock
+            key={`missing-${entry.platform}-${i}`}
+            platform={entry.platform}
+            missingLabel={missingLabel}
+          />
+        ),
+      )}
     </div>
   );
 }
@@ -1105,6 +1212,8 @@ interface EditableAdRateBlockGroupProps {
   onDiscard: (rowId: string, platform: string, listingId: string) => void;
   quickPushStates?: Record<string, QuickPushState>;
   failedPushStates?: Record<string, FailedPushState | undefined>;
+  includeMissingPlatforms?: boolean;
+  missingLabel?: string;
 }
 
 export function EditableAdRateBlockGroup({
@@ -1115,8 +1224,10 @@ export function EditableAdRateBlockGroup({
   onDiscard,
   quickPushStates,
   failedPushStates,
+  includeMissingPlatforms = false,
+  missingLabel = "Listing not found",
 }: EditableAdRateBlockGroupProps) {
-  if (items.length === 0) {
+  if (items.length === 0 && !includeMissingPlatforms) {
     return <span className="text-xs text-muted-foreground">—</span>;
   }
 
@@ -1125,22 +1236,31 @@ export function EditableAdRateBlockGroup({
     platformCounts.set(it.platform, (platformCounts.get(it.platform) ?? 0) + 1);
   }
   const hasDuplicatePlatforms = [...platformCounts.values()].some((c) => c > 1);
+  const displayEntries = buildDisplayEntries(items, includeMissingPlatforms);
 
   return (
     <div className="flex min-w-0 w-full flex-col gap-1">
-      {items.map((item, i) => (
-        <EditableAdRateBlock
-          key={`${item.platform}-${item.listingId}-${i}`}
-          item={item}
-          rowId={rowId}
-          onSave={onSave}
-          onPush={onPush}
-          onDiscard={onDiscard}
-          quickPushState={quickPushStates?.[`${rowId}:${item.platform}:${item.listingId}:adRate`]}
-          failedPushState={failedPushStates?.[`${rowId}:${item.platform}:${item.listingId}:adRate`]}
-          showItemId={hasDuplicatePlatforms && (platformCounts.get(item.platform) ?? 0) > 1}
-        />
-      ))}
+      {displayEntries.map((entry, i) =>
+        entry.kind === "item" ? (
+          <EditableAdRateBlock
+            key={`${entry.item.platform}-${entry.item.listingId}-${entry.item.variantId ?? ""}-${i}`}
+            item={entry.item}
+            rowId={rowId}
+            onSave={onSave}
+            onPush={onPush}
+            onDiscard={onDiscard}
+            quickPushState={quickPushStates?.[`${rowId}:${entry.item.platform}:${entry.item.listingId}:adRate`]}
+            failedPushState={failedPushStates?.[`${rowId}:${entry.item.platform}:${entry.item.listingId}:adRate`]}
+            showItemId={hasDuplicatePlatforms && (platformCounts.get(entry.item.platform) ?? 0) > 1}
+          />
+        ) : (
+          <MissingStoreBlock
+            key={`missing-${entry.platform}-${i}`}
+            platform={entry.platform}
+            missingLabel={missingLabel}
+          />
+        ),
+      )}
     </div>
   );
 }

@@ -12,7 +12,7 @@ export type LiveUpcLine =
       platform: Platform;
       label: string;
       value: string | null;
-      state: "live" | "missing" | "pending_refresh";
+      state: "live" | "missing" | "pending_refresh" | "not_found";
     };
 
 export type LiveUpcChoice = {
@@ -20,7 +20,7 @@ export type LiveUpcChoice = {
   label: string;
   value: string | null;
   editable: boolean;
-  state?: "live" | "missing" | "pending_refresh";
+  state?: "live" | "missing" | "pending_refresh" | "not_found";
 };
 
 export type ListingUpcSource = {
@@ -274,9 +274,23 @@ export function buildLiveUpcSummary(listings: ListingUpcSource[], rowUpc: string
     }
   }
 
-  const ordered = PLATFORM_ORDER
+  const ordered: Array<{
+    platform: Platform;
+    label: string;
+    value: string | null;
+    state: "live" | "missing" | "pending_refresh" | "not_found";
+    editable: boolean;
+  }> = PLATFORM_ORDER
     .map((platform) => {
-      if (!presentPlatforms.includes(platform)) return null;
+      if (!presentPlatforms.includes(platform)) {
+        return {
+          platform,
+          label: PLATFORM_SHORT[platform],
+          value: null,
+          state: "not_found" as const,
+          editable: false,
+        };
+      }
       const platformListings = listings.filter((listing) => listing.integration.platform === platform);
       const hasStoredPayload = platformListings.some((listing) => hasMeaningfulPayload(listing.rawData));
       const value = platformValues.get(platform) ?? null;
@@ -284,6 +298,7 @@ export function buildLiveUpcSummary(listings: ListingUpcSource[], rowUpc: string
         platform,
         label: PLATFORM_SHORT[platform],
         value,
+        editable: true,
         state: value
           ? ("live" as const)
           : !hasStoredPayload && (platform === "TPP_EBAY" || platform === "TT_EBAY")
@@ -291,30 +306,20 @@ export function buildLiveUpcSummary(listings: ListingUpcSource[], rowUpc: string
             : ("missing" as const),
       };
     })
-    .filter(
-      (
-        entry,
-      ): entry is {
-        platform: Platform;
-        label: string;
-        value: string | null;
-        state: "live" | "missing" | "pending_refresh";
-      } => Boolean(entry),
-    );
+    .filter(Boolean);
 
   const choices: LiveUpcChoice[] = ordered.map((entry) => ({
     platform: entry.platform,
     label: entry.label,
     value: entry.value,
-    editable: true,
+    editable: entry.editable,
     state: entry.state,
   }));
 
   const nonNullValues = ordered.map((entry) => entry.value).filter((value): value is string => Boolean(value));
   const distinctValues = [...new Set(nonNullValues)];
   const allStores =
-    presentPlatforms.length > 1 &&
-    ordered.length === presentPlatforms.length &&
+    ordered.length === PLATFORM_ORDER.length &&
     nonNullValues.length === ordered.length &&
     distinctValues.length === 1;
 

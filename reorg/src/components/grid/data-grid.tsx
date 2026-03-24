@@ -3607,6 +3607,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
                         onDiscard={handleDiscardStaged}
                         quickPushStates={quickPushStates}
                         failedPushStates={failedPushStates.storeStates}
+                        includeMissingPlatforms
                       />
                     </div>
                   )}
@@ -3664,7 +3665,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
                   {/* Platform Fees */}
                   {isColVisible("platformFees") && (
                     <div className={cn(COL_WIDTHS.platformFees, "flex items-center px-3", cellPy)}>
-                      <StoreBlockGroup items={row.platformFees} format="currency" showStaged={false} />
+                      <StoreBlockGroup items={row.platformFees} format="currency" showStaged={false} includeMissingPlatforms />
                     </div>
                   )}
 
@@ -3672,7 +3673,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
                   {isColVisible("adRate") && (
                     <div className={cn(COL_WIDTHS.adRate, "min-w-0 flex items-center px-3", cellPy)}>
                       {row.isVariation && !row.isParent ? (
-                        <StoreBlockGroup items={row.adRates} format="percent" showStaged={false} />
+                        <StoreBlockGroup items={row.adRates} format="percent" showStaged={false} includeMissingPlatforms />
                       ) : (
                         <EditableAdRateBlockGroup
                           items={row.adRates}
@@ -3682,6 +3683,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
                           onDiscard={handleDiscardStagedAdRate}
                           quickPushStates={quickPushStates}
                           failedPushStates={failedPushStates.storeStates}
+                          includeMissingPlatforms
                         />
                       )}
                     </div>
@@ -3690,7 +3692,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
                   {/* Profit */}
                   {isColVisible("profit") && (
                     <div className={cn(COL_WIDTHS.profit, "flex items-center px-3", cellPy)}>
-                      <StoreBlockGroup items={row.profits} format="currency" />
+                      <StoreBlockGroup items={row.profits} format="currency" includeMissingPlatforms compact />
                     </div>
                   )}
                 </div>
