@@ -82,6 +82,44 @@ export const PAGE_TOUR_STEPS: Record<OnboardingPageKey, TourStep[]> = {
       body: "Always finish by checking the profit column after pricing or fee changes. The point is not just to update a number, but to keep the row commercially valid.",
     },
   ],
+  inventoryForecaster: [
+    {
+      id: "inventory-1",
+      target: "inventory-forecaster-header",
+      title: "Forecast mission",
+      body: "This page is for read-only replenishment planning. It combines historical demand across all stores, then compares that demand against one deduped live master inventory quantity per SKU.",
+    },
+    {
+      id: "inventory-2",
+      target: "inventory-forecaster-controls",
+      title: "Set the planning window",
+      body: "Start with the lookback, bucket, transit days, and desired days after arrival. Those four controls define how much history to trust and how far forward you want to protect inventory.",
+    },
+    {
+      id: "inventory-3",
+      target: "inventory-forecaster-summary",
+      title: "Read the run health",
+      body: "This card shows what history window was actually covered, whether marketplace pulls raised warnings, and what High, Medium, or Low confidence means before you act on the numbers.",
+    },
+    {
+      id: "inventory-4",
+      target: "inventory-forecaster-results",
+      title: "Interpret the table",
+      body: "Each row explains the recommendation: historical demand, transit demand, post-arrival demand, safety buffer, inbound already on the way, and the final reorder quantity.",
+    },
+    {
+      id: "inventory-5",
+      target: "inventory-forecaster-actions",
+      title: "Save, order, or export",
+      body: "Save Run stores this forecast inside reorG, Create Order opens an internal supplier order record only, and Export builds the polished Excel workbook for purchasing review.",
+    },
+    {
+      id: "inventory-6",
+      target: "inventory-forecaster-orders",
+      title: "Track inbound supply",
+      body: "Recent Internal Supplier Orders are part of the planning loop. Ordered and In Transit quantities feed back into future forecasts so you do not double-order the same SKU.",
+    },
+  ],
   sync: [
     {
       id: "sync-1",

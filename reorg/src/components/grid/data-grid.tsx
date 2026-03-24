@@ -2825,6 +2825,53 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
     return count;
   }, [gridRows]);
 
+  function reviewAllStagedValues() {
+    const pushItems: PushItem[] = [];
+    const seenKeys = new Set<string>();
+
+    const appendItem = (item: PushItem | null) => {
+      if (!item) return;
+      const key = `${item.platform}:${item.listingId}:${item.platformVariantId ?? ""}:${item.field}`;
+      if (seenKeys.has(key)) return;
+      seenKeys.add(key);
+      pushItems.push(item);
+    };
+
+    const collectRow = (row: GridRow) => {
+      for (const salePrice of row.salePrices) {
+        if (salePrice.stagedValue != null && salePrice.stagedValue !== salePrice.value) {
+          appendItem(buildPushItem(row, salePrice.platform, salePrice.listingId, "salePrice"));
+        }
+      }
+
+      for (const adRate of row.adRates) {
+        if (adRate.stagedValue != null && adRate.stagedValue !== adRate.value) {
+          appendItem(buildPushItem(row, adRate.platform, adRate.listingId, "adRate"));
+        }
+      }
+
+      for (const upcItem of buildUpcPushItems(row)) {
+        appendItem(upcItem);
+      }
+
+      for (const child of row.childRows ?? []) {
+        collectRow(child);
+      }
+    };
+
+    for (const row of gridRows) {
+      collectRow(row);
+    }
+
+    if (pushItems.length === 0) {
+      showToast("No staged values are ready for review push.");
+      return;
+    }
+
+    queuePushReview(pushItems, "review");
+    showToast(`Queued ${pushItems.length} staged marketplace changes for review.`);
+  }
+
   function handleClearAllStaged() {
     setGridRows((prev) =>
       prev.map((row) => {
@@ -3070,6 +3117,15 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
             >
               <AlertTriangle className="h-3 w-3" />
               Push Alerts ({failedPushCount})
+            </button>
+          )}
+          {stagedCount > 0 && (
+            <button
+              onClick={reviewAllStagedValues}
+              className="flex items-center gap-1 rounded border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 text-xs font-medium text-emerald-300 transition-colors hover:bg-emerald-500/20 cursor-pointer"
+            >
+              <Check className="h-3 w-3" />
+              Push Staged Values ({stagedCount})
             </button>
           )}
           <button

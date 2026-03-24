@@ -14,12 +14,14 @@ type LiveUpcLine =
       kind: "all";
       label: string;
       value: string;
+      state?: "live";
     }
   | {
       kind: "platform";
       platform: Platform;
       label: string;
       value: string | null;
+      state: "live" | "missing" | "pending_refresh";
     };
 
 export type LiveUpcChoice = {
@@ -27,6 +29,7 @@ export type LiveUpcChoice = {
   label: string;
   value: string | null;
   editable: boolean;
+  state?: "live" | "missing" | "pending_refresh";
 };
 
 const upcLiveCache = new Map<string, { expiresAt: number; value: LiveUpcLine[] }>();
@@ -127,6 +130,26 @@ function renderCompactButtonLabel(text: string) {
       ))}
     </span>
   );
+}
+
+function getLiveUpcText(line: LiveUpcLine): string {
+  if (line.value) {
+    return line.value;
+  }
+  if (line.kind === "platform" && line.state === "pending_refresh") {
+    return "Waiting on eBay detail";
+  }
+  return "No UPC";
+}
+
+function getLiveUpcBadge(line: LiveUpcLine): string {
+  if (line.value) {
+    return "LIVE";
+  }
+  if (line.kind === "platform" && line.state === "pending_refresh") {
+    return "WAIT";
+  }
+  return "NONE";
 }
 
 export function UpcCell({
@@ -702,7 +725,7 @@ export function UpcCell({
                   line.value ? PLATFORM_TEXT_COLORS[line.platform] : "text-muted-foreground/60",
                 )}
               >
-                {line.value ?? "No UPC"}
+                {getLiveUpcText(line)}
               </span>
               <span
                 className={cn(
@@ -712,13 +735,15 @@ export function UpcCell({
                       ? "bg-blue-500"
                       : line.platform === "TT_EBAY"
                         ? "bg-emerald-500"
-                        : line.platform === "BIGCOMMERCE"
+                      : line.platform === "BIGCOMMERCE"
                           ? "bg-orange-500"
                           : "bg-lime-500 text-black"
-                    : "bg-muted text-muted-foreground",
+                    : line.state === "pending_refresh"
+                      ? "bg-amber-500 text-black"
+                      : "bg-muted text-muted-foreground",
                 )}
               >
-                {line.value ? "LIVE" : "NONE"}
+                {getLiveUpcBadge(line)}
               </span>
             </div>
             {failedPushTarget ? (
@@ -754,7 +779,7 @@ export function UpcCell({
                 line.value ? PLATFORM_TEXT_COLORS[line.platform] : "text-muted-foreground/60",
               )}
             >
-              {line.value ?? "No UPC"}
+              {getLiveUpcText(line)}
             </span>
             <span
               className={cn(
@@ -764,13 +789,15 @@ export function UpcCell({
                     ? "bg-blue-500"
                     : line.platform === "TT_EBAY"
                       ? "bg-emerald-500"
-                      : line.platform === "BIGCOMMERCE"
+                    : line.platform === "BIGCOMMERCE"
                         ? "bg-orange-500"
                         : "bg-lime-500 text-black"
-                  : "bg-muted text-muted-foreground",
+                  : line.state === "pending_refresh"
+                    ? "bg-amber-500 text-black"
+                    : "bg-muted text-muted-foreground",
               )}
             >
-            {line.value ? "LIVE" : "NONE"}
+            {getLiveUpcBadge(line)}
             </span>
           </div>
           {renderCopyButton(line.value, `${line.label} UPC`)}

@@ -5,6 +5,10 @@ const TEMPLATE_ROWS = [
   {
     sku: "EXAMPLE-SKU-001",
     upc: "850027678160",
+    upc_tpp_ebay: "",
+    upc_tt_ebay: "",
+    upc_shopify: "",
+    upc_bigcommerce: "",
     weight: "5",
     supplier_cost: 12.5,
     supplier_shipping_cost: 3.25,
@@ -13,17 +17,32 @@ const TEMPLATE_ROWS = [
   {
     sku: "EXAMPLE-SKU-002",
     upc: "",
+    upc_tpp_ebay: "850027678160",
+    upc_tt_ebay: "",
+    upc_shopify: "850027678199",
+    upc_bigcommerce: "",
     weight: "2LBS",
     supplier_cost: 28,
     supplier_shipping_cost: 7.5,
-    notes: "Blank optional cells are ignored. They do not delete existing values.",
+    notes: "Blank optional cells are ignored. Marketplace-specific UPC columns override the shared UPC only for that store.",
   },
 ];
 
 export async function GET() {
   const workbook = XLSX.utils.book_new();
   const worksheet = XLSX.utils.json_to_sheet(TEMPLATE_ROWS, {
-    header: ["sku", "upc", "weight", "supplier_cost", "supplier_shipping_cost", "notes"],
+    header: [
+      "sku",
+      "upc",
+      "upc_tpp_ebay",
+      "upc_tt_ebay",
+      "upc_shopify",
+      "upc_bigcommerce",
+      "weight",
+      "supplier_cost",
+      "supplier_shipping_cost",
+      "notes",
+    ],
   });
   XLSX.utils.book_append_sheet(workbook, worksheet, "import-template");
 
@@ -31,8 +50,9 @@ export async function GET() {
     ["reorG Import Template"],
     [""],
     ["Required column", "sku"],
-    ["Supported columns", "upc, weight, supplier_cost, supplier_shipping_cost, notes"],
-    ["UPC behavior", "Blank UPC cells are ignored. Filled UPC values are staged for review, not pushed live automatically."],
+    ["Supported columns", "upc, upc_tpp_ebay, upc_tt_ebay, upc_shopify, upc_bigcommerce, weight, supplier_cost, supplier_shipping_cost, notes"],
+    ["Shared UPC behavior", "Filled upc values are staged for connected marketplaces on the row for review. They do not auto-push live."],
+    ["Marketplace UPC overrides", "Use the marketplace-specific UPC columns only when a store needs a different UPC than the shared row UPC."],
     ["Weight format", "1-16 for ounces, 2LBS-10LBS for pounds"],
     ["Notes field", "Internal free-text notes stored on the master row inside reorG."],
     ["Recommended mode", "Fill blanks only for safe first-time imports"],

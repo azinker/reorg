@@ -53,6 +53,19 @@ export function TourOverlay({
   const isLast = stepIndex >= steps.length - 1;
   const isFirst = stepIndex <= 0;
 
+  const scrollTargetIntoView = useCallback(() => {
+    if (!open || !step?.target) return;
+
+    const el = queryTarget(step.target);
+    if (!el) return;
+
+    el.scrollIntoView({
+      behavior: "smooth",
+      block: "center",
+      inline: "nearest",
+    });
+  }, [open, step]);
+
   const updatePositions = useCallback(() => {
     if (!open || !step) return;
     if (step.target == null) {
@@ -119,6 +132,17 @@ export function TourOverlay({
   useLayoutEffect(() => {
     updatePositions();
   }, [updatePositions, stepIndex]);
+
+  useEffect(() => {
+    if (!open) return;
+
+    scrollTargetIntoView();
+    const id = window.setTimeout(() => {
+      updatePositions();
+    }, 260);
+
+    return () => window.clearTimeout(id);
+  }, [open, scrollTargetIntoView, stepIndex, updatePositions]);
 
   useEffect(() => {
     if (!open) return;

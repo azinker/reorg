@@ -472,7 +472,6 @@ async function evaluatePostPushRefreshHeadroom(
   }
 
   const warnings: string[] = [];
-  let blockedReason: string | null = null;
   let retryAt: string | null = null;
   let totalRequiredCalls = 0;
   let totalAvailableCalls = 0;
@@ -486,22 +485,14 @@ async function evaluatePostPushRefreshHeadroom(
 
     if (!snapshot) {
       const detail = `${group.labels.join(" + ")} could not verify live eBay Trading API headroom for the post-push refresh.`;
-      if (!dryRun) {
-        blockedReason = `${detail} Wait for eBay quota visibility to recover before running a live push.`;
-        break;
-      }
-      warnings.push(`${detail} The dry run can continue, but the live push should wait.`);
+      warnings.push(`${detail} Live push can continue, but the targeted readback may be delayed until quota visibility recovers.`);
       continue;
     }
 
     const getItemRate = getEbayMethodRate(snapshot, "GetItem");
     if (!getItemRate || getItemRate.limit <= 0) {
       const detail = `${group.labels.join(" + ")} returned no usable GetItem quota data for the post-push refresh check.`;
-      if (!dryRun) {
-        blockedReason = `${detail} Wait for eBay quota visibility to recover before running a live push.`;
-        break;
-      }
-      warnings.push(`${detail} The dry run can continue, but the live push should wait.`);
+      warnings.push(`${detail} Live push can continue, but the targeted readback may be delayed until quota visibility recovers.`);
       continue;
     }
 
@@ -524,40 +515,34 @@ async function evaluatePostPushRefreshHeadroom(
 
     if (cooldownUntil || getItemRate.remaining <= 0) {
       const cooldownLabel = formatCooldownRetryAt(cooldownUntil);
-      blockedReason = cooldownLabel
-        ? `${group.labels.join(" + ")} are still inside the eBay GetItem cooldown window. Wait until about ${cooldownLabel} before running a live push so the post-push refresh can complete.`
-        : `${group.labels.join(" + ")} are still inside the eBay GetItem cooldown window. Wait for the next eBay reset before running a live push.`;
+      warnings.push(
+        cooldownLabel
+          ? `${group.labels.join(" + ")} are still inside the eBay GetItem cooldown window. Live push can continue now, but the targeted readback may not complete until about ${cooldownLabel}.`
+          : `${group.labels.join(" + ")} are still inside the eBay GetItem cooldown window. Live push can continue now, but the targeted readback may not complete until the next eBay reset.`,
+      );
       retryAt = cooldownUntil?.toISOString() ?? null;
-      break;
+      continue;
     }
 
     if (group.requiredCalls > targetedReserve) {
-      blockedReason =
+      warnings.push(
         `${group.labels.join(" + ")} would need about ${group.requiredCalls.toLocaleString()} ` +
         `targeted GetItem refreshes after this push, but the protected fast-refresh reserve for ` +
-        `that shared eBay app is only ${targetedReserve.toLocaleString()} calls. Split the push ` +
-        `into smaller batches so the post-push refresh can stay fast and safe.`;
-      break;
+        `that shared eBay app is only ${targetedReserve.toLocaleString()} calls. Live push can continue, ` +
+        `but split future batches smaller if you want the post-push refresh to stay fast and safe.`,
+      );
+      continue;
     }
 
     if (availableForTargetedRefresh < group.requiredCalls) {
-      blockedReason =
+      warnings.push(
         `${group.labels.join(" + ")} only have about ${availableForTargetedRefresh.toLocaleString()} ` +
         `GetItem calls available above the protected base reserve, but this push would need about ` +
-        `${group.requiredCalls.toLocaleString()} targeted refresh calls to reflect quickly afterward.`;
+        `${group.requiredCalls.toLocaleString()} targeted refresh calls to reflect quickly afterward. Live push can continue, but the readback may lag until quota resets.`,
+      );
       retryAt = snapshot.nextResetAt;
-      break;
+      continue;
     }
-  }
-
-  if (blockedReason) {
-    return {
-      status: dryRun ? "warning" : "blocked",
-      detail: blockedReason,
-      retryAt,
-      requiredCalls: totalRequiredCalls,
-      availableCalls: totalAvailableCalls || null,
-    };
   }
 
   if (warnings.length > 0) {
@@ -1017,18 +1002,6 @@ export async function executePush(
       availableCalls: null,
     },
   });
-  if (!request.dryRun && postPushRefresh?.status === "blocked") {
-    return buildBlockedResult({
-      dryRun: false,
-      blockedReason: postPushRefresh.detail,
-      summary,
-      batchSafety,
-      goLiveChecklist: dryRunChecklist,
-      prePushBackup: prePushBackupPlan,
-      postPushRefresh,
-    });
-  }
-
   // Create push job record
   const pushJob = await db.pushJob.create({
     data: {

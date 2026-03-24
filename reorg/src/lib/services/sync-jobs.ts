@@ -1,6 +1,9 @@
 import { db } from "@/lib/db";
 
-const STALE_RUNNING_JOB_MS = 45 * 60 * 1000;
+// Larger full catalog pulls can legitimately exceed 45 minutes while still
+// making progress, especially on BigCommerce. Keep the guardrail, but avoid
+// auto-failing healthy long-running jobs too aggressively.
+const STALE_RUNNING_JOB_MS = 90 * 60 * 1000;
 
 export function isRunningJobStale(
   job: {

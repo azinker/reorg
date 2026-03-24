@@ -17,6 +17,7 @@ Use this checklist to verify reorG is working after setup or deployment. Run thr
 
 - [ ] **Sidebar visible** - Left sidebar shows all main sections
 - [ ] **Dashboard link works** - Click Dashboard and confirm the main grid loads
+- [ ] **Inventory Forecaster link works** - Inventory Forecaster page loads
 - [ ] **Sync link works** - Sync page loads
 - [ ] **Integrations link works** - Integrations page loads
 - [ ] **Engine Room link works** - Engine Room page loads
@@ -50,6 +51,20 @@ Use this checklist to verify reorG is working after setup or deployment. Run thr
 - [ ] **Sync status shows** - Completed, failed, or in-progress status is visible
 - [ ] **Automation health reads clearly** - Healthy, Running behind, or Attention needed includes a next step
 - [ ] **Errors surface** - If sync fails, the issue appears clearly
+
+---
+
+## Inventory Forecaster
+
+- [ ] **Inventory Forecaster page loads** - No blank page or server error
+- [ ] **Run Forecast works** - Forecast completes and results render
+- [ ] **Sales coverage shows** - Coverage dates appear in the summary card
+- [ ] **Warnings are readable** - Missing credentials or partial history appear as notes, not silent failures
+- [ ] **Save Run works** - Forecast run saves successfully
+- [ ] **Create Order works** - Internal supplier order draft is created
+- [ ] **Supplier order editing works** - Status and ETA can be updated
+- [ ] **Export Excel works** - Workbook downloads successfully
+- [ ] **Forecast stays read-only for marketplaces** - No marketplace write or push action occurs
 
 ---
 

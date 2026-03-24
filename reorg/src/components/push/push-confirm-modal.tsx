@@ -129,6 +129,16 @@ type ModalPhase =
   | "blocked"
   | "error";
 
+function getPushItemKey(item: PushItem): string {
+  return [
+    item.platform,
+    item.listingId,
+    item.platformVariantId ?? "",
+    item.field,
+    String(item.newValue),
+  ].join(":");
+}
+
 function formatValue(field: string, value: number | string | null): string {
   if (value == null) return "—";
   if (field === "upc") return String(value);
@@ -229,6 +239,7 @@ export function PushConfirmModal({
   const [result, setResult] = useState<PushApiData | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [activeItems, setActiveItems] = useState<PushItem[]>(items);
+  const [selectedItemKeys, setSelectedItemKeys] = useState<Set<string>>(new Set(items.map(getPushItemKey)));
   const [autoDryRunStarted, setAutoDryRunStarted] = useState(false);
 
   useEffect(() => {
@@ -237,10 +248,23 @@ export function PushConfirmModal({
     setResult(null);
     setErrorMessage(null);
     setActiveItems(items);
+    setSelectedItemKeys(new Set(items.map(getPushItemKey)));
     setAutoDryRunStarted(false);
   }, [open, items]);
 
   const reviewItems = previewItems?.length ? previewItems : activeItems;
+  const activeItemKeySet = useMemo(
+    () => new Set(activeItems.map(getPushItemKey)),
+    [activeItems],
+  );
+  const selectedActiveItems = useMemo(
+    () => activeItems.filter((item) => selectedItemKeys.has(getPushItemKey(item))),
+    [activeItems, selectedItemKeys],
+  );
+  const selectedListingCount = useMemo(
+    () => new Set(selectedActiveItems.map((item) => `${item.platform}:${item.listingId}`)).size,
+    [selectedActiveItems],
+  );
 
   const groupedByListing = useMemo(() => {
     return reviewItems.reduce<Record<string, PushItem[]>>((acc, item) => {
@@ -300,7 +324,30 @@ export function PushConfirmModal({
     result.status !== "blocked" &&
     result.goLiveChecklist?.every((item) => item.status !== "blocked") !== false;
 
+  function setAllSelections(nextChecked: boolean) {
+    setSelectedItemKeys(nextChecked ? new Set(activeItems.map(getPushItemKey)) : new Set());
+  }
+
+  function toggleItemSelection(item: PushItem, checked: boolean) {
+    const key = getPushItemKey(item);
+    setSelectedItemKeys((current) => {
+      const next = new Set(current);
+      if (checked) {
+        next.add(key);
+      } else {
+        next.delete(key);
+      }
+      return next;
+    });
+  }
+
   async function runRequest(dryRun: boolean) {
+    if (selectedActiveItems.length === 0) {
+      setErrorMessage("Select at least one staged change before running the push.");
+      setPhase("error");
+      return;
+    }
+
     setErrorMessage(null);
     setPhase(dryRun ? "dry-run" : "pushing");
 
@@ -309,7 +356,7 @@ export function PushConfirmModal({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          changes: activeItems,
+          changes: selectedActiveItems,
           dryRun,
           confirmedLivePush: !dryRun,
         }),
@@ -369,8 +416,8 @@ export function PushConfirmModal({
                 {autoRunDryRun ? "Fast Push Review" : "Review Push"}
               </h2>
               <p className="text-xs text-muted-foreground">
-                {reviewItems.length} change{reviewItems.length === 1 ? "" : "s"} across {Object.keys(groupedByListing).length} listing
-                {Object.keys(groupedByListing).length === 1 ? "" : "s"}
+                {selectedActiveItems.length} selected change{selectedActiveItems.length === 1 ? "" : "s"} ready across {selectedListingCount} listing
+                {selectedListingCount === 1 ? "" : "s"}
               </p>
             </div>
           </div>
@@ -399,13 +446,21 @@ export function PushConfirmModal({
             <div className="rounded-xl border border-border bg-background/50 p-4">
               <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Listings</div>
               <div className="mt-1 text-2xl font-semibold text-foreground">
-                {showingPreviewPlan ? plannedListingCount : (result?.summary.distinctListings ?? plannedListingCount)}
+                {phase === "review" || phase === "ready"
+                  ? selectedListingCount
+                  : showingPreviewPlan
+                    ? plannedListingCount
+                    : (result?.summary.distinctListings ?? plannedListingCount)}
               </div>
             </div>
             <div className="rounded-xl border border-border bg-background/50 p-4">
               <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Changes</div>
               <div className="mt-1 text-2xl font-semibold text-foreground">
-                {showingPreviewPlan ? plannedChangeCount : (result?.summary.totalChanges ?? plannedChangeCount)}
+                {phase === "review" || phase === "ready"
+                  ? selectedActiveItems.length
+                  : showingPreviewPlan
+                    ? plannedChangeCount
+                    : (result?.summary.totalChanges ?? plannedChangeCount)}
               </div>
             </div>
             <div className="rounded-xl border border-border bg-background/50 p-4">
@@ -562,11 +617,31 @@ export function PushConfirmModal({
           ) : null}
 
           <section>
-            <div className="mb-2">
+            <div className="mb-2 flex flex-wrap items-start justify-between gap-3">
+              <div>
               <h3 className="text-sm font-semibold text-foreground">Changes In This Push</h3>
               <p className="text-xs text-muted-foreground">
                 Review the exact listings and fields before confirming any live write.
               </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setAllSelections(true)}
+                  disabled={activeItems.length === 0}
+                  className="rounded-md border border-border px-3 py-1.5 text-xs text-foreground transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"
+                >
+                  Select All
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setAllSelections(false)}
+                  disabled={selectedActiveItems.length === 0}
+                  className="rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"
+                >
+                  Clear All
+                </button>
+              </div>
             </div>
             <div className="space-y-3">
               {Object.entries(groupedByListing).map(([key, listingItems]) => {
@@ -582,20 +657,45 @@ export function PushConfirmModal({
                     </div>
                     <p className="mt-1 text-xs text-muted-foreground">{first.title}</p>
                     <div className="mt-3 space-y-2">
-                      {listingItems.map((item) => (
-                        <div key={`${item.platform}:${item.listingId}:${item.field}`} className="flex items-center gap-3 text-sm">
-                          <span className="w-20 shrink-0 text-xs uppercase tracking-wide text-muted-foreground">
-                            {item.field}
-                          </span>
-                          <span className="text-muted-foreground line-through">
-                            {formatDisplayValue(item.field, item.oldValue)}
-                          </span>
-                          <RefreshCw className="h-3.5 w-3.5 text-muted-foreground/60" />
-                          <span className="font-semibold text-foreground">
-                            {formatDisplayValue(item.field, item.newValue)}
-                          </span>
-                        </div>
-                      ))}
+                      {listingItems.map((item) => {
+                        const itemKey = getPushItemKey(item);
+                        const isSelectable = activeItemKeySet.has(itemKey);
+                        const isSelected = selectedItemKeys.has(itemKey);
+                        return (
+                          <label
+                            key={`${item.platform}:${item.listingId}:${item.field}:${item.newValue}`}
+                            className={cn(
+                              "flex items-center gap-3 rounded-lg border px-3 py-2 text-sm",
+                              isSelectable
+                                ? "border-border bg-background/40"
+                                : "border-border/50 bg-muted/20 opacity-70",
+                            )}
+                          >
+                            {isSelectable ? (
+                              <input
+                                type="checkbox"
+                                checked={isSelected}
+                                onChange={(event) => toggleItemSelection(item, event.target.checked)}
+                                className="h-4 w-4 cursor-pointer rounded border-border bg-background text-primary focus:ring-primary"
+                              />
+                            ) : (
+                              <span className="inline-flex min-w-[72px] items-center rounded border border-border/70 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                                Preview only
+                              </span>
+                            )}
+                            <span className="w-20 shrink-0 text-xs uppercase tracking-wide text-muted-foreground">
+                              {item.field}
+                            </span>
+                            <span className="text-muted-foreground line-through">
+                              {formatDisplayValue(item.field, item.oldValue)}
+                            </span>
+                            <RefreshCw className="h-3.5 w-3.5 text-muted-foreground/60" />
+                            <span className="font-semibold text-foreground">
+                              {formatDisplayValue(item.field, item.newValue)}
+                            </span>
+                          </label>
+                        );
+                      })}
                     </div>
                   </article>
                 );
@@ -607,7 +707,7 @@ export function PushConfirmModal({
         <div className="flex items-center justify-between gap-3 border-t border-border px-6 py-4">
           <div className="text-xs text-muted-foreground">
             {phase === "review"
-              ? "Live marketplace writes only run after a successful dry run and explicit confirmation."
+              ? "Select the staged changes you want, run the dry run, then confirm the live push only for those selected items."
               : result?.nextStep ?? "Review the result and next step before closing."}
           </div>
           <div className="flex items-center gap-2">
@@ -621,6 +721,7 @@ export function PushConfirmModal({
                 </button>
                 <button
                   onClick={() => void runRequest(true)}
+                  disabled={selectedActiveItems.length === 0}
                   className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 cursor-pointer"
                 >
                   {autoRunDryRun ? "Checking Push" : "Run Dry Run"}
@@ -638,7 +739,7 @@ export function PushConfirmModal({
                 </button>
                 <button
                   onClick={() => void runRequest(false)}
-                  disabled={!canConfirmLive}
+                  disabled={!canConfirmLive || selectedActiveItems.length === 0}
                   className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"
                 >
                   {autoRunDryRun ? "Push Now" : "Confirm Live Push"}
@@ -652,6 +753,7 @@ export function PushConfirmModal({
                   <button
                     onClick={() => {
                       setActiveItems(retryFailedItems);
+                      setSelectedItemKeys(new Set(retryFailedItems.map(getPushItemKey)));
                       setResult(null);
                       setErrorMessage(null);
                       setPhase("review");

@@ -8,6 +8,7 @@ import {
   FileCheck,
   FileDown,
   Loader2,
+  RotateCcw,
   Settings2,
   Upload,
 } from "lucide-react";
@@ -32,7 +33,27 @@ const SUPPORTED_FIELDS = [
   {
     key: "upc",
     required: false,
-    description: "Optional. Blank UPC cells are ignored. Filled UPC values are staged for review, not pushed live automatically.",
+    description: "Optional shared UPC. If you fill only this column, reorG stages that UPC across the connected marketplaces on the row for review, not auto-push.",
+  },
+  {
+    key: "upc_tpp_ebay",
+    required: false,
+    description: "Optional marketplace-specific override for The Perfect Part eBay only. Use this when TPP needs a different UPC than the shared row UPC.",
+  },
+  {
+    key: "upc_tt_ebay",
+    required: false,
+    description: "Optional marketplace-specific override for Telitetech eBay only.",
+  },
+  {
+    key: "upc_shopify",
+    required: false,
+    description: "Optional marketplace-specific override for Shopify only.",
+  },
+  {
+    key: "upc_bigcommerce",
+    required: false,
+    description: "Optional marketplace-specific override for BigCommerce only.",
   },
   {
     key: "weight",
@@ -59,6 +80,10 @@ const SUPPORTED_FIELDS = [
 const FAILURE_DOWNLOAD_HEADERS = [
   "sku",
   "upc",
+  "upc_tpp_ebay",
+  "upc_tt_ebay",
+  "upc_shopify",
+  "upc_bigcommerce",
   "weight",
   "supplier_cost",
   "supplier_shipping_cost",
@@ -93,6 +118,10 @@ type ImportFailure = {
   fields: {
     sku: string;
     upc: string;
+    upc_tpp_ebay: string;
+    upc_tt_ebay: string;
+    upc_shopify: string;
+    upc_bigcommerce: string;
     weight: string;
     supplier_cost: string;
     supplier_shipping_cost: string;
@@ -113,6 +142,7 @@ type ImportResult = {
   created: number;
   updated: number;
   unchanged: number;
+  undoAuditLogId: string | null;
   applyErrors: { row: number; error: string }[];
   successes: ImportSuccess[];
   failures: ImportFailure[];
@@ -124,6 +154,7 @@ export default function ImportPage() {
   const [preview, setPreview] = useState<PreviewState | null>(null);
   const [importMode, setImportMode] = useState<"fill_blanks" | "overwrite">("fill_blanks");
   const [loading, setLoading] = useState(false);
+  const [undoing, setUndoing] = useState(false);
   const [result, setResult] = useState<ImportResult | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -178,6 +209,7 @@ export default function ImportPage() {
           created: json.data.created ?? 0,
           updated: json.data.updated ?? 0,
           unchanged: json.data.unchanged ?? 0,
+          undoAuditLogId: json.data.undoAuditLogId ?? null,
           applyErrors: json.data.applyErrors ?? [],
           successes: json.data.successes ?? [],
           failures: json.data.failures ?? [],
@@ -192,6 +224,10 @@ export default function ImportPage() {
     window.location.href = "/api/import/template";
   }
 
+  function downloadMissingParameters() {
+    window.location.href = "/api/import/missing-parameters";
+  }
+
   function downloadFailedRows() {
     if (!result || result.failures.length === 0) return;
 
@@ -199,6 +235,10 @@ export default function ImportPage() {
     const rows = result.failures.map((failure) => ({
       sku: failure.fields.sku ?? "",
       upc: failure.fields.upc ?? "",
+      upc_tpp_ebay: failure.fields.upc_tpp_ebay ?? "",
+      upc_tt_ebay: failure.fields.upc_tt_ebay ?? "",
+      upc_shopify: failure.fields.upc_shopify ?? "",
+      upc_bigcommerce: failure.fields.upc_bigcommerce ?? "",
       weight: failure.fields.weight ?? "",
       supplier_cost: failure.fields.supplier_cost ?? "",
       supplier_shipping_cost: failure.fields.supplier_shipping_cost ?? "",
@@ -232,6 +272,33 @@ export default function ImportPage() {
 
   function goToNextStep() {
     setCurrentStep((step) => Math.min(STEPS.length, step + 1));
+  }
+
+  async function undoLastImport() {
+    if (!result?.undoAuditLogId) return;
+    setUndoing(true);
+    try {
+      const response = await fetch("/api/import/undo", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ auditLogId: result.undoAuditLogId }),
+      });
+      const json = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(json.error ?? "Undo import failed.");
+      }
+
+      setResult((current) =>
+        current
+          ? {
+              ...current,
+              undoAuditLogId: null,
+            }
+          : current,
+      );
+    } finally {
+      setUndoing(false);
+    }
   }
 
   return (
@@ -308,19 +375,34 @@ export default function ImportPage() {
               </p>
             </div>
 
-            <button
-              type="button"
-              onClick={downloadTemplate}
-              className={cn(
-                "inline-flex cursor-pointer items-center gap-2 rounded-lg border border-border bg-background px-4 py-2.5 text-sm font-medium text-foreground",
-                "transition-colors hover:bg-muted",
-                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
-              )}
-              aria-label="Download import template"
-            >
-              <FileDown className="h-4 w-4" aria-hidden />
-              Download template
-            </button>
+            <div className="flex flex-wrap gap-3">
+              <button
+                type="button"
+                onClick={downloadTemplate}
+                className={cn(
+                  "inline-flex cursor-pointer items-center gap-2 rounded-lg border border-border bg-background px-4 py-2.5 text-sm font-medium text-foreground",
+                  "transition-colors hover:bg-muted",
+                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+                )}
+                aria-label="Download import template"
+              >
+                <FileDown className="h-4 w-4" aria-hidden />
+                Download template
+              </button>
+              <button
+                type="button"
+                onClick={downloadMissingParameters}
+                className={cn(
+                  "inline-flex cursor-pointer items-center gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-2.5 text-sm font-medium text-emerald-300",
+                  "transition-colors hover:bg-emerald-500/15",
+                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+                )}
+                aria-label="Download missing parameters"
+              >
+                <FileDown className="h-4 w-4" aria-hidden />
+                Download Missing Parameters
+              </button>
+            </div>
 
             <div>
               <h3 className="text-sm font-medium text-foreground">Supported fields</h3>
@@ -670,16 +752,29 @@ export default function ImportPage() {
                       Created: {result.created} · Updated: {result.updated} · No changes: {result.unchanged} · Failed: {result.failures.length}
                     </p>
                   </div>
-                  {result.failures.length > 0 && (
-                    <button
-                      type="button"
-                      onClick={downloadFailedRows}
-                      className="inline-flex items-center gap-2 rounded-lg border border-border bg-background px-3 py-2 text-sm font-medium text-foreground transition-colors hover:bg-muted cursor-pointer"
-                    >
-                      <FileDown className="h-4 w-4" />
-                      Download failed rows (.xlsx)
-                    </button>
-                  )}
+                  <div className="flex flex-wrap items-center gap-2">
+                    {result.undoAuditLogId ? (
+                      <button
+                        type="button"
+                        onClick={() => void undoLastImport()}
+                        disabled={undoing}
+                        className="inline-flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm font-medium text-amber-300 transition-colors hover:bg-amber-500/15 disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"
+                      >
+                        {undoing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RotateCcw className="h-4 w-4" />}
+                        {undoing ? "Undoing import..." : "Undo imported changes"}
+                      </button>
+                    ) : null}
+                    {result.failures.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={downloadFailedRows}
+                        className="inline-flex items-center gap-2 rounded-lg border border-border bg-background px-3 py-2 text-sm font-medium text-foreground transition-colors hover:bg-muted cursor-pointer"
+                      >
+                        <FileDown className="h-4 w-4" />
+                        Download failed rows (.xlsx)
+                      </button>
+                    )}
+                  </div>
                 </div>
 
                 <div className="grid gap-3 md:grid-cols-4">

@@ -6,6 +6,7 @@ import {
   executeScheduledSyncs,
   planScheduledSyncs,
 } from "@/lib/services/sync-scheduler";
+import { captureDailyInventorySnapshots } from "@/lib/inventory-forecast/snapshots";
 
 const bodySchema = z
   .object({
@@ -134,6 +135,7 @@ async function handleSchedulerTick(request: NextRequest, dryRun: boolean) {
     }
 
     const result = await executeScheduledSyncs();
+    const snapshotResult = await captureDailyInventorySnapshots();
     const status: Parameters<typeof saveSchedulerStatus>[0] = {
       tickedAt: new Date().toISOString(),
       outcome: "completed",
@@ -149,6 +151,7 @@ async function handleSchedulerTick(request: NextRequest, dryRun: boolean) {
         dueCount: result.plan.filter((item) => item.due).length,
         dispatchedCount: result.dispatched.length,
         dispatched: result.dispatched,
+        inventorySnapshots: snapshotResult,
         plan: result.plan,
       },
     });

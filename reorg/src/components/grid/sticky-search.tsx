@@ -190,7 +190,7 @@ export function StickySearch({
               <div className="min-w-0 flex-1">
                 <div className="truncate font-medium">{result.title}</div>
                 <div className="truncate text-xs text-muted-foreground">
-                  SKU: {result.sku}
+                  SKU: <span className="font-semibold text-emerald-400">{result.sku}</span>
                   {result.matchField !== "SKU" && result.matchField !== "Title" && (
                     <> | {result.matchField}: {result.matchValue}</>
                   )}

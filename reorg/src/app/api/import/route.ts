@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import * as XLSX from "xlsx";
 import { db } from "@/lib/db";
 import { Platform } from "@prisma/client";
+import { buildLiveUpcSummary } from "@/lib/upc-live";
 
 const VALID_MODES = ["preview", "fill_blanks", "overwrite"] as const;
 type ImportMode = (typeof VALID_MODES)[number];
@@ -9,15 +10,52 @@ type ImportMode = (typeof VALID_MODES)[number];
 const IMPORT_FIELD_HEADERS = [
   "sku",
   "upc",
+  "upc_tpp_ebay",
+  "upc_tt_ebay",
+  "upc_shopify",
+  "upc_bigcommerce",
   "weight",
   "supplier_cost",
   "supplier_shipping_cost",
   "notes",
 ] as const;
 
+const IMPORT_UPC_PLATFORM_FIELDS = [
+  {
+    platform: Platform.TPP_EBAY,
+    key: "upc_tpp_ebay",
+    label: "TPP eBay UPC",
+  },
+  {
+    platform: Platform.TT_EBAY,
+    key: "upc_tt_ebay",
+    label: "TT eBay UPC",
+  },
+  {
+    platform: Platform.SHOPIFY,
+    key: "upc_shopify",
+    label: "Shopify UPC",
+  },
+  {
+    platform: Platform.BIGCOMMERCE,
+    key: "upc_bigcommerce",
+    label: "BigCommerce UPC",
+  },
+] as const;
+
+const SUPPORTED_UPC_PLATFORMS = new Set<Platform>(
+  IMPORT_UPC_PLATFORM_FIELDS.map((field) => field.platform),
+);
+
+type SupportedUpcPlatform = (typeof IMPORT_UPC_PLATFORM_FIELDS)[number]["platform"];
+
 type ImportDownloadRow = {
   sku: string;
   upc: string;
+  upc_tpp_ebay: string;
+  upc_tt_ebay: string;
+  upc_shopify: string;
+  upc_bigcommerce: string;
   weight: string;
   supplier_cost: string;
   supplier_shipping_cost: string;
@@ -48,6 +86,33 @@ type ImportImpact = {
   changedFields: string[];
 };
 
+type StagedUpcSnapshot = {
+  marketplaceListingId: string | null;
+  stagedValue: string;
+  liveValue: string | null;
+};
+
+type ImportUndoOperation =
+  | {
+      kind: "restore_existing";
+      masterRowId: string;
+      sku: string;
+      previousValues: {
+        title: string | null;
+        weight: string | null;
+        weightOz: number | null;
+        supplierCost: number | null;
+        supplierShipping: number | null;
+        notes: string | null;
+      };
+      previousStagedUpcChanges: StagedUpcSnapshot[];
+    }
+  | {
+      kind: "delete_created";
+      masterRowId: string;
+      sku: string;
+    };
+
 type ExistingImportRow = {
   id: string;
   sku: string;
@@ -60,11 +125,36 @@ type ExistingImportRow = {
   notes: string | null;
   listings: Array<{
     id: string;
+    rawData: unknown;
     integration: {
       platform: Platform;
     };
   }>;
 };
+
+type ImportedUpcValues = {
+  shared: string | null;
+  byPlatform: Partial<Record<SupportedUpcPlatform, string>>;
+};
+
+type ImportedUpcTarget = {
+  platform: SupportedUpcPlatform | null;
+  label: string;
+  desiredValue: string;
+  liveValue: string | null;
+  listingIds: string[];
+};
+
+function snapshotRowValues(row: ExistingImportRow) {
+  return {
+    title: row.title,
+    weight: row.weight,
+    weightOz: row.weightOz,
+    supplierCost: row.supplierCost,
+    supplierShipping: row.supplierShipping,
+    notes: row.notes,
+  };
+}
 
 const COLUMN_MAP: Record<string, string> = {
   sku: "sku",
@@ -77,6 +167,21 @@ const COLUMN_MAP: Record<string, string> = {
   supplier_shipping: "supplierShipping",
   notes: "notes",
   upc: "upc",
+  upc_tpp: "upc_tpp_ebay",
+  upc_tpp_ebay: "upc_tpp_ebay",
+  tpp_upc: "upc_tpp_ebay",
+  ebay_tpp_upc: "upc_tpp_ebay",
+  upc_tt: "upc_tt_ebay",
+  upc_tt_ebay: "upc_tt_ebay",
+  tt_upc: "upc_tt_ebay",
+  ebay_tt_upc: "upc_tt_ebay",
+  upc_shopify: "upc_shopify",
+  shopify_upc: "upc_shopify",
+  upc_shpfy: "upc_shopify",
+  upc_bigcommerce: "upc_bigcommerce",
+  bigcommerce_upc: "upc_bigcommerce",
+  bc_upc: "upc_bigcommerce",
+  upc_bc: "upc_bigcommerce",
 };
 
 function normalizeHeader(h: string): string {
@@ -159,6 +264,10 @@ function buildDownloadRow(fields: Record<string, unknown>, errorReason?: string)
   const row: ImportDownloadRow = {
     sku: "",
     upc: "",
+    upc_tpp_ebay: "",
+    upc_tt_ebay: "",
+    upc_shopify: "",
+    upc_bigcommerce: "",
     weight: "",
     supplier_cost: "",
     supplier_shipping_cost: "",
@@ -167,6 +276,10 @@ function buildDownloadRow(fields: Record<string, unknown>, errorReason?: string)
 
   row.sku = String(fields.sku ?? "").trim();
   row.upc = String(fields.upc ?? "").trim();
+  row.upc_tpp_ebay = String(fields.upc_tpp_ebay ?? "").trim();
+  row.upc_tt_ebay = String(fields.upc_tt_ebay ?? "").trim();
+  row.upc_shopify = String(fields.upc_shopify ?? "").trim();
+  row.upc_bigcommerce = String(fields.upc_bigcommerce ?? "").trim();
   row.weight = String(fields.weight ?? "").trim();
   row.supplier_cost =
     fields.supplierCost == null || String(fields.supplierCost).trim() === ""
@@ -199,44 +312,172 @@ async function getSystemUser() {
   return user;
 }
 
-async function stageImportedUpc(args: {
-  masterRowId: string;
-  importedUpc: string;
-  changedById: string;
-  listingIds: string[];
-}) {
-  await db.stagedChange.updateMany({
-    where: {
-      masterRowId: args.masterRowId,
-      field: "upc",
-      status: "STAGED",
-    },
-    data: { status: "CANCELLED" },
-  });
+function normalizeTrimmedString(value: unknown): string | null {
+  if (value == null) return null;
+  const normalized = String(value).trim();
+  return normalized.length > 0 ? normalized : null;
+}
 
-  if (args.listingIds.length === 0) {
-    await db.stagedChange.create({
-      data: {
-        masterRowId: args.masterRowId,
-        field: "upc",
-        stagedValue: args.importedUpc,
-        liveValue: null,
-        changedById: args.changedById,
-      },
-    });
-    return;
+function collectImportedUpcValues(fields: Record<string, unknown>): ImportedUpcValues {
+  const byPlatform = {} as Partial<Record<SupportedUpcPlatform, string>>;
+
+  for (const field of IMPORT_UPC_PLATFORM_FIELDS) {
+    const value = normalizeTrimmedString(fields[field.key]);
+    if (value) {
+      byPlatform[field.platform] = value;
+    }
   }
 
-  await db.stagedChange.createMany({
-    data: args.listingIds.map((listingId) => ({
-      masterRowId: args.masterRowId,
-      marketplaceListingId: listingId,
-      field: "upc",
-      stagedValue: args.importedUpc,
-      liveValue: null,
-      changedById: args.changedById,
+  return {
+    shared: normalizeTrimmedString(fields.upc),
+    byPlatform,
+  };
+}
+
+function buildLiveUpcMap(row: ExistingImportRow | null): Map<SupportedUpcPlatform, string | null> {
+  if (!row) {
+    return new Map();
+  }
+
+  const summary = buildLiveUpcSummary(
+    row.listings.map((listing) => ({
+      rawData: listing.rawData,
+      integration: listing.integration,
     })),
-  });
+    row.upc,
+  );
+
+  return new Map(
+    summary.choices.map((choice) => [choice.platform as SupportedUpcPlatform, choice.value ?? null]),
+  );
+}
+
+function buildImportedUpcTargets(args: {
+  existing: ExistingImportRow | null;
+  importedUpcs: ImportedUpcValues;
+}): ImportedUpcTarget[] {
+  const targets: ImportedUpcTarget[] = [];
+  const liveUpcMap = buildLiveUpcMap(args.existing);
+
+  if (!args.existing) {
+    if (args.importedUpcs.shared) {
+      targets.push({
+        platform: null,
+        label: "UPC",
+        desiredValue: args.importedUpcs.shared,
+        liveValue: null,
+        listingIds: [],
+      });
+    }
+    return targets;
+  }
+
+  for (const field of IMPORT_UPC_PLATFORM_FIELDS) {
+    const listingIds = args.existing.listings
+      .filter((listing) => listing.integration.platform === field.platform)
+      .map((listing) => listing.id);
+    if (listingIds.length === 0) {
+      continue;
+    }
+
+    const desiredValue = args.importedUpcs.byPlatform[field.platform] ?? args.importedUpcs.shared;
+    if (!desiredValue) {
+      continue;
+    }
+
+    targets.push({
+      platform: field.platform,
+      label: field.label,
+      desiredValue,
+      liveValue: liveUpcMap.get(field.platform) ?? null,
+      listingIds,
+    });
+  }
+
+  if (targets.length === 0 && args.importedUpcs.shared) {
+    targets.push({
+      platform: null,
+      label: "UPC",
+      desiredValue: args.importedUpcs.shared,
+      liveValue: args.existing.upc?.trim() || null,
+      listingIds: [],
+    });
+  }
+
+  return targets;
+}
+
+async function replaceTargetedImportedUpcStages(args: {
+  masterRowId: string;
+  changedById: string;
+  targets: ImportedUpcTarget[];
+  mode: Exclude<ImportMode, "preview">;
+}) {
+  const stagedLabels = new Set<string>();
+
+  for (const target of args.targets) {
+    const shouldStage =
+      args.mode === "overwrite"
+        ? target.liveValue !== target.desiredValue
+        : !target.liveValue;
+
+    if (target.listingIds.length > 0) {
+      if (args.mode === "overwrite" || shouldStage) {
+        await db.stagedChange.updateMany({
+          where: {
+            masterRowId: args.masterRowId,
+            field: "upc",
+            status: "STAGED",
+            marketplaceListingId: { in: target.listingIds },
+          },
+          data: { status: "CANCELLED" },
+        });
+      }
+
+      if (shouldStage) {
+        await db.stagedChange.createMany({
+          data: target.listingIds.map((listingId) => ({
+            masterRowId: args.masterRowId,
+            marketplaceListingId: listingId,
+            field: "upc",
+            stagedValue: target.desiredValue,
+            liveValue: target.liveValue,
+            changedById: args.changedById,
+          })),
+        });
+        stagedLabels.add(target.label);
+      }
+
+      continue;
+    }
+
+    if (args.mode === "overwrite" || shouldStage) {
+      await db.stagedChange.updateMany({
+        where: {
+          masterRowId: args.masterRowId,
+          field: "upc",
+          status: "STAGED",
+          marketplaceListingId: null,
+        },
+        data: { status: "CANCELLED" },
+      });
+    }
+
+    if (shouldStage) {
+      await db.stagedChange.create({
+        data: {
+          masterRowId: args.masterRowId,
+          field: "upc",
+          stagedValue: target.desiredValue,
+          liveValue: target.liveValue,
+          changedById: args.changedById,
+        },
+      });
+      stagedLabels.add(target.label);
+    }
+  }
+
+  return [...stagedLabels];
 }
 
 function collectImportedData(fields: Record<string, unknown>) {
@@ -275,6 +516,14 @@ function fieldLabel(field: string): string {
       return "Notes";
     case "upc":
       return "UPC";
+    case "upc_tpp_ebay":
+      return "TPP eBay UPC";
+    case "upc_tt_ebay":
+      return "TT eBay UPC";
+    case "upc_shopify":
+      return "Shopify UPC";
+    case "upc_bigcommerce":
+      return "BigCommerce UPC";
     default:
       return field;
   }
@@ -283,7 +532,7 @@ function fieldLabel(field: string): string {
 function summarizeSuccess(args: {
   created: boolean;
   changedFields: string[];
-  upcStaged: boolean;
+  stagedUpcLabels: string[];
 }): ImportSuccess["summary"] {
   const parts: string[] = [];
 
@@ -293,8 +542,8 @@ function summarizeSuccess(args: {
   if (args.changedFields.length > 0) {
     parts.push(`Updated ${args.changedFields.join(", ")}`);
   }
-  if (args.upcStaged) {
-    parts.push("Staged UPC for review");
+  if (args.stagedUpcLabels.length > 0) {
+    parts.push(`Staged ${args.stagedUpcLabels.join(", ")} for review`);
   }
 
   return parts.length > 0 ? parts.join(". ") : "No changes needed";
@@ -303,12 +552,12 @@ function summarizeSuccess(args: {
 function computeImportImpact(args: {
   existing: ExistingImportRow | null;
   data: ReturnType<typeof collectImportedData>;
-  importedUpc: string | null;
+  importedUpcs: ImportedUpcValues;
   mode: Exclude<ImportMode, "preview">;
 }) {
   const changedFields: string[] = [];
   let rowCreated = false;
-  let upcStaged = false;
+  let stagedUpcLabels: string[] = [];
 
   if (args.existing) {
     if (args.mode === "overwrite") {
@@ -320,10 +569,12 @@ function computeImportImpact(args: {
         }
       }
 
-      const liveUpc = args.existing.upc?.trim() || null;
-      if (args.importedUpc && liveUpc !== args.importedUpc) {
-        upcStaged = true;
-      }
+      stagedUpcLabels = buildImportedUpcTargets({
+        existing: args.existing,
+        importedUpcs: args.importedUpcs,
+      })
+        .filter((target) => target.liveValue !== target.desiredValue)
+        .map((target) => target.label);
     } else {
       for (const [key, value] of Object.entries(args.data)) {
         if (value === undefined || value === null || value === "") continue;
@@ -337,32 +588,36 @@ function computeImportImpact(args: {
         }
       }
 
-      const liveUpc = args.existing.upc?.trim() || null;
-      if (args.importedUpc && !liveUpc) {
-        upcStaged = true;
-      }
+      stagedUpcLabels = buildImportedUpcTargets({
+        existing: args.existing,
+        importedUpcs: args.importedUpcs,
+      })
+        .filter((target) => !target.liveValue)
+        .map((target) => target.label);
     }
   } else {
     rowCreated = true;
     changedFields.push(...Object.keys(args.data).map(fieldLabel));
-    if (args.importedUpc) {
-      upcStaged = true;
+    if (args.importedUpcs.shared) {
+      stagedUpcLabels = ["UPC"];
     }
   }
 
+  stagedUpcLabels = [...new Set(stagedUpcLabels)];
+
   return {
     rowCreated,
-    upcStaged,
+    stagedUpcLabels,
     changedFields,
     outcome: rowCreated
       ? ("created" as const)
-      : changedFields.length > 0 || upcStaged
+      : changedFields.length > 0 || stagedUpcLabels.length > 0
         ? ("updated" as const)
         : ("no_changes" as const),
     summary: summarizeSuccess({
       created: rowCreated,
       changedFields,
-      upcStaged,
+      stagedUpcLabels,
     }),
   };
 }
@@ -389,6 +644,7 @@ async function loadExistingRowsBySku(skus: string[]) {
       listings: {
         select: {
           id: true,
+          rawData: true,
           integration: {
             select: {
               platform: true,
@@ -400,6 +656,40 @@ async function loadExistingRowsBySku(skus: string[]) {
   });
 
   return new Map(rows.map((row) => [row.sku, row]));
+}
+
+async function loadExistingStagedUpcChanges(masterRowIds: string[]) {
+  if (masterRowIds.length === 0) {
+    return new Map<string, StagedUpcSnapshot[]>();
+  }
+
+  const stagedChanges = await db.stagedChange.findMany({
+    where: {
+      masterRowId: { in: masterRowIds },
+      field: "upc",
+      status: "STAGED",
+    },
+    select: {
+      masterRowId: true,
+      marketplaceListingId: true,
+      stagedValue: true,
+      liveValue: true,
+    },
+    orderBy: [{ masterRowId: "asc" }, { createdAt: "asc" }],
+  });
+
+  const byMasterRowId = new Map<string, StagedUpcSnapshot[]>();
+  for (const change of stagedChanges) {
+    const bucket = byMasterRowId.get(change.masterRowId) ?? [];
+    bucket.push({
+      marketplaceListingId: change.marketplaceListingId,
+      stagedValue: change.stagedValue,
+      liveValue: change.liveValue,
+    });
+    byMasterRowId.set(change.masterRowId, bucket);
+  }
+
+  return byMasterRowId;
 }
 
 export async function POST(request: NextRequest) {
@@ -452,19 +742,19 @@ export async function POST(request: NextRequest) {
     const existingRowsBySku = await loadExistingRowsBySku(
       [...new Set(validRows.map((row) => String(row.fields.sku ?? "").trim()).filter(Boolean))],
     );
+    const existingStagedUpcChangesByMasterRowId = await loadExistingStagedUpcChanges(
+      [...new Set([...existingRowsBySku.values()].map((row) => row.id))],
+    );
 
     if (resolvedMode === "preview") {
       const impacts: ImportImpact[] = validRows.slice(0, 50).map((row) => {
         const sku = String(row.fields.sku ?? "").trim();
         const data = collectImportedData(row.fields);
-        const importedUpc =
-          row.fields.upc != null && String(row.fields.upc).trim() !== ""
-            ? String(row.fields.upc).trim()
-            : null;
+        const importedUpcs = collectImportedUpcValues(row.fields);
         const impact = computeImportImpact({
           existing: existingRowsBySku.get(sku) ?? null,
           data,
-          importedUpc,
+          importedUpcs,
           mode: resolvedAnalysisMode,
         });
 
@@ -475,7 +765,7 @@ export async function POST(request: NextRequest) {
           summary: impact.summary,
           changedFields: [
             ...impact.changedFields,
-            ...(impact.upcStaged ? ["UPC"] : []),
+            ...impact.stagedUpcLabels,
           ],
         };
       });
@@ -484,14 +774,11 @@ export async function POST(request: NextRequest) {
         (counts, row) => {
           const sku = String(row.fields.sku ?? "").trim();
           const data = collectImportedData(row.fields);
-          const importedUpc =
-            row.fields.upc != null && String(row.fields.upc).trim() !== ""
-              ? String(row.fields.upc).trim()
-              : null;
+          const importedUpcs = collectImportedUpcValues(row.fields);
           const impact = computeImportImpact({
             existing: existingRowsBySku.get(sku) ?? null,
             data,
-            importedUpc,
+            importedUpcs,
             mode: resolvedAnalysisMode,
           });
 
@@ -523,6 +810,7 @@ export async function POST(request: NextRequest) {
     let unchanged = 0;
     const applyErrors: { row: number; error: string }[] = [];
     const successes: ImportSuccess[] = [];
+    const undoOperations: ImportUndoOperation[] = [];
     const failures: ImportFailure[] = errorRows.map((row) => ({
       row: row.index,
       sku: String(row.fields.sku ?? "").trim(),
@@ -536,27 +824,21 @@ export async function POST(request: NextRequest) {
       if (!sku) continue;
       try {
         let existing = existingRowsBySku.get(sku) ?? null;
+        const previousValues = existing ? snapshotRowValues(existing) : null;
+        const previousStagedUpcChanges = existing
+          ? (existingStagedUpcChangesByMasterRowId.get(existing.id) ?? []).map((entry) => ({ ...entry }))
+          : [];
         const data = collectImportedData(fields);
-        const importedUpc =
-          fields.upc != null && String(fields.upc).trim() !== ""
-            ? String(fields.upc).trim()
-            : null;
+        const importedUpcs = collectImportedUpcValues(fields);
         const impact = computeImportImpact({
           existing,
           data,
-          importedUpc,
+          importedUpcs,
           mode: resolvedMode,
         });
         let rowCreated = impact.rowCreated;
-        let upcStaged = false;
-        const changedFields = [...impact.changedFields];
-
-        const supportedPlatforms = new Set<Platform>([
-          Platform.TPP_EBAY,
-          Platform.TT_EBAY,
-          Platform.BIGCOMMERCE,
-          Platform.SHOPIFY,
-        ]);
+        let stagedUpcLabels: string[] = [];
+        const changedFields: string[] = [];
 
         if (resolvedMode === "overwrite") {
           let masterRow;
@@ -579,6 +861,7 @@ export async function POST(request: NextRequest) {
                     listings: {
                       select: {
                         id: true,
+                        rawData: true,
                         integration: { select: { platform: true } },
                       },
                     },
@@ -595,6 +878,7 @@ export async function POST(request: NextRequest) {
                 listings: {
                   select: {
                     id: true,
+                    rawData: true,
                     integration: { select: { platform: true } },
                   },
                 },
@@ -603,34 +887,37 @@ export async function POST(request: NextRequest) {
             existingRowsBySku.set(sku, masterRow);
           }
 
-          if (importedUpc) {
-            const liveUpc = masterRow.upc?.trim() || null;
-            if (liveUpc !== importedUpc) {
-              const supportedListingIds = masterRow.listings
-                .filter((listing) => supportedPlatforms.has(listing.integration.platform))
-                .map((listing) => listing.id);
-              await stageImportedUpc({
-                masterRowId: masterRow.id,
-                importedUpc,
-                changedById: systemUser.id,
-                listingIds: supportedListingIds,
-              });
-              upcStaged = true;
-            } else {
-              await db.stagedChange.updateMany({
-                where: {
-                  masterRowId: masterRow.id,
-                  field: "upc",
-                  status: "STAGED",
-                },
-              data: { status: "CANCELLED" },
-              });
-            }
+          stagedUpcLabels = await replaceTargetedImportedUpcStages({
+            masterRowId: masterRow.id,
+            changedById: systemUser.id,
+            targets: buildImportedUpcTargets({
+              existing: masterRow,
+              importedUpcs,
+            }),
+            mode: resolvedMode,
+          });
+
+          if (
+            existing &&
+            (rowCreated || changedFields.length > 0 || stagedUpcLabels.length > 0 || previousStagedUpcChanges.length > 0)
+          ) {
+            undoOperations.push({
+              kind: "restore_existing",
+              masterRowId: existing.id,
+              sku,
+              previousValues: previousValues!,
+              previousStagedUpcChanges,
+            });
           }
 
           if (rowCreated) {
             created++;
-          } else if (changedFields.length > 0 || upcStaged) {
+            undoOperations.push({
+              kind: "delete_created",
+              masterRowId: masterRow.id,
+              sku,
+            });
+          } else if (changedFields.length > 0 || stagedUpcLabels.length > 0) {
             updated++;
           } else {
             unchanged++;
@@ -667,6 +954,7 @@ export async function POST(request: NextRequest) {
                   listings: {
                     select: {
                       id: true,
+                      rawData: true,
                       integration: { select: { platform: true } },
                     },
                   },
@@ -675,23 +963,27 @@ export async function POST(request: NextRequest) {
               existingRowsBySku.set(sku, existing);
             }
 
-            if (importedUpc) {
-              const liveUpc = existing.upc?.trim() || null;
-              if (!liveUpc) {
-                const supportedListingIds = existing.listings
-                  .filter((listing) => supportedPlatforms.has(listing.integration.platform))
-                  .map((listing) => listing.id);
-                await stageImportedUpc({
-                  masterRowId: existing.id,
-                  importedUpc,
-                  changedById: systemUser.id,
-                  listingIds: supportedListingIds,
-                });
-                upcStaged = true;
-              }
+            stagedUpcLabels = await replaceTargetedImportedUpcStages({
+              masterRowId: existing.id,
+              changedById: systemUser.id,
+              targets: buildImportedUpcTargets({
+                existing,
+                importedUpcs,
+              }),
+              mode: resolvedMode,
+            });
+
+            if (changedFields.length > 0 || stagedUpcLabels.length > 0 || previousStagedUpcChanges.length > 0) {
+              undoOperations.push({
+                kind: "restore_existing",
+                masterRowId: existing.id,
+                sku,
+                previousValues: previousValues!,
+                previousStagedUpcChanges,
+              });
             }
 
-            if (changedFields.length > 0 || upcStaged) {
+            if (changedFields.length > 0 || stagedUpcLabels.length > 0) {
               updated++;
             } else {
               unchanged++;
@@ -700,15 +992,15 @@ export async function POST(request: NextRequest) {
             const masterRow = await db.masterRow.create({ data: { sku, ...data } });
             rowCreated = true;
             changedFields.push(...Object.keys(data).map(fieldLabel));
-            if (importedUpc) {
-              await stageImportedUpc({
-                masterRowId: masterRow.id,
-                importedUpc,
-                changedById: systemUser.id,
-                listingIds: [],
-              });
-              upcStaged = true;
-            }
+            stagedUpcLabels = await replaceTargetedImportedUpcStages({
+              masterRowId: masterRow.id,
+              changedById: systemUser.id,
+              targets: buildImportedUpcTargets({
+                existing: null,
+                importedUpcs,
+              }),
+              mode: resolvedMode,
+            });
             existingRowsBySku.set(sku, {
               id: masterRow.id,
               sku: masterRow.sku,
@@ -722,21 +1014,26 @@ export async function POST(request: NextRequest) {
               listings: [],
             });
             created++;
+            undoOperations.push({
+              kind: "delete_created",
+              masterRowId: masterRow.id,
+              sku,
+            });
           }
         }
 
         successes.push({
           row: index,
           sku,
-          outcome: rowCreated ? "created" : changedFields.length > 0 || upcStaged ? "updated" : "no_changes",
+          outcome: rowCreated ? "created" : changedFields.length > 0 || stagedUpcLabels.length > 0 ? "updated" : "no_changes",
           summary: summarizeSuccess({
             created: rowCreated,
             changedFields,
-            upcStaged,
+            stagedUpcLabels,
           }),
           changedFields: [
             ...changedFields,
-            ...(upcStaged ? ["UPC"] : []),
+            ...stagedUpcLabels,
           ],
         });
       } catch (err) {
@@ -754,7 +1051,7 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    await db.auditLog.create({
+    const importAuditLog = await db.auditLog.create({
       data: {
         userId: systemUser.id,
         action: "import_completed",
@@ -772,6 +1069,9 @@ export async function POST(request: NextRequest) {
           duplicateSkuFailures: failures.filter((failure) =>
             failure.error.toLowerCase().includes("duplicate sku"),
           ).length,
+          undoAvailable: undoOperations.length > 0,
+          undoAppliedAt: null,
+          undoOperations,
           successPreview: successes.slice(0, 20),
           failurePreview: failures.slice(0, 20).map((failure) => ({
             row: failure.row,
@@ -792,6 +1092,7 @@ export async function POST(request: NextRequest) {
         created,
         updated,
         unchanged,
+        undoAuditLogId: undoOperations.length > 0 ? importAuditLog.id : null,
         applyErrors: applyErrors.slice(0, 100),
         successes,
         failures,

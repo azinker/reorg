@@ -1,0 +1,7 @@
+.next
+.dev-server.log
+.env.production.vercel
+.env.staging.vercel
+.env.staging.verify
+.env.backup.before-staging
+node_modules

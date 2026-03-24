@@ -67,6 +67,22 @@ Refresh tokens are long-lived; reorG uses them to get new access tokens as neede
 - [eBay OAuth Documentation](https://developer.ebay.com/docs/static/oauth-tokens.html)
 - [eBay Developer Portal](https://developer.ebay.com/my/keys)
 
+### Step 4: Configure Marketplace Account Deletion
+
+eBay production apps should also have Marketplace Account Deletion notifications configured.
+
+Use:
+
+- **Application URL:** `https://reorg.theperfectpart.net`
+- **Notification endpoint:** `https://reorg.theperfectpart.net/api/webhooks/ebay/account-deletion`
+
+Create your own verification token and store it in:
+
+- Vercel production env: `EBAY_MARKETPLACE_ACCOUNT_DELETION_VERIFICATION_TOKEN`
+- eBay Developer Portal: **Verification token**
+
+More detail: see [docs/ebay-account-deletion.md](./ebay-account-deletion.md)
+
 ---
 
 ## BigCommerce

@@ -1,6 +1,7 @@
 import { db } from "@/lib/db";
 import { planScheduledSyncs, type SchedulerPlanItem } from "@/lib/services/sync-scheduler";
 import type { Prisma } from "@prisma/client";
+import { getAppEnv } from "@/lib/app-env";
 import {
   formatCooldownRetryAt,
   getEbayRateLimitCooldownUntil,
@@ -227,6 +228,7 @@ function getWebhookHealthStatus(
   intervalMinutes: number,
   lastWebhookAt: Date | null,
   now: Date,
+  currentDestination: string | null,
 ) {
   if (!WEBHOOK_PLATFORMS.has(platform)) {
     return {
@@ -234,6 +236,21 @@ function getWebhookHealthStatus(
       webhookStatus: "n/a" as const,
       minutesSinceWebhook: null,
       webhookMessage: "This store relies on scheduled pulls, not change notices.",
+    };
+  }
+
+  if (
+    getAppEnv() === "local" &&
+    currentDestination &&
+    (currentDestination.includes("reorg.theperfectpart.net") ||
+      currentDestination.includes("stage.reorg.theperfectpart.net"))
+  ) {
+    return {
+      webhookExpected: true,
+      webhookStatus: "ok" as const,
+      minutesSinceWebhook: lastWebhookAt ? minutesBetween(now, lastWebhookAt) : null,
+      webhookMessage:
+        "Webhook destination points to a deployed environment, which is expected while running locally.",
     };
   }
 
@@ -471,6 +488,7 @@ export async function buildAutomationHealthSnapshot(
   plan: SchedulerPlanItem[],
   now = new Date(),
 ): Promise<AutomationHealthSnapshot> {
+  const appEnv = getAppEnv();
   const [integrations, recentWebhookEntries, recentFailedJobs] = await Promise.all([
     db.integration.findMany({
       where: { enabled: true },
@@ -585,21 +603,33 @@ export async function buildAutomationHealthSnapshot(
                   : "Latest pull hit eBay API usage limits. The next retry should happen after the cooldown window."
                 : recentFailure.message
                   ? `Latest pull failed: ${recentFailure.message}`
-                : "Latest pull failed before this store recorded a newer successful update.",
+                  : "Latest pull failed before this store recorded a newer successful update.",
           }
         : sync;
+      const syncMonitorBaseAdjusted =
+        appEnv === "local" &&
+        !failedAfterLastSuccess &&
+        syncMonitorBase.syncStatus !== "never"
+          ? {
+              ...syncMonitorBase,
+              status: "healthy" as const,
+              syncStatus: "fresh" as const,
+              syncMessage:
+                "Local development does not run automatic scheduler ticks, so freshness here is based on the connected database snapshot.",
+            }
+          : syncMonitorBase;
       const syncMonitor =
         backlog.monitorStatus === "healthy"
-          ? syncMonitorBase
+          ? syncMonitorBaseAdjusted
           : {
-              ...syncMonitorBase,
+              ...syncMonitorBaseAdjusted,
               status: getWorseMonitorStatus(
-                syncMonitorBase.status,
+                syncMonitorBaseAdjusted.status,
                 backlog.monitorStatus,
               ),
               syncMessage:
-                syncMonitorBase.status === "attention"
-                  ? syncMonitorBase.syncMessage
+                syncMonitorBaseAdjusted.status === "attention"
+                  ? syncMonitorBaseAdjusted.syncMessage
                   : backlog.backlogMessage,
             };
       const webhook = getWebhookHealthStatus(
@@ -607,6 +637,7 @@ export async function buildAutomationHealthSnapshot(
         item.intervalMinutes,
         lastWebhookAt,
         now,
+        storedConfig.webhookState.destination,
       );
       const webhookStatusImpact =
         webhook.webhookStatus === "missing"

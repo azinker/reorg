@@ -5,12 +5,14 @@ export type LiveUpcLine =
       kind: "all";
       label: string;
       value: string;
+      state?: "live";
     }
   | {
       kind: "platform";
       platform: Platform;
       label: string;
       value: string | null;
+      state: "live" | "missing" | "pending_refresh";
     };
 
 export type LiveUpcChoice = {
@@ -18,6 +20,7 @@ export type LiveUpcChoice = {
   label: string;
   value: string | null;
   editable: boolean;
+  state?: "live" | "missing" | "pending_refresh";
 };
 
 export type ListingUpcSource = {
@@ -59,6 +62,13 @@ function firstString(...values: unknown[]): string | null {
         }
       }
     }
+    const record = asRecord(value);
+    if (record) {
+      const textValue = firstString(record["#text"], record.value, record.Value);
+      if (textValue) {
+        return textValue;
+      }
+    }
   }
   return null;
 }
@@ -67,6 +77,16 @@ function toArray(value: unknown): unknown[] {
   if (Array.isArray(value)) return value;
   if (value != null) return [value];
   return [];
+}
+
+function hasMeaningfulPayload(rawData: unknown): boolean {
+  if (!rawData || typeof rawData !== "object") {
+    return false;
+  }
+  if (Array.isArray(rawData)) {
+    return rawData.length > 0;
+  }
+  return Object.keys(rawData as Record<string, unknown>).length > 0;
 }
 
 function extractSpecificsUpc(specifics: unknown): string | null {
@@ -257,19 +277,37 @@ export function buildLiveUpcSummary(listings: ListingUpcSource[], rowUpc: string
   const ordered = PLATFORM_ORDER
     .map((platform) => {
       if (!presentPlatforms.includes(platform)) return null;
+      const platformListings = listings.filter((listing) => listing.integration.platform === platform);
+      const hasStoredPayload = platformListings.some((listing) => hasMeaningfulPayload(listing.rawData));
+      const value = platformValues.get(platform) ?? null;
       return {
         platform,
         label: PLATFORM_SHORT[platform],
-        value: platformValues.get(platform) ?? null,
+        value,
+        state: value
+          ? ("live" as const)
+          : !hasStoredPayload && (platform === "TPP_EBAY" || platform === "TT_EBAY")
+            ? ("pending_refresh" as const)
+            : ("missing" as const),
       };
     })
-    .filter((entry): entry is { platform: Platform; label: string; value: string | null } => Boolean(entry));
+    .filter(
+      (
+        entry,
+      ): entry is {
+        platform: Platform;
+        label: string;
+        value: string | null;
+        state: "live" | "missing" | "pending_refresh";
+      } => Boolean(entry),
+    );
 
   const choices: LiveUpcChoice[] = ordered.map((entry) => ({
     platform: entry.platform,
     label: entry.label,
     value: entry.value,
     editable: true,
+    state: entry.state,
   }));
 
   const nonNullValues = ordered.map((entry) => entry.value).filter((value): value is string => Boolean(value));
@@ -286,6 +324,7 @@ export function buildLiveUpcSummary(listings: ListingUpcSource[], rowUpc: string
           kind: "all",
           label: "All Stores",
           value: distinctValues[0],
+          state: "live",
         },
       ]
     : ordered.map((entry) => ({
@@ -293,6 +332,7 @@ export function buildLiveUpcSummary(listings: ListingUpcSource[], rowUpc: string
         platform: entry.platform,
         label: entry.label,
         value: entry.value,
+        state: entry.state,
       }));
 
   return {

@@ -1,0 +1,18 @@
+/\.git
+/\.venv
+/\.cursor
+/\.vercel
+/design-system
+/Prompts
+/src
+/64732_The Perfect Part_logo_02.png
+/Bigcommerce_logo.svg
+/eBay_logo.svg
+/Shopify_logo.svg
+/HANDOFF.md
+/AGENTS.md
+reorg/.next
+reorg/.dev-server.log
+reorg/node_modules
+reorg/.env
+reorg/.env.*

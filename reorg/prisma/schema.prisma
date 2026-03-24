@@ -62,6 +62,37 @@ enum ListingStatus {
   OUT_OF_STOCK
 }
 
+enum ForecastBucket {
+  DAILY
+  WEEKLY
+}
+
+enum ForecastConfidence {
+  HIGH
+  MEDIUM
+  LOW
+}
+
+enum DemandPattern {
+  STABLE
+  TRENDING
+  SEASONAL
+  INTERMITTENT
+  NEW_ITEM
+}
+
+enum SupplierOrderStatus {
+  DRAFT
+  ORDERED
+  IN_TRANSIT
+  RECEIVED
+  CANCELLED
+}
+
+enum InventorySourceType {
+  MASTER_TPP_LIVE
+}
+
 // ─── Auth & Users ────────────────────────────────────────────────────────────
 
 model User {
@@ -75,11 +106,13 @@ model User {
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 
-  accounts      Account[]
-  sessions      Session[]
-  stagedChanges StagedChange[]
-  pushJobs      PushJob[]
-  auditLogs     AuditLog[]
+  accounts       Account[]
+  sessions       Session[]
+  stagedChanges  StagedChange[]
+  pushJobs       PushJob[]
+  auditLogs      AuditLog[]
+  forecastRuns   ForecastRun[]
+  supplierOrders SupplierOrder[]
 
   @@map("users")
 }
@@ -127,16 +160,16 @@ model VerificationToken {
 // ─── Integrations ────────────────────────────────────────────────────────────
 
 model Integration {
-  id          String   @id @default(cuid())
-  platform    Platform @unique
+  id          String    @id @default(cuid())
+  platform    Platform  @unique
   label       String
-  enabled     Boolean  @default(false)
-  isMaster    Boolean  @default(false)
-  writeLocked Boolean  @default(true)
-  config      Json     @default("{}")
+  enabled     Boolean   @default(false)
+  isMaster    Boolean   @default(false)
+  writeLocked Boolean   @default(true)
+  config      Json      @default("{}")
   lastSyncAt  DateTime?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
 
   listings          MarketplaceListing[]
   unmatchedListings UnmatchedListing[]
@@ -148,10 +181,10 @@ model Integration {
 // ─── Core Data Model ─────────────────────────────────────────────────────────
 
 model MasterRow {
-  id                   String  @id @default(cuid())
-  sku                  String  @unique
+  id                   String   @id @default(cuid())
+  sku                  String   @unique
   title                String?
-  alternateTitles      Json    @default("[]")
+  alternateTitles      Json     @default("[]")
   imageUrl             String?
   imageSource          String?
   upc                  String?
@@ -161,14 +194,18 @@ model MasterRow {
   supplierCost         Float?
   supplierShipping     Float?
   shippingCostOverride Float?
-  platformFeeRate      Float   @default(0.136)
+  platformFeeRate      Float    @default(0.136)
   notes                String?
-  isActive             Boolean @default(true)
+  isActive             Boolean  @default(true)
   createdAt            DateTime @default(now())
   updatedAt            DateTime @updatedAt
 
-  listings      MarketplaceListing[]
-  stagedChanges StagedChange[]
+  listings           MarketplaceListing[]
+  stagedChanges      StagedChange[]
+  saleHistoryLines   MarketplaceSaleLine[]
+  inventorySnapshots InventorySnapshot[]
+  forecastRunLines   ForecastRunLine[]
+  supplierOrderLines SupplierOrderLine[]
 
   @@index([sku])
   @@index([title])
@@ -176,28 +213,28 @@ model MasterRow {
 }
 
 model MarketplaceListing {
-  id              String        @id @default(cuid())
-  masterRowId     String
-  integrationId   String
-  platformItemId  String
+  id                String        @id @default(cuid())
+  masterRowId       String
+  integrationId     String
+  platformItemId    String
   platformVariantId String?
-  sku             String
-  title           String?
-  imageUrl        String?
-  salePrice       Float?
-  adRate          Float?
-  inventory       Int?
-  status          ListingStatus @default(ACTIVE)
-  isVariation     Boolean       @default(false)
-  parentListingId String?
-  rawData         Json          @default("{}")
-  lastSyncedAt    DateTime?
-  createdAt       DateTime      @default(now())
-  updatedAt       DateTime      @updatedAt
+  sku               String
+  title             String?
+  imageUrl          String?
+  salePrice         Float?
+  adRate            Float?
+  inventory         Int?
+  status            ListingStatus @default(ACTIVE)
+  isVariation       Boolean       @default(false)
+  parentListingId   String?
+  rawData           Json          @default("{}")
+  lastSyncedAt      DateTime?
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
 
-  masterRow     MasterRow     @relation(fields: [masterRowId], references: [id])
-  integration   Integration   @relation(fields: [integrationId], references: [id])
-  parentListing MarketplaceListing? @relation("VariationParent", fields: [parentListingId], references: [id])
+  masterRow     MasterRow            @relation(fields: [masterRowId], references: [id])
+  integration   Integration          @relation(fields: [integrationId], references: [id])
+  parentListing MarketplaceListing?  @relation("VariationParent", fields: [parentListingId], references: [id])
   childListings MarketplaceListing[] @relation("VariationParent")
   stagedChanges StagedChange[]
 
@@ -210,15 +247,15 @@ model MarketplaceListing {
 }
 
 model UnmatchedListing {
-  id             String   @id @default(cuid())
+  id             String    @id @default(cuid())
   integrationId  String
   platformItemId String
   sku            String?
   title          String?
-  rawData        Json     @default("{}")
+  rawData        Json      @default("{}")
   lastSyncedAt   DateTime?
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
 
   integration Integration @relation(fields: [integrationId], references: [id])
 
@@ -352,4 +389,184 @@ model AppSetting {
   updatedAt DateTime @updatedAt
 
   @@map("app_settings")
+}
+
+model MarketplaceSaleOrder {
+  id              String    @id @default(cuid())
+  platform        Platform
+  externalOrderId String
+  orderDate       DateTime
+  orderStatus     String?
+  cancelledAt     DateTime?
+  rawData         Json      @default("{}")
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  lines MarketplaceSaleLine[]
+
+  @@unique([platform, externalOrderId])
+  @@index([platform, orderDate])
+  @@index([orderDate])
+  @@map("marketplace_sale_orders")
+}
+
+model MarketplaceSaleLine {
+  id                     String   @id @default(cuid())
+  marketplaceSaleOrderId String
+  masterRowId            String?
+  platform               Platform
+  externalLineId         String
+  orderDate              DateTime
+  sku                    String
+  title                  String?
+  platformItemId         String?
+  platformVariantId      String?
+  quantity               Int
+  isCancelled            Boolean  @default(false)
+  isReturn               Boolean  @default(false)
+  rawData                Json     @default("{}")
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+
+  marketplaceSaleOrder MarketplaceSaleOrder @relation(fields: [marketplaceSaleOrderId], references: [id], onDelete: Cascade)
+  masterRow            MasterRow?           @relation(fields: [masterRowId], references: [id], onDelete: SetNull)
+
+  @@unique([marketplaceSaleOrderId, externalLineId])
+  @@index([masterRowId])
+  @@index([sku])
+  @@index([platform, orderDate])
+  @@index([platform, sku])
+  @@index([orderDate])
+  @@map("marketplace_sale_lines")
+}
+
+model InventorySnapshot {
+  id           String              @id @default(cuid())
+  masterRowId  String
+  snapshotDate DateTime
+  quantity     Int
+  source       InventorySourceType @default(MASTER_TPP_LIVE)
+  isNearZero   Boolean             @default(false)
+  createdAt    DateTime            @default(now())
+
+  masterRow MasterRow @relation(fields: [masterRowId], references: [id], onDelete: Cascade)
+
+  @@unique([masterRowId, snapshotDate, source])
+  @@index([snapshotDate])
+  @@index([source, snapshotDate])
+  @@map("inventory_snapshots")
+}
+
+model ForecastRun {
+  id                      String              @id @default(cuid())
+  createdById             String?
+  lookbackDays            Int
+  forecastBucket          ForecastBucket      @default(WEEKLY)
+  transitDays             Int
+  desiredCoverageDays     Int
+  useOpenInTransit        Boolean             @default(true)
+  showReorderRelevantOnly Boolean             @default(true)
+  mode                    String              @default("balanced")
+  inventorySource         InventorySourceType @default(MASTER_TPP_LIVE)
+  syncedSalesThrough      DateTime?
+  summary                 Json                @default("{}")
+  createdAt               DateTime            @default(now())
+  updatedAt               DateTime            @updatedAt
+
+  createdBy      User?             @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  lines          ForecastRunLine[]
+  supplierOrders SupplierOrder[]
+
+  @@index([createdById])
+  @@index([createdAt])
+  @@map("forecast_runs")
+}
+
+model ForecastRunLine {
+  id                      String             @id @default(cuid())
+  forecastRunId           String
+  masterRowId             String
+  title                   String?
+  sku                     String
+  upc                     String?
+  imageUrl                String?
+  supplierCost            Float?
+  currentInventory        Int                @default(0)
+  salesTotalUnits         Int                @default(0)
+  salesHistoryDays        Int                @default(0)
+  averageDailyDemand      Float              @default(0)
+  transitDemand           Float              @default(0)
+  postArrivalDemand       Float              @default(0)
+  safetyBuffer            Float              @default(0)
+  grossRequiredQty        Float              @default(0)
+  openInTransitQty        Int                @default(0)
+  openInTransitEta        DateTime?
+  projectedStockOnArrival Float              @default(0)
+  recommendedQty          Int                @default(0)
+  overrideQty             Int?
+  finalQty                Int                @default(0)
+  demandPattern           DemandPattern      @default(NEW_ITEM)
+  modelUsed               String
+  confidence              ForecastConfidence @default(LOW)
+  confidenceNote          String?
+  warningFlags            Json               @default("[]")
+  backtestError           Float?
+  suspectedStockout       Boolean            @default(false)
+  limitedHistory          Boolean            @default(false)
+  hasInbound              Boolean            @default(false)
+  createdAt               DateTime           @default(now())
+  updatedAt               DateTime           @updatedAt
+
+  forecastRun ForecastRun @relation(fields: [forecastRunId], references: [id], onDelete: Cascade)
+  masterRow   MasterRow   @relation(fields: [masterRowId], references: [id], onDelete: Cascade)
+
+  @@unique([forecastRunId, masterRowId])
+  @@index([forecastRunId])
+  @@index([masterRowId])
+  @@index([title])
+  @@map("forecast_run_lines")
+}
+
+model SupplierOrder {
+  id            String              @id @default(cuid())
+  createdById   String?
+  forecastRunId String?
+  supplier      String?
+  status        SupplierOrderStatus @default(DRAFT)
+  eta           DateTime
+  notes         String?
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+
+  createdBy   User?               @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  forecastRun ForecastRun?        @relation(fields: [forecastRunId], references: [id], onDelete: SetNull)
+  lines       SupplierOrderLine[]
+
+  @@index([createdById])
+  @@index([forecastRunId])
+  @@index([status, eta])
+  @@map("supplier_orders")
+}
+
+model SupplierOrderLine {
+  id                   String   @id @default(cuid())
+  supplierOrderId      String
+  masterRowId          String
+  title                String?
+  sku                  String
+  supplierCost         Float?
+  systemRecommendedQty Int      @default(0)
+  overrideQty          Int?
+  finalQty             Int      @default(0)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  supplierOrder SupplierOrder @relation(fields: [supplierOrderId], references: [id], onDelete: Cascade)
+  masterRow     MasterRow     @relation(fields: [masterRowId], references: [id], onDelete: Cascade)
+
+  @@unique([supplierOrderId, masterRowId])
+  @@index([supplierOrderId])
+  @@index([masterRowId])
+  @@index([title])
+  @@map("supplier_order_lines")
 }

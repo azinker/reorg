@@ -184,6 +184,8 @@ type EngineRoomData = {
     activeSyncs: number;
     queuedPushes: number;
     recentErrors: number;
+    historicalFailures: number;
+    recoveredFailures: number;
     recentErrorDetail: string | null;
     recentErrorAt: string | null;
     recentErrorStore: string | null;
@@ -1109,6 +1111,8 @@ export default function EngineRoomPage() {
     activeSyncs: 0,
     queuedPushes: 0,
     recentErrors: 0,
+    historicalFailures: 0,
+    recoveredFailures: 0,
     recentErrorDetail: null as string | null,
     recentErrorAt: null as string | null,
     recentErrorStore: null as string | null,
@@ -1240,14 +1244,18 @@ export default function EngineRoomPage() {
           className={cn(
             "rounded-lg border border-border bg-card p-4 transition-colors duration-200",
             "ring-1 ring-border/50",
-            "hover:border-border/80 hover:bg-card/95"
+            summary.recentErrors > 0
+              ? "hover:border-red-500/40 hover:bg-card/95"
+              : "hover:border-border/80 hover:bg-card/95"
           )}
         >
           <div className="flex items-center gap-3">
             <div
               className={cn(
                 "flex h-10 w-10 shrink-0 items-center justify-center rounded-md",
-                "bg-red-500/15 text-red-400"
+                summary.recentErrors > 0
+                  ? "bg-red-500/15 text-red-400"
+                  : "bg-emerald-500/15 text-emerald-400"
               )}
             >
               <FileText className="h-5 w-5" aria-hidden />
@@ -1257,7 +1265,7 @@ export default function EngineRoomPage() {
                 {loading ? "-" : summary.recentErrors}
               </p>
               <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-                Recent Failures (7d)
+                Open Sync Failures
               </p>
               {!loading && summary.recentErrors > 0 && summary.recentErrorDetail && (
                 <p
@@ -1270,6 +1278,16 @@ export default function EngineRoomPage() {
               {!loading && summary.recentErrors > 0 && (
                 <p className="mt-1 max-w-full text-[11px] text-muted-foreground">
                   Latest: {summary.recentErrorStore ?? "unknown store"} at {formatDateTime(summary.recentErrorAt)}
+                </p>
+              )}
+              {!loading && summary.recentErrors === 0 && summary.recoveredFailures > 0 && (
+                <p className="mt-1 max-w-full whitespace-normal break-words text-xs leading-relaxed text-emerald-400/90">
+                  {summary.recoveredFailures} recent failure{summary.recoveredFailures === 1 ? "" : "s"} recovered in the last 7 days.
+                </p>
+              )}
+              {!loading && summary.historicalFailures > 0 && (
+                <p className="mt-1 max-w-full text-[11px] text-muted-foreground">
+                  Historical failures tracked: {summary.historicalFailures} in the last 7 days.
                 </p>
               )}
             </div>

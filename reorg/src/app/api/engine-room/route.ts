@@ -111,7 +111,7 @@ async function buildEngineRoomData() {
       db.syncJob.findMany({
         orderBy: { createdAt: "desc" },
         take: 50,
-        include: { integration: { select: { platform: true, label: true } } },
+        include: { integration: { select: { platform: true, label: true, lastSyncAt: true } } },
       }),
       db.pushJob.findMany({
         orderBy: { createdAt: "desc" },
@@ -648,11 +648,41 @@ async function buildEngineRoomData() {
 
     const activeSyncs = syncJobs.filter((j) => j.status === "RUNNING").length;
     const queuedPushes = stagedChanges.length;
+    const latestCleanCompletedByIntegration = new Map<string, Date>();
+    for (const job of syncJobs) {
+      const rawErrors = Array.isArray(job.errors) ? job.errors : [];
+      if (job.status !== "COMPLETED" || rawErrors.length > 0 || !job.completedAt) continue;
+      if (latestCleanCompletedByIntegration.has(job.integrationId)) continue;
+      latestCleanCompletedByIntegration.set(job.integrationId, job.completedAt);
+    }
+
     const failedInLast7Days = syncJobs.filter(
-      (j) => j.status === "FAILED" && j.completedAt && Date.now() - j.completedAt.getTime() < 7 * 24 * 60 * 60 * 1000,
+      (job) =>
+        job.status === "FAILED" &&
+        job.completedAt &&
+        Date.now() - job.completedAt.getTime() < 7 * 24 * 60 * 60 * 1000,
     );
-    const recentErrors = failedInLast7Days.length;
-    const mostRecentFailure = failedInLast7Days[0] ?? null;
+    const latestOpenFailureByIntegration = new Map<string, (typeof failedInLast7Days)[number]>();
+    for (const job of failedInLast7Days) {
+      const occurredAt = job.completedAt ?? job.startedAt ?? job.createdAt;
+      const recoveredByLaterCleanSync =
+        !!job.completedAt &&
+        !!latestCleanCompletedByIntegration.get(job.integrationId) &&
+        latestCleanCompletedByIntegration.get(job.integrationId)!.getTime() >
+          job.completedAt.getTime();
+      const recoveredByIntegrationSync =
+        !!job.integration?.lastSyncAt &&
+        job.integration.lastSyncAt.getTime() > occurredAt.getTime();
+      if (recoveredByLaterCleanSync || recoveredByIntegrationSync) continue;
+      if (latestOpenFailureByIntegration.has(job.integrationId)) continue;
+      latestOpenFailureByIntegration.set(job.integrationId, job);
+    }
+
+    const openFailures = [...latestOpenFailureByIntegration.values()];
+    const recentErrors = openFailures.length;
+    const historicalFailures = failedInLast7Days.length;
+    const recoveredFailures = Math.max(0, historicalFailures - recentErrors);
+    const mostRecentFailure = openFailures[0] ?? null;
     const recentErrorDetail =
       mostRecentFailure
         ? Array.isArray(mostRecentFailure.errors) && mostRecentFailure.errors.length > 0
@@ -713,6 +743,8 @@ async function buildEngineRoomData() {
         activeSyncs,
         queuedPushes,
         recentErrors,
+        historicalFailures,
+        recoveredFailures,
         recentErrorDetail,
         recentErrorAt,
         recentErrorStore,

@@ -19,7 +19,9 @@ interface BigCommerceConfig {
 export class BigCommerceAdapter implements MarketplaceAdapter {
   platform: Platform = "BIGCOMMERCE";
   label = "BigCommerce";
-  private static readonly SYNC_PAGE_SIZE = 25;
+  // BigCommerce supports up to 250 products per page; use the larger page size
+  // to reduce external requests and keep full pulls well under the stale-job window.
+  private static readonly SYNC_PAGE_SIZE = 250;
   private static readonly REQUEST_TIMEOUT_MS = 30_000;
   private config: BigCommerceConfig;
   private baseUrl: string;
@@ -97,7 +99,7 @@ export class BigCommerceAdapter implements MarketplaceAdapter {
     options?: FetchListingsOptions
   ): Promise<FetchListingsResult> {
     const page = options?.cursor ? parseInt(options.cursor) : 1;
-    const limit = options?.pageSize ?? 100;
+    const limit = Math.min(options?.pageSize ?? BigCommerceAdapter.SYNC_PAGE_SIZE, 250);
 
     const response = await this.apiCall(
       `/catalog/products?limit=${limit}&page=${page}&include=variants,images`
