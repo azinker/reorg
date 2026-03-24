@@ -75,6 +75,9 @@ export async function runSync(
   let syncJob: { id: string };
   let pageCursor: string | undefined;
   let listingOffset: number;
+  let priorProcessed = 0;
+  let priorCreated = 0;
+  let priorUpdated = 0;
 
   if (resumeContinuation) {
     if (!resumeState?.jobId) {
@@ -93,6 +96,9 @@ export async function runSync(
     syncJob = { id: existing.id };
     pageCursor = resumeState.cursor ?? undefined;
     listingOffset = resumeState.listingOffset ?? 0;
+    priorProcessed = existing.itemsProcessed;
+    priorCreated = existing.itemsCreated;
+    priorUpdated = existing.itemsUpdated;
   } else {
     await db.integration.update({
       where: { id: integrationId },
@@ -117,9 +123,9 @@ export async function runSync(
     syncJob = { id: createdJob.id };
   }
 
-  let totalProcessed = 0;
-  let totalCreated = 0;
-  let totalUpdated = 0;
+  let totalProcessed = priorProcessed;
+  let totalCreated = priorCreated;
+  let totalUpdated = priorUpdated;
   let totalUnmatched = 0;
 
   const chunkStartedAt = Date.now();

@@ -235,6 +235,9 @@ export async function runShopifySync(
   const resumeState = icfg.syncState.catalogPullResume;
 
   let syncJob: { id: string };
+  let priorProcessed = 0;
+  let priorCreated = 0;
+  let priorUpdated = 0;
 
   if (resumeContinuation) {
     if (!resumeState?.jobId) {
@@ -249,6 +252,9 @@ export async function runShopifySync(
       throw new Error("Shopify catalog continuation job is not running or does not match.");
     }
     syncJob = { id: existing.id };
+    priorProcessed = existing.itemsProcessed;
+    priorCreated = existing.itemsCreated;
+    priorUpdated = existing.itemsUpdated;
   } else {
     await db.integration.update({
       where: { id: integration.id },
@@ -271,6 +277,9 @@ export async function runShopifySync(
   }
 
   const progress = createSyncProgress(syncJob.id);
+  progress.itemsProcessed = priorProcessed;
+  progress.itemsCreated = priorCreated;
+  progress.itemsUpdated = priorUpdated;
 
   const chunkStartedAt = Date.now();
   const overBudget = () => Date.now() - chunkStartedAt >= CATALOG_SYNC_CHUNK_BUDGET_MS;
@@ -405,14 +414,16 @@ export async function runShopifySync(
     });
 
     try {
-      const staleCount = await removeStaleListings(integration.id, seenListingIds);
-      if (staleCount > 0) {
-        console.log(`[shopify-sync] Removed ${staleCount} stale listings no longer on Shopify`);
-      }
+      if (!resumeContinuation) {
+        const staleCount = await removeStaleListings(integration.id, seenListingIds);
+        if (staleCount > 0) {
+          console.log(`[shopify-sync] Removed ${staleCount} stale listings no longer on Shopify`);
+        }
 
-      const orphanCount = await removeOrphanedMasterRows();
-      if (orphanCount > 0) {
-        console.log(`[shopify-sync] Removed ${orphanCount} orphaned master rows with no listings`);
+        const orphanCount = await removeOrphanedMasterRows();
+        if (orphanCount > 0) {
+          console.log(`[shopify-sync] Removed ${orphanCount} orphaned master rows with no listings`);
+        }
       }
 
       await repairVariationFamiliesForIntegration(integration.id);

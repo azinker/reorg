@@ -1,10 +1,12 @@
 # Shopify + BigCommerce Sync Handoff
 
-Date: 2026-03-24  
+Date: 2026-03-24 (addendum: manual `/execute` dispatch + doc corrections — same file, extend as needed)  
 Repo root: `C:\Users\thepe\OneDrive - theperfectpart.net\Desktop\The Perfect Part reorG`  
 App root: `reorg\`  
-Production: `https://reorg.theperfectpart.net`
+Production: `https://reorg.theperfectpart.net`  
 Staging: `https://stage.reorg.theperfectpart.net`
+
+**For the next agent:** Read **§ Manual sync → `/execute` dispatch**, **§ Stale running-job thresholds (current code)**, and **§ Deploy (PowerShell)** first. Use **repo-relative paths** under `reorg/` (avoid hard-coded `C:\Users\...` links — they break on other machines).
 
 ## Scope
 
@@ -19,16 +21,17 @@ It also includes the related UI/status work on the `/sync` page that was done to
 
 What is working:
 
-- Manual Shopify syncs now at least start correctly and show real progress.
-- BigCommerce manual sync launch no longer immediately fails at the button path the way it did before.
-- There is now a `Cancel Sync` button on the sync page so a user can stop a stuck pull safely and retry.
-- Stale job detection is stricter than before, so dead jobs should not sit around for hours as easily.
+- **Chunked catalog pulls** for Shopify and BigCommerce with **resume state** (`catalogPullResume` on integration config) and **continuation** via `POST /api/sync/{integrationId}/execute` + `CRON_SECRET` (same pattern as scheduler chunks).
+- **Manual sync from `/sync`:** `POST /api/sync/[integrationId]` now **dispatches real work** by firing `/execute` in a **separate** invocation when `AUTH_URL` (or `VERCEL_URL`) **and** `CRON_SECRET` are set — avoids relying on `after(() => startIntegrationSync(..., "inline"))` alone (which matched production symptoms: `RUNNING` + **0 processed** for many minutes).
+- Manual Shopify syncs can show steady progress; BigCommerce reports progress in listing batches.
+- `Cancel Sync` (DELETE on the sync API route) stops pulls at checkpoints and clears `catalogPullResume`.
+- Stale-job cleanup exists with thresholds tuned for **multi-chunk** pulls (longer wall-clock than the old 5/15/20 minute experiment — see below).
 
 What is still broken / under investigation:
 
-- Shopify can still appear to finish the main listing work and then remain in `RUNNING` much longer than it should.
-- BigCommerce can still stall after the first chunk, for example around `200 processed / 198 updated`, and remain in `RUNNING` far too long.
-- The remaining issue now looks less like a UI bug and more like a worker lifecycle / long-running function / checkpointing problem.
+- Shopify can still appear to finish the main listing work and then remain in `RUNNING` longer than expected (tail cleanup / completion path — some of this was addressed by completing the job before heavy post-pull work; re-verify on latest deploy).
+- BigCommerce can still stall **between** chunks or on a **slow/hanging** marketplace page fetch — progress may freeze at a multiple of batch size (e.g. ~200) until the next page completes or continuation fires.
+- If production env is missing `AUTH_URL` / `CRON_SECRET`, manual sync **falls back** to `after()` + inline sync — expect the old “stuck at 0” class of bugs to return.
 
 ## Access map for the next agent
 
@@ -40,8 +43,7 @@ Production app is hosted on Vercel.
 
 Useful local metadata:
 
-- Local Vercel project file:
-  - [project.json](C:/Users/thepe/OneDrive%20-%20theperfectpart.net/Desktop/The%20Perfect%20Part%20reorG/reorg/.vercel/project.json)
+- Local Vercel project file: `reorg/.vercel/project.json`
 - Current values from that file:
   - `projectName`: `reorg`
   - `projectId`: `prj_VH1kTPKHbO4M3U9NUH4ssF95Yzb4`
@@ -74,8 +76,8 @@ Important Vercel production env vars relevant to this project:
 
 Where to see the expected variable names:
 
-- [.env.example](C:/Users/thepe/OneDrive%20-%20theperfectpart.net/Desktop/The%20Perfect%20Part%20reorG/reorg/.env.example)
-- [env-checklist.md](C:/Users/thepe/OneDrive%20-%20theperfectpart.net/Desktop/The%20Perfect%20Part%20reorG/reorg/docs/env-checklist.md)
+- `reorg/.env.example`
+- `reorg/docs/env-checklist.md`
 
 ### Database / Neon
 
@@ -113,8 +115,8 @@ This project already has production eBay app / webhook setup work in place.
 
 Useful docs:
 
-- [api-tokens.md](C:/Users/thepe/OneDrive%20-%20theperfectpart.net/Desktop/The%20Perfect%20Part%20reorG/reorg/docs/api-tokens.md)
-- [ebay-account-deletion.md](C:/Users/thepe/OneDrive%20-%20theperfectpart.net/Desktop/The%20Perfect%20Part%20reorG/reorg/docs/ebay-account-deletion.md)
+- `reorg/docs/api-tokens.md`
+- `reorg/docs/ebay-account-deletion.md`
 
 Known production values that are safe to document:
 
@@ -141,8 +143,8 @@ Credential names used by the app:
 
 Helpful docs:
 
-- [shopify-setup.md](C:/Users/thepe/OneDrive%20-%20theperfectpart.net/Desktop/The%20Perfect%20Part%20reorG/reorg/docs/shopify-setup.md)
-- [shopify-oauth.md](C:/Users/thepe/OneDrive%20-%20theperfectpart.net/Desktop/The%20Perfect%20Part%20reorG/reorg/docs/shopify-oauth.md)
+- `reorg/docs/shopify-setup.md`
+- `reorg/docs/shopify-oauth.md`
 
 ### BigCommerce
 
@@ -155,7 +157,7 @@ Credential names used by the app:
 
 Helpful doc:
 
-- [api-tokens.md](C:/Users/thepe/OneDrive%20-%20theperfectpart.net/Desktop/The%20Perfect%20Part%20reorG/reorg/docs/api-tokens.md)
+- `reorg/docs/api-tokens.md`
 
 ### Cron / internal sync execution
 
@@ -165,14 +167,16 @@ Important variable:
 
 This matters because:
 
-- scheduler calls use it
-- some internal sync execution / continuation flows depend on it
+- Scheduler / tick routes use it.
+- **Catalog continuation** and **manual sync dispatch** POST to `/api/sync/{integrationId}/execute` with `Authorization: Bearer CRON_SECRET` (or `x-cron-secret` header — see execute route).
+- **Production manual sync** requires `CRON_SECRET` + `AUTH_URL` (or `VERCEL_URL`) so `dispatchManualSyncExecution` can reach `/execute`. If either is missing, the app falls back to `after()` + inline sync (fragile on Vercel).
 
 Related code paths:
 
-- [tick route](C:/Users/thepe/OneDrive%20-%20theperfectpart.net/Desktop/The%20Perfect%20Part%20reorG/reorg/src/app/api/scheduler/tick/route.ts)
-- [execute sync route](C:/Users/thepe/OneDrive%20-%20theperfectpart.net/Desktop/The%20Perfect%20Part%20reorG/reorg/src/app/api/sync/[integrationId]/execute/route.ts)
-- [sync-continuation.ts](C:/Users/thepe/OneDrive%20-%20theperfectpart.net/Desktop/The%20Perfect%20Part%20reorG/reorg/src/lib/services/sync-continuation.ts)
+- `reorg/src/app/api/scheduler/tick/route.ts`
+- `reorg/src/app/api/sync/[integrationId]/execute/route.ts` — `await startIntegrationSync(..., "inline")` (real work runs here for dispatched jobs)
+- `reorg/src/app/api/sync/[integrationId]/route.ts` — POST returns `STARTED` quickly; triggers execute when env allows
+- `reorg/src/lib/services/sync-continuation.ts` — `dispatchManualSyncExecution`, `dispatchCatalogSyncContinuation`, shared `postSyncExecute`
 
 ### Quick rule for the next agent
 
@@ -195,53 +199,67 @@ These come from `AGENTS.md` and must still be respected:
 
 ## Current git state at time of handoff
 
-Latest commits in local history:
+Do **not** trust the commit list below as “latest” forever — run:
+
+```powershell
+cd "C:\Users\thepe\OneDrive - theperfectpart.net\Desktop\The Perfect Part reorG"
+git log --oneline -20
+```
+
+Notable historical commits (context only):
 
 ```text
 310a4de Shorten stuck sync windows and finish Shopify syncs sooner
-cd72f47 Keep variation parent item IDs scoped to parent listings
-dbe71c5 Add safe cancel sync control
-8c4c68d Show N/A for Shopify and BigCommerce ad rates
-8726e84 Finish Shopify and BigCommerce syncs before variation repair
-2262081 Inherit eBay ad rates from child variations on parent rows
-bad8eeb Show eBay ad rates on synthetic variation parent rows
-9a4ebc3 Show eBay parent ad rates on variation parent rows
-4479212 Chunk BigCommerce sync batches for faster progress reporting
-ce30aca Fix BigCommerce manual sync dispatch path
-abc708e Fix manual sync worker authorization
-9047418 Fix sync worker auth and refine variation marketplace placeholders
+… (older sync / UI / BC chunking commits — see full log)
 ```
 
-At the moment this handoff file was created, `git status --short` showed:
+**Later work (may be newer than the above):** chunked BC/Shopify pulls with `catalogPullResume`, `sync-chunk-budget`, `sync-resume-persist`, `sync-continuation`, and **manual sync → `dispatchManualSyncExecution`** in `reorg/src/app/api/sync/[integrationId]/route.ts`. Verify with `git log` and `git blame` on those files.
 
-```text
- M reorg/src/components/grid/data-grid.tsx
- M reorg/src/lib/grid-query.ts
-```
-
-These are dashboard-related local changes and are **not** the core Shopify/BigCommerce sync work.  
-Do **not** casually revert them while debugging sync.
+If `git status` shows unrelated modified files (e.g. dashboard grid), do **not** revert them while debugging sync unless you know they conflict.
 
 ## Deployment / production verification notes
 
 When checking whether production has a specific fix:
 
-1. Verify local git:
-   - `git log --oneline -5`
-2. Verify pushed branch:
-   - `git log origin/main --oneline -5`
-3. Confirm the latest commit hash matches
-4. Then confirm the newest Vercel deployment is based on that commit
+1. Verify local git: `git log --oneline -5`
+2. Verify pushed branch: `git log origin/main --oneline -5` (adjust branch name if needed)
+3. Confirm the latest commit hash matches the Vercel deployment’s commit
 
-At one point the user explicitly verified:
+### Deploy (PowerShell) — give these steps to the user every time code changes
 
-```text
-cd72f47 (HEAD -> main, origin/main) Keep variation parent item IDs scoped to parent listings
-dbe71c5 Add safe cancel sync control
-8c4c68d Show N/A for Shopify and BigCommerce ad rates
+**Option A — Git-connected Vercel (typical)**
+
+```powershell
+cd "C:\Users\thepe\OneDrive - theperfectpart.net\Desktop\The Perfect Part reorG"
+
+git status
+git add -A
+git commit -m "your message here"
+git push origin main
 ```
 
-So that pattern is a valid way to confirm what is really pushed.
+Replace `main` with whatever branch triggers **production** deploys for this project.
+
+**Option B — Vercel CLI**
+
+```powershell
+cd "C:\Users\thepe\OneDrive - theperfectpart.net\Desktop\The Perfect Part reorG\reorg"
+npx vercel --prod
+```
+
+**After deploy**
+
+1. Vercel dashboard → project **reorg** → latest deployment → **Ready**
+2. Hard-refresh `https://reorg.theperfectpart.net/sync`
+3. If testing manual BC/Shopify sync: confirm **Production** env has `AUTH_URL=https://reorg.theperfectpart.net` and `CRON_SECRET` set (see § Cron / internal sync execution).
+
+### Production env sanity for sync dispatch
+
+If manual sync shows `RUNNING` with **0 processed** for many minutes after a deploy:
+
+- Confirm `AUTH_URL` and `CRON_SECRET` exist on **Production** in Vercel.
+- Confirm `SKIP_AUTH` (or any debug bypass) is **not** accidentally enabled on production unless intentional.
+- Tail **Vercel function logs** for `/api/sync/.../execute` around the time the user clicks Sync.
 
 ## Problem history
 
@@ -414,34 +432,22 @@ Why:
 
 - Shopify could reach `3223 processed / 3223 updated` and still remain `RUNNING`, which strongly suggested it was stuck in post-pull cleanup rather than still actively syncing.
 
-### 7. Stale running-job thresholds were tightened
+### 7. Stale running-job thresholds (evolved for chunked pulls)
 
-File touched:
+File:
 
 - `reorg/src/lib/services/sync-jobs.ts`
 
-Current thresholds:
-
-- zero progress: `5 minutes`
-- some progress: `15 minutes`
-- large progress (`>= 1000` items): `20 minutes`
-
-Current constants:
+**Current code (as of this doc update)** — tuned so a **legitimate** multi-chunk Shopify/BigCommerce catalog job is not marked stale while waiting for continuations; zero-progress runs still fail faster:
 
 ```ts
-const STALE_RUNNING_JOB_MS = 15 * 60 * 1000;
-const STALE_RUNNING_ACTIVE_JOB_MS = 20 * 60 * 1000;
+const STALE_RUNNING_JOB_MS = 55 * 60 * 1000;           // ~55 min (some progress, below 1k items)
+const STALE_RUNNING_ACTIVE_JOB_MS = 90 * 60 * 1000;     // ~90 min (>= 1000 items processed)
 const LARGE_PROGRESS_ITEM_THRESHOLD = 1000;
-const STALE_RUNNING_ZERO_PROGRESS_MS = 5 * 60 * 1000;
+const STALE_RUNNING_ZERO_PROGRESS_MS = 12 * 60 * 1000;  // ~12 min (0 processed)
 ```
 
-Why:
-
-- Earlier thresholds were too forgiving, so stuck jobs lingered for 60-240 minutes.
-
-Relevant latest commit:
-
-- `310a4de Shorten stuck sync windows and finish Shopify syncs sooner`
+**Important:** An older version of this handoff incorrectly quoted **5 / 15 / 20** minute constants. That was superseded by the values above — always read `sync-jobs.ts` on the branch you are debugging.
 
 ### 8. User-facing production symptoms after these fixes
 
@@ -462,42 +468,48 @@ This is important because it narrows the failure mode:
 - status caching is not the only problem anymore
 - the worker is getting partway through real work and then not reaching a clean completion
 
-### 9. Current sync-job stale settings at handoff time
+### 9. Current sync-job stale settings (verify in repo)
 
-Current code in [sync-jobs.ts](C:/Users/thepe/OneDrive%20-%20theperfectpart.net/Desktop/The%20Perfect%20Part%20reorG/reorg/src/lib/services/sync-jobs.ts):
+Authoritative source: `reorg/src/lib/services/sync-jobs.ts` (see §7 for the current constant values).
 
-```ts
-const STALE_RUNNING_JOB_MS = 15 * 60 * 1000;
-const STALE_RUNNING_ACTIVE_JOB_MS = 20 * 60 * 1000;
-const LARGE_PROGRESS_ITEM_THRESHOLD = 1000;
-const STALE_RUNNING_ZERO_PROGRESS_MS = 5 * 60 * 1000;
-```
+Meaning (current tuning):
 
-Meaning:
+- **0 processed** → stale after ~**12 minutes** (catches “never started” / hung first fetch)
+- **Some progress, fewer than 1000 items** → ~**55 minutes**
+- **≥ 1000 items processed** → ~**90 minutes**
 
-- zero-progress jobs should fail after about 5 minutes
-- lower-progress jobs after about 15 minutes
-- large-progress jobs after about 20 minutes
+If production shows jobs stuck **beyond** these windows, check: wrong deploy, wrong job row in UI, or `GET` handler not calling `failStaleRunningJob` for that poll path.
 
-If production still shows jobs stuck beyond that, one of the following is likely true:
+### 10. Architecture update: checkpointed Shopify / BigCommerce pulls
 
-- production is not actually on the newest code
-- the displayed job is not the DB job the UI thinks it is
-- the stale-fail path is not being triggered for that record
+The older narrative “Shopify and BigCommerce still need resumable checkpointing” is **out of date** relative to the current codebase:
 
-### 10. Current concrete suspicion
+- **BigCommerce:** `reorg/src/lib/services/sync.ts` — chunked loop, `persistCatalogPullResume`, `dispatchCatalogSyncContinuation` when `CATALOG_SYNC_CHUNK_BUDGET_MS` is exceeded.
+- **Shopify:** `reorg/src/lib/services/shopify-sync.ts` — same pattern (per-item loop with budget, resume cursor + offset).
+- **Budget:** `reorg/src/lib/services/sync-chunk-budget.ts`
+- **Resume persistence:** `reorg/src/lib/services/sync-resume-persist.ts`, `CatalogPullResume` in `reorg/src/lib/integrations/runtime-config.ts`
 
-As of this handoff, the strongest suspicion is:
+**Remaining suspicion areas (updated):**
 
-- BigCommerce and Shopify still need **resumable / checkpointed full sync execution**
-- right now they are still too dependent on a single long-running function invocation
-- BigCommerce especially appears to get through an early chunk and then stop advancing
-- Shopify appears to finish the bulk listing work but still not flip to a final clean state reliably enough
+1. **Continuation request not running or failing silently** — `void fetch(...)` to `/execute` from `sync-continuation.ts`; check Vercel logs, `CRON_SECRET`, and that `AUTH_URL` points at the **public** production URL (not a preview URL).
+2. **First page / first batch hangs** — UI shows `RUNNING` + **0 processed** until first `fetchListings` returns and first batch persists progress (can look like a “stuck start”).
+3. **Manual sync path** — must use **`dispatchManualSyncExecution`** on Vercel so work runs under `/execute` (see §11); fallback `after()` + inline is for local dev without secrets.
+4. **Tail work after catalog loop** — Shopify still has post-pull cleanup; ensure job is marked `COMPLETED` before the slowest optional steps (already partially addressed — re-verify in `shopify-sync.ts`).
 
-In other words:
+### 11. Manual sync → `/execute` dispatch (critical for Vercel)
 
-- the system is beyond the “button is broken” stage
-- it is now in “long-running production job architecture still needs another pass”
+**Problem observed:** On production, BC + Shopify both showed **Sync running** with **Processed: 0** for several minutes (“Starting pull…”). A plausible cause was manual sync only scheduling `after(() => startIntegrationSync(..., "inline"))` from `POST /api/sync/[integrationId]`, which is a poor fit for long work on serverless.
+
+**Fix (in tree):**
+
+- `reorg/src/lib/services/sync-continuation.ts` — `dispatchManualSyncExecution(integrationId, mode?)` POSTs to `${AUTH_URL or https://VERCEL_URL}/api/sync/${integrationId}/execute` with `Authorization: Bearer ${CRON_SECRET}` and optional JSON `{ "mode": "full" | "incremental" }`.
+- `reorg/src/app/api/sync/[integrationId]/route.ts` — after duplicate-job checks, calls `dispatchManualSyncExecution(integration.id, parsed.data?.mode)` **before** returning `STARTED`. If that returns `false` (missing `AUTH_URL`/`VERCEL_URL` or `CRON_SECRET`), falls back to `after(() => startIntegrationSync(..., "inline"))`.
+
+**Implications for the next agent:**
+
+- Treat **`AUTH_URL` + `CRON_SECRET` on Production** as **required** for healthy manual BC/Shopify sync on Vercel.
+- Continuations already used the same `postSyncExecute` helper with `{ resumeContinuation: true }`; manual start now shares the infrastructure.
+- The Sync UI still receives `jobId: null` on `STARTED` from the **main** POST route — it must keep polling `GET /api/sync/...` for `lastJob` (unchanged contract).
 
 ## What we know from direct inspection
 
@@ -517,18 +529,9 @@ This matters because it suggests:
 - the sync architecture can work
 - the failure mode is likely around long-running production execution and job lifecycle, not basic adapter correctness
 
-### Production code state that was confirmed locally
+### Production code state
 
-At handoff time, the local branch already contained these sync-related commits:
-
-- `abc708e Fix manual sync worker authorization`
-- `ce30aca Fix BigCommerce manual sync dispatch path`
-- `4479212 Chunk BigCommerce sync batches for faster progress reporting`
-- `8726e84 Finish Shopify and BigCommerce syncs before variation repair`
-- `dbe71c5 Add safe cancel sync control`
-- `310a4de Shorten stuck sync windows and finish Shopify syncs sooner`
-
-So a next agent should assume those ideas have already been attempted and should not rediscover them from scratch.
+Assume the repo may already include: manual sync auth fixes, BC batch chunking, completing jobs before variation repair, cancel sync, **relaxed stale thresholds for chunked jobs**, **catalog resume + continuation**, and **manual dispatch to `/execute`**. Use `git log` / blame on the files in § Files most relevant — do not re-implement from scratch without reading current code.
 
 ### Production UI observations
 
@@ -549,33 +552,30 @@ Interpretation:
 
 ## Current likely root causes
 
-As of this handoff, the most likely remaining causes are:
+Updated for **checkpointed** BC/Shopify + **manual `/execute` dispatch**:
 
-1. **Long-running serverless invocation limits / execution lifecycle**
-   - manual sync may still be too monolithic for production Vercel execution
-   - even after progress starts, later pages or tail-end work may exceed safe runtime behavior
+1. **Continuation or manual `/execute` request failing** — wrong `AUTH_URL`, missing `CRON_SECRET`, preview URL vs production, or fetch dropped when the parent invocation ends (monitor logs; `postSyncExecute` uses fire-and-forget `fetch`).
 
-2. **Lack of checkpointed resumable sync for Shopify/BigCommerce**
-   - eBay has richer sync-state/cursor handling already
-   - Shopify and BigCommerce still largely run as one long pull
-   - if that invocation stalls or dies, the job can remain misleadingly `RUNNING`
+2. **Per-invocation time budget** — `CATALOG_SYNC_CHUNK_BUDGET_MS` ends a chunk and schedules the next; if continuation never runs, job stays `RUNNING` with partial progress.
 
-3. **Stale job detection still only looks at elapsed time since start**
-   - we attempted a heartbeat-based stale check using `updatedAt`, but `SyncJob` does not have an `updatedAt` column, so that was backed out
-   - current stale detection is still wall-clock only
-   - that is better than before, but not ideal
+3. **Marketplace API slowness or hang** — first `fetchListings` can hold `itemsProcessed` at 0 for a long time; not always a “dispatch bug.”
 
-4. **BigCommerce page/chunk boundaries may still be too large or a later fetch may be hanging**
-   - especially since BC can stall after the first chunk reports correctly
+4. **Stale job detection is wall-clock only** — no `SyncJob.updatedAt`; heartbeat-based stale detection was considered and backed out. Thresholds are long for active large jobs by design (§7).
+
+5. **Tail-phase work** — Shopify post-pull cleanup / integration update ordering can still affect perceived “done” time even after job status improvements.
 
 ## Files most relevant for the next agent
 
 Primary sync orchestration:
 
-- `reorg/src/app/api/sync/[integrationId]/route.ts`
+- `reorg/src/app/api/sync/[integrationId]/route.ts` — POST manual start + `dispatchManualSyncExecution`; GET status; DELETE cancel
+- `reorg/src/app/api/sync/[integrationId]/execute/route.ts` — runs `startIntegrationSync(..., "inline")` (worker)
 - `reorg/src/lib/services/sync-control.ts`
 - `reorg/src/lib/services/sync-scheduler.ts`
 - `reorg/src/lib/services/sync-jobs.ts`
+- `reorg/src/lib/services/sync-continuation.ts` — manual + continuation `fetch` to `/execute`
+- `reorg/src/lib/services/sync-chunk-budget.ts`
+- `reorg/src/lib/services/sync-resume-persist.ts`
 
 Shopify path:
 
@@ -612,11 +612,12 @@ Ops / deployment metadata:
 
 ### 1. Confirm what is actually deployed
 
-The user should verify that production includes commit:
+Use `git log` / Vercel deployment metadata to confirm production includes:
 
-- `310a4de Shorten stuck sync windows and finish Shopify syncs sooner`
+- Chunked BC/Shopify + resume + continuation work (`sync.ts`, `shopify-sync.ts`, `sync-continuation.ts`, etc.)
+- **Manual `dispatchManualSyncExecution`** in `reorg/src/app/api/sync/[integrationId]/route.ts` (fixes “RUNNING + 0 processed” class of issues when env is correct)
 
-This is important because the latest shortened-threshold + Shopify-post-completion changes are part of that commit.
+Then verify **Vercel Production** env: `AUTH_URL`, `CRON_SECRET`.
 
 ### 2. Check production DB job rows after a fresh manual sync
 
@@ -641,23 +642,13 @@ Need to know whether:
 
 ### 3. If DB still shows true long-running `RUNNING`
 
-Then the best next architectural fix is probably:
+Shopify/BigCommerce **already** use checkpointed catalog pulls (`catalogPullResume` + `/execute` continuations). Next steps are more likely:
 
-- break Shopify and BigCommerce full sync into resumable chunks using `syncState.lastCursor`
-- each invocation processes only a bounded amount of work
-- route re-dispatches next chunk until done
+- Confirm **continuations** are firing (Vercel logs for `/api/sync/.../execute` with `resumeContinuation: true`).
+- Add **targeted logging** around `postSyncExecute` / first `fetchListings` / `dispatchCatalogSyncContinuation` to see where time goes.
+- Confirm **no duplicate** stuck jobs: UI `lastJob` is “most recent by `createdAt`” — an old `RUNNING` row could confuse operators even if a new job completed (rare; usually stale-fail cleans this).
 
-This is probably the highest-leverage next step.
-
-There is already some cursor/state vocabulary in the codebase:
-
-- `syncState.lastCursor`
-- `pendingIncrementalItemIds`
-- `pendingIncrementalWindowEndedAt`
-
-That machinery is richer on the eBay side than on Shopify/BigCommerce right now.
-
-This would make them behave more like a checkpointed job instead of one giant long-lived serverless call.
+Incremental/delta vocabulary (`syncState.lastCursor`, `pendingIncrementalItemIds`, etc.) remains richer on **eBay** than on BC/Shopify; catalog checkpointing is separate from that.
 
 ### 4. Specifically for BigCommerce
 
@@ -675,10 +666,10 @@ The symptom `200 processed / 198 updated` strongly suggests:
 
 ### 5. Specifically for Shopify
 
-If it still shows `3223 / 3223` and remains `RUNNING` even after `310a4de`:
+If it still shows `3223 / 3223` and remains `RUNNING` on a **current** deploy:
 
-- check whether production is still on older code
-- if code is current, instrument exactly what happens after the last `db.syncJob.update(...)` in `runShopifySync`
+- Confirm production is on the latest commit (not a stale preview).
+- Instrument what happens after the main loop in `runShopifySync` (job completion vs post-pull cleanup).
 - possible hidden problem:
   - `db.integration.update(...)`
   - post-completion cleanup
@@ -710,9 +701,10 @@ Get-Content 'reorg/docs/env-checklist.md'
 Get-Content 'reorg/docs/api-tokens.md'
 ```
 
-Inspect recent sync jobs in the current DB:
+Inspect recent sync jobs in the current DB (run from **`reorg`** so `@prisma/client` resolves):
 
 ```powershell
+cd "C:\Users\thepe\OneDrive - theperfectpart.net\Desktop\The Perfect Part reorG\reorg"
 @'
 const { PrismaClient } = require('@prisma/client');
 const db = new PrismaClient();
@@ -745,20 +737,18 @@ const db = new PrismaClient();
 
 ## Short plain-English summary for the next agent
 
-The team has already fixed:
+Already in place:
 
-- stale sync page caching
-- broken manual dispatch/auth
-- expensive variation repair staying on the critical path
-- BigCommerce first-batch size being too large
-- missing cancel control
+- Stale `/sync` caching fixes, cancel sync, BC batch sizing, job completion before the heaviest variation repair, **checkpointed catalog pulls** for BC/Shopify, and **manual sync that POSTs to `/execute`** when `AUTH_URL` + `CRON_SECRET` exist.
 
-What still seems wrong is:
+Still worth investigating if users report pain:
 
-- Shopify and BigCommerce can still remain in `RUNNING` far longer than acceptable
-- BigCommerce especially can stall after an early progress chunk
+- **Env misconfiguration** on Vercel (manual sync falls back to fragile `after()` behavior).
+- **Continuation or `/execute` failures** (silent `fetch` errors — add logging/alerts).
+- **Long `RUNNING` with partial progress** (stuck between chunks or slow marketplace API).
+- **Tail work** on Shopify after the main catalog loop.
 
-So the next agent should treat this as a **production sync execution / checkpointing problem**, not as a credential problem and not primarily as a UI bug.
+Treat new bugs as **execution + observability + env**, not as “missing checkpointing” unless code regresses.
 
 ## Short plain-English access summary for the next agent
 
@@ -770,3 +760,13 @@ So the next agent should treat this as a **production sync execution / checkpoin
 - Shopify secrets use `SHOPIFY_*`
 - eBay deletion webhook details are documented in `docs/ebay-account-deletion.md`
 - Do not copy or print actual secret values into the repo
+
+---
+
+## Maintaining this handoff
+
+When sync behavior or thresholds change again:
+
+1. Update **§ Current top-level status**, **§7 / §9** (stale thresholds), and **§11** if the manual/execute contract changes.
+2. Refresh **§ Deploy (PowerShell)** only if the team’s deploy process changes.
+3. Replace narrative claims with **file paths + “read the source”** so the doc does not drift (this file previously had incorrect stale-timeout numbers — fixed in this revision).
