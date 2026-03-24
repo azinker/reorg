@@ -338,6 +338,26 @@ export async function repairVariationFamiliesForIntegration(
       const variantId = listing.platformVariantId?.trim() ?? "";
       return variantId.length === 0;
     });
+    const childParentIds = new Set(
+      childListings
+        .map((listing) => listing.parentListingId)
+        .filter((value): value is string => typeof value === "string" && value.length > 0),
+    );
+    const validExistingParents = parentListings.filter(
+      (listing) => !childMasterRowIds.includes(listing.masterRowId),
+    );
+
+    // Most families are already healthy by the time this repair runs. Skip the
+    // expensive per-family master-row / parent-listing resolution when we
+    // already have exactly one valid parent and all children point to it.
+    if (
+      validExistingParents.length === 1 &&
+      parentListings.length === 1 &&
+      childParentIds.size <= 1 &&
+      (!childParentIds.size || childParentIds.has(validExistingParents[0].id))
+    ) {
+      continue;
+    }
 
     const parentMasterRowId = await resolveParentMasterRowId({
       platform: integration.platform,

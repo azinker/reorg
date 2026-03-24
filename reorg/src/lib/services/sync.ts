@@ -94,8 +94,6 @@ export async function runSync(
     }
 
     const completedAt = new Date();
-    await repairVariationFamiliesForIntegration(integrationId);
-
     await db.syncJob.update({
       where: { id: syncJob.id },
       data: {
@@ -135,6 +133,25 @@ export async function runSync(
         },
       },
     });
+
+    try {
+      await repairVariationFamiliesForIntegration(integrationId);
+    } catch (repairError) {
+      await db.auditLog.create({
+        data: {
+          action: "variation_repair_failed",
+          entityType: "integration",
+          entityId: integrationId,
+          details: {
+            syncJobId: syncJob.id,
+            error:
+              repairError instanceof Error
+                ? repairError.message
+                : "Unknown variation repair error",
+          },
+        },
+      });
+    }
 
     return {
       syncJobId: syncJob.id,

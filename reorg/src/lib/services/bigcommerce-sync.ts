@@ -155,7 +155,6 @@ export async function runBigCommerceWebhookReconcile(
     }
 
     const completedAt = new Date();
-    await repairVariationFamiliesForIntegration(integration.id);
 
     await db.syncJob.update({
       where: { id: syncJob.id },
@@ -185,6 +184,25 @@ export async function runBigCommerceWebhookReconcile(
         ) as unknown as Prisma.InputJsonValue,
       },
     });
+
+    try {
+      await repairVariationFamiliesForIntegration(integration.id);
+    } catch (repairError) {
+      await db.auditLog.create({
+        data: {
+          action: "variation_repair_failed",
+          entityType: "integration",
+          entityId: integration.id,
+          details: {
+            syncJobId: syncJob.id,
+            error:
+              repairError instanceof Error
+                ? repairError.message
+                : "Unknown variation repair error",
+          },
+        },
+      });
+    }
 
     const durationMs = Date.now() - startTime;
     await recordWebhookReconcileCompleted({
