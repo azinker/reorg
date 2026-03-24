@@ -6,6 +6,7 @@ import { db } from "@/lib/db";
 const STALE_RUNNING_JOB_MS = 90 * 60 * 1000;
 const STALE_RUNNING_ACTIVE_JOB_MS = 4 * 60 * 60 * 1000;
 const LARGE_PROGRESS_ITEM_THRESHOLD = 1000;
+const STALE_RUNNING_ZERO_PROGRESS_MS = 15 * 60 * 1000;
 
 export function isRunningJobStale(
   job: {
@@ -16,10 +17,13 @@ export function isRunningJobStale(
   now = new Date(),
 ) {
   const startedAt = job.startedAt ?? job.createdAt;
+  const processed = job.itemsProcessed ?? 0;
   const staleThresholdMs =
-    (job.itemsProcessed ?? 0) >= LARGE_PROGRESS_ITEM_THRESHOLD
-      ? STALE_RUNNING_ACTIVE_JOB_MS
-      : STALE_RUNNING_JOB_MS;
+    processed === 0
+      ? STALE_RUNNING_ZERO_PROGRESS_MS
+      : processed >= LARGE_PROGRESS_ITEM_THRESHOLD
+        ? STALE_RUNNING_ACTIVE_JOB_MS
+        : STALE_RUNNING_JOB_MS;
 
   return now.getTime() - startedAt.getTime() >= staleThresholdMs;
 }

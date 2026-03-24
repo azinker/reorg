@@ -255,10 +255,20 @@ export async function GET(
       );
     }
 
-    const lastJob = await db.syncJob.findFirst({
+    let lastJob = await db.syncJob.findFirst({
       where: { integrationId: integration.id },
       orderBy: { createdAt: "desc" },
     });
+    if (lastJob?.status === "RUNNING" && isRunningJobStale(lastJob)) {
+      await failStaleRunningJob(
+        lastJob,
+        "Marked failed automatically because the sync job exceeded the stale running threshold.",
+      );
+      lastJob = await db.syncJob.findFirst({
+        where: { integrationId: integration.id },
+        orderBy: { createdAt: "desc" },
+      });
+    }
     const recentWebhookEntries = await db.auditLog.findMany({
       where: { action: "webhook_received" },
       orderBy: { createdAt: "desc" },
