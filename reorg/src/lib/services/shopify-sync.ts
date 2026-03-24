@@ -270,18 +270,6 @@ export async function runShopifySync(
       });
     }
 
-    // Remove listings that were NOT seen during this sync (deleted/edited on marketplace)
-    const staleCount = await removeStaleListings(integration.id, seenListingIds);
-    if (staleCount > 0) {
-      console.log(`[shopify-sync] Removed ${staleCount} stale listings no longer on Shopify`);
-    }
-
-    // Clean up orphaned MasterRows that have zero listings left
-    const orphanCount = await removeOrphanedMasterRows();
-    if (orphanCount > 0) {
-      console.log(`[shopify-sync] Removed ${orphanCount} orphaned master rows with no listings`);
-    }
-
     progress.status = "COMPLETED";
 
     const completedAt = new Date();
@@ -311,6 +299,16 @@ export async function runShopifySync(
     });
 
     try {
+      const staleCount = await removeStaleListings(integration.id, seenListingIds);
+      if (staleCount > 0) {
+        console.log(`[shopify-sync] Removed ${staleCount} stale listings no longer on Shopify`);
+      }
+
+      const orphanCount = await removeOrphanedMasterRows();
+      if (orphanCount > 0) {
+        console.log(`[shopify-sync] Removed ${orphanCount} orphaned master rows with no listings`);
+      }
+
       await repairVariationFamiliesForIntegration(integration.id);
     } catch (repairError) {
       await db.auditLog.create({

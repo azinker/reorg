@@ -23,8 +23,8 @@ export class BigCommerceAdapter implements MarketplaceAdapter {
   // expand into a very large listing batch once variants are flattened. Keep the
   // API page reasonably large while yielding smaller sync batches so progress is
   // visible quickly and long first batches do not trip stale-job guards.
-  private static readonly SYNC_PAGE_SIZE = 100;
-  private static readonly SYNC_LISTING_BATCH_SIZE = 200;
+  private static readonly SYNC_PAGE_SIZE = 25;
+  private static readonly SYNC_LISTING_BATCH_SIZE = 50;
   private static readonly REQUEST_TIMEOUT_MS = 30_000;
   private config: BigCommerceConfig;
   private baseUrl: string;
@@ -163,6 +163,10 @@ export class BigCommerceAdapter implements MarketplaceAdapter {
       }
       cursor = result.nextCursor;
       hasMore = result.hasMore;
+
+      if (hasMore) {
+        await new Promise((resolve) => setTimeout(resolve, 150));
+      }
     }
   }
 

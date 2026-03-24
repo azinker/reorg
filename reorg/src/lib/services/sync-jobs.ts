@@ -3,8 +3,8 @@ import { db } from "@/lib/db";
 // Keep a reasonably aggressive stale-job guard for jobs that never really got
 // going, but give large in-flight catalog pulls more room once they've already
 // processed a substantial amount of data.
-const STALE_RUNNING_JOB_MS = 90 * 60 * 1000;
-const STALE_RUNNING_ACTIVE_JOB_MS = 4 * 60 * 60 * 1000;
+const STALE_RUNNING_JOB_MS = 15 * 60 * 1000;
+const STALE_RUNNING_ACTIVE_JOB_MS = 20 * 60 * 1000;
 const LARGE_PROGRESS_ITEM_THRESHOLD = 1000;
 const STALE_RUNNING_ZERO_PROGRESS_MS = 5 * 60 * 1000;
 export const SYNC_CANCELLED_ERROR = "Sync cancelled by user.";
