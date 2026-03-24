@@ -644,6 +644,7 @@ function buildGridRow(
     }
   }
   const itemNumbers: StoreValue[] = sortItemNumbers([...itemNumberMap.values()]);
+  const parentRowItemNumbers = itemNumbers.filter((item) => !item.variantId);
 
   return {
     id: master.id,
@@ -665,7 +666,7 @@ function buildGridRow(
     childRowsHydrated: !isVariationParent,
     alternateTitles,
     hasStagedChanges: hasStagedChanges || upcStage.hasStagedUpc,
-    itemNumbers,
+    itemNumbers: isVariationParent ? parentRowItemNumbers : itemNumbers,
     salePrices: isVariationParent ? [] : salePrices,
     adRates,
     platformFees: isVariationParent ? [] : platformFees,
