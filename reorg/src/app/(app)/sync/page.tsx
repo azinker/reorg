@@ -863,6 +863,50 @@ export default function SyncPage() {
     [fetchIntegrations, fetchSchedulerStatus, loadStoreStatus, pollSyncStatus],
   );
 
+  const cancelSync = useCallback(
+    async (apiPlatform: string) => {
+      try {
+        const res = await fetch(`/api/sync/${apiPlatform}`, {
+          method: "DELETE",
+        });
+        const json = (await res.json().catch(() => ({}))) as {
+          data?: { message?: string };
+          error?: string;
+        };
+
+        if (!res.ok) {
+          setSyncing((prev) => ({ ...prev, [apiPlatform]: "error" }));
+          setResults((prev) => ({
+            ...prev,
+            [apiPlatform]: json.error ?? "Failed to cancel sync",
+          }));
+          return;
+        }
+
+        if (pollTimers.current[apiPlatform]) {
+          clearInterval(pollTimers.current[apiPlatform]);
+          delete pollTimers.current[apiPlatform];
+        }
+
+        setSyncing((prev) => ({ ...prev, [apiPlatform]: "done" }));
+        setResults((prev) => ({
+          ...prev,
+          [apiPlatform]: json.data?.message ?? "Sync cancelled",
+        }));
+        await loadStoreStatus(apiPlatform);
+        fetchSchedulerStatus(true);
+      } catch (error) {
+        setSyncing((prev) => ({ ...prev, [apiPlatform]: "error" }));
+        setResults((prev) => ({
+          ...prev,
+          [apiPlatform]:
+            error instanceof Error ? error.message : "Failed to cancel sync",
+        }));
+      }
+    },
+    [fetchSchedulerStatus, loadStoreStatus],
+  );
+
   const syncAll = useCallback(async () => {
     setSyncAllRunning(true);
     const connectedStores = stores.filter((store) => getStatus(store.apiPlatform)?.connected);
@@ -1732,6 +1776,20 @@ export default function SyncPage() {
                   >
                     <RefreshCw className="h-3.5 w-3.5" aria-hidden />
                     Full Sync
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!connected || !isSyncing}
+                    onClick={() => cancelSync(store.apiPlatform)}
+                    className={cn(
+                      "inline-flex cursor-pointer items-center gap-2 rounded-md border border-red-500/40 bg-red-500/10 px-4 py-2 text-sm font-medium text-red-300",
+                      "transition-colors hover:bg-red-500/15",
+                      "disabled:cursor-not-allowed disabled:opacity-50",
+                    )}
+                    aria-label={`Cancel sync for ${store.name}`}
+                  >
+                    <XCircle className="h-3.5 w-3.5" aria-hidden />
+                    Cancel Sync
                   </button>
                 </div>
                 <span className="text-xs text-muted-foreground">Pull-only</span>

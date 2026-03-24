@@ -19,6 +19,10 @@ import {
   reconcileMarketplaceListingIdentity,
 } from "@/lib/services/marketplace-listing-dedupe";
 import { repairVariationFamiliesForIntegration } from "@/lib/services/variation-repair";
+import {
+  SYNC_CANCELLED_ERROR,
+  throwIfSyncJobStopped,
+} from "@/lib/services/sync-jobs";
 
 interface SyncProgress {
   jobId: string;
@@ -234,6 +238,8 @@ export async function runShopifySync(
     const seenListingIds = new Set<string>();
 
     for await (const batch of adapter.fetchAllListings()) {
+      await throwIfSyncJobStopped(syncJob.id);
+
       for (const listing of batch) {
         try {
           const result = await upsertListing(listing, integration.id);
@@ -279,6 +285,7 @@ export async function runShopifySync(
     progress.status = "COMPLETED";
 
     const completedAt = new Date();
+    await throwIfSyncJobStopped(syncJob.id);
     await db.syncJob.update({
       where: { id: syncJob.id },
       data: {
@@ -323,20 +330,24 @@ export async function runShopifySync(
     }
   } catch (err) {
     progress.status = "FAILED";
+    const errorMessage = err instanceof Error ? err.message : "Sync failed";
+    const wasCancelled = errorMessage === SYNC_CANCELLED_ERROR;
 
     const allErrors = [
       ...progress.errors,
-      { sku: "_global", message: err instanceof Error ? err.message : "Sync failed" },
+      { sku: "_global", message: errorMessage },
     ];
 
-    await db.syncJob.update({
-      where: { id: syncJob.id },
-      data: {
-        status: "FAILED",
-        completedAt: new Date(),
-        errors: JSON.parse(JSON.stringify(allErrors)),
-      },
-    });
+    if (!wasCancelled) {
+      await db.syncJob.update({
+        where: { id: syncJob.id },
+        data: {
+          status: "FAILED",
+          completedAt: new Date(),
+          errors: JSON.parse(JSON.stringify(allErrors)),
+        },
+      });
+    }
   }
 
   return progress;

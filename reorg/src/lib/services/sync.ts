@@ -11,6 +11,10 @@ import {
   type SyncExecutionOptions,
 } from "@/lib/services/sync-control";
 import { repairVariationFamiliesForIntegration } from "@/lib/services/variation-repair";
+import {
+  SYNC_CANCELLED_ERROR,
+  throwIfSyncJobStopped,
+} from "@/lib/services/sync-jobs";
 
 export interface SyncResult {
   syncJobId: string;
@@ -63,6 +67,8 @@ export async function runSync(
 
   try {
     for await (const batch of adapter.fetchAllListings()) {
+      await throwIfSyncJobStopped(syncJob.id);
+
       const matchResult = await matchListings(
         batch,
         integrationId,
@@ -94,6 +100,7 @@ export async function runSync(
     }
 
     const completedAt = new Date();
+    await throwIfSyncJobStopped(syncJob.id);
     await db.syncJob.update({
       where: { id: syncJob.id },
       data: {
@@ -167,30 +174,33 @@ export async function runSync(
   } catch (error) {
     const errorMessage =
       error instanceof Error ? error.message : "Unknown sync error";
+    const wasCancelled = errorMessage === SYNC_CANCELLED_ERROR;
     errors.push(errorMessage);
 
-    await db.syncJob.update({
-      where: { id: syncJob.id },
-      data: {
-        status: "FAILED",
-        itemsProcessed: totalProcessed,
-        errors,
-        completedAt: new Date(),
-      },
-    });
-
-    await db.auditLog.create({
-      data: {
-        action: "sync_failed",
-        entityType: "integration",
-        entityId: integrationId,
-        details: {
-          syncJobId: syncJob.id,
-          error: errorMessage,
-          durationMs: Date.now() - startTime,
+    if (!wasCancelled) {
+      await db.syncJob.update({
+        where: { id: syncJob.id },
+        data: {
+          status: "FAILED",
+          itemsProcessed: totalProcessed,
+          errors,
+          completedAt: new Date(),
         },
-      },
-    });
+      });
+
+      await db.auditLog.create({
+        data: {
+          action: "sync_failed",
+          entityType: "integration",
+          entityId: integrationId,
+          details: {
+            syncJobId: syncJob.id,
+            error: errorMessage,
+            durationMs: Date.now() - startTime,
+          },
+        },
+      });
+    }
 
     return {
       syncJobId: syncJob.id,

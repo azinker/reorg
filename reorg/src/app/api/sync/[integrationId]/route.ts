@@ -20,7 +20,11 @@ import {
 } from "@/lib/services/ebay-analytics";
 import { getSharedEbayQuotaStoreCount } from "@/lib/services/ebay-sync-budget";
 import { getReservedEbayGetItemCalls } from "@/lib/services/ebay-sync-policy";
-import { failStaleRunningJob, isRunningJobStale } from "@/lib/services/sync-jobs";
+import {
+  cancelRunningSyncJob,
+  failStaleRunningJob,
+  isRunningJobStale,
+} from "@/lib/services/sync-jobs";
 
 export const runtime = "nodejs";
 export const maxDuration = 800;
@@ -377,6 +381,68 @@ export async function GET(
     return NextResponse.json(
       { error: "Failed to fetch sync status" },
       { status: 500 }
+    );
+  }
+}
+
+export async function DELETE(
+  _request: NextRequest,
+  { params }: { params: Promise<{ integrationId: string }> }
+) {
+  const { integrationId } = await params;
+
+  try {
+    const integration = await db.integration.findFirst({
+      where: {
+        OR: [
+          { id: integrationId },
+          { platform: integrationId.toUpperCase() as Platform },
+        ],
+      },
+    });
+
+    if (!integration) {
+      return NextResponse.json(
+        { error: `Integration "${integrationId}" not found` },
+        { status: 404 },
+      );
+    }
+
+    const runningJob = await db.syncJob.findFirst({
+      where: { integrationId: integration.id, status: "RUNNING" },
+      orderBy: { createdAt: "desc" },
+    });
+
+    if (!runningJob) {
+      return NextResponse.json({
+        data: {
+          integrationId: integration.id,
+          platform: integration.platform,
+          status: "IDLE",
+          message: `${integration.label} does not have a running sync to cancel.`,
+        },
+      });
+    }
+
+    await cancelRunningSyncJob(
+      runningJob,
+      "Cancelled by user from the Sync page.",
+    );
+
+    return NextResponse.json({
+      data: {
+        integrationId: integration.id,
+        platform: integration.platform,
+        status: "CANCELLED",
+        jobId: runningJob.id,
+        message: `${integration.label} sync was cancelled.`,
+      },
+    });
+  } catch (error) {
+    console.error(`[sync] DELETE ${integrationId} failed`, error);
+    return NextResponse.json(
+      { error: "Failed to cancel sync" },
+      { status: 500 },
     );
   }
 }
