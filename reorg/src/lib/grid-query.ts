@@ -250,6 +250,7 @@ function buildAdRateLookupByPlatform(
     id: string;
     adRate: number | null;
     integration: { platform: Platform };
+    childListings?: Array<{ adRate: number | null }>;
   }>,
   stagedMap: Map<string, { field: string; stagedValue: string; liveValue: string | null }>,
 ): Partial<Record<Platform, number>> {
@@ -265,7 +266,9 @@ function buildAdRateLookupByPlatform(
         ? parseFloat(staged.stagedValue)
         : listing.adRate != null
           ? Number(listing.adRate)
-          : null;
+          : listing.childListings?.find((child) => child.adRate != null)?.adRate != null
+            ? Number(listing.childListings.find((child) => child.adRate != null)!.adRate)
+            : null;
 
     if (effective != null) {
       lookup[platform] = effective;
