@@ -23,7 +23,7 @@ import { getReservedEbayGetItemCalls } from "@/lib/services/ebay-sync-policy";
 import { failStaleRunningJob, isRunningJobStale } from "@/lib/services/sync-jobs";
 
 export const runtime = "nodejs";
-export const maxDuration = 3600;
+export const maxDuration = 800;
 
   const postSchema = z
   .object({
