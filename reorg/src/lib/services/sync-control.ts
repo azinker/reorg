@@ -21,6 +21,8 @@ export interface SyncExecutionOptions {
   fallbackReason?: string | null;
   targetedPlatformItemIds?: string[];
   preserveSyncState?: boolean;
+  /** Next chunk of a checkpointed Shopify/BigCommerce catalog pull */
+  resumeContinuation?: boolean;
 }
 
 export interface SyncDispatchResult {
@@ -44,7 +46,7 @@ type SyncDispatchMode = "background" | "inline";
 
 interface ExecutedSyncResult {
   jobId: string | null;
-  status: "COMPLETED" | "FAILED";
+  status: "COMPLETED" | "FAILED" | "CONTINUING";
 }
 
 function formatTriggeredBy(options: SyncExecutionOptions): string {
@@ -95,6 +97,9 @@ async function executeIntegrationSync(
   switch (integration.platform) {
     case "SHOPIFY": {
       const result = await runShopifySync(options);
+      if (result.catalogChunkScheduled) {
+        return { jobId: result.jobId, status: "CONTINUING" };
+      }
       return {
         jobId: result.jobId,
         status: result.status === "COMPLETED" ? "COMPLETED" : "FAILED",
@@ -116,6 +121,9 @@ async function executeIntegrationSync(
     }
     case "BIGCOMMERCE": {
       const result = await runBigCommerceSync(options);
+      if (result.status === "continuing") {
+        return { jobId: result.syncJobId, status: "CONTINUING" };
+      }
       return {
         jobId: result.syncJobId,
         status: result.status === "completed" ? "COMPLETED" : "FAILED",
@@ -143,6 +151,7 @@ export function buildCompletedSyncConfig(
     ...config,
     syncState: {
       ...config.syncState,
+      catalogPullResume: null,
       lastRequestedMode: options.requestedMode ?? config.syncState.lastRequestedMode,
       lastEffectiveMode: effectiveMode,
       lastFullSyncAt:
@@ -207,12 +216,14 @@ export async function startIntegrationSync(
   options: SyncExecutionOptions = {},
   dispatchMode: SyncDispatchMode = "background",
 ): Promise<SyncDispatchResult> {
+  const resumeContinuation = options.resumeContinuation === true;
+
   const runningJob = await db.syncJob.findFirst({
     where: { integrationId: integration.id, status: "RUNNING" },
     orderBy: { createdAt: "desc" },
   });
 
-  if (runningJob) {
+  if (runningJob && !resumeContinuation) {
     if (isRunningJobStale(runningJob)) {
       await failStaleRunningJob(
         runningJob,
@@ -231,6 +242,38 @@ export async function startIntegrationSync(
         message: `${integration.label} sync is already running.`,
       };
     }
+  }
+
+  if (resumeContinuation && runningJob) {
+    const config = getIntegrationConfig(integration);
+    const resume = config.syncState.catalogPullResume;
+    if (!resume || resume.jobId !== runningJob.id) {
+      const modes = resolveSyncModes(integration, options.requestedMode);
+      return {
+        integrationId: integration.id,
+        platform: integration.platform,
+        requestedMode: modes.requestedMode,
+        effectiveMode: modes.effectiveMode,
+        fallbackReason: modes.fallbackReason,
+        status: "FAILED",
+        jobId: runningJob.id,
+        message: `${integration.label} catalog resume state is missing or does not match the running job.`,
+      };
+    }
+  }
+
+  if (resumeContinuation && !runningJob) {
+    const modes = resolveSyncModes(integration, options.requestedMode);
+    return {
+      integrationId: integration.id,
+      platform: integration.platform,
+      requestedMode: modes.requestedMode,
+      effectiveMode: modes.effectiveMode,
+      fallbackReason: modes.fallbackReason,
+      status: "FAILED",
+      jobId: null,
+      message: `${integration.label} catalog continuation has no running job to attach to.`,
+    };
   }
 
   const modes = resolveSyncModes(integration, options.requestedMode);
@@ -258,6 +301,19 @@ export async function startIntegrationSync(
         status: "UNSUPPORTED",
         jobId: null,
         message: `Sync for ${integration.platform} is not implemented yet.`,
+      };
+    }
+
+    if (result.status === "CONTINUING") {
+      return {
+        integrationId: integration.id,
+        platform: integration.platform,
+        requestedMode: modes.requestedMode,
+        effectiveMode: modes.effectiveMode,
+        fallbackReason: modes.fallbackReason,
+        status: "STARTED",
+        jobId: result.jobId,
+        message: `${integration.label} catalog pull is still running; the next chunk was scheduled automatically.`,
       };
     }
 

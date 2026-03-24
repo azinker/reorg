@@ -20,6 +20,14 @@ export interface SyncProfile {
   incrementalStrategy: IncrementalStrategy;
 }
 
+/** Resume a long catalog pull across multiple serverless invocations (Shopify/BigCommerce). */
+export type CatalogPullResume = {
+  jobId: string;
+  cursor?: string | null;
+  /** Skip this many flattened listings on the current API page after re-fetch. */
+  listingOffset?: number;
+};
+
 export interface SyncState {
   lastRequestedMode: SyncMode | null;
   lastEffectiveMode: SyncMode | null;
@@ -33,6 +41,7 @@ export interface SyncState {
   lastRateLimitMessage: string | null;
   pendingIncrementalItemIds: string[];
   pendingIncrementalWindowEndedAt: string | null;
+  catalogPullResume?: CatalogPullResume | null;
 }
 
 export interface WebhookState {
@@ -113,6 +122,7 @@ const EMPTY_SYNC_STATE: SyncState = {
   lastRateLimitMessage: null,
   pendingIncrementalItemIds: [],
   pendingIncrementalWindowEndedAt: null,
+  catalogPullResume: null,
 };
 
 const EMPTY_WEBHOOK_STATE: WebhookState = {
@@ -211,6 +221,27 @@ export function normalizeSyncProfile(
   };
 }
 
+function normalizeCatalogPullResume(raw: unknown): CatalogPullResume | null {
+  if (!isRecord(raw)) return null;
+  const jobId = typeof raw.jobId === "string" && raw.jobId.trim() ? raw.jobId : null;
+  if (!jobId) return null;
+  const cursor =
+    raw.cursor === undefined || raw.cursor === null
+      ? null
+      : typeof raw.cursor === "string"
+        ? raw.cursor
+        : String(raw.cursor);
+  let listingOffset: number | undefined;
+  if (
+    typeof raw.listingOffset === "number" &&
+    Number.isFinite(raw.listingOffset) &&
+    raw.listingOffset > 0
+  ) {
+    listingOffset = Math.floor(raw.listingOffset);
+  }
+  return { jobId, cursor, listingOffset };
+}
+
 export function normalizeSyncState(raw: unknown): SyncState {
   const record = isRecord(raw) ? raw : {};
 
@@ -235,6 +266,7 @@ export function normalizeSyncState(raw: unknown): SyncState {
     lastRateLimitMessage: asNullableString(record.lastRateLimitMessage),
     pendingIncrementalItemIds: asStringArray(record.pendingIncrementalItemIds),
     pendingIncrementalWindowEndedAt: asNullableString(record.pendingIncrementalWindowEndedAt),
+    catalogPullResume: normalizeCatalogPullResume(record.catalogPullResume),
   };
 }
 

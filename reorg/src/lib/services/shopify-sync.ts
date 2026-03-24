@@ -2,10 +2,14 @@ import { db } from "@/lib/db";
 import { Platform, Prisma, type SyncStatus } from "@prisma/client";
 import { ShopifyAdapter } from "@/lib/integrations/shopify";
 import type { RawListing } from "@/lib/integrations/types";
+import { getIntegrationConfig, mergeIntegrationConfig } from "@/lib/integrations/runtime-config";
 import {
   buildCompletedSyncConfigFromLatest,
   type SyncExecutionOptions,
 } from "@/lib/services/sync-control";
+import { CATALOG_SYNC_CHUNK_BUDGET_MS } from "@/lib/services/sync-chunk-budget";
+import { dispatchCatalogSyncContinuation } from "@/lib/services/sync-continuation";
+import { persistCatalogPullResume } from "@/lib/services/sync-resume-persist";
 import {
   removeMarketplaceListingsByPlatformItemIds,
   removeMarketplaceListingsMissingFromProductSet,
@@ -31,6 +35,8 @@ interface SyncProgress {
   itemsCreated: number;
   itemsUpdated: number;
   errors: Array<{ sku: string; message: string }>;
+  /** Set when a chunk finished under time budget and another invocation was scheduled. */
+  catalogChunkScheduled?: boolean;
 }
 
 interface ShopifySyncContext {
@@ -218,37 +224,121 @@ async function ensureShopifyParentListing(args: {
   return createdParent.id;
 }
 
+const SHOPIFY_CATALOG_PAGE_SIZE = 250;
+
 export async function runShopifySync(
   options: SyncExecutionOptions = {},
 ): Promise<SyncProgress> {
   const { integration, adapter } = await getShopifySyncContext();
+  const resumeContinuation = options.resumeContinuation === true;
+  const icfg = getIntegrationConfig(integration);
+  const resumeState = icfg.syncState.catalogPullResume;
 
-  const syncJob = await db.syncJob.create({
-    data: {
-      integrationId: integration.id,
-      status: "RUNNING",
-      triggeredBy: options.triggeredBy ?? "system",
-      startedAt: new Date(),
-    },
-  });
+  let syncJob: { id: string };
+
+  if (resumeContinuation) {
+    if (!resumeState?.jobId) {
+      throw new Error("Shopify catalog continuation requested but resume state is missing.");
+    }
+    const existing = await db.syncJob.findUnique({ where: { id: resumeState.jobId } });
+    if (
+      !existing ||
+      existing.status !== "RUNNING" ||
+      existing.integrationId !== integration.id
+    ) {
+      throw new Error("Shopify catalog continuation job is not running or does not match.");
+    }
+    syncJob = { id: existing.id };
+  } else {
+    await db.integration.update({
+      where: { id: integration.id },
+      data: {
+        config: mergeIntegrationConfig(integration.platform, integration.config, {
+          syncState: { catalogPullResume: null },
+        }) as unknown as Prisma.InputJsonValue,
+      },
+    });
+
+    const created = await db.syncJob.create({
+      data: {
+        integrationId: integration.id,
+        status: "RUNNING",
+        triggeredBy: options.triggeredBy ?? "system",
+        startedAt: new Date(),
+      },
+    });
+    syncJob = { id: created.id };
+  }
 
   const progress = createSyncProgress(syncJob.id);
+
+  const chunkStartedAt = Date.now();
+  const overBudget = () => Date.now() - chunkStartedAt >= CATALOG_SYNC_CHUNK_BUDGET_MS;
+
+  let pageCursor: string | undefined;
+  let listingOffset: number;
+  if (resumeContinuation) {
+    pageCursor = resumeState!.cursor ?? undefined;
+    listingOffset = resumeState!.listingOffset ?? 0;
+  } else {
+    pageCursor = undefined;
+    listingOffset = 0;
+  }
+
+  let hasMore = true;
+
+  const flushJobProgress = async () => {
+    await db.syncJob.update({
+      where: { id: syncJob.id },
+      data: {
+        itemsProcessed: progress.itemsProcessed,
+        itemsCreated: progress.itemsCreated,
+        itemsUpdated: progress.itemsUpdated,
+        errors: JSON.parse(JSON.stringify(progress.errors)),
+      },
+    });
+  };
 
   try {
     const seenListingIds = new Set<string>();
 
-    for await (const batch of adapter.fetchAllListings()) {
-      await throwIfSyncJobStopped(syncJob.id);
+    while (hasMore) {
+      const requestCursor = pageCursor;
+      const result = await adapter.fetchListings({
+        cursor: pageCursor,
+        pageSize: SHOPIFY_CATALOG_PAGE_SIZE,
+      });
 
-      for (const listing of batch) {
+      const fullPage = result.listings;
+      const pageListings =
+        listingOffset > 0 ? fullPage.slice(listingOffset) : fullPage;
+      const skippedOnPage = fullPage.length - pageListings.length;
+      listingOffset = 0;
+
+      for (let i = 0; i < pageListings.length; i++) {
+        await throwIfSyncJobStopped(syncJob.id);
+
+        if (overBudget()) {
+          await persistCatalogPullResume(integration.id, integration.platform, {
+            jobId: syncJob.id,
+            cursor: requestCursor ?? null,
+            listingOffset: skippedOnPage + i,
+          });
+          dispatchCatalogSyncContinuation(integration.id);
+          await flushJobProgress();
+          progress.catalogChunkScheduled = true;
+          return progress;
+        }
+
+        const listing = pageListings[i]!;
         try {
-          const result = await upsertListing(listing, integration.id);
-          if (result) {
-            for (const seenId of result.ids) {
+          const upsertResult = await upsertListing(listing, integration.id);
+          if (upsertResult) {
+            for (const seenId of upsertResult.ids) {
               seenListingIds.add(seenId);
             }
-            if (result.status === "created") progress.itemsCreated++;
-            if (result.status === "updated") progress.itemsUpdated++;
+            if (upsertResult.status === "created") progress.itemsCreated++;
+            if (upsertResult.status === "updated") progress.itemsUpdated++;
           }
           progress.itemsProcessed++;
         } catch (err) {
@@ -257,17 +347,31 @@ export async function runShopifySync(
             message: err instanceof Error ? err.message : "Unknown error",
           });
         }
+
+        if (progress.itemsProcessed % 50 === 0) {
+          await flushJobProgress();
+        }
       }
 
-      await db.syncJob.update({
-        where: { id: syncJob.id },
-        data: {
-          itemsProcessed: progress.itemsProcessed,
-          itemsCreated: progress.itemsCreated,
-          itemsUpdated: progress.itemsUpdated,
-          errors: JSON.parse(JSON.stringify(progress.errors)),
-        },
-      });
+      await flushJobProgress();
+
+      pageCursor = result.nextCursor;
+      hasMore = result.hasMore;
+
+      if (hasMore && overBudget()) {
+        await persistCatalogPullResume(integration.id, integration.platform, {
+          jobId: syncJob.id,
+          cursor: result.nextCursor ?? null,
+          listingOffset: undefined,
+        });
+        dispatchCatalogSyncContinuation(integration.id);
+        progress.catalogChunkScheduled = true;
+        return progress;
+      }
+
+      if (hasMore) {
+        await new Promise((r) => setTimeout(r, 550));
+      }
     }
 
     progress.status = "COMPLETED";
@@ -285,6 +389,8 @@ export async function runShopifySync(
         errors: JSON.parse(JSON.stringify(progress.errors)),
       },
     });
+
+    await persistCatalogPullResume(integration.id, integration.platform, null);
 
     await db.integration.update({
       where: { id: integration.id },
@@ -337,6 +443,7 @@ export async function runShopifySync(
     ];
 
     if (!wasCancelled) {
+      await persistCatalogPullResume(integration.id, integration.platform, null);
       await db.syncJob.update({
         where: { id: syncJob.id },
         data: {

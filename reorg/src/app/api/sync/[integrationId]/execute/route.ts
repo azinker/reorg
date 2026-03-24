@@ -12,6 +12,7 @@ export const dynamic = "force-dynamic";
 const postSchema = z
   .object({
     mode: z.enum(["full", "incremental"]).optional(),
+    resumeContinuation: z.boolean().optional(),
   })
   .optional();
 
@@ -80,11 +81,15 @@ export async function POST(
       );
     }
 
+    const resumeContinuation = parsed.data?.resumeContinuation === true;
+
     const result = await startIntegrationSync(
       integration,
       {
         requestedMode: parsed.data?.mode,
-        triggerSource: "manual",
+        resumeContinuation,
+        triggerSource: resumeContinuation ? "scheduler" : "manual",
+        triggeredBy: resumeContinuation ? "catalog-continuation" : undefined,
       },
       "inline",
     );

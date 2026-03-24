@@ -1,7 +1,8 @@
 import { after, NextResponse, type NextRequest } from "next/server";
 import { db } from "@/lib/db";
-import { Platform } from "@prisma/client";
+import { Platform, Prisma } from "@prisma/client";
 import { z } from "zod";
+import { mergeIntegrationConfig } from "@/lib/integrations/runtime-config";
 import {
   resolveIntegrationSyncModes,
   startIntegrationSync,
@@ -428,6 +429,17 @@ export async function DELETE(
       runningJob,
       "Cancelled by user from the Sync page.",
     );
+
+    await db.integration.update({
+      where: { id: integration.id },
+      data: {
+        config: mergeIntegrationConfig(
+          integration.platform,
+          integration.config,
+          { syncState: { catalogPullResume: null } },
+        ) as unknown as Prisma.InputJsonValue,
+      },
+    });
 
     return NextResponse.json({
       data: {
