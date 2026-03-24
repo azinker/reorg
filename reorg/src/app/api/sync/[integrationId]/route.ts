@@ -68,10 +68,6 @@ function getWebhookProofStatus(lastSyncAt: Date | null, receivedAt: Date | null)
     : "before_last_pull";
 }
 
-function buildDispatchUrl(request: NextRequest, integrationId: string) {
-  return new URL(`/api/sync/${integrationId}/execute`, request.nextUrl.origin);
-}
-
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ integrationId: string }> }
@@ -196,51 +192,18 @@ export async function POST(
       }
     }
 
-    const payload = parsed.data?.mode ? { mode: parsed.data.mode } : {};
-    const dispatchUrl = buildDispatchUrl(request, integration.platform);
-    const cronSecret = process.env.CRON_SECRET;
-    const cookieHeader = request.headers.get("cookie");
-
     after(() => {
-      if (!cronSecret) {
-        void fetch(dispatchUrl, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            ...(cookieHeader ? { Cookie: cookieHeader } : {}),
-          },
-          body: JSON.stringify(payload),
-          cache: "no-store",
-        }).then(async (response) => {
-          if (response.ok) return;
-          const text = await response.text().catch(() => "");
-          console.error(
-            `[sync] session dispatch ${integration.platform} returned ${response.status}: ${text || response.statusText}`,
-          );
-        }).catch((error) => {
-          console.error(`[sync] session dispatch ${integration.platform} failed`, error);
-        });
-        return;
-      }
-
-      void fetch(dispatchUrl, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${cronSecret}`,
-          "x-cron-secret": cronSecret,
-          ...(cookieHeader ? { Cookie: cookieHeader } : {}),
+      void startIntegrationSync(
+        integration,
+        {
+          requestedMode: modes.requestedMode,
+          effectiveMode: modes.effectiveMode,
+          fallbackReason: modes.fallbackReason,
+          triggerSource: "manual",
         },
-        body: JSON.stringify(payload),
-        cache: "no-store",
-      }).then(async (response) => {
-        if (response.ok) return;
-        const text = await response.text().catch(() => "");
-        console.error(
-          `[sync] dispatch ${integration.platform} returned ${response.status}: ${text || response.statusText}`,
-        );
-      }).catch((error) => {
-        console.error(`[sync] dispatch ${integration.platform} failed`, error);
+        "inline",
+      ).catch((error) => {
+        console.error(`[sync] direct dispatch ${integration.platform} failed`, error);
       });
     });
 
