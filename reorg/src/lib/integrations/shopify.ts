@@ -20,6 +20,7 @@ interface ShopifyConfig {
 export class ShopifyAdapter implements MarketplaceAdapter {
   platform: Platform = "SHOPIFY";
   label = "Shopify";
+  private static readonly REQUEST_TIMEOUT_MS = 30_000;
   private config: ShopifyConfig;
   private baseUrl: string;
 
@@ -33,16 +34,34 @@ export class ShopifyAdapter implements MarketplaceAdapter {
     options: RequestInit = {}
   ): Promise<Response> {
     const url = `${this.baseUrl}${endpoint}`;
+    const controller = new AbortController();
+    const timeout = setTimeout(
+      () => controller.abort(),
+      ShopifyAdapter.REQUEST_TIMEOUT_MS,
+    );
 
-    const response = await fetch(url, {
-      ...options,
-      headers: {
-        "X-Shopify-Access-Token": this.config.accessToken,
-        "Content-Type": "application/json",
-        Accept: "application/json",
-        ...options.headers,
-      },
-    });
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        ...options,
+        signal: controller.signal,
+        headers: {
+          "X-Shopify-Access-Token": this.config.accessToken,
+          "Content-Type": "application/json",
+          Accept: "application/json",
+          ...options.headers,
+        },
+      });
+    } catch (error) {
+      if (error instanceof Error && error.name === "AbortError") {
+        throw new Error(
+          `Shopify request timed out after ${ShopifyAdapter.REQUEST_TIMEOUT_MS}ms: ${endpoint}`,
+        );
+      }
+      throw error;
+    } finally {
+      clearTimeout(timeout);
+    }
 
     if (response.status === 429) {
       const retryAfter = parseFloat(

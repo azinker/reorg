@@ -313,10 +313,24 @@ export async function runShopifySync(
 
     while (hasMore) {
       const requestCursor = pageCursor;
-      const result = await adapter.fetchListings({
-        cursor: pageCursor,
-        pageSize: SHOPIFY_CATALOG_PAGE_SIZE,
-      });
+      let result: Awaited<ReturnType<typeof adapter.fetchListings>>;
+      const maxRetries = 2;
+      for (let attempt = 1; ; attempt++) {
+        try {
+          result = await adapter.fetchListings({
+            cursor: pageCursor,
+            pageSize: SHOPIFY_CATALOG_PAGE_SIZE,
+          });
+          break;
+        } catch (fetchErr) {
+          if (attempt >= maxRetries) throw fetchErr;
+          console.warn(
+            `[shopify-sync] fetchListings attempt ${attempt} failed, retrying in 3s:`,
+            fetchErr instanceof Error ? fetchErr.message : fetchErr,
+          );
+          await new Promise((r) => setTimeout(r, 3000));
+        }
+      }
 
       const fullPage = result.listings;
       const pageListings =
