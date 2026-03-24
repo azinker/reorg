@@ -1,8 +1,11 @@
-import { NextResponse, type NextRequest } from "next/server";
+import { after, NextResponse, type NextRequest } from "next/server";
 import { db } from "@/lib/db";
 import { Platform } from "@prisma/client";
 import { z } from "zod";
-import { startIntegrationSync } from "@/lib/services/sync-control";
+import {
+  resolveIntegrationSyncModes,
+  startIntegrationSync,
+} from "@/lib/services/sync-control";
 import { getIntegrationConfig } from "@/lib/integrations/runtime-config";
 import { assessIntegrationWebhookHealth } from "@/lib/webhook-health";
 import {
@@ -17,6 +20,10 @@ import {
 } from "@/lib/services/ebay-analytics";
 import { getSharedEbayQuotaStoreCount } from "@/lib/services/ebay-sync-budget";
 import { getReservedEbayGetItemCalls } from "@/lib/services/ebay-sync-policy";
+import { failStaleRunningJob, isRunningJobStale } from "@/lib/services/sync-jobs";
+
+export const runtime = "nodejs";
+export const maxDuration = 3600;
 
   const postSchema = z
   .object({
@@ -156,20 +163,64 @@ export async function POST(
       );
     }
 
-    const result = await startIntegrationSync(
-      integration,
-      {
-        requestedMode: parsed.data?.mode,
-        triggerSource: "manual",
-      },
-      "inline",
-    );
+    const modes = resolveIntegrationSyncModes(integration, parsed.data?.mode);
+    const runningJob = await db.syncJob.findFirst({
+      where: { integrationId: integration.id, status: "RUNNING" },
+      orderBy: { createdAt: "desc" },
+    });
 
-    if (result.status === "UNSUPPORTED") {
-      return NextResponse.json({ error: result.message }, { status: 501 });
+    if (runningJob) {
+      if (isRunningJobStale(runningJob)) {
+        await failStaleRunningJob(
+          runningJob,
+          "Marked failed automatically because the sync job exceeded the stale running threshold.",
+        );
+      } else {
+        return NextResponse.json({
+          data: {
+            integrationId: integration.id,
+            platform: integration.platform,
+            requestedMode: modes.requestedMode,
+            effectiveMode: modes.effectiveMode,
+            fallbackReason: modes.fallbackReason,
+            status: "ALREADY_RUNNING",
+            jobId: runningJob.id,
+            message: `${integration.label} sync is already running.`,
+          },
+        });
+      }
     }
 
-    return NextResponse.json({ data: result });
+    after(async () => {
+      try {
+        await startIntegrationSync(
+          integration,
+          {
+            requestedMode: modes.requestedMode,
+            triggerSource: "manual",
+          },
+          "inline",
+        );
+      } catch (error) {
+        console.error(`[sync] deferred ${integration.platform} sync failed`, error);
+      }
+    });
+
+    return NextResponse.json({
+      data: {
+        integrationId: integration.id,
+        platform: integration.platform,
+        requestedMode: modes.requestedMode,
+        effectiveMode: modes.effectiveMode,
+        fallbackReason: modes.fallbackReason,
+        status: "STARTED",
+        jobId: null,
+        message:
+          modes.effectiveMode === "incremental"
+            ? `${integration.label} incremental sync started.`
+            : `${integration.label} full sync started.`,
+      },
+    });
   } catch (error) {
     console.error(`[sync] ${integrationId} failed`, error);
     return NextResponse.json(
