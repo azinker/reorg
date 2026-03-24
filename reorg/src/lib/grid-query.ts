@@ -718,6 +718,18 @@ function buildSyntheticVariationParent(children: GridRow[], familyKey: string): 
   const inventoryValues = children
     .map((child) => child.inventory)
     .filter((value): value is number => value != null);
+  const profitAdRatesByPlatform = first.profitAdRatesByPlatform ?? {};
+  const adRates = sortItemNumbers(
+    [...itemNumberMap.values()]
+      .filter((item) => item.platform === "TPP_EBAY" || item.platform === "TT_EBAY")
+      .map((item) => ({
+        platform: item.platform,
+        listingId: item.listingId,
+        marketplaceListingId: item.marketplaceListingId ?? null,
+        variantId: undefined,
+        value: profitAdRatesByPlatform[item.platform] ?? null,
+      })),
+  );
 
   return {
     id: `variation-parent:${familyKey}`,
@@ -746,10 +758,10 @@ function buildSyntheticVariationParent(children: GridRow[], familyKey: string): 
     alternateTitles,
     itemNumbers: sortItemNumbers([...itemNumberMap.values()]),
     salePrices: [],
-    adRates: [],
+    adRates,
     profits: [],
     platformFees: [],
-    profitAdRatesByPlatform: first.profitAdRatesByPlatform ?? {},
+    profitAdRatesByPlatform,
     hasStagedChanges: children.some((child) => child.hasStagedChanges),
   };
 }
