@@ -125,6 +125,7 @@ interface StoreBlockGroupProps {
   showStaged?: boolean;
   includeMissingPlatforms?: boolean;
   missingLabel?: string;
+  missingLabelsByPlatform?: Partial<Record<Platform, string>>;
   compact?: boolean;
 }
 
@@ -197,6 +198,7 @@ export function StoreBlockGroup({
   showStaged = true,
   includeMissingPlatforms = false,
   missingLabel = "Listing not found",
+  missingLabelsByPlatform,
   compact = false,
 }: StoreBlockGroupProps) {
   if (items.length === 0 && !includeMissingPlatforms) {
@@ -226,7 +228,7 @@ export function StoreBlockGroup({
           <MissingStoreBlock
             key={`missing-${entry.platform}-${i}`}
             platform={entry.platform}
-            missingLabel={missingLabel}
+            missingLabel={missingLabelsByPlatform?.[entry.platform] ?? missingLabel}
             compact={compact}
           />
         ),
@@ -1214,6 +1216,7 @@ interface EditableAdRateBlockGroupProps {
   failedPushStates?: Record<string, FailedPushState | undefined>;
   includeMissingPlatforms?: boolean;
   missingLabel?: string;
+  missingLabelsByPlatform?: Partial<Record<Platform, string>>;
 }
 
 export function EditableAdRateBlockGroup({
@@ -1226,6 +1229,7 @@ export function EditableAdRateBlockGroup({
   failedPushStates,
   includeMissingPlatforms = false,
   missingLabel = "Listing not found",
+  missingLabelsByPlatform,
 }: EditableAdRateBlockGroupProps) {
   if (items.length === 0 && !includeMissingPlatforms) {
     return <span className="text-xs text-muted-foreground">—</span>;
@@ -1257,7 +1261,7 @@ export function EditableAdRateBlockGroup({
           <MissingStoreBlock
             key={`missing-${entry.platform}-${i}`}
             platform={entry.platform}
-            missingLabel={missingLabel}
+            missingLabel={missingLabelsByPlatform?.[entry.platform] ?? missingLabel}
           />
         ),
       )}

@@ -3718,6 +3718,10 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
                           showStaged={false}
                           includeMissingPlatforms
                           missingLabel="Set on parent"
+                          missingLabelsByPlatform={{
+                            SHOPIFY: "N/A",
+                            BIGCOMMERCE: "N/A",
+                          }}
                         />
                       ) : (
                         <EditableAdRateBlockGroup
@@ -3730,6 +3734,10 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
                           failedPushStates={failedPushStates.storeStates}
                           includeMissingPlatforms
                           missingLabel="No Listing"
+                          missingLabelsByPlatform={{
+                            SHOPIFY: "N/A",
+                            BIGCOMMERCE: "N/A",
+                          }}
                         />
                       )}
                     </div>
