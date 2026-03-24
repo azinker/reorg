@@ -199,18 +199,26 @@ export async function POST(
     const payload = parsed.data?.mode ? { mode: parsed.data.mode } : {};
     const dispatchUrl = buildDispatchUrl(request, integration.platform);
     const cronSecret = process.env.CRON_SECRET;
+    const cookieHeader = request.headers.get("cookie");
 
     after(() => {
       if (!cronSecret) {
-        void startIntegrationSync(
-          integration,
-          {
-            requestedMode: modes.requestedMode,
-            triggerSource: "manual",
+        void fetch(dispatchUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...(cookieHeader ? { Cookie: cookieHeader } : {}),
           },
-          "inline",
-        ).catch((error) => {
-          console.error(`[sync] deferred ${integration.platform} sync failed`, error);
+          body: JSON.stringify(payload),
+          cache: "no-store",
+        }).then(async (response) => {
+          if (response.ok) return;
+          const text = await response.text().catch(() => "");
+          console.error(
+            `[sync] session dispatch ${integration.platform} returned ${response.status}: ${text || response.statusText}`,
+          );
+        }).catch((error) => {
+          console.error(`[sync] session dispatch ${integration.platform} failed`, error);
         });
         return;
       }
@@ -220,6 +228,8 @@ export async function POST(
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${cronSecret}`,
+          "x-cron-secret": cronSecret,
+          ...(cookieHeader ? { Cookie: cookieHeader } : {}),
         },
         body: JSON.stringify(payload),
         cache: "no-store",

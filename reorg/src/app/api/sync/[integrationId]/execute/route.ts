@@ -3,6 +3,7 @@ import { Platform } from "@prisma/client";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { startIntegrationSync } from "@/lib/services/sync-control";
+import { auth } from "@/lib/auth";
 
 export const runtime = "nodejs";
 export const maxDuration = 800;
@@ -14,17 +15,22 @@ const postSchema = z
   })
   .optional();
 
-function isAuthorized(request: NextRequest) {
+async function isAuthorized(request: NextRequest) {
   const secret = process.env.CRON_SECRET;
-  if (!secret) return false;
+  if (secret) {
+    const headerSecret = request.headers.get("x-cron-secret");
+    const authHeader = request.headers.get("authorization");
+    const bearerSecret = authHeader?.startsWith("Bearer ")
+      ? authHeader.slice("Bearer ".length)
+      : null;
 
-  const headerSecret = request.headers.get("x-cron-secret");
-  const authHeader = request.headers.get("authorization");
-  const bearerSecret = authHeader?.startsWith("Bearer ")
-    ? authHeader.slice("Bearer ".length)
-    : null;
+    if (headerSecret === secret || bearerSecret === secret) {
+      return true;
+    }
+  }
 
-  return headerSecret === secret || bearerSecret === secret;
+  const session = await auth();
+  return Boolean(session?.user?.id);
 }
 
 export async function POST(
@@ -34,7 +40,7 @@ export async function POST(
   const { integrationId } = await context.params;
 
   try {
-    if (!isAuthorized(request)) {
+    if (!(await isAuthorized(request))) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
