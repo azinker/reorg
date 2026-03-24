@@ -670,7 +670,9 @@ export default function SyncPage() {
   }
 
   const loadStoreStatus = useCallback(async (apiPlatform: string) => {
-    const res = await fetch(`/api/sync/${apiPlatform}`);
+    const res = await fetch(`/api/sync/${apiPlatform}?ts=${Date.now()}`, {
+      cache: "no-store",
+    });
     const json = await res.json();
     const data = (json.data ?? null) as SyncRouteData | null;
 
@@ -678,6 +680,23 @@ export default function SyncPage() {
 
     setSyncMeta((prev) => ({ ...prev, [apiPlatform]: data }));
     setLiveJobs((prev) => ({ ...prev, [apiPlatform]: data.lastJob }));
+
+    const job = data.lastJob;
+    if (job?.status === "RUNNING") {
+      setSyncing((prev) => ({ ...prev, [apiPlatform]: "syncing" }));
+    } else if (job?.status === "COMPLETED" || job?.status === "FAILED") {
+      const issueCount = Array.isArray(job.errors) ? job.errors.length : 0;
+      const message =
+        job.status === "COMPLETED"
+          ? `Last sync: ${job.itemsProcessed} processed, ${job.itemsCreated} created, ${job.itemsUpdated} updated${issueCount > 0 ? `, ${issueCount} issues` : ""}`
+          : "Last sync failed - see details below";
+
+      setSyncing((prev) => ({
+        ...prev,
+        [apiPlatform]: job.status === "COMPLETED" ? "done" : "error",
+      }));
+      setResults((prev) => ({ ...prev, [apiPlatform]: message }));
+    }
 
     return data;
   }, []);

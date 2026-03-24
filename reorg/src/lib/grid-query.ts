@@ -113,6 +113,25 @@ const childMasterRowFullSelect = Prisma.validator<Prisma.MasterRowDefaultArgs>()
 
 type DBChildMasterRowFull = Prisma.MasterRowGetPayload<typeof childMasterRowFullSelect>;
 
+function sameStoreIdentity(
+  a: Pick<StoreValue, "platform" | "listingId" | "marketplaceListingId" | "variantId">,
+  b: Pick<StoreValue, "platform" | "listingId" | "marketplaceListingId" | "variantId">,
+) {
+  if (a.marketplaceListingId && b.marketplaceListingId) {
+    return a.marketplaceListingId === b.marketplaceListingId;
+  }
+
+  if (a.variantId && b.variantId) {
+    return (
+      a.platform === b.platform &&
+      a.listingId === b.listingId &&
+      a.variantId === b.variantId
+    );
+  }
+
+  return a.platform === b.platform && a.listingId === b.listingId;
+}
+
 function appendItemNumber(
   map: Map<string, StoreValue>,
   entry: DBListingRef | StoreValue,
@@ -382,24 +401,14 @@ function buildFullChildRows(
     const allListings = cm.listings;
 
     const childSalePrices: StoreValue[] = allListings.map((l) => {
-      const sv: StoreValue = {
-        platform: l.integration.platform as Platform,
-        listingId: l.platformItemId,
-        variantId: l.platformVariantId || undefined,
-        value: l.salePrice,
-      };
+      const sv = listingToStoreValue(l, "salePrice");
       const staged = childStagedMap.get(`${l.id}-salePrice`);
       if (staged) sv.stagedValue = parseFloat(staged.stagedValue);
       return sv;
     });
 
     const childAdRates: StoreValue[] = allListings.map((l) => {
-      const sv: StoreValue = {
-        platform: l.integration.platform as Platform,
-        listingId: l.platformItemId,
-        variantId: l.platformVariantId || undefined,
-        value: l.adRate,
-      };
+      const sv = listingToStoreValue(l, "adRate");
       const staged = childStagedMap.get(`${l.id}-adRate`);
       if (staged) sv.stagedValue = parseFloat(staged.stagedValue);
       return sv;
@@ -408,6 +417,7 @@ function buildFullChildRows(
     const childItemNumbers: StoreValue[] = allListings.map((l) => ({
       platform: l.integration.platform as Platform,
       listingId: l.platformItemId,
+      marketplaceListingId: l.id,
       variantId: l.platformVariantId || undefined,
       value: l.platformItemId,
     }));
@@ -415,17 +425,24 @@ function buildFullChildRows(
     const childFees: StoreValue[] = childSalePrices.map((sp) => {
       const sale = sp.stagedValue != null ? Number(sp.stagedValue) : sp.value != null ? Number(sp.value) : 0;
       const r = sp.platform === "BIGCOMMERCE" || sp.platform === "SHOPIFY" ? 0 : feeRate;
-      return { platform: sp.platform, listingId: sp.listingId, variantId: sp.variantId, value: calcFee(sale, r) };
+      return {
+        platform: sp.platform,
+        listingId: sp.listingId,
+        marketplaceListingId: sp.marketplaceListingId,
+        variantId: sp.variantId,
+        value: calcFee(sale, r),
+      };
     });
 
     const childProfits: StoreValue[] = childSalePrices.map((sp) => {
       const sale = sp.stagedValue != null ? Number(sp.stagedValue) : sp.value != null ? Number(sp.value) : 0;
       const r = sp.platform === "BIGCOMMERCE" || sp.platform === "SHOPIFY" ? 0 : feeRate;
-      const ar = childAdRates.find((a) => a.platform === sp.platform && a.listingId === sp.listingId);
+      const ar = childAdRates.find((a) => sameStoreIdentity(a, sp));
       const adR = ar?.value != null ? Number(ar.value) : 0;
       return {
         platform: sp.platform,
         listingId: sp.listingId,
+        marketplaceListingId: sp.marketplaceListingId,
         variantId: sp.variantId,
         value: calcProfit(sale, cm.supplierCost ?? 0, cm.supplierShipping ?? 0, childShipCost ?? 0, r, adR),
       };

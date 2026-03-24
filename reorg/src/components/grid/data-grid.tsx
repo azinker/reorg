@@ -329,11 +329,30 @@ function applyShippingLookup(row: GridRow, lookup: (w: string | null) => number 
   return recalcRowStatic(updated);
 }
 
+function sameStoreValueIdentity(
+  a: Pick<StoreValue, "platform" | "listingId" | "marketplaceListingId" | "variantId">,
+  b: Pick<StoreValue, "platform" | "listingId" | "marketplaceListingId" | "variantId">,
+) {
+  if (a.marketplaceListingId && b.marketplaceListingId) {
+    return a.marketplaceListingId === b.marketplaceListingId;
+  }
+
+  if (a.variantId && b.variantId) {
+    return (
+      a.platform === b.platform &&
+      a.listingId === b.listingId &&
+      a.variantId === b.variantId
+    );
+  }
+
+  return a.platform === b.platform && a.listingId === b.listingId;
+}
+
 function recalcRowStatic(row: GridRow, overrideFeeRate?: number): GridRow {
   const ebayFeeRate = overrideFeeRate ?? row.platformFeeRate;
 
-  const getAdRate = (platform: string, listingId: string) => {
-    const ar = row.adRates.find((a) => a.platform === platform && a.listingId === listingId);
+  const getAdRate = (target: StoreValue) => {
+    const ar = row.adRates.find((a) => sameStoreValueIdentity(a, target));
     if (!ar) return 0;
     return ar.stagedValue != null ? Number(ar.stagedValue) : ar.value != null ? Number(ar.value) : 0;
   };
@@ -341,16 +360,23 @@ function recalcRowStatic(row: GridRow, overrideFeeRate?: number): GridRow {
   const newFees: StoreValue[] = row.salePrices.map((sp) => {
     const sale = sp.stagedValue != null ? Number(sp.stagedValue) : sp.value != null ? Number(sp.value) : 0;
     const feeRate = sp.platform === "BIGCOMMERCE" || sp.platform === "SHOPIFY" ? 0 : ebayFeeRate;
-    return { platform: sp.platform, listingId: sp.listingId, variantId: sp.variantId, value: calcFee(sale, feeRate) };
+    return {
+      platform: sp.platform,
+      listingId: sp.listingId,
+      marketplaceListingId: sp.marketplaceListingId,
+      variantId: sp.variantId,
+      value: calcFee(sale, feeRate),
+    };
   });
 
   const newProfits: StoreValue[] = row.salePrices.map((sp) => {
     const sale = sp.stagedValue != null ? Number(sp.stagedValue) : sp.value != null ? Number(sp.value) : 0;
     const feeRate = sp.platform === "BIGCOMMERCE" || sp.platform === "SHOPIFY" ? 0 : ebayFeeRate;
-    const adRate = getAdRate(sp.platform, sp.listingId);
+    const adRate = getAdRate(sp);
     return {
       platform: sp.platform,
       listingId: sp.listingId,
+      marketplaceListingId: sp.marketplaceListingId,
       variantId: sp.variantId,
       value: calcProfit(sale, row.supplierCost ?? 0, row.supplierShipping ?? 0, row.shippingCost ?? 0, feeRate, adRate),
     };

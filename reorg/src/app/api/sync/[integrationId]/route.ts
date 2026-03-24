@@ -24,6 +24,7 @@ import { failStaleRunningJob, isRunningJobStale } from "@/lib/services/sync-jobs
 
 export const runtime = "nodejs";
 export const maxDuration = 800;
+export const dynamic = "force-dynamic";
 
   const postSchema = z
   .object({
@@ -365,6 +366,10 @@ export async function GET(
               completedAt: lastJob.completedAt,
             }
           : null,
+      },
+    }, {
+      headers: {
+        "Cache-Control": "no-store, max-age=0, must-revalidate",
       },
     });
   } catch (error) {
