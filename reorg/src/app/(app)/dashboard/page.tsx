@@ -15,7 +15,7 @@ const SCHEDULER_HEALTH_POLL_MS = 120_000;
 
 interface GridPayload {
   rows: GridRow[];
-  source: "db" | "mock";
+  source: "db" | "mock" | "error";
   error: string | null;
 }
 
@@ -31,6 +31,11 @@ interface SchedulerHealthPayload {
 }
 
 async function fetchGridData(): Promise<GridPayload> {
+  const isLocalDev =
+    process.env.NEXT_PUBLIC_APP_ENV === "local" ||
+    (typeof window !== "undefined" &&
+      window.location.hostname.toLowerCase().includes("localhost"));
+
   try {
     const res = await fetch("/api/grid", { cache: "no-store" });
     if (!res.ok) throw new Error(`API returned ${res.status}`);
@@ -39,10 +44,24 @@ async function fetchGridData(): Promise<GridPayload> {
     if (dbRows.length > 0) {
       return { rows: dbRows, source: "db", error: null };
     }
-    return { rows: MOCK_ROWS, source: "mock", error: null };
+
+    if (isLocalDev) {
+      return { rows: MOCK_ROWS, source: "mock", error: null };
+    }
+
+    return {
+      rows: [],
+      source: "error",
+      error: "Live grid returned zero rows.",
+    };
   } catch (err) {
-    console.error("Failed to load grid data from API, falling back to mock:", err);
-    return { rows: MOCK_ROWS, source: "mock", error: String(err) };
+    console.error("Failed to load grid data from API:", err);
+
+    if (isLocalDev) {
+      return { rows: MOCK_ROWS, source: "mock", error: String(err) };
+    }
+
+    return { rows: [], source: "error", error: String(err) };
   }
 }
 
@@ -107,12 +126,12 @@ export default function DashboardPage() {
   const isPageVisible = usePageVisibility();
   const [rows, setRows] = useState<GridRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [source, setSource] = useState<"db" | "mock" | null>(null);
+  const [source, setSource] = useState<"db" | "mock" | "error" | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [schedulerHealth, setSchedulerHealth] = useState<SchedulerHealthPayload["healthSummary"] | null>(null);
   const [loadingProgress, setLoadingProgress] = useState(8);
   const versionRef = useRef<string | null>(null);
-  const sourceRef = useRef<"db" | "mock" | null>(null);
+  const sourceRef = useRef<"db" | "mock" | "error" | null>(null);
   const refreshInFlightRef = useRef(false);
 
   useEffect(() => {
@@ -320,6 +339,18 @@ export default function DashboardPage() {
           <span className="text-xs text-blue-400">
             Refreshing live marketplace values in the background...
           </span>
+        </div>
+      )}
+      {source === "error" && (
+        <div className="border-b border-red-500/20 bg-red-500/5 px-4 py-2">
+          <div className="text-xs text-red-300">
+            <div className="font-semibold">Dashboard connection issue</div>
+            <div className="mt-0.5">
+              The live dashboard data could not be loaded, so reorG is not showing sample rows
+              here anymore.
+            </div>
+            {error ? <div className="mt-1 opacity-90">Detail: {error}</div> : null}
+          </div>
         </div>
       )}
       <div className="min-h-0 min-w-0 flex-1 overflow-hidden">

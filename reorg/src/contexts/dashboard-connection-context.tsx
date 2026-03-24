@@ -13,7 +13,7 @@ export interface GridSummary {
 }
 
 export interface ConnectionInfo {
-  source: "db" | "mock";
+  source: "db" | "mock" | "error";
   error: string | null;
   summary: GridSummary | null;
 }

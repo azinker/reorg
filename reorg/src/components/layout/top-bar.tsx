@@ -62,6 +62,7 @@ export function TopBar({ user, onOpenSidebar }: TopBarProps) {
 
   const isConnected = connectionInfo?.source === "db";
   const isNotConnected = connectionInfo?.source === "mock";
+  const hasConnectionIssue = connectionInfo?.source === "error";
   const summary = connectionInfo?.summary ?? null;
   const hasTooltip = isConnected && summary != null;
   const detailText =
@@ -111,6 +112,10 @@ export function TopBar({ user, onOpenSidebar }: TopBarProps) {
             <span className="inline-flex items-center gap-2 text-sm font-medium text-emerald-500">
               <CheckCircle2 className="h-4 w-4 shrink-0" />
               <span>Connected to database</span>
+            </span>
+          ) : hasConnectionIssue ? (
+            <span className="text-sm font-medium text-red-400">
+              Connection issue
             </span>
           ) : (
             <span className="text-sm font-medium text-amber-500">
