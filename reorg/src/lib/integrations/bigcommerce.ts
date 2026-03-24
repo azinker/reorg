@@ -19,9 +19,12 @@ interface BigCommerceConfig {
 export class BigCommerceAdapter implements MarketplaceAdapter {
   platform: Platform = "BIGCOMMERCE";
   label = "BigCommerce";
-  // BigCommerce supports up to 250 products per page; use the larger page size
-  // to reduce external requests and keep full pulls well under the stale-job window.
-  private static readonly SYNC_PAGE_SIZE = 250;
+  // BigCommerce supports up to 250 products per page, but one product page can
+  // expand into a very large listing batch once variants are flattened. Keep the
+  // API page reasonably large while yielding smaller sync batches so progress is
+  // visible quickly and long first batches do not trip stale-job guards.
+  private static readonly SYNC_PAGE_SIZE = 100;
+  private static readonly SYNC_LISTING_BATCH_SIZE = 200;
   private static readonly REQUEST_TIMEOUT_MS = 30_000;
   private config: BigCommerceConfig;
   private baseUrl: string;
@@ -147,7 +150,16 @@ export class BigCommerceAdapter implements MarketplaceAdapter {
         pageSize: BigCommerceAdapter.SYNC_PAGE_SIZE,
       });
       if (result.listings.length > 0) {
-        yield result.listings;
+        for (
+          let index = 0;
+          index < result.listings.length;
+          index += BigCommerceAdapter.SYNC_LISTING_BATCH_SIZE
+        ) {
+          yield result.listings.slice(
+            index,
+            index + BigCommerceAdapter.SYNC_LISTING_BATCH_SIZE,
+          );
+        }
       }
       cursor = result.nextCursor;
       hasMore = result.hasMore;
