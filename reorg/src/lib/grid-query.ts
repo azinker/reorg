@@ -547,7 +547,7 @@ function buildGridRow(
     return sv;
   });
 
-  const adRates: StoreValue[] = parentListings.map((l) => {
+  const rawAdRates: StoreValue[] = parentListings.map((l) => {
     const sv = listingToStoreValue(l, "adRate");
     const staged = stagedMap.get(`${l.id}-adRate`);
     if (staged) sv.stagedValue = parseFloat(staged.stagedValue);
@@ -555,6 +555,30 @@ function buildGridRow(
   }).filter((entry) => entry.platform === "TPP_EBAY" || entry.platform === "TT_EBAY");
 
   const parentAdRatesByPlatform = buildAdRateLookupByPlatform(parentListings, stagedMap);
+  const adRates: StoreValue[] = isVariationParent
+    ? parentListings
+        .filter((listing) => {
+          const platform = listing.integration.platform as Platform;
+          return platform === "TPP_EBAY" || platform === "TT_EBAY";
+        })
+        .map((listing) => {
+          const platform = listing.integration.platform as Platform;
+          const staged = stagedMap.get(`${listing.id}-adRate`);
+          const effectiveValue =
+            staged != null
+              ? parseFloat(staged.stagedValue)
+              : parentAdRatesByPlatform[platform] ?? null;
+
+          return {
+            platform,
+            listingId: listing.platformItemId,
+            marketplaceListingId: listing.id,
+            variantId: undefined,
+            value: effectiveValue,
+            stagedValue: staged != null ? parseFloat(staged.stagedValue) : undefined,
+          };
+        })
+    : rawAdRates;
 
   const platformFees: StoreValue[] = salePrices.map((sp) => {
     const sale = sp.stagedValue != null ? Number(sp.stagedValue) : sp.value != null ? Number(sp.value) : 0;
@@ -565,7 +589,7 @@ function buildGridRow(
   const profits: StoreValue[] = salePrices.map((sp) => {
     const sale = sp.stagedValue != null ? Number(sp.stagedValue) : sp.value != null ? Number(sp.value) : 0;
     const rate = sp.platform === "BIGCOMMERCE" || sp.platform === "SHOPIFY" ? 0 : feeRate;
-    const ar = adRates.find((a) => a.platform === sp.platform && a.listingId === sp.listingId);
+    const ar = rawAdRates.find((a) => a.platform === sp.platform && a.listingId === sp.listingId);
     const adRate = ar?.value != null ? Number(ar.value) : 0;
     return {
       platform: sp.platform,
