@@ -245,6 +245,36 @@ function listingToStoreValue(listing: ListingLike, field: "salePrice" | "adRate"
   };
 }
 
+function buildAdRateLookupByPlatform(
+  listings: Array<{
+    id: string;
+    adRate: number | null;
+    integration: { platform: Platform };
+  }>,
+  stagedMap: Map<string, { field: string; stagedValue: string; liveValue: string | null }>,
+): Partial<Record<Platform, number>> {
+  const lookup: Partial<Record<Platform, number>> = {};
+
+  for (const listing of listings) {
+    const platform = listing.integration.platform;
+    if (platform !== "TPP_EBAY" && platform !== "TT_EBAY") continue;
+
+    const staged = stagedMap.get(`${listing.id}-adRate`);
+    const effective =
+      staged != null
+        ? parseFloat(staged.stagedValue)
+        : listing.adRate != null
+          ? Number(listing.adRate)
+          : null;
+
+    if (effective != null) {
+      lookup[platform] = effective;
+    }
+  }
+
+  return lookup;
+}
+
 function collectChildSkus(parentListings: DBMasterRow["listings"]): string[] {
   const childSkus = new Set<string>();
   const sortedParents = [...parentListings].sort((a, b) => {
@@ -397,6 +427,7 @@ function buildFullChildRows(
   childMasters: DBChildMasterRowFull[],
   shippingRateMap: Map<string, number>,
   feeRate: number,
+  parentAdRatesByPlatform: Partial<Record<Platform, number>>,
 ): GridRow[] {
   
   const rows: GridRow[] = [];
@@ -416,12 +447,7 @@ function buildFullChildRows(
       return sv;
     });
 
-    const childAdRates: StoreValue[] = allListings.map((l) => {
-      const sv = listingToStoreValue(l, "adRate");
-      const staged = childStagedMap.get(`${l.id}-adRate`);
-      if (staged) sv.stagedValue = parseFloat(staged.stagedValue);
-      return sv;
-    });
+    const childAdRates: StoreValue[] = [];
 
     const childItemNumbers: StoreValue[] = allListings.map((l) => ({
       platform: l.integration.platform as Platform,
@@ -446,8 +472,7 @@ function buildFullChildRows(
     const childProfits: StoreValue[] = childSalePrices.map((sp) => {
       const sale = sp.stagedValue != null ? Number(sp.stagedValue) : sp.value != null ? Number(sp.value) : 0;
       const r = sp.platform === "BIGCOMMERCE" || sp.platform === "SHOPIFY" ? 0 : feeRate;
-      const ar = childAdRates.find((a) => sameStoreIdentity(a, sp));
-      const adR = ar?.value != null ? Number(ar.value) : 0;
+      const adR = parentAdRatesByPlatform[sp.platform] ?? 0;
       return {
         platform: sp.platform,
         listingId: sp.listingId,
@@ -487,6 +512,7 @@ function buildFullChildRows(
       adRates: childAdRates,
       platformFees: childFees,
       profits: childProfits,
+      profitAdRatesByPlatform: parentAdRatesByPlatform,
     });
   }
 
@@ -526,7 +552,9 @@ function buildGridRow(
     const staged = stagedMap.get(`${l.id}-adRate`);
     if (staged) sv.stagedValue = parseFloat(staged.stagedValue);
     return sv;
-  });
+  }).filter((entry) => entry.platform === "TPP_EBAY" || entry.platform === "TT_EBAY");
+
+  const parentAdRatesByPlatform = buildAdRateLookupByPlatform(parentListings, stagedMap);
 
   const platformFees: StoreValue[] = salePrices.map((sp) => {
     const sale = sp.stagedValue != null ? Number(sp.stagedValue) : sp.value != null ? Number(sp.value) : 0;
@@ -573,7 +601,7 @@ function buildGridRow(
   }
 
   const childRows: GridRow[] | undefined = isVariationParent
-    ? buildBatchChildRows(parentListings, childMasterRowsBySku, shippingRateMap, feeRate)
+    ? buildBatchChildRows(parentListings, childMasterRowsBySku, shippingRateMap, feeRate, parentAdRatesByPlatform)
     : undefined;
 
   const itemNumberMap = new Map<string, StoreValue>();
@@ -615,6 +643,7 @@ function buildGridRow(
     adRates,
     platformFees: isVariationParent ? [] : platformFees,
     profits: isVariationParent ? [] : profits,
+    profitAdRatesByPlatform: parentAdRatesByPlatform,
     childRows,
   };
 }
@@ -696,6 +725,7 @@ function buildSyntheticVariationParent(children: GridRow[], familyKey: string): 
     adRates: [],
     profits: [],
     platformFees: [],
+    profitAdRatesByPlatform: first.profitAdRatesByPlatform ?? {},
     hasStagedChanges: children.some((child) => child.hasStagedChanges),
   };
 }
@@ -728,6 +758,12 @@ function mergeVariationParents(rows: GridRow[], familyKey: string): GridRow {
       if (!adRateMap.has(key)) {
         adRateMap.set(key, adRate);
       }
+    }
+    if (row.profitAdRatesByPlatform) {
+      representative.profitAdRatesByPlatform = {
+        ...(representative.profitAdRatesByPlatform ?? {}),
+        ...row.profitAdRatesByPlatform,
+      };
     }
     if (row.alternateTitles?.length) {
       alternateTitles.push(...row.alternateTitles);
@@ -928,7 +964,7 @@ export async function getGridRowById(rowId: string): Promise<GridRow | null> {
       return null;
     }
 
-    return buildFullChildRows([childMaster], shippingRateMap, feeRate)[0] ?? null;
+    return buildFullChildRows([childMaster], shippingRateMap, feeRate, {})[0] ?? null;
   }
 
   const master = await db.masterRow.findUnique({
@@ -957,7 +993,7 @@ async function buildChildRows(
   feeRate: number,
 ): Promise<GridRow[]> {
   const childMasters = await fetchChildMasterRows(parentListings);
-  return buildFullChildRows(childMasters, shippingRateMap, feeRate);
+  return buildFullChildRows(childMasters, shippingRateMap, feeRate, {});
 }
 
 function buildBatchChildRows(
@@ -965,10 +1001,11 @@ function buildBatchChildRows(
   childMasterRowsBySku: Map<string, DBChildMasterRowFull>,
   shippingRateMap: Map<string, number>,
   feeRate: number,
+  parentAdRatesByPlatform: Partial<Record<Platform, number>>,
 ): GridRow[] {
   const childMasters = collectChildSkus(parentListings)
     .map((sku) => childMasterRowsBySku.get(sku))
     .filter((childMaster): childMaster is DBChildMasterRowFull => childMaster != null);
 
-  return buildFullChildRows(childMasters, shippingRateMap, feeRate);
+  return buildFullChildRows(childMasters, shippingRateMap, feeRate, parentAdRatesByPlatform);
 }

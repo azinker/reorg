@@ -88,6 +88,7 @@ export interface GridRow {
   adRates: StoreValue[];
   profits: StoreValue[];
   platformFees: StoreValue[];
+  profitAdRatesByPlatform?: Partial<Record<Platform, number>>;
 
   hasStagedChanges: boolean;
 }

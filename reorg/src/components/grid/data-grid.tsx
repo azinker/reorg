@@ -353,7 +353,7 @@ function recalcRowStatic(row: GridRow, overrideFeeRate?: number): GridRow {
 
   const getAdRate = (target: StoreValue) => {
     const ar = row.adRates.find((a) => sameStoreValueIdentity(a, target));
-    if (!ar) return 0;
+    if (!ar) return row.profitAdRatesByPlatform?.[target.platform] ?? 0;
     return ar.stagedValue != null ? Number(ar.stagedValue) : ar.value != null ? Number(ar.value) : 0;
   };
 
@@ -385,7 +385,39 @@ function recalcRowStatic(row: GridRow, overrideFeeRate?: number): GridRow {
   const hasStaged = row.salePrices.some((sp) => sp.stagedValue != null && sp.stagedValue !== sp.value)
     || row.adRates.some((ar) => ar.stagedValue != null && ar.stagedValue !== ar.value)
     || Boolean(row.stagedUpc && row.stagedUpc !== row.upc);
-  return { ...row, platformFeeRate: ebayFeeRate, platformFees: newFees, profits: newProfits, hasStagedChanges: hasStaged };
+  if (row.isParent && row.childRows?.length) {
+    const nextParentRates: Partial<Record<Platform, number>> = {};
+    for (const rate of row.adRates) {
+      if (rate.platform !== "TPP_EBAY" && rate.platform !== "TT_EBAY") continue;
+      const effective =
+        rate.stagedValue != null ? Number(rate.stagedValue) : rate.value != null ? Number(rate.value) : null;
+      if (effective != null) {
+        nextParentRates[rate.platform] = effective;
+      }
+    }
+
+    const nextChildren = row.childRows.map((child) =>
+      recalcRowStatic({ ...child, profitAdRatesByPlatform: nextParentRates }, ebayFeeRate),
+    );
+
+    return {
+      ...row,
+      platformFeeRate: ebayFeeRate,
+      platformFees: newFees,
+      profits: newProfits,
+      profitAdRatesByPlatform: nextParentRates,
+      childRows: nextChildren,
+      hasStagedChanges: hasStaged || nextChildren.some((child) => child.hasStagedChanges),
+    };
+  }
+
+  return {
+    ...row,
+    platformFeeRate: ebayFeeRate,
+    platformFees: newFees,
+    profits: newProfits,
+    hasStagedChanges: hasStaged,
+  };
 }
 
 function mergeIncomingRows(prevRows: GridRow[], nextRows: GridRow[]): GridRow[] {
@@ -3485,7 +3517,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
                   {isColVisible("itemIds") && (
                     <div className={cn(COL_WIDTHS.itemIds, "flex items-center px-2", cellPy)}>
                       <div className={cn("w-full min-w-0", isChild && "pl-4")}>
-                        <ItemNumberCell items={row.itemNumbers} />
+                        <ItemNumberCell items={row.itemNumbers} includeMissingPlatforms missingLabel="Listing not found" />
                       </div>
                     </div>
                   )}
@@ -3599,7 +3631,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
                   {isColVisible("salePrice") && (
                     <div className={cn(COL_WIDTHS.salePrice, "flex items-center px-3", cellPy)}>
                       <EditableStoreBlockGroup
-                        items={row.salePrices}
+                        items={row.isParent ? [] : row.salePrices}
                         rowId={row.id}
                         onSave={handleSalePriceEdit}
                         onBulkSave={handleSalePriceBulkEdit}
@@ -3608,6 +3640,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
                         quickPushStates={quickPushStates}
                         failedPushStates={failedPushStates.storeStates}
                         includeMissingPlatforms
+                        missingLabel={row.isParent ? "See child rows" : "No Listing"}
                       />
                     </div>
                   )}
@@ -3665,15 +3698,27 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
                   {/* Platform Fees */}
                   {isColVisible("platformFees") && (
                     <div className={cn(COL_WIDTHS.platformFees, "flex items-center px-3", cellPy)}>
-                      <StoreBlockGroup items={row.platformFees} format="currency" showStaged={false} includeMissingPlatforms />
+                      <StoreBlockGroup
+                        items={row.isParent ? [] : row.platformFees}
+                        format="currency"
+                        showStaged={false}
+                        includeMissingPlatforms
+                        missingLabel={row.isParent ? "See child rows" : "No Listing"}
+                      />
                     </div>
                   )}
 
-                  {/* Ad Rate: editable only on parent/standalone rows; child SKUs show rate read-only */}
+                  {/* Ad Rate: editable only on parent/standalone rows; child SKUs use the parent eBay rate */}
                   {isColVisible("adRate") && (
                     <div className={cn(COL_WIDTHS.adRate, "min-w-0 flex items-center px-3", cellPy)}>
                       {row.isVariation && !row.isParent ? (
-                        <StoreBlockGroup items={row.adRates} format="percent" showStaged={false} includeMissingPlatforms />
+                        <StoreBlockGroup
+                          items={[]}
+                          format="percent"
+                          showStaged={false}
+                          includeMissingPlatforms
+                          missingLabel="Set on parent"
+                        />
                       ) : (
                         <EditableAdRateBlockGroup
                           items={row.adRates}
@@ -3684,6 +3729,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
                           quickPushStates={quickPushStates}
                           failedPushStates={failedPushStates.storeStates}
                           includeMissingPlatforms
+                          missingLabel="No Listing"
                         />
                       )}
                     </div>
@@ -3692,7 +3738,12 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
                   {/* Profit */}
                   {isColVisible("profit") && (
                     <div className={cn(COL_WIDTHS.profit, "flex items-center px-3", cellPy)}>
-                      <StoreBlockGroup items={row.profits} format="currency" includeMissingPlatforms compact />
+                      <StoreBlockGroup
+                        items={row.isParent ? [] : row.profits}
+                        format="currency"
+                        includeMissingPlatforms
+                        missingLabel={row.isParent ? "See child rows" : "No Listing"}
+                      />
                     </div>
                   )}
                 </div>
