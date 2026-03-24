@@ -26,7 +26,6 @@ import {
   failStaleRunningJob,
   isRunningJobStale,
 } from "@/lib/services/sync-jobs";
-import { dispatchManualSyncExecution } from "@/lib/services/sync-continuation";
 
 export const runtime = "nodejs";
 export const maxDuration = 800;
@@ -198,14 +197,9 @@ export async function POST(
       }
     }
 
-    const dispatched = dispatchManualSyncExecution(
-      integration.id,
-      parsed.data?.mode,
-    );
-
-    if (!dispatched) {
-      after(() => {
-        void startIntegrationSync(
+    after(async () => {
+      try {
+        await startIntegrationSync(
           integration,
           {
             requestedMode: modes.requestedMode,
@@ -214,11 +208,11 @@ export async function POST(
             triggerSource: "manual",
           },
           "inline",
-        ).catch((error) => {
-          console.error(`[sync] direct dispatch ${integration.platform} failed`, error);
-        });
-      });
-    }
+        );
+      } catch (error) {
+        console.error(`[sync] manual ${integration.platform} sync failed`, error);
+      }
+    });
 
     return NextResponse.json({
       data: {
