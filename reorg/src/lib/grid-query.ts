@@ -1,7 +1,6 @@
 import { db } from "@/lib/db";
 import { calcProfit, calcFee } from "@/lib/grid-types";
 import type { GridRow, StoreValue, Platform, UpcPushTarget } from "@/lib/grid-types";
-import { maybeRepairDuplicateSingletonMarketplaceListings } from "@/lib/services/marketplace-listing-dedupe";
 import { Prisma } from "@prisma/client";
 
 const UPC_PUSH_PLATFORMS = new Set<Platform>(["TPP_EBAY", "TT_EBAY", "BIGCOMMERCE", "SHOPIFY"]);
@@ -171,7 +170,7 @@ function appendItemNumber(
 }
 
 async function fetchMasterRows() {
-  const batchSize = 100;
+  const batchSize = 1000;
   let skip = 0;
 
   return {
@@ -903,8 +902,6 @@ function consolidateStandaloneVariationRows(rows: GridRow[]): GridRow[] {
 
 
 export async function getGridData(): Promise<GridRow[]> {
-  await maybeRepairDuplicateSingletonMarketplaceListings();
-
   const [masterRowBatches, shippingRateMap, feeRateSetting] = await Promise.all([
     fetchMasterRows(),
     fetchShippingRates(),
@@ -942,8 +939,6 @@ export async function getGridData(): Promise<GridRow[]> {
 }
 
 export async function getGridChildRows(parentRowId: string): Promise<GridRow[]> {
-  await maybeRepairDuplicateSingletonMarketplaceListings();
-
   const [master, shippingRateMap, feeRateSetting] = await Promise.all([
     db.masterRow.findUnique({
       where: { id: parentRowId },
@@ -963,8 +958,6 @@ export async function getGridChildRows(parentRowId: string): Promise<GridRow[]> 
 }
 
 export async function getGridRowById(rowId: string): Promise<GridRow | null> {
-  await maybeRepairDuplicateSingletonMarketplaceListings();
-
   const isChildRow = rowId.startsWith("child-");
   const normalizedRowId = isChildRow ? rowId.slice("child-".length) : rowId;
 
