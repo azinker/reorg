@@ -26,6 +26,7 @@ import {
   failStaleRunningJob,
   isRunningJobStale,
 } from "@/lib/services/sync-jobs";
+import { dispatchManualSyncExecution } from "@/lib/services/sync-continuation";
 
 export const runtime = "nodejs";
 export const maxDuration = 800;
@@ -197,20 +198,27 @@ export async function POST(
       }
     }
 
-    after(() => {
-      void startIntegrationSync(
-        integration,
-        {
-          requestedMode: modes.requestedMode,
-          effectiveMode: modes.effectiveMode,
-          fallbackReason: modes.fallbackReason,
-          triggerSource: "manual",
-        },
-        "inline",
-      ).catch((error) => {
-        console.error(`[sync] direct dispatch ${integration.platform} failed`, error);
+    const dispatched = dispatchManualSyncExecution(
+      integration.id,
+      parsed.data?.mode,
+    );
+
+    if (!dispatched) {
+      after(() => {
+        void startIntegrationSync(
+          integration,
+          {
+            requestedMode: modes.requestedMode,
+            effectiveMode: modes.effectiveMode,
+            fallbackReason: modes.fallbackReason,
+            triggerSource: "manual",
+          },
+          "inline",
+        ).catch((error) => {
+          console.error(`[sync] direct dispatch ${integration.platform} failed`, error);
+        });
       });
-    });
+    }
 
     return NextResponse.json({
       data: {

@@ -2010,13 +2010,13 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
     if (mode === "push") {
       queuePushReview(pushItems, "review");
       showToast(
-        `Sale price review ready â€” SKU ${sku} across ${pushItems.length} marketplace${pushItems.length === 1 ? "" : "s"}.`,
+        `Sale price review ready — SKU ${sku} across ${pushItems.length} marketplace${pushItems.length === 1 ? "" : "s"}.`,
       );
       return;
     }
 
     showToast(
-      `Sale price staged â€” SKU ${sku} across ${pushItems.length} marketplace${pushItems.length === 1 ? "" : "s"}.`,
+      `Sale price staged — SKU ${sku} across ${pushItems.length} marketplace${pushItems.length === 1 ? "" : "s"}.`,
     );
   }
 

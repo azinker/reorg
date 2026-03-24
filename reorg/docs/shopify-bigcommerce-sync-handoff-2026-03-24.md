@@ -4,6 +4,7 @@ Date: 2026-03-24
 Repo root: `C:\Users\thepe\OneDrive - theperfectpart.net\Desktop\The Perfect Part reorG`  
 App root: `reorg\`  
 Production: `https://reorg.theperfectpart.net`
+Staging: `https://stage.reorg.theperfectpart.net`
 
 ## Scope
 
@@ -28,6 +29,159 @@ What is still broken / under investigation:
 - Shopify can still appear to finish the main listing work and then remain in `RUNNING` much longer than it should.
 - BigCommerce can still stall after the first chunk, for example around `200 processed / 198 updated`, and remain in `RUNNING` far too long.
 - The remaining issue now looks less like a UI bug and more like a worker lifecycle / long-running function / checkpointing problem.
+
+## Access map for the next agent
+
+This section is intentionally written to help another agent find the right systems and variable names **without exposing actual secret values**.
+
+### Vercel
+
+Production app is hosted on Vercel.
+
+Useful local metadata:
+
+- Local Vercel project file:
+  - [project.json](C:/Users/thepe/OneDrive%20-%20theperfectpart.net/Desktop/The%20Perfect%20Part%20reorG/reorg/.vercel/project.json)
+- Current values from that file:
+  - `projectName`: `reorg`
+  - `projectId`: `prj_VH1kTPKHbO4M3U9NUH4ssF95Yzb4`
+  - `orgId`: `team_aE7hawQ16Q1r4cguIvntKGaK`
+  - `rootDirectory`: `reorg`
+
+Where a Vercel API token would normally be found:
+
+- local shell environment variable name: `VERCEL_TOKEN`
+- or local uncommitted `.env` / machine-level environment
+- if missing locally, create/find it in:
+  - Vercel dashboard -> account settings -> tokens
+
+Important Vercel production env vars relevant to this project:
+
+- `DATABASE_URL`
+- `DIRECT_URL`
+- `NEXT_PUBLIC_APP_ENV`
+- `AUTH_URL`
+- `CRON_SECRET`
+- `BIGCOMMERCE_STORE_HASH`
+- `BIGCOMMERCE_ACCESS_TOKEN`
+- `BIGCOMMERCE_WEBHOOK_SECRET`
+- `SHOPIFY_STORE_DOMAIN`
+- `SHOPIFY_ACCESS_TOKEN`
+- `SHOPIFY_API_VERSION`
+- `SHOPIFY_WEBHOOK_SECRET`
+- `EBAY_MARKETPLACE_ACCOUNT_DELETION_ENDPOINT`
+- `EBAY_MARKETPLACE_ACCOUNT_DELETION_VERIFICATION_TOKEN`
+
+Where to see the expected variable names:
+
+- [.env.example](C:/Users/thepe/OneDrive%20-%20theperfectpart.net/Desktop/The%20Perfect%20Part%20reorG/reorg/.env.example)
+- [env-checklist.md](C:/Users/thepe/OneDrive%20-%20theperfectpart.net/Desktop/The%20Perfect%20Part%20reorG/reorg/docs/env-checklist.md)
+
+### Database / Neon
+
+The app uses PostgreSQL via Prisma. In practice this project has been using Neon-hosted Postgres.
+
+Credential names:
+
+- `DATABASE_URL`
+- `DIRECT_URL`
+
+If API-level Neon access is needed, the variable name used previously was:
+
+- `NEON_API_KEY`
+
+Do not put secret values in docs or git. The next agent should only read them from:
+
+- local `.env` if present
+- Vercel project environment variables
+- machine environment variables
+
+### GitHub
+
+The repo remote is GitHub-based.
+
+Typical access path:
+
+- Git remote + local SSH auth on this machine
+- if an agent shell cannot talk to GitHub directly, ask the user to verify with:
+  - `git log origin/main --oneline -3`
+  - or use their PowerShell with their SSH setup
+
+### eBay Developer Portal
+
+This project already has production eBay app / webhook setup work in place.
+
+Useful docs:
+
+- [api-tokens.md](C:/Users/thepe/OneDrive%20-%20theperfectpart.net/Desktop/The%20Perfect%20Part%20reorG/reorg/docs/api-tokens.md)
+- [ebay-account-deletion.md](C:/Users/thepe/OneDrive%20-%20theperfectpart.net/Desktop/The%20Perfect%20Part%20reorG/reorg/docs/ebay-account-deletion.md)
+
+Known production values that are safe to document:
+
+- Application URL: `https://reorg.theperfectpart.net`
+- Account deletion webhook:
+  - `https://reorg.theperfectpart.net/api/webhooks/ebay/account-deletion`
+
+The verification token exists in Vercel env under:
+
+- `EBAY_MARKETPLACE_ACCOUNT_DELETION_VERIFICATION_TOKEN`
+
+Do not copy its value into docs.
+
+### Shopify
+
+Credential names used by the app:
+
+- `SHOPIFY_CLIENT_ID`
+- `SHOPIFY_CLIENT_SECRET`
+- `SHOPIFY_STORE_DOMAIN`
+- `SHOPIFY_ACCESS_TOKEN`
+- `SHOPIFY_API_VERSION`
+- `SHOPIFY_WEBHOOK_SECRET`
+
+Helpful docs:
+
+- [shopify-setup.md](C:/Users/thepe/OneDrive%20-%20theperfectpart.net/Desktop/The%20Perfect%20Part%20reorG/reorg/docs/shopify-setup.md)
+- [shopify-oauth.md](C:/Users/thepe/OneDrive%20-%20theperfectpart.net/Desktop/The%20Perfect%20Part%20reorG/reorg/docs/shopify-oauth.md)
+
+### BigCommerce
+
+Credential names used by the app:
+
+- `BIGCOMMERCE_STORE_HASH`
+- `BIGCOMMERCE_ACCESS_TOKEN`
+- `BIGCOMMERCE_WEBHOOK_SECRET`
+- `NEXT_PUBLIC_BIGCOMMERCE_STORE_HASH`
+
+Helpful doc:
+
+- [api-tokens.md](C:/Users/thepe/OneDrive%20-%20theperfectpart.net/Desktop/The%20Perfect%20Part%20reorG/reorg/docs/api-tokens.md)
+
+### Cron / internal sync execution
+
+Important variable:
+
+- `CRON_SECRET`
+
+This matters because:
+
+- scheduler calls use it
+- some internal sync execution / continuation flows depend on it
+
+Related code paths:
+
+- [tick route](C:/Users/thepe/OneDrive%20-%20theperfectpart.net/Desktop/The%20Perfect%20Part%20reorG/reorg/src/app/api/scheduler/tick/route.ts)
+- [execute sync route](C:/Users/thepe/OneDrive%20-%20theperfectpart.net/Desktop/The%20Perfect%20Part%20reorG/reorg/src/app/api/sync/[integrationId]/execute/route.ts)
+- [sync-continuation.ts](C:/Users/thepe/OneDrive%20-%20theperfectpart.net/Desktop/The%20Perfect%20Part%20reorG/reorg/src/lib/services/sync-continuation.ts)
+
+### Quick rule for the next agent
+
+If you need access:
+
+- first inspect local uncommitted env on the machine
+- then inspect Vercel project env
+- use the docs above to confirm which variable name you actually need
+- never print the raw secret into the repo or the handoff
 
 ## Important safety constraints
 
@@ -67,6 +221,27 @@ At the moment this handoff file was created, `git status --short` showed:
 
 These are dashboard-related local changes and are **not** the core Shopify/BigCommerce sync work.  
 Do **not** casually revert them while debugging sync.
+
+## Deployment / production verification notes
+
+When checking whether production has a specific fix:
+
+1. Verify local git:
+   - `git log --oneline -5`
+2. Verify pushed branch:
+   - `git log origin/main --oneline -5`
+3. Confirm the latest commit hash matches
+4. Then confirm the newest Vercel deployment is based on that commit
+
+At one point the user explicitly verified:
+
+```text
+cd72f47 (HEAD -> main, origin/main) Keep variation parent item IDs scoped to parent listings
+dbe71c5 Add safe cancel sync control
+8c4c68d Show N/A for Shopify and BigCommerce ad rates
+```
+
+So that pattern is a valid way to confirm what is really pushed.
 
 ## Problem history
 
@@ -268,6 +443,62 @@ Relevant latest commit:
 
 - `310a4de Shorten stuck sync windows and finish Shopify syncs sooner`
 
+### 8. User-facing production symptoms after these fixes
+
+Observed from production screenshots:
+
+- Shopify eventually started showing:
+  - non-zero progress
+  - often `3223 processed / 3223 updated`
+  - but still remained in `RUNNING` far too long
+- BigCommerce improved from immediate failure to:
+  - a true running state
+  - then often `200 processed / 198 updated`
+  - but then it stalled for very long durations, such as `57 minutes`
+
+This is important because it narrows the failure mode:
+
+- launch path issues are not the only problem anymore
+- status caching is not the only problem anymore
+- the worker is getting partway through real work and then not reaching a clean completion
+
+### 9. Current sync-job stale settings at handoff time
+
+Current code in [sync-jobs.ts](C:/Users/thepe/OneDrive%20-%20theperfectpart.net/Desktop/The%20Perfect%20Part%20reorG/reorg/src/lib/services/sync-jobs.ts):
+
+```ts
+const STALE_RUNNING_JOB_MS = 15 * 60 * 1000;
+const STALE_RUNNING_ACTIVE_JOB_MS = 20 * 60 * 1000;
+const LARGE_PROGRESS_ITEM_THRESHOLD = 1000;
+const STALE_RUNNING_ZERO_PROGRESS_MS = 5 * 60 * 1000;
+```
+
+Meaning:
+
+- zero-progress jobs should fail after about 5 minutes
+- lower-progress jobs after about 15 minutes
+- large-progress jobs after about 20 minutes
+
+If production still shows jobs stuck beyond that, one of the following is likely true:
+
+- production is not actually on the newest code
+- the displayed job is not the DB job the UI thinks it is
+- the stale-fail path is not being triggered for that record
+
+### 10. Current concrete suspicion
+
+As of this handoff, the strongest suspicion is:
+
+- BigCommerce and Shopify still need **resumable / checkpointed full sync execution**
+- right now they are still too dependent on a single long-running function invocation
+- BigCommerce especially appears to get through an early chunk and then stop advancing
+- Shopify appears to finish the bulk listing work but still not flip to a final clean state reliably enough
+
+In other words:
+
+- the system is beyond the “button is broken” stage
+- it is now in “long-running production job architecture still needs another pass”
+
 ## What we know from direct inspection
 
 ### Local DB inspection
@@ -285,6 +516,19 @@ This matters because it suggests:
 - marketplace credentials are probably not the core problem
 - the sync architecture can work
 - the failure mode is likely around long-running production execution and job lifecycle, not basic adapter correctness
+
+### Production code state that was confirmed locally
+
+At handoff time, the local branch already contained these sync-related commits:
+
+- `abc708e Fix manual sync worker authorization`
+- `ce30aca Fix BigCommerce manual sync dispatch path`
+- `4479212 Chunk BigCommerce sync batches for faster progress reporting`
+- `8726e84 Finish Shopify and BigCommerce syncs before variation repair`
+- `dbe71c5 Add safe cancel sync control`
+- `310a4de Shorten stuck sync windows and finish Shopify syncs sooner`
+
+So a next agent should assume those ideas have already been attempted and should not rediscover them from scratch.
 
 ### Production UI observations
 
@@ -348,9 +592,21 @@ Variation tail work:
 
 - `reorg/src/lib/services/variation-repair.ts`
 
+Runtime config / env assumptions:
+
+- `reorg/src/lib/integrations/runtime-config.ts`
+- `reorg/.env.example`
+- `reorg/docs/env-checklist.md`
+
 UI/status:
 
 - `reorg/src/app/(app)/sync/page.tsx`
+
+Ops / deployment metadata:
+
+- `reorg/.vercel/project.json`
+- `reorg/docs/api-tokens.md`
+- `reorg/docs/ebay-account-deletion.md`
 
 ## Recommended next debugging steps
 
@@ -391,6 +647,16 @@ Then the best next architectural fix is probably:
 - each invocation processes only a bounded amount of work
 - route re-dispatches next chunk until done
 
+This is probably the highest-leverage next step.
+
+There is already some cursor/state vocabulary in the codebase:
+
+- `syncState.lastCursor`
+- `pendingIncrementalItemIds`
+- `pendingIncrementalWindowEndedAt`
+
+That machinery is richer on the eBay side than on Shopify/BigCommerce right now.
+
 This would make them behave more like a checkpointed job instead of one giant long-lived serverless call.
 
 ### 4. Specifically for BigCommerce
@@ -400,6 +666,7 @@ Investigate whether later pages after the first chunk are slow/hanging:
 - log page numbers
 - log elapsed time per page
 - log batch emission timing
+- log whether the function exits before hitting the final `db.syncJob.update(... status: "COMPLETED")`
 
 The symptom `200 processed / 198 updated` strongly suggests:
 
@@ -418,6 +685,8 @@ If it still shows `3223 / 3223` and remains `RUNNING` even after `310a4de`:
   - audit logging
   - worker lifecycle after response scheduling
 
+Also verify whether the UI card is still tied to the same DB row you think it is.
+
 ## Commands that were useful during debugging
 
 Check git state:
@@ -425,6 +694,20 @@ Check git state:
 ```powershell
 git status --short
 git log --oneline -12
+```
+
+Check Vercel linkage metadata:
+
+```powershell
+Get-Content '.vercel/project.json'
+```
+
+Check env variable names expected by the app:
+
+```powershell
+Get-Content 'reorg/.env.example'
+Get-Content 'reorg/docs/env-checklist.md'
+Get-Content 'reorg/docs/api-tokens.md'
 ```
 
 Inspect recent sync jobs in the current DB:
@@ -477,3 +760,13 @@ What still seems wrong is:
 
 So the next agent should treat this as a **production sync execution / checkpointing problem**, not as a credential problem and not primarily as a UI bug.
 
+## Short plain-English access summary for the next agent
+
+- Vercel project is `reorg`, linked locally in `.vercel/project.json`
+- Production domain is `reorg.theperfectpart.net`
+- Expected Vercel auth token name is `VERCEL_TOKEN`
+- Database secrets live under `DATABASE_URL` and `DIRECT_URL`
+- BigCommerce secrets use `BIGCOMMERCE_*`
+- Shopify secrets use `SHOPIFY_*`
+- eBay deletion webhook details are documented in `docs/ebay-account-deletion.md`
+- Do not copy or print actual secret values into the repo
