@@ -135,7 +135,7 @@ export async function runSync(
 
   const scheduleContinuation = async (resume: CatalogPullResume) => {
     await persistCatalogPullResume(integrationId, integrationPlatform, resume);
-    dispatchCatalogSyncContinuation(integrationId);
+    await dispatchCatalogSyncContinuation(integrationId);
   };
 
   const processBatch = async (batch: Awaited<ReturnType<MarketplaceAdapter["fetchListings"]>>["listings"]) => {

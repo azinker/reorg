@@ -754,8 +754,10 @@ export default function SyncPage() {
           const completionSummary = getCompletionSummary(liveJob, relevantFallbackReason);
           const healthItem = schedulerStatus?.integrationHealth?.find((h) => h.platform === store.apiPlatform);
           const healthStatus = healthItem?.combinedStatus ?? (connected ? "healthy" : undefined);
+          const rateLimits = meta?.rateLimits ?? null;
           const logoSrc = LOGO_MAP[store.platform];
           const pendingBacklogCount = syncState?.pendingIncrementalItemIds?.length ?? 0;
+          const isEbay = store.platform === "eBay";
 
           return (
             <article
@@ -852,6 +854,46 @@ export default function SyncPage() {
                     </div>
                   </div>
                 </div>
+
+                {/* ---- eBay API credits ---- */}
+                {isEbay && rateLimits && rateLimits.methods.length > 0 && (
+                  <div className="mt-4 rounded-lg border border-border/60 bg-muted/10 px-3 py-2.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">eBay API Credits</span>
+                      {rateLimits.nextResetAt && (
+                        <span className="text-[10px] text-muted-foreground">
+                          Resets {formatRelativeTime(rateLimits.nextResetAt, nowMs).replace(" ago", "")}
+                        </span>
+                      )}
+                    </div>
+                    <div className="mt-2 space-y-2">
+                      {rateLimits.methods.map((method) => {
+                        const pct = method.limit > 0 ? Math.round((method.remaining / method.limit) * 100) : 0;
+                        const barColor =
+                          method.status === "exhausted" ? "bg-red-500"
+                            : method.status === "tight" ? "bg-amber-500"
+                            : "bg-emerald-500";
+                        const textColor =
+                          method.status === "exhausted" ? "text-red-400"
+                            : method.status === "tight" ? "text-amber-400"
+                            : "text-emerald-400";
+                        return (
+                          <div key={method.name}>
+                            <div className="flex items-center justify-between text-[11px]">
+                              <span className="text-muted-foreground">{method.name}</span>
+                              <span className={cn("font-semibold tabular-nums", textColor)}>
+                                {method.remaining.toLocaleString()} / {method.limit.toLocaleString()}
+                              </span>
+                            </div>
+                            <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-muted/40">
+                              <div className={cn("h-full rounded-full transition-all", barColor)} style={{ width: `${pct}%` }} />
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
 
                 {/* ---- live progress (during sync) ---- */}
                 {isSyncing && liveJob?.status === "RUNNING" && (

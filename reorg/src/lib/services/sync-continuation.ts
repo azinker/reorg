@@ -11,10 +11,10 @@ function getSyncExecuteBaseUrlAndSecret(): { base: string; secret: string } | nu
   return { base, secret };
 }
 
-function postSyncExecute(
+async function postSyncExecute(
   integrationId: string,
   body: Record<string, unknown>,
-): void {
+): Promise<void> {
   const creds = getSyncExecuteBaseUrlAndSecret();
   if (!creds) {
     console.error(
@@ -25,16 +25,21 @@ function postSyncExecute(
 
   const url = `${creds.base}/api/sync/${integrationId}/execute`;
 
-  void fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${creds.secret}`,
-    },
-    body: JSON.stringify(body),
-  }).catch((err) => {
+  try {
+    await Promise.race([
+      fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${creds.secret}`,
+        },
+        body: JSON.stringify(body),
+      }),
+      new Promise<void>((resolve) => setTimeout(resolve, 5000)),
+    ]);
+  } catch (err) {
     console.error("[sync-continuation] Execute request failed:", err);
-  });
+  }
 }
 
 /**
@@ -42,16 +47,16 @@ function postSyncExecute(
  * Use this for manual sync from `/api/sync/[id]` so work is not tied to the POST
  * handler's `after()` lifetime (unreliable for long pulls on some hosts).
  */
-export function dispatchManualSyncExecution(
+export async function dispatchManualSyncExecution(
   integrationId: string,
   mode?: "full" | "incremental",
-): boolean {
+): Promise<boolean> {
   if (!getSyncExecuteBaseUrlAndSecret()) {
     return false;
   }
   const body: Record<string, unknown> = {};
   if (mode) body.mode = mode;
-  postSyncExecute(integrationId, body);
+  await postSyncExecute(integrationId, body);
   return true;
 }
 
@@ -59,6 +64,6 @@ export function dispatchManualSyncExecution(
  * Chains another serverless invocation so long catalog pulls can finish under
  * per-request time limits (e.g. Vercel maxDuration).
  */
-export function dispatchCatalogSyncContinuation(integrationId: string): void {
-  postSyncExecute(integrationId, { resumeContinuation: true });
+export async function dispatchCatalogSyncContinuation(integrationId: string): Promise<void> {
+  await postSyncExecute(integrationId, { resumeContinuation: true });
 }
