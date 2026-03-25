@@ -120,6 +120,7 @@ const DEFAULT_FILTERS: FilterState = {
   marketplace: "all",
   stockStatus: "all",
   stagedOnly: false,
+  localOnlyOnly: false,
   missingData: null,
   priceMin: null,
   priceMax: null,
@@ -161,6 +162,10 @@ function applyFilters(rows: GridRow[], filters: FilterState): GridRow[] {
 
     if (filters.stagedOnly && !row.hasStagedChanges) {
       if (!row.childRows?.some((c) => c.hasStagedChanges)) return false;
+    }
+
+    if (filters.localOnlyOnly && !row.hasLocalOnlyChanges) {
+      if (!row.childRows?.some((c) => c.hasLocalOnlyChanges)) return false;
     }
 
     if (filters.stockStatus === "in_stock" && row.inventory === 0) return false;
@@ -205,7 +210,7 @@ function applySorting(rows: GridRow[], sortField: SortField, sortDir: SortDir): 
 
 type FlatRow = GridRow & { depth: number; parentId?: string };
 
-function flattenForRender(rows: GridRow[], expandedSet: Set<string>, stockFilter?: string, stagedOnly?: boolean): FlatRow[] {
+function flattenForRender(rows: GridRow[], expandedSet: Set<string>, stockFilter?: string, stagedOnly?: boolean, localOnlyOnly?: boolean): FlatRow[] {
   const flat: FlatRow[] = [];
   for (const row of rows) {
     if (stockFilter === "low_stock" && row.isParent && row.childRows) {
@@ -216,7 +221,8 @@ function flattenForRender(rows: GridRow[], expandedSet: Set<string>, stockFilter
       continue;
     }
 
-    const autoExpand = stagedOnly && row.isParent && row.childRows?.some((c) => c.hasStagedChanges);
+    const autoExpand = (stagedOnly && row.isParent && row.childRows?.some((c) => c.hasStagedChanges))
+      || (localOnlyOnly && row.isParent && row.childRows?.some((c) => c.hasLocalOnlyChanges));
     const isExpanded = expandedSet.has(row.id) || autoExpand;
 
     flat.push({ ...row, depth: 0 });
@@ -225,7 +231,9 @@ function flattenForRender(rows: GridRow[], expandedSet: Set<string>, stockFilter
         continue;
       }
       let children = row.childRows;
-      if (stagedOnly) {
+      if (localOnlyOnly) {
+        children = children.filter((c) => c.hasLocalOnlyChanges);
+      } else if (stagedOnly) {
         children = children.filter((c) => c.hasStagedChanges);
       } else if (stockFilter === "low_stock") {
         children = children.filter((c) => c.inventory != null && c.inventory > 0 && c.inventory < 25);
@@ -2276,8 +2284,8 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
   const filteredRows = useMemo(() => applyFilters(gridRows, filters), [gridRows, filters]);
   const sortedRows = useMemo(() => applySorting(filteredRows, sortField, sortDir), [filteredRows, sortField, sortDir]);
   const flatRows = useMemo(
-    () => flattenForRender(sortedRows, expandedRows, filters.stockStatus, filters.stagedOnly),
-    [sortedRows, expandedRows, filters.stockStatus, filters.stagedOnly]
+    () => flattenForRender(sortedRows, expandedRows, filters.stockStatus, filters.stagedOnly, filters.localOnlyOnly),
+    [sortedRows, expandedRows, filters.stockStatus, filters.stagedOnly, filters.localOnlyOnly]
   );
 
   function collectBulkUpcRows(rows: GridRow[]): GridRow[] {
@@ -2536,11 +2544,19 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
     action: string,
     newUpc?: string,
     target?: { platform?: string; listingId?: string },
+    rejectionReason?: string,
   ) {
     return fetch("/api/grid/stage", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action, sku, field: "upc", newValue: newUpc, ...target }),
+      body: JSON.stringify({
+        action,
+        sku,
+        field: "upc",
+        newValue: newUpc,
+        rejectionReason,
+        ...target,
+      }),
     })
       .then(async (response) => {
         const payload = (await response.json().catch(() => null)) as
@@ -2564,10 +2580,75 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
       });
   }
 
+  function handleSaveUpcLocalOnly(
+    rowId: string,
+    options?: { platform?: string; listingId?: string; rejectionReason?: string },
+  ) {
+    const row = findRow(rowId);
+    if (!row || row.isParent) {
+      showToast("Save locally is only available on a product row.");
+      return;
+    }
+
+    const value = row.stagedUpc?.trim();
+    if (!value) {
+      showToast("Stage a UPC first, or use Save locally from the editor.");
+      return;
+    }
+
+    const target =
+      options?.platform && options?.listingId
+        ? { platform: options.platform, listingId: options.listingId }
+        : undefined;
+    const targets = row.upcPushTargets ?? [];
+    const fullRow = !target;
+    const singleTargetCoversRow = Boolean(target) && targets.length === 1;
+    const clearStagedFlag = fullRow || singleTargetCoversRow;
+
+    void persistUpcAction(row.sku, "stage_local_only", value, target, options?.rejectionReason)
+      .then(() => {
+        updateRowById(rowId, (current) => {
+          const affectedPlatforms = (
+            target
+              ? [target.platform as Platform]
+              : ([...new Set(targets.map((t) => t.platform))] as Platform[])
+          ) as Platform[];
+          const nextLocal = [...new Set([...(current.localOnlyUpcPlatforms ?? []), ...affectedPlatforms])];
+          const nextPushTargets = (current.upcPushTargets ?? []).map((t) =>
+            !target || (t.platform === target.platform && t.listingId === target.listingId)
+              ? { ...t, stagedChangeId: buildLocalUpcStageId(t.platform, t.listingId) }
+              : t,
+          );
+          return {
+            ...current,
+            stagedUpc: value,
+            hasStagedUpc: clearStagedFlag ? false : current.hasStagedUpc,
+            hasLocalOnlyChanges: true,
+            localOnlyUpcPlatforms: nextLocal,
+            upcPushTargets: nextPushTargets,
+            hasStagedChanges:
+              (!clearStagedFlag && current.hasStagedUpc) ||
+              current.salePrices.some((entry) => entry.stagedValue != null && entry.stagedValue !== entry.value) ||
+              current.adRates.some((entry) => entry.stagedValue != null && entry.stagedValue !== entry.value),
+          };
+        });
+        clearQuickPushState(getUpcQuickPushKey(rowId));
+        showToast(
+          target
+            ? `UPC saved locally for ${PLATFORM_SHORT[target.platform as Platform]} on SKU ${row.sku}.`
+            : `UPC saved locally for SKU ${row.sku} (dashboard only).`,
+        );
+      })
+      .catch((err: Error) => {
+        console.error(err);
+        showToast(err.message ?? "Could not save UPC locally.");
+      });
+  }
+
   function handleUpcEdit(
     rowId: string,
     newUpc: string,
-    mode: "stage" | "push" | "fastPush",
+    mode: "stage" | "push" | "fastPush" | "localOnly",
     targetSelection?: { platform: string; listingId: string; currentValue?: string | null },
   ) {
     const row = findRow(rowId);
@@ -2615,6 +2696,50 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
       } else {
         void handleDiscardStagedUpc(rowId);
       }
+      return;
+    }
+
+    if (mode === "localOnly") {
+      const targets = row.upcPushTargets ?? [];
+      const fullRow = !targetSelection;
+      const singleTargetCoversRow = Boolean(targetSelection) && targets.length === 1;
+      const clearStagedFlag = fullRow || singleTargetCoversRow;
+
+      updateRowById(rowId, (current) => {
+        const affectedPlatforms = targetSelection
+          ? [targetSelection.platform as Platform]
+          : ([...new Set(targets.map((t) => t.platform))] as Platform[]);
+        const nextLocal = [...new Set([...(current.localOnlyUpcPlatforms ?? []), ...affectedPlatforms])];
+        const nextPushTargets = (current.upcPushTargets ?? []).map((t) =>
+          selectedTargets.some(
+            (s) => s.platform === t.platform && s.listingId === t.listingId,
+          )
+            ? { ...t, stagedChangeId: buildLocalUpcStageId(t.platform, t.listingId) }
+            : t,
+        );
+        return {
+          ...current,
+          stagedUpc: normalizedUpc,
+          hasStagedUpc: clearStagedFlag ? false : current.hasStagedUpc,
+          hasLocalOnlyChanges: true,
+          localOnlyUpcPlatforms: nextLocal,
+          upcPushTargets: nextPushTargets,
+          hasStagedChanges:
+            (!clearStagedFlag && current.hasStagedUpc) ||
+            current.salePrices.some((entry) => entry.stagedValue != null && entry.stagedValue !== entry.value) ||
+            current.adRates.some((entry) => entry.stagedValue != null && entry.stagedValue !== entry.value),
+        };
+      });
+      void persistUpcAction(
+        row.sku,
+        "stage_local_only",
+        normalizedUpc,
+        targetSelection
+          ? { platform: targetSelection.platform, listingId: targetSelection.listingId }
+          : undefined,
+      );
+      clearQuickPushState(getUpcQuickPushKey(rowId));
+      showToast(`UPC saved locally for SKU ${row.sku} (dashboard only).`);
       return;
     }
 
@@ -2708,6 +2833,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
   useEffect(() => {
     const needsChildHydration =
       filters.stagedOnly ||
+      filters.localOnlyOnly ||
       filters.stockStatus === "low_stock" ||
       filters.stockStatus === "out_of_stock";
 
@@ -2719,6 +2845,9 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
       }
 
       if (filters.stagedOnly && row.childRows.some((child) => child.hasStagedChanges)) {
+        return true;
+      }
+      if (filters.localOnlyOnly && row.childRows.some((child) => child.hasLocalOnlyChanges)) {
         return true;
       }
 
@@ -2736,7 +2865,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
     if (targetParents.length === 0) return;
 
     void Promise.all(targetParents.map((row) => ensureChildRowsLoaded(row.id)));
-  }, [filters.stagedOnly, filters.stockStatus, gridRows]);
+  }, [filters.stagedOnly, filters.localOnlyOnly, filters.stockStatus, gridRows]);
 
   useEffect(() => {
     const expandedParentsNeedingHydration = gridRows.filter(
@@ -2882,6 +3011,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
         const rowUpcStates: Record<string, FailedPushState | undefined> = {};
         for (const target of row.upcPushTargets) {
           if (!target.stagedChangeId) continue;
+          if (row.localOnlyUpcPlatforms?.includes(target.platform)) continue;
           const match = (failuresByComposite.get(`${masterRowId}:${target.platform}:${target.listingId}:upc`) ?? []).find(
             (failure) => valuesMatch(failure.newValue, row.stagedUpc),
           );
@@ -2913,10 +3043,10 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
     let count = 0;
     for (const row of gridRows) {
       for (const sp of row.salePrices) {
-        if (sp.stagedValue != null && sp.stagedValue !== sp.value) count++;
+        if (sp.stagedValue != null && sp.stagedValue !== sp.value && !sp.localOnly) count++;
       }
       for (const ar of row.adRates) {
-        if (ar.stagedValue != null && ar.stagedValue !== ar.value) count++;
+        if (ar.stagedValue != null && ar.stagedValue !== ar.value && !ar.localOnly) count++;
       }
       if (row.hasStagedUpc) {
         count++;
@@ -2924,10 +3054,10 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
       if (row.childRows) {
         for (const child of row.childRows) {
           for (const sp of child.salePrices) {
-            if (sp.stagedValue != null && sp.stagedValue !== sp.value) count++;
+            if (sp.stagedValue != null && sp.stagedValue !== sp.value && !sp.localOnly) count++;
           }
           for (const ar of child.adRates) {
-            if (ar.stagedValue != null && ar.stagedValue !== ar.value) count++;
+            if (ar.stagedValue != null && ar.stagedValue !== ar.value && !ar.localOnly) count++;
           }
           if (child.hasStagedUpc) {
             count++;
@@ -3542,12 +3672,14 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
                           liveFetchRevision={upcLiveRefreshRevisions[row.id] ?? 0}
                           disableLiveFetch={row.isParent && row.id.startsWith("variation-parent:")}
                           stagedUpc={row.stagedUpc}
+                          localOnlyPlatforms={row.localOnlyUpcPlatforms}
                           editable={!row.isParent && (row.upcPushTargets?.length ?? 0) > 0}
                           canPush={!row.isParent && Boolean(row.hasStagedUpc) && (row.upcPushTargets?.length ?? 0) > 0}
                           pushTargets={buildUpcPushChoices(row)}
                           quickPushState={quickPushStates[getUpcQuickPushKey(row.id)]}
                           failedPushTargets={failedPushStates.upcStates[row.id]}
                           onSave={(value, mode, target) => handleUpcEdit(row.id, value, mode, target)}
+                          onSaveUpcLocalOnly={(opts) => handleSaveUpcLocalOnly(row.id, opts)}
                           onReviewPush={() => handlePushStagedUpc(row.id, "review")}
                           onFastPush={() => handlePushStagedUpc(row.id, "fast")}
                           onReviewPushTarget={(platform, listingId) =>

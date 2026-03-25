@@ -49,6 +49,8 @@ export interface StoreValue {
   variantId?: string;
   value: number | string | null;
   stagedValue?: number | string | null;
+  localOnly?: boolean;
+  rejectionReason?: string | null;
   url?: string;
 }
 
@@ -67,6 +69,8 @@ export interface GridRow {
   upc: string | null;
   stagedUpc?: string | null;
   hasStagedUpc?: boolean;
+  hasLocalOnlyChanges?: boolean;
+  localOnlyUpcPlatforms?: Platform[];
   upcPushTargets?: UpcPushTarget[];
   imageUrl: string | null;
   imageSource?: string;
@@ -101,6 +105,7 @@ export type FilterState = {
   marketplace: Platform | "all";
   stockStatus: StockFilter;
   stagedOnly: boolean;
+  localOnlyOnly: boolean;
   missingData: MissingDataFilter | null;
   priceMin: number | null;
   priceMax: number | null;

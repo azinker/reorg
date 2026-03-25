@@ -1502,6 +1502,31 @@ export async function executePush(
     });
   }
 
+  // Mark eBay validation failures as LOCAL_ONLY so they appear on dashboard
+  // but don't clog the push queue. The value is stored locally for reference.
+  const ebayValidationFailures = results.filter(
+    (r) =>
+      !r.success &&
+      r.stagedChangeId &&
+      (r.platform === "TPP_EBAY" || r.platform === "TT_EBAY") &&
+      r.error &&
+      (r.error.toLowerCase().includes("invalid value") ||
+       r.error.toLowerCase().includes("validation")),
+  );
+  if (ebayValidationFailures.length > 0) {
+    await Promise.all(
+      ebayValidationFailures.map((failure) =>
+        db.stagedChange.update({
+          where: { id: failure.stagedChangeId! },
+          data: {
+            status: "LOCAL_ONLY",
+            rejectionReason: failure.error ?? "eBay rejected the value.",
+          },
+        }).catch(() => {}),
+      ),
+    );
+  }
+
   const status = results.every((r) => r.success)
     ? "completed"
     : results.some((r) => r.success)

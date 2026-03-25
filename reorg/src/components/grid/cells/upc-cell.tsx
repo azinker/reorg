@@ -80,6 +80,7 @@ interface UpcCellProps {
   liveFetchRevision?: number;
   disableLiveFetch?: boolean;
   stagedUpc?: string | null;
+  localOnlyPlatforms?: Platform[];
   editable?: boolean;
   canPush?: boolean;
   pushTargets?: Array<{
@@ -95,9 +96,11 @@ interface UpcCellProps {
   failedPushTargets?: Record<string, { summary: string; error: string } | undefined>;
   onSave?: (
     value: string,
-    mode: "stage" | "push" | "fastPush",
+    mode: "stage" | "push" | "fastPush" | "localOnly",
     target?: { platform: string; listingId: string; currentValue?: string | null },
   ) => void;
+  /** Save current staged UPC as LOCAL_ONLY (e.g. after marketplace rejection). */
+  onSaveUpcLocalOnly?: (opts?: { platform?: string; listingId?: string; rejectionReason?: string }) => void;
   onReviewPush?: () => void;
   onFastPush?: () => void;
   onReviewPushTarget?: (platform: string, listingId: string) => void;
@@ -145,7 +148,13 @@ function getLiveUpcText(line: LiveUpcLine): string {
   return "No UPC";
 }
 
-function getLiveUpcBadge(line: LiveUpcLine): string {
+function getLiveUpcBadge(line: LiveUpcLine, localOnlyPlatforms?: Platform[]): string {
+  if (
+    line.kind === "platform" &&
+    localOnlyPlatforms?.includes(line.platform)
+  ) {
+    return "LOCAL";
+  }
   if (line.value) {
     return "LIVE";
   }
@@ -164,6 +173,7 @@ export function UpcCell({
   liveFetchRevision = 0,
   disableLiveFetch = false,
   stagedUpc = null,
+  localOnlyPlatforms = [],
   editable = false,
   canPush = false,
   pushTargets = [],
@@ -177,6 +187,7 @@ export function UpcCell({
   onDiscard,
   onDiscardTarget,
   onMatchUpc,
+  onSaveUpcLocalOnly,
 }: UpcCellProps) {
   const cachedUiState = upcUiStateCache.get(rowId);
   const svgRef = useRef<SVGSVGElement>(null);
@@ -553,7 +564,7 @@ export function UpcCell({
     );
   }
 
-  function saveDraft(mode: "stage" | "push" | "fastPush") {
+  function saveDraft(mode: "stage" | "push" | "fastPush" | "localOnly") {
     const activeTarget = getActivePushTarget();
     const activeChoice =
       activeTarget
@@ -625,33 +636,51 @@ export function UpcCell({
     }
 
     return (
-      <div className="mt-1 grid grid-cols-3 gap-1">
-        <button
-          onClick={onReviewPush}
-          className="inline-flex min-w-0 items-center justify-center rounded bg-emerald-500 px-1 py-[3px] text-[8px] font-bold leading-none text-white hover:bg-emerald-600 cursor-pointer"
-        >
-          {renderCompactButtonLabel("Review Push")}
-        </button>
-        <button
-          onClick={onFastPush}
-          className="inline-flex min-w-0 items-center justify-center rounded bg-blue-500 px-1 py-[3px] text-[8px] font-bold leading-none text-white hover:bg-blue-600 cursor-pointer"
-        >
-          {renderCompactButtonLabel("Fast Push")}
-        </button>
-        <button
-          onClick={() => {
-            if (actionableTarget && onDiscardTarget) {
-              onDiscardTarget(actionableTarget.platform, actionableTarget.listingId);
-              return;
+      <div className="mt-1 space-y-1">
+        <div className="grid grid-cols-3 gap-1">
+          <button
+            onClick={onReviewPush}
+            className="inline-flex min-w-0 items-center justify-center rounded bg-emerald-500 px-1 py-[3px] text-[8px] font-bold leading-none text-white hover:bg-emerald-600 cursor-pointer"
+          >
+            {renderCompactButtonLabel("Review Push")}
+          </button>
+          <button
+            onClick={onFastPush}
+            className="inline-flex min-w-0 items-center justify-center rounded bg-blue-500 px-1 py-[3px] text-[8px] font-bold leading-none text-white hover:bg-blue-600 cursor-pointer"
+          >
+            {renderCompactButtonLabel("Fast Push")}
+          </button>
+          <button
+            onClick={() => {
+              if (actionableTarget && onDiscardTarget) {
+                onDiscardTarget(actionableTarget.platform, actionableTarget.listingId);
+                return;
+              }
+              setDismissedPlatforms((prev) =>
+                prev.includes(line.platform) ? prev : [...prev, line.platform],
+              );
+            }}
+            className="inline-flex min-w-0 items-center justify-center rounded bg-muted px-1 py-[3px] text-[8px] font-medium leading-none text-muted-foreground hover:text-foreground cursor-pointer"
+          >
+            {renderCompactButtonLabel("Discard")}
+          </button>
+        </div>
+        {onSaveUpcLocalOnly ? (
+          <button
+            type="button"
+            onClick={() =>
+              onSaveUpcLocalOnly(
+                actionableTarget
+                  ? { platform: actionableTarget.platform, listingId: actionableTarget.listingId }
+                  : undefined,
+              )
             }
-            setDismissedPlatforms((prev) =>
-              prev.includes(line.platform) ? prev : [...prev, line.platform],
-            );
-          }}
-          className="inline-flex min-w-0 items-center justify-center rounded bg-muted px-1 py-[3px] text-[8px] font-medium leading-none text-muted-foreground hover:text-foreground cursor-pointer"
-        >
-          {renderCompactButtonLabel("Discard")}
-        </button>
+            className="w-full rounded border border-amber-500/50 bg-amber-500/15 px-1 py-[3px] text-[8px] font-bold leading-none text-amber-200 hover:bg-amber-500/25 cursor-pointer"
+            title="Store this UPC as LOCAL on the dashboard only — no marketplace update."
+          >
+            {renderCompactButtonLabel("Local only")}
+          </button>
+        ) : null}
       </div>
     );
   }
@@ -714,11 +743,15 @@ export function UpcCell({
               <span
                 className={cn(
                   "inline-flex min-h-[18px] min-w-[22px] items-center justify-center rounded-sm px-0.5 text-[6px] font-bold leading-none",
-                  failedPushTarget ? "bg-red-500 text-white" : "bg-amber-500 text-black",
+                  failedPushTarget
+                    ? "bg-red-500 text-white"
+                    : localOnlyPlatforms?.includes(line.platform)
+                      ? "bg-amber-500 text-black"
+                      : "bg-amber-500 text-black",
                 )}
                 title={failedPushTarget?.error}
               >
-                {failedPushTarget ? "FAILED" : "NEW"}
+                {failedPushTarget ? "FAILED" : localOnlyPlatforms?.includes(line.platform) ? "LOCAL" : "NEW"}
               </span>
             </div>
             <div className="mt-1 grid min-h-[26px] min-w-0 grid-cols-[46px_minmax(0,1fr)_34px] items-center gap-1.5">
@@ -736,30 +769,50 @@ export function UpcCell({
               <span
                 className={cn(
                   "inline-flex min-h-[18px] min-w-[22px] items-center justify-center rounded-sm px-0.5 text-[6px] font-bold leading-none text-white",
-                  line.value
-                    ? line.platform === "TPP_EBAY"
-                      ? "bg-blue-500"
-                      : line.platform === "TT_EBAY"
-                        ? "bg-emerald-500"
-                      : line.platform === "BIGCOMMERCE"
-                          ? "bg-orange-500"
-                          : "bg-lime-500 text-black"
-                    : line.state === "pending_refresh"
-                      ? "bg-amber-500 text-black"
-                      : line.state === "not_found"
-                        ? "bg-muted text-muted-foreground"
-                      : "bg-muted text-muted-foreground",
+                  line.kind === "platform" && localOnlyPlatforms?.includes(line.platform)
+                    ? "bg-amber-500 text-black"
+                    : line.value
+                      ? line.platform === "TPP_EBAY"
+                        ? "bg-blue-500"
+                        : line.platform === "TT_EBAY"
+                          ? "bg-emerald-500"
+                        : line.platform === "BIGCOMMERCE"
+                            ? "bg-orange-500"
+                            : "bg-lime-500 text-black"
+                      : line.state === "pending_refresh"
+                        ? "bg-amber-500 text-black"
+                        : line.state === "not_found"
+                          ? "bg-muted text-muted-foreground"
+                        : "bg-muted text-muted-foreground",
                 )}
               >
-                {getLiveUpcBadge(line)}
+                {getLiveUpcBadge(line, localOnlyPlatforms)}
               </span>
             </div>
             {failedPushTarget ? (
-              <div
-                className="mt-1 truncate text-[9px] font-medium leading-none text-red-300"
-                title={failedPushTarget.error}
-              >
-                {failedPushTarget.summary}
+              <div className="mt-1 space-y-1">
+                <div
+                  className="truncate text-[9px] font-medium leading-none text-red-300"
+                  title={failedPushTarget.error}
+                >
+                  {failedPushTarget.summary}
+                </div>
+                {onSaveUpcLocalOnly && actionableTarget ? (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      onSaveUpcLocalOnly({
+                        platform: line.platform,
+                        listingId: actionableTarget.listingId,
+                        rejectionReason: failedPushTarget.error,
+                      })
+                    }
+                    className="w-full rounded bg-amber-500/90 px-1.5 py-1 text-[8px] font-bold uppercase leading-none text-black hover:bg-amber-400 cursor-pointer"
+                    title="Keep this UPC on the dashboard only (LOCAL). Does not send to the marketplace."
+                  >
+                    Save locally (no push)
+                  </button>
+                ) : null}
               </div>
             ) : null}
             {renderInlineUpcActions(line)}
@@ -792,22 +845,24 @@ export function UpcCell({
             <span
               className={cn(
                 "inline-flex min-h-[18px] min-w-[22px] items-center justify-center rounded-sm px-0.5 text-[6px] font-bold leading-none text-white",
-                line.value
-                  ? line.platform === "TPP_EBAY"
-                    ? "bg-blue-500"
-                    : line.platform === "TT_EBAY"
-                      ? "bg-emerald-500"
-                    : line.platform === "BIGCOMMERCE"
-                        ? "bg-orange-500"
-                        : "bg-lime-500 text-black"
-                  : line.state === "pending_refresh"
-                    ? "bg-amber-500 text-black"
-                    : line.state === "not_found"
-                      ? "bg-muted text-muted-foreground"
-                    : "bg-muted text-muted-foreground",
+                line.kind === "platform" && localOnlyPlatforms?.includes(line.platform)
+                  ? "bg-amber-500 text-black"
+                  : line.value
+                    ? line.platform === "TPP_EBAY"
+                      ? "bg-blue-500"
+                      : line.platform === "TT_EBAY"
+                        ? "bg-emerald-500"
+                      : line.platform === "BIGCOMMERCE"
+                          ? "bg-orange-500"
+                          : "bg-lime-500 text-black"
+                    : line.state === "pending_refresh"
+                      ? "bg-amber-500 text-black"
+                      : line.state === "not_found"
+                        ? "bg-muted text-muted-foreground"
+                      : "bg-muted text-muted-foreground",
               )}
             >
-            {getLiveUpcBadge(line)}
+            {getLiveUpcBadge(line, localOnlyPlatforms)}
             </span>
           </div>
           {renderCopyButton(line.value, `${line.label} UPC`)}
@@ -1280,6 +1335,20 @@ export function UpcCell({
               {renderCompactButtonLabel("Fast Push")}
             </button>
           </div>
+        ) : null}
+        {showActions && onSave ? (
+          <button
+            type="button"
+            onClick={() => {
+              saveDraft("localOnly");
+              setEditing(false);
+              setShowActions(false);
+            }}
+            className="mt-1 w-full rounded border border-amber-500/50 bg-amber-500/15 px-1.5 py-1.5 text-[9px] font-bold leading-none text-amber-200 hover:bg-amber-500/25 cursor-pointer"
+            title="Save on the dashboard only (LOCAL). Does not push to any marketplace."
+          >
+            {renderCompactButtonLabel("Local only (dashboard)")}
+          </button>
         ) : null}
       </div>
     );

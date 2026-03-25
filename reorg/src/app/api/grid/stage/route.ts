@@ -5,12 +5,13 @@ import { db } from "@/lib/db";
 const UPC_STAGEABLE_PLATFORMS = new Set(["TPP_EBAY", "TT_EBAY", "BIGCOMMERCE", "SHOPIFY"]);
 
 const stageSchema = z.object({
-  action: z.enum(["stage", "push", "discard", "clear_all"]),
+  action: z.enum(["stage", "stage_local_only", "push", "discard", "clear_all"]),
   sku: z.string().optional(),
   platform: z.string().optional(),
   listingId: z.string().optional(),
   newPrice: z.number().optional(),
   newValue: z.string().optional(),
+  rejectionReason: z.string().optional(),
   field: z.enum(["salePrice", "adRate", "upc"]).optional(),
 });
 
@@ -26,7 +27,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { action, sku, platform, listingId, newPrice, newValue, field: stageField } = parsed.data;
+    const { action, sku, platform, listingId, newPrice, newValue, rejectionReason, field: stageField } = parsed.data;
     const targetField = stageField ?? "salePrice";
 
     if (action === "clear_all") {
@@ -249,6 +250,189 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({
           data: {
             action: "staged",
+            sku,
+            field: "upc",
+            newValue: normalizedUpc,
+            targetCount: eligibleListings.length,
+          },
+        });
+      }
+
+      if (action === "stage_local_only") {
+        const normalizedUpc = newValue?.trim() ?? "";
+        if (!normalizedUpc) {
+          return NextResponse.json({ error: "newValue required for local-only UPC" }, { status: 400 });
+        }
+
+        if (isTargetedUpcAction && eligibleListings.length === 0) {
+          return NextResponse.json({ error: "Supported UPC listing not found" }, { status: 404 });
+        }
+
+        const liveValue = master.upc?.trim() || null;
+        const reason =
+          rejectionReason?.trim() ||
+          "Saved locally (dashboard only — not applied on the marketplace).";
+
+        if (isTargetedUpcAction) {
+          const targetListingIds = eligibleListings.map((listing) => listing.id);
+
+          const stagedRemaining = await db.stagedChange.count({
+            where: {
+              masterRowId: master.id,
+              marketplaceListingId: { in: targetListingIds },
+              field: "upc",
+              status: "STAGED",
+            },
+          });
+          const localRows = await db.stagedChange.findMany({
+            where: {
+              masterRowId: master.id,
+              marketplaceListingId: { in: targetListingIds },
+              field: "upc",
+              status: "LOCAL_ONLY",
+            },
+          });
+          const alreadyLocalOnly =
+            stagedRemaining === 0 &&
+            localRows.length === targetListingIds.length &&
+            localRows.every((r) => r.stagedValue?.trim() === normalizedUpc);
+
+          if (alreadyLocalOnly) {
+            return NextResponse.json({
+              data: {
+                action: "noop",
+                reason: "unchanged",
+                sku,
+                platform,
+                listingId,
+                field: "upc",
+                newValue: normalizedUpc,
+              },
+            });
+          }
+
+          await db.stagedChange.updateMany({
+            where: {
+              masterRowId: master.id,
+              marketplaceListingId: { in: targetListingIds },
+              field: "upc",
+              status: { in: ["STAGED", "LOCAL_ONLY"] },
+            },
+            data: { status: "CANCELLED" },
+          });
+
+          const systemUser = await getSystemUser();
+          const createdStages = await Promise.all(
+            eligibleListings.map((listing) =>
+              db.stagedChange.create({
+                data: {
+                  masterRowId: master.id,
+                  marketplaceListingId: listing.id,
+                  field: "upc",
+                  stagedValue: normalizedUpc,
+                  liveValue: liveValue,
+                  status: "LOCAL_ONLY",
+                  rejectionReason: reason,
+                  changedById: systemUser.id,
+                },
+              }),
+            ),
+          );
+
+          await db.auditLog.create({
+            data: {
+              userId: systemUser.id,
+              action: "staged_change_local_only",
+              entityType: "StagedChange",
+              entityId: master.id,
+              details: {
+                sku: master.sku,
+                field: "upc",
+                newValue: normalizedUpc,
+                platform,
+                listingId,
+                targetCount: eligibleListings.length,
+                rejectionReason: reason,
+              },
+            },
+          });
+
+          return NextResponse.json({
+            data: {
+              action: "staged_local_only",
+              sku,
+              platform,
+              listingId,
+              field: "upc",
+              newValue: normalizedUpc,
+              targetCount: eligibleListings.length,
+              targets: eligibleListings.map((listing, index) => ({
+                platform: listing.integration.platform,
+                listingId: listing.platformItemId,
+                marketplaceListingId: listing.id,
+                stagedChangeId: createdStages[index]?.id ?? null,
+              })),
+            },
+          });
+        }
+
+        await db.stagedChange.updateMany({
+          where: {
+            masterRowId: master.id,
+            field: "upc",
+            status: { in: ["STAGED", "LOCAL_ONLY"] },
+          },
+          data: { status: "CANCELLED" },
+        });
+
+        const systemUser = await getSystemUser();
+        if (eligibleListings.length === 0) {
+          await db.stagedChange.create({
+            data: {
+              masterRowId: master.id,
+              marketplaceListingId: null,
+              field: "upc",
+              stagedValue: normalizedUpc,
+              liveValue: liveValue,
+              status: "LOCAL_ONLY",
+              rejectionReason: reason,
+              changedById: systemUser.id,
+            },
+          });
+        } else {
+          await db.stagedChange.createMany({
+            data: eligibleListings.map((listing) => ({
+              masterRowId: master.id,
+              marketplaceListingId: listing.id,
+              field: "upc",
+              stagedValue: normalizedUpc,
+              liveValue: liveValue,
+              status: "LOCAL_ONLY" as const,
+              rejectionReason: reason,
+              changedById: systemUser.id,
+            })),
+          });
+        }
+
+        await db.auditLog.create({
+          data: {
+            userId: systemUser.id,
+            action: "staged_change_local_only",
+            entityType: "StagedChange",
+            entityId: master.id,
+            details: {
+              sku: master.sku,
+              field: "upc",
+              newValue: normalizedUpc,
+              targetCount: eligibleListings.length,
+              rejectionReason: reason,
+            },
+          },
+        });
+
+        return NextResponse.json({
+          data: {
+            action: "staged_local_only",
             sku,
             field: "upc",
             newValue: normalizedUpc,

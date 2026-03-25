@@ -47,6 +47,7 @@ function hasActiveFilters(f: FilterState): boolean {
     f.marketplace !== "all" ||
     f.stockStatus !== "all" ||
     f.stagedOnly ||
+    f.localOnlyOnly ||
     f.missingData !== null ||
     f.priceMin !== null ||
     f.priceMax !== null ||
@@ -113,6 +114,7 @@ export function FilterBar({ filters, onChange }: FilterBarProps) {
       marketplace: "all",
       stockStatus: "all",
       stagedOnly: false,
+      localOnlyOnly: false,
       missingData: null,
       priceMin: null,
       priceMax: null,
@@ -152,6 +154,18 @@ export function FilterBar({ filters, onChange }: FilterBarProps) {
         )}
       >
         Staged Only
+      </button>
+
+      <button
+        onClick={() => onChange({ ...filters, localOnlyOnly: !filters.localOnlyOnly })}
+        className={cn(
+          "rounded-md border px-2.5 py-1 text-xs font-medium transition-colors cursor-pointer",
+          filters.localOnlyOnly
+            ? "border-amber-500 bg-amber-500/15 text-amber-400"
+            : "border-input bg-background text-muted-foreground hover:text-foreground"
+        )}
+      >
+        Local Only
       </button>
 
       <select

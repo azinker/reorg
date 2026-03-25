@@ -54,13 +54,15 @@ const masterRowWithRelations = Prisma.validator<Prisma.MasterRowDefaultArgs>()({
       },
     },
     stagedChanges: {
-      where: { status: "STAGED" },
+      where: { status: { in: ["STAGED", "LOCAL_ONLY"] } },
       select: {
         id: true,
         marketplaceListingId: true,
         field: true,
         stagedValue: true,
         liveValue: true,
+        status: true,
+        rejectionReason: true,
       },
     },
   },
@@ -99,13 +101,15 @@ const childMasterRowFullSelect = Prisma.validator<Prisma.MasterRowDefaultArgs>()
       },
     },
     stagedChanges: {
-      where: { status: "STAGED" },
+      where: { status: { in: ["STAGED", "LOCAL_ONLY"] } },
       select: {
         id: true,
         marketplaceListingId: true,
         field: true,
         stagedValue: true,
         liveValue: true,
+        status: true,
+        rejectionReason: true,
       },
     },
   },
@@ -191,11 +195,13 @@ function buildStagedMap(
     field: string;
     stagedValue: string;
     liveValue: string | null;
+    status: string;
+    rejectionReason: string | null;
   }>,
 ) {
   const stagedMap = new Map<
     string,
-    { field: string; stagedValue: string; liveValue: string | null }
+    { field: string; stagedValue: string; liveValue: string | null; localOnly: boolean; rejectionReason: string | null }
   >();
 
   for (const sc of stagedChanges) {
@@ -204,6 +210,8 @@ function buildStagedMap(
         field: sc.field,
         stagedValue: sc.stagedValue,
         liveValue: sc.liveValue,
+        localOnly: sc.status === "LOCAL_ONLY",
+        rejectionReason: sc.rejectionReason,
       });
     }
   }
@@ -252,7 +260,7 @@ function buildAdRateLookupByPlatform(
     integration: { platform: Platform };
     childListings?: Array<{ adRate: number | null }>;
   }>,
-  stagedMap: Map<string, { field: string; stagedValue: string; liveValue: string | null }>,
+  stagedMap: Map<string, { field: string; stagedValue: string; liveValue: string | null; localOnly: boolean; rejectionReason: string | null }>,
 ): Partial<Record<Platform, number>> {
   const lookup: Partial<Record<Platform, number>> = {};
 
@@ -320,9 +328,11 @@ function buildChildStagedMap(
     field: string;
     stagedValue: string;
     liveValue: string | null;
+    status: string;
+    rejectionReason: string | null;
   }>,
 ) {
-  const childStagedMap = new Map<string, { id: string; field: string; stagedValue: string; liveValue: string | null }>();
+  const childStagedMap = new Map<string, { id: string; field: string; stagedValue: string; liveValue: string | null; localOnly: boolean; rejectionReason: string | null }>();
   for (const sc of stagedChanges) {
     if (sc.marketplaceListingId) {
       childStagedMap.set(`${sc.marketplaceListingId}-${sc.field}`, {
@@ -330,6 +340,8 @@ function buildChildStagedMap(
         field: sc.field,
         stagedValue: sc.stagedValue,
         liveValue: sc.liveValue,
+        localOnly: sc.status === "LOCAL_ONLY",
+        rejectionReason: sc.rejectionReason,
       });
     }
   }
@@ -348,10 +360,13 @@ function buildUpcStageDetails(
     marketplaceListingId: string | null;
     field: string;
     stagedValue: string;
+    status: string;
   }>,
 ) {
   const upcStages = stagedChanges.filter((change) => change.field === "upc");
-  const stagedUpc = upcStages[0]?.stagedValue ?? null;
+  const activeUpcStages = upcStages.filter((s) => s.status === "STAGED");
+  const localOnlyUpcStages = upcStages.filter((s) => s.status === "LOCAL_ONLY");
+  const stagedUpc = activeUpcStages[0]?.stagedValue ?? localOnlyUpcStages[0]?.stagedValue ?? null;
   const upcPushTargets: UpcPushTarget[] = [];
 
   const stageByListingId = new Map(
@@ -360,12 +375,18 @@ function buildUpcStageDetails(
       .map((change) => [change.marketplaceListingId as string, change]),
   );
 
+  const localOnlyUpcPlatforms: Platform[] = [];
+
   for (const listing of listings) {
     if (!UPC_PUSH_PLATFORMS.has(listing.integration.platform)) {
       continue;
     }
 
     const stagedChange = stageByListingId.get(listing.id);
+
+    if (stagedChange?.status === "LOCAL_ONLY") {
+      localOnlyUpcPlatforms.push(listing.integration.platform);
+    }
 
     upcPushTargets.push({
       platform: listing.integration.platform,
@@ -378,7 +399,9 @@ function buildUpcStageDetails(
 
   return {
     stagedUpc: stagedUpc ?? null,
-    hasStagedUpc: upcStages.length > 0,
+    hasStagedUpc: activeUpcStages.length > 0,
+    hasLocalOnlyChanges: localOnlyUpcStages.length > 0,
+    localOnlyUpcPlatforms,
     upcPushTargets,
   };
 }
@@ -507,7 +530,11 @@ function buildFullChildRows(
     const childSalePrices: StoreValue[] = allListings.map((l) => {
       const sv = listingToStoreValue(l, "salePrice");
       const staged = childStagedMap.get(`${l.id}-salePrice`);
-      if (staged) sv.stagedValue = parseFloat(staged.stagedValue);
+      if (staged) {
+        sv.stagedValue = parseFloat(staged.stagedValue);
+        sv.localOnly = staged.localOnly;
+        sv.rejectionReason = staged.rejectionReason;
+      }
       return sv;
     });
 
@@ -556,6 +583,8 @@ function buildFullChildRows(
       upc: cm.upc,
       stagedUpc: upcStage.stagedUpc,
       hasStagedUpc: upcStage.hasStagedUpc,
+      hasLocalOnlyChanges: upcStage.hasLocalOnlyChanges,
+      localOnlyUpcPlatforms: upcStage.localOnlyUpcPlatforms,
       upcPushTargets: upcStage.upcPushTargets,
       imageUrl: cm.imageUrl ?? parentImageUrl ?? null,
       weight: cm.weight,
@@ -570,7 +599,7 @@ function buildFullChildRows(
       childRowsHydrated: true,
       alternateTitles: [],
       hasStagedChanges:
-        upcStage.hasStagedUpc ||
+        upcStage.hasStagedUpc || upcStage.hasLocalOnlyChanges ||
         childSalePrices.some((sp) => sp.stagedValue != null && sp.stagedValue !== sp.value)
         || childAdRates.some((ar) => ar.stagedValue != null && ar.stagedValue !== ar.value),
       itemNumbers: sortItemNumbers(childItemNumbers),
@@ -587,7 +616,7 @@ function buildFullChildRows(
 
 function buildGridRow(
   master: DBMasterRow,
-  stagedMap: Map<string, { field: string; stagedValue: string; liveValue: string | null }>,
+  stagedMap: Map<string, { field: string; stagedValue: string; liveValue: string | null; localOnly: boolean; rejectionReason: string | null }>,
   shippingRateMap: Map<string, number>,
   feeRate: number,
   childMasterRowsBySku: Map<string, DBChildMasterRowFull>,
@@ -610,14 +639,22 @@ function buildGridRow(
   const salePrices: StoreValue[] = parentListings.map((l) => {
     const sv = listingToStoreValue(l, "salePrice");
     const staged = stagedMap.get(`${l.id}-salePrice`);
-    if (staged) sv.stagedValue = parseFloat(staged.stagedValue);
+    if (staged) {
+      sv.stagedValue = parseFloat(staged.stagedValue);
+      sv.localOnly = staged.localOnly;
+      sv.rejectionReason = staged.rejectionReason;
+    }
     return sv;
   });
 
   const rawAdRates: StoreValue[] = parentListings.map((l) => {
     const sv = listingToStoreValue(l, "adRate");
     const staged = stagedMap.get(`${l.id}-adRate`);
-    if (staged) sv.stagedValue = parseFloat(staged.stagedValue);
+    if (staged) {
+      sv.stagedValue = parseFloat(staged.stagedValue);
+      sv.localOnly = staged.localOnly;
+      sv.rejectionReason = staged.rejectionReason;
+    }
     return sv;
   }).filter((entry) => entry.platform === "TPP_EBAY" || entry.platform === "TT_EBAY");
 
@@ -732,6 +769,8 @@ function buildGridRow(
     upc: master.upc,
     stagedUpc: upcStage.stagedUpc,
     hasStagedUpc: upcStage.hasStagedUpc,
+    hasLocalOnlyChanges: upcStage.hasLocalOnlyChanges,
+    localOnlyUpcPlatforms: upcStage.localOnlyUpcPlatforms,
     upcPushTargets: upcStage.upcPushTargets,
     imageUrl: master.imageUrl,
     weight: master.weight,
@@ -745,7 +784,7 @@ function buildGridRow(
     isParent: isVariationParent,
     childRowsHydrated: !isVariationParent,
     alternateTitles,
-    hasStagedChanges: hasStagedChanges || upcStage.hasStagedUpc,
+    hasStagedChanges: hasStagedChanges || upcStage.hasStagedUpc || upcStage.hasLocalOnlyChanges,
     itemNumbers: isVariationParent ? parentRowItemNumbers : itemNumbers,
     salePrices: isVariationParent ? [] : salePrices,
     adRates,

@@ -33,6 +33,7 @@ enum ChangeStatus {
   STAGED
   PUSHED
   CANCELLED
+  LOCAL_ONLY
 }
 
 enum PushJobStatus {
@@ -275,6 +276,7 @@ model StagedChange {
   liveValue            String?
   changedById          String
   status               ChangeStatus @default(STAGED)
+  rejectionReason      String?
   pushedAt             DateTime?
   createdAt            DateTime     @default(now())
   updatedAt            DateTime     @updatedAt
