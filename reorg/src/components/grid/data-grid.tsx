@@ -2863,7 +2863,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
       for (const ar of row.adRates) {
         if (ar.stagedValue != null && ar.stagedValue !== ar.value) count++;
       }
-      if (row.hasStagedUpc && row.stagedUpc && row.stagedUpc !== row.upc) {
+      if (row.hasStagedUpc) {
         count++;
       }
       if (row.childRows) {
@@ -2874,7 +2874,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
           for (const ar of child.adRates) {
             if (ar.stagedValue != null && ar.stagedValue !== ar.value) count++;
           }
-          if (child.hasStagedUpc && child.stagedUpc && child.stagedUpc !== child.upc) {
+          if (child.hasStagedUpc) {
             count++;
           }
         }

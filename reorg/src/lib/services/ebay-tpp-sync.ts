@@ -1281,6 +1281,11 @@ async function upsertEbayItem(
           upc,
         },
       });
+    } else if (imageUrl && parentMaster.imageUrl !== imageUrl) {
+      parentMaster = await db.masterRow.update({
+        where: { id: parentMaster.id },
+        data: { imageUrl, imageSource: "TPP_EBAY" },
+      });
     }
 
     const existingParents = await db.marketplaceListing.findMany({
@@ -1316,6 +1321,17 @@ async function upsertEbayItem(
           lastSyncedAt: new Date(),
         },
       });
+    } else {
+      await db.marketplaceListing.update({
+        where: { id: parentListing.id },
+        data: {
+          masterRowId: parentMaster.id,
+          title: title ?? null,
+          imageUrl,
+          rawData: JSON.parse(JSON.stringify(item)),
+          lastSyncedAt: new Date(),
+        },
+      });
     }
 
     for (const variation of variationList) {
@@ -1339,6 +1355,11 @@ async function upsertEbayItem(
             imageSource: "TPP_EBAY",
             upc: variationUpc,
           },
+        });
+      } else if (variationImageUrl && childMaster.imageUrl !== variationImageUrl) {
+        childMaster = await db.masterRow.update({
+          where: { id: childMaster.id },
+          data: { imageUrl: variationImageUrl, imageSource: "TPP_EBAY" },
         });
       }
 
@@ -1399,6 +1420,11 @@ async function upsertEbayItem(
         imageSource: "TPP_EBAY",
         upc,
       },
+    });
+  } else if (imageUrl && masterRow.imageUrl !== imageUrl) {
+    masterRow = await db.masterRow.update({
+      where: { id: masterRow.id },
+      data: { imageUrl, imageSource: "TPP_EBAY" },
     });
   }
 

@@ -327,10 +327,10 @@ export async function matchListings(
 
   const existingRows = await db.masterRow.findMany({
     where: { sku: { in: uniqueSkus } },
-    select: { id: true, sku: true },
+    select: { id: true, sku: true, imageUrl: true },
   });
 
-  const skuToMasterRowId = new Map(existingRows.map((r) => [r.sku, r.id]));
+  const skuToMasterRow = new Map(existingRows.map((r) => [r.sku, r]));
 
   for (const listing of listings) {
     if (!listing.sku) {
@@ -339,7 +339,8 @@ export async function matchListings(
       continue;
     }
 
-    let masterRowId = skuToMasterRowId.get(listing.sku);
+    const existingMaster = skuToMasterRow.get(listing.sku);
+    let masterRowId = existingMaster?.id;
 
     if (!masterRowId && isMaster) {
       const newRow = await db.masterRow.create({
@@ -352,8 +353,15 @@ export async function matchListings(
         },
       });
       masterRowId = newRow.id;
-      skuToMasterRowId.set(listing.sku, masterRowId);
+      skuToMasterRow.set(listing.sku, { id: newRow.id, sku: newRow.sku, imageUrl: newRow.imageUrl });
       result.stats.created++;
+    } else if (masterRowId && isMaster && listing.imageUrl) {
+      if (existingMaster && existingMaster.imageUrl !== listing.imageUrl) {
+        await db.masterRow.update({
+          where: { id: masterRowId },
+          data: { imageUrl: listing.imageUrl, imageSource: "master" },
+        });
+      }
     }
 
     if (masterRowId) {

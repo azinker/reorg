@@ -763,7 +763,7 @@ export default function SyncPage() {
             <article
               key={store.id}
               className={cn(
-                "relative overflow-hidden rounded-xl border bg-card transition-all duration-300",
+                "relative rounded-xl border bg-card transition-all duration-300",
                 isSyncing
                   ? "border-violet-500/40 shadow-[0_0_20px_rgba(139,92,246,0.06)]"
                   : "border-border hover:border-violet-500/20",
