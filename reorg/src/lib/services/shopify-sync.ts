@@ -346,6 +346,7 @@ export async function runShopifySync(
             jobId: syncJob.id,
             cursor: requestCursor ?? null,
             listingOffset: skippedOnPage + i,
+            lastChunkAt: new Date().toISOString(),
           });
           await dispatchCatalogSyncContinuation(integration.id);
           await flushJobProgress();
@@ -386,6 +387,7 @@ export async function runShopifySync(
           jobId: syncJob.id,
           cursor: result.nextCursor ?? null,
           listingOffset: undefined,
+          lastChunkAt: new Date().toISOString(),
         });
         await dispatchCatalogSyncContinuation(integration.id);
         progress.catalogChunkScheduled = true;

@@ -196,6 +196,7 @@ export async function runSync(
             jobId: syncJob.id,
             cursor: pageKey,
             listingOffset: skippedOnPage + i,
+            lastChunkAt: new Date().toISOString(),
           });
           return {
             syncJobId: syncJob.id,
@@ -224,6 +225,7 @@ export async function runSync(
           jobId: syncJob.id,
           cursor: nextCursor ?? null,
           listingOffset: undefined,
+          lastChunkAt: new Date().toISOString(),
         });
         return {
           syncJobId: syncJob.id,

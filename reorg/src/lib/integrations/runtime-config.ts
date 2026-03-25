@@ -26,6 +26,13 @@ export type CatalogPullResume = {
   cursor?: string | null;
   /** Skip this many flattened listings on the current API page after re-fetch. */
   listingOffset?: number;
+  /**
+   * ISO timestamp of when this chunk was saved.
+   * Used by recoverStuckCatalogContinuations to detect a stall vs a healthy
+   * in-progress sync. Compare against this instead of job.startedAt so that
+   * active multi-chunk syncs are never incorrectly flagged as stuck.
+   */
+  lastChunkAt?: string | null;
 };
 
 export interface SyncState {
@@ -243,7 +250,11 @@ function normalizeCatalogPullResume(raw: unknown): CatalogPullResume | null {
   ) {
     listingOffset = Math.floor(raw.listingOffset);
   }
-  return { jobId, cursor, listingOffset };
+  const lastChunkAt =
+    typeof raw.lastChunkAt === "string" && raw.lastChunkAt.trim()
+      ? raw.lastChunkAt
+      : null;
+  return { jobId, cursor, listingOffset, lastChunkAt };
 }
 
 export function normalizeSyncState(raw: unknown): SyncState {

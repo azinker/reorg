@@ -338,16 +338,23 @@ export async function planScheduledSyncs(now = new Date()) {
 /**
  * Safety net: if a BC/Shopify catalog pull has a saved resume cursor but the
  * continuation invocation was never received (network hiccup, cold-start race,
- * etc.), the job stays RUNNING but frozen. Re-dispatch the continuation so the
- * pull can finish without needing a manual re-trigger.
+ * serverless OOM, etc.), the job stays RUNNING but frozen. Re-dispatch the
+ * continuation so the pull can finish without a manual re-trigger.
  *
- * Only fires for non-stale RUNNING jobs with a catalogPullResume that haven't
- * updated their itemsProcessed count in the last 10 minutes.
+ * Uses `catalogPullResume.lastChunkAt` (stamped when each chunk hands off to
+ * the next) as the "last activity" reference — much more accurate than
+ * `job.startedAt` which never changes across chunks. Falls back to `startedAt`
+ * for jobs that pre-date the `lastChunkAt` field.
+ *
+ * Threshold: 4 minutes. Each chunk runs for up to 9 minutes (CATALOG_SYNC_CHUNK_BUDGET_MS),
+ * so a gap of 4 min after the hand-off timestamp signals the next invocation
+ * never started. We'll re-dispatch and let it either pick up cleanly or be
+ * marked stale by isRunningJobStale on the next scheduler tick.
  */
 async function recoverStuckCatalogContinuations(now: Date): Promise<void> {
-  const STUCK_THRESHOLD_MS = 10 * 60 * 1000;
+  const STUCK_THRESHOLD_MS = 4 * 60 * 1000; // 4 min after last chunk hand-off
 
-  const stuckJobs = await db.syncJob.findMany({
+  const runningJobs = await db.syncJob.findMany({
     where: {
       status: "RUNNING",
       integration: {
@@ -363,12 +370,8 @@ async function recoverStuckCatalogContinuations(now: Date): Promise<void> {
     },
   });
 
-  for (const job of stuckJobs) {
+  for (const job of runningJobs) {
     if (isRunningJobStale(job, now)) continue;
-    // Use startedAt as the last-activity proxy; real updates bump itemsProcessed
-    // but the DB record's `updatedAt` is not reliable across all Prisma versions
-    const lastActivity = job.startedAt ?? job.createdAt;
-    if (now.getTime() - lastActivity.getTime() < STUCK_THRESHOLD_MS) continue;
 
     const integration = await db.integration.findUnique({
       where: { id: job.integrationId },
@@ -377,10 +380,24 @@ async function recoverStuckCatalogContinuations(now: Date): Promise<void> {
     if (!integration) continue;
 
     const config = getIntegrationConfig(integration);
-    if (!config.syncState.catalogPullResume?.cursor) continue;
+    const resume = config.syncState.catalogPullResume;
+
+    // Only recover jobs that have an active cursor waiting for continuation
+    if (!resume?.cursor && resume?.cursor !== "") continue;
+
+    // Use lastChunkAt (when the cursor was last saved) if available;
+    // otherwise fall back to startedAt for pre-existing jobs without it
+    const lastActivity = resume.lastChunkAt
+      ? new Date(resume.lastChunkAt)
+      : (job.startedAt ?? job.createdAt);
+
+    if (Number.isNaN(lastActivity.getTime())) continue;
+    if (now.getTime() - lastActivity.getTime() < STUCK_THRESHOLD_MS) continue;
 
     console.log(
-      `[sync-scheduler] Re-dispatching stuck catalog continuation for job ${job.id} (${job.integrationId}, ${job.itemsProcessed ?? 0} items)`,
+      `[sync-scheduler] Re-dispatching stuck catalog continuation for job ${job.id}` +
+      ` (${integration.platform}, ${job.itemsProcessed ?? 0} items,` +
+      ` last chunk at ${resume.lastChunkAt ?? "unknown"})`,
     );
     await dispatchCatalogSyncContinuation(job.integrationId).catch((err) =>
       console.error("[sync-scheduler] Failed to re-dispatch continuation", err),

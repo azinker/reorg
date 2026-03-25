@@ -469,7 +469,7 @@ export default function SyncPage() {
     const timer = setInterval(() => {
       if (document.visibilityState !== "visible") return;
       void fetchSchedulerStatus();
-    }, 60_000);
+    }, 20_000);
     return () => {
       Object.values(pollTimers.current).forEach(clearInterval);
       clearInterval(timer);
@@ -877,6 +877,29 @@ export default function SyncPage() {
                   </div>
                 </div>
 
+                {/* ---- attention / delayed detail ---- */}
+                {(healthStatus === "attention" || healthStatus === "delayed") && healthItem && !isSyncing && (
+                  <div className={cn(
+                    "mt-4 rounded-lg border px-3 py-2.5 text-xs",
+                    healthStatus === "attention"
+                      ? "border-red-500/30 bg-red-500/[0.06] text-red-300"
+                      : "border-amber-500/30 bg-amber-500/[0.06] text-amber-300",
+                  )}>
+                    <div className="flex items-start gap-1.5">
+                      <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                      <div className="min-w-0 space-y-1">
+                        <p className="font-semibold leading-snug">{healthItem.syncMessage}</p>
+                        {healthItem.webhookStatus !== "ok" && healthItem.webhookStatus !== "n/a" && (
+                          <p className="leading-snug opacity-80">{healthItem.webhookMessage}</p>
+                        )}
+                        {healthItem.recommendedAction && (
+                          <p className="leading-snug opacity-70">→ {healthItem.recommendedAction}</p>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 {/* ---- eBay API credits ---- */}
                 {isEbay && (
                   <div className="mt-4 rounded-lg border border-border/60 bg-muted/10 px-3 py-2.5">
@@ -946,49 +969,68 @@ export default function SyncPage() {
                 )}
 
                 {/* ---- live progress (during sync) ---- */}
-                {isSyncing && liveJob?.status === "RUNNING" && (
-                  <div className="mt-4 rounded-lg border border-violet-500/30 bg-violet-500/[0.04] p-4">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <Loader2 className="h-4 w-4 animate-spin text-violet-400" />
-                        <span className="text-sm font-semibold text-violet-400">
-                          {liveJob.itemsProcessed === 0 ? "Starting..." : "Syncing..."}
-                        </span>
+                {isSyncing && liveJob?.status === "RUNNING" && (() => {
+                  const isChunkedPlatform = store.platform === "BigCommerce" || store.platform === "Shopify";
+                  const itemsPerMin =
+                    liveJob.itemsProcessed > 0 && durationMs && durationMs > 5000
+                      ? Math.round((liveJob.itemsProcessed / (durationMs / 1000)) * 60)
+                      : null;
+                  return (
+                    <div className="mt-4 rounded-lg border border-violet-500/30 bg-violet-500/[0.04] p-4">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <Loader2 className="h-4 w-4 animate-spin text-violet-400" />
+                          <span className="text-sm font-semibold text-violet-400">
+                            {liveJob.itemsProcessed === 0 ? "Starting…" : "Syncing…"}
+                          </span>
+                          {isChunkedPlatform && liveJob.itemsProcessed > 0 && (
+                            <span className="rounded border border-violet-500/25 bg-violet-500/10 px-1.5 py-0.5 text-[10px] font-medium text-violet-400/70">
+                              Multi-chunk
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-2">
+                          {itemsPerMin !== null && (
+                            <span className="text-[11px] tabular-nums text-violet-400/60">
+                              {itemsPerMin.toLocaleString()}/min
+                            </span>
+                          )}
+                          {durationMs !== null && (
+                            <span className="text-xs tabular-nums text-muted-foreground">{formatDurationMs(durationMs)}</span>
+                          )}
+                        </div>
                       </div>
-                      {durationMs !== null && (
-                        <span className="text-xs tabular-nums text-muted-foreground">{formatDurationMs(durationMs)}</span>
+                      {liveJob.itemsProcessed === 0 && (
+                        <p className="mt-1 text-[11px] text-violet-400/70">
+                          Connected — waiting for first batch to report progress.
+                        </p>
+                      )}
+                      <div className="mt-3 h-1 overflow-hidden rounded-full bg-violet-500/20">
+                        <div className="h-full w-full animate-[pulse_1.5s_ease-in-out_infinite] rounded-full bg-gradient-to-r from-violet-600 via-purple-500 to-violet-600" />
+                      </div>
+                      <div className="mt-3 grid grid-cols-3 gap-2 text-center">
+                        <div>
+                          <div className="text-lg font-bold tabular-nums text-violet-400">{liveJob.itemsProcessed.toLocaleString()}</div>
+                          <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Processed</div>
+                        </div>
+                        <div>
+                          <div className="text-lg font-bold tabular-nums text-emerald-400">{liveJob.itemsCreated.toLocaleString()}</div>
+                          <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Created</div>
+                        </div>
+                        <div>
+                          <div className="text-lg font-bold tabular-nums text-amber-400">{liveJob.itemsUpdated.toLocaleString()}</div>
+                          <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Updated</div>
+                        </div>
+                      </div>
+                      {jobErrors.length > 0 && (
+                        <div className="mt-3 flex items-center gap-1 text-xs text-red-400">
+                          <AlertTriangle className="h-3 w-3" />
+                          {jobErrors.length} issue{jobErrors.length > 1 ? "s" : ""} so far
+                        </div>
                       )}
                     </div>
-                    {liveJob.itemsProcessed === 0 && (
-                      <p className="mt-1 text-[11px] text-violet-400/70">
-                        Connected — waiting for the first batch to report progress.
-                      </p>
-                    )}
-                    <div className="mt-3 h-1 overflow-hidden rounded-full bg-violet-500/20">
-                      <div className="h-full w-full animate-[pulse_1.5s_ease-in-out_infinite] rounded-full bg-gradient-to-r from-violet-600 via-purple-500 to-violet-600" />
-                    </div>
-                    <div className="mt-3 grid grid-cols-3 gap-2 text-center">
-                      <div>
-                        <div className="text-lg font-bold tabular-nums text-violet-400">{liveJob.itemsProcessed.toLocaleString()}</div>
-                        <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Processed</div>
-                      </div>
-                      <div>
-                        <div className="text-lg font-bold tabular-nums text-emerald-400">{liveJob.itemsCreated.toLocaleString()}</div>
-                        <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Created</div>
-                      </div>
-                      <div>
-                        <div className="text-lg font-bold tabular-nums text-amber-400">{liveJob.itemsUpdated.toLocaleString()}</div>
-                        <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Updated</div>
-                      </div>
-                    </div>
-                    {jobErrors.length > 0 && (
-                      <div className="mt-3 flex items-center gap-1 text-xs text-red-400">
-                        <AlertTriangle className="h-3 w-3" />
-                        {jobErrors.length} issue{jobErrors.length > 1 ? "s" : ""} so far
-                      </div>
-                    )}
-                  </div>
-                )}
+                  );
+                })()}
 
                 {/* starting spinner (no job record yet) */}
                 {isSyncing && !liveJob && (
