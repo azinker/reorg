@@ -36,6 +36,7 @@ export interface SyncDispatchResult {
   status: "STARTED" | "COMPLETED" | "FAILED" | "ALREADY_RUNNING" | "UNSUPPORTED";
   jobId: string | null;
   message: string;
+  catalogContinuationScheduled?: boolean;
 }
 
 export interface SyncCompletionOptions {
@@ -317,6 +318,7 @@ export async function startIntegrationSync(
         status: "STARTED",
         jobId: result.jobId,
         message: `${integration.label} catalog pull is still running; the next chunk was scheduled automatically.`,
+        catalogContinuationScheduled: true,
       };
     }
 

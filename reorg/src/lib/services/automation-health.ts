@@ -619,19 +619,32 @@ export async function buildAutomationHealthSnapshot(
         failedAfterLastSuccess &&
         recentFailure.message != null &&
         isEbayUsageLimitMessage(recentFailure.message);
+      // When a stale auto-fail exists (an old running job was reaped after the
+      // timeout threshold), only let it downgrade the status if the underlying
+      // sync health is already NOT healthy. If the store completed a successful
+      // sync recently (sync.status === "healthy"), the timed-out ghost job from
+      // a prior run is irrelevant — don't show it as a warning.
       const syncMonitorBase = failedAfterLastSuccess
         ? {
             ...sync,
-            status: isEbayRateLimitCooldown || isStaleAutoFail
-              ? isStaleAutoFail ? ("delayed" as const) : ("healthy" as const)
-              : ("attention" as const),
-            syncStatus: isStaleAutoFail ? ("delayed" as const) : ("stale" as const),
+            status: isEbayRateLimitCooldown
+              ? ("healthy" as const)
+              : isStaleAutoFail
+                ? (sync.status === "healthy" ? "healthy" as const : "delayed" as const)
+                : ("attention" as const),
+            syncStatus: isEbayRateLimitCooldown
+              ? ("stale" as const)
+              : isStaleAutoFail
+                ? (sync.syncStatus === "fresh" ? "fresh" as const : "delayed" as const)
+                : ("stale" as const),
             syncMessage: isEbayRateLimitCooldown
               ? rateLimitCooldownUntil
                 ? `eBay API cooldown — resumes automatically around ${formatCooldownRetryAt(rateLimitCooldownUntil) ?? "the next automatic check"}.`
                 : "eBay API cooldown — will resume automatically after the cooldown window."
               : isStaleAutoFail
-                ? "A recent pull timed out. The next scheduled pull will retry automatically."
+                ? sync.status === "healthy"
+                  ? sync.syncMessage
+                  : "A recent pull timed out. The next scheduled pull will retry automatically."
                 : recentFailure.message
                   ? `Latest pull failed: ${recentFailure.message}`
                   : "Latest pull failed before this store recorded a newer successful update.",
@@ -670,12 +683,10 @@ export async function buildAutomationHealthSnapshot(
         now,
         storedConfig.webhookState.destination,
       );
-      const webhookStatusImpact =
-        webhook.webhookStatus === "missing"
-          ? syncMonitor.status === "healthy"
-            ? "healthy"
-            : "attention"
-          : syncMonitor.status;
+      // Missing webhooks are NOT an escalation trigger on their own —
+      // scheduled pulls are the safety net. Only propagate the underlying
+      // sync status. Webhooks are a "nice to have" early-refresh signal.
+      const webhookStatusImpact: MonitorHealthStatus = syncMonitor.status;
       const combinedStatus = getWorseMonitorStatus(
         syncMonitor.status,
         webhookStatusImpact,

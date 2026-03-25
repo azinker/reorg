@@ -24,8 +24,8 @@ async function postSyncExecute(
   }
 
   const url = `${creds.base}/api/sync/${integrationId}/execute`;
-  const MAX_ATTEMPTS = 2;
-  const DISPATCH_TIMEOUT_MS = 15_000;
+  const MAX_ATTEMPTS = 3;
+  const DISPATCH_TIMEOUT_MS = 30_000;
 
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     const controller = new AbortController();
@@ -40,20 +40,27 @@ async function postSyncExecute(
         body: JSON.stringify(body),
         signal: controller.signal,
       });
-      // Server responded (unlikely for inline sync, but possible)
       return;
     } catch (err) {
       if (err instanceof Error && err.name === "AbortError") {
-        // Timed out — the request was sent and received by the server;
-        // we just didn't wait for the full response (sync runs inline).
-        return;
+        // 30s timeout → for inline syncs this usually means the server
+        // accepted the request and is running. On the FIRST attempt the
+        // cold-start might not have fully started yet; retry once more to
+        // double-confirm delivery. On attempt 2+ we accept it.
+        if (attempt >= 2) return;
+        console.log(
+          `[sync-continuation] Attempt ${attempt}/${MAX_ATTEMPTS}: timeout — ` +
+          `retrying once to confirm delivery.`,
+        );
+        await new Promise((r) => setTimeout(r, 3_000));
+        continue;
       }
       console.error(
         `[sync-continuation] Attempt ${attempt}/${MAX_ATTEMPTS} failed:`,
         err,
       );
       if (attempt < MAX_ATTEMPTS) {
-        await new Promise((r) => setTimeout(r, 2_000));
+        await new Promise((r) => setTimeout(r, 3_000));
       }
     } finally {
       clearTimeout(timeoutId);
@@ -61,8 +68,8 @@ async function postSyncExecute(
   }
 
   console.error(
-    `[sync-continuation] All ${MAX_ATTEMPTS} attempts failed for ${integrationId}. Continuation may be lost. ` +
-    `The scheduler will re-dispatch it on the next cron run (within ~5 minutes).`,
+    `[sync-continuation] All ${MAX_ATTEMPTS} attempts failed for ${integrationId}. ` +
+    `Continuation may be lost — scheduler will re-dispatch within ~2 minutes.`,
   );
 }
 

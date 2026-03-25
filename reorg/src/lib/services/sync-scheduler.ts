@@ -346,13 +346,13 @@ export async function planScheduledSyncs(now = new Date()) {
  * `job.startedAt` which never changes across chunks. Falls back to `startedAt`
  * for jobs that pre-date the `lastChunkAt` field.
  *
- * Threshold: 4 minutes. Each chunk runs for up to 9 minutes (CATALOG_SYNC_CHUNK_BUDGET_MS),
- * so a gap of 4 min after the hand-off timestamp signals the next invocation
- * never started. We'll re-dispatch and let it either pick up cleanly or be
- * marked stale by isRunningJobStale on the next scheduler tick.
+ * Threshold: 2 minutes. Each chunk runs for up to 9 minutes (CATALOG_SYNC_CHUNK_BUDGET_MS),
+ * so a gap of 2 min after the hand-off timestamp strongly signals the next
+ * invocation was lost. We'll re-dispatch and let it either pick up cleanly or
+ * be marked stale by isRunningJobStale on the next scheduler tick.
  */
 async function recoverStuckCatalogContinuations(now: Date): Promise<void> {
-  const STUCK_THRESHOLD_MS = 4 * 60 * 1000; // 4 min after last chunk hand-off
+  const STUCK_THRESHOLD_MS = 2 * 60 * 1000; // 2 min after last chunk hand-off
 
   const runningJobs = await db.syncJob.findMany({
     where: {
