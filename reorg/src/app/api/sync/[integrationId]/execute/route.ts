@@ -3,10 +3,7 @@ import { Platform } from "@prisma/client";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { startIntegrationSync } from "@/lib/services/sync-control";
-import { dispatchCatalogSyncContinuation } from "@/lib/services/sync-continuation";
 import { auth } from "@/lib/auth";
-
-const CHUNKED_PLATFORMS = new Set(["SHOPIFY", "BIGCOMMERCE"]);
 
 export const runtime = "nodejs";
 export const maxDuration = 800;
@@ -96,19 +93,6 @@ export async function POST(
       },
       "inline",
     );
-
-    // Belt-and-suspenders: if a chunked sync scheduled a continuation, fire a
-    // backup dispatch after a short delay. If the primary (in-process) dispatch
-    // already landed, the backup will see ALREADY_RUNNING and exit harmlessly.
-    if (
-      CHUNKED_PLATFORMS.has(integration.platform) &&
-      result.catalogContinuationScheduled
-    ) {
-      await new Promise((r) => setTimeout(r, 5_000));
-      await dispatchCatalogSyncContinuation(integration.id).catch((err) =>
-        console.warn("[sync-execute] Backup continuation dispatch failed", err),
-      );
-    }
 
     return NextResponse.json({ data: result }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {

@@ -346,7 +346,7 @@ export async function planScheduledSyncs(now = new Date()) {
  * `job.startedAt` which never changes across chunks. Falls back to `startedAt`
  * for jobs that pre-date the `lastChunkAt` field.
  *
- * Threshold: 2 minutes. Each chunk runs for up to 13 minutes (CATALOG_SYNC_CHUNK_BUDGET_MS),
+ * Threshold: 2 minutes. Each chunk runs for up to 10 minutes (CATALOG_SYNC_CHUNK_BUDGET_MS),
  * so a gap of 2 min after the hand-off timestamp strongly signals the next
  * invocation was lost. We'll re-dispatch and let it either pick up cleanly or
  * be marked stale by isRunningJobStale on the next scheduler tick.

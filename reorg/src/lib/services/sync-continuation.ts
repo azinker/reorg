@@ -24,8 +24,14 @@ async function postSyncExecute(
   }
 
   const url = `${creds.base}/api/sync/${integrationId}/execute`;
-  const MAX_ATTEMPTS = 3;
-  const DISPATCH_TIMEOUT_MS = 30_000;
+  // Two attempts for hard network errors; 20 s timeout per attempt.
+  // AbortError (timeout) means the server already received the request and
+  // is running the inline sync — always return immediately, never retry on
+  // AbortError. Retrying on AbortError wastes ~33 s inside the chunk
+  // function and can push us past Vercel's 800 s maxDuration before the
+  // DB cursor write + this dispatch even complete.
+  const MAX_ATTEMPTS = 2;
+  const DISPATCH_TIMEOUT_MS = 20_000;
 
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     const controller = new AbortController();
@@ -43,24 +49,16 @@ async function postSyncExecute(
       return;
     } catch (err) {
       if (err instanceof Error && err.name === "AbortError") {
-        // 30s timeout → for inline syncs this usually means the server
-        // accepted the request and is running. On the FIRST attempt the
-        // cold-start might not have fully started yet; retry once more to
-        // double-confirm delivery. On attempt 2+ we accept it.
-        if (attempt >= 2) return;
-        console.log(
-          `[sync-continuation] Attempt ${attempt}/${MAX_ATTEMPTS}: timeout — ` +
-          `retrying once to confirm delivery.`,
-        );
-        await new Promise((r) => setTimeout(r, 3_000));
-        continue;
+        // Server received the request and started the inline sync — the
+        // response will never arrive in time. This is expected and correct.
+        return;
       }
       console.error(
         `[sync-continuation] Attempt ${attempt}/${MAX_ATTEMPTS} failed:`,
         err,
       );
       if (attempt < MAX_ATTEMPTS) {
-        await new Promise((r) => setTimeout(r, 3_000));
+        await new Promise((r) => setTimeout(r, 2_000));
       }
     } finally {
       clearTimeout(timeoutId);
@@ -69,7 +67,7 @@ async function postSyncExecute(
 
   console.error(
     `[sync-continuation] All ${MAX_ATTEMPTS} attempts failed for ${integrationId}. ` +
-    `Continuation may be lost — scheduler will re-dispatch within ~2 minutes.`,
+    `Continuation may be lost — scheduler safety-net re-dispatches within ~2 min.`,
   );
 }
 
