@@ -258,6 +258,7 @@ async function recordRateLimitState(
   message: string,
   pendingIncrementalItemIds: string[] = [],
   pendingIncrementalWindowEndedAt: string | null = null,
+  rateLimitResetAt?: string | null,
 ) {
   const integration = await db.integration.findUnique({
     where: { id: integrationId },
@@ -274,6 +275,7 @@ async function recordRateLimitState(
         syncState: {
           ...config.syncState,
           lastRateLimitAt: new Date().toISOString(),
+          lastRateLimitResetAt: rateLimitResetAt ?? null,
           lastRateLimitMessage: message,
           pendingIncrementalItemIds,
           pendingIncrementalWindowEndedAt,
@@ -284,7 +286,7 @@ async function recordRateLimitState(
 
   // Both eBay stores share the same developer app quota — propagate cooldown
   // to sibling eBay integrations so they all show the cooldown banner.
-  void propagateEbayRateLimitToAllSharedIntegrations(integrationId, message);
+  void propagateEbayRateLimitToAllSharedIntegrations(integrationId, message, rateLimitResetAt);
 }
 
 export async function runEbayTppSync(
@@ -341,6 +343,7 @@ export async function runEbayTppSync(
   };
   let pendingIncrementalItemIdsForCompletion: string[] = [];
   let pendingIncrementalWindowEndedAtForCompletion: string | null = null;
+  let analyticsSnapshot: EbayTradingRateLimitSnapshot | null = null;
 
   try {
     let effectiveMode = options.effectiveMode ?? options.requestedMode ?? "full";
@@ -353,7 +356,7 @@ export async function runEbayTppSync(
         ),
       ),
     ];
-    const analyticsSnapshot = await getEbayTradingRateLimitSnapshotForIntegration(
+    analyticsSnapshot = await getEbayTradingRateLimitSnapshotForIntegration(
       integration,
     ).catch(() => null);
 
@@ -689,6 +692,7 @@ export async function runEbayTppSync(
         err instanceof Error ? err.message : "eBay API usage limit reached.",
         pendingIncrementalItemIdsForCompletion,
         pendingIncrementalWindowEndedAtForCompletion,
+        analyticsSnapshot?.nextResetAt,
       );
     }
     const allErrors = [
@@ -860,6 +864,9 @@ async function runFullSync(
               await recordRateLimitState(
                 integrationId,
                 error instanceof Error ? error.message : "eBay GetItem usage limit reached.",
+                [],
+                null,
+                analyticsSnapshot?.nextResetAt,
               );
               if (!hydrateNoticePushed) {
                 hydrateNoticePushed = true;
@@ -1780,6 +1787,9 @@ async function fetchMissingUpcs(
           result.reason instanceof Error
             ? result.reason.message
             : "eBay GetItem usage limit reached.",
+          [],
+          null,
+          snap?.nextResetAt,
         );
         break;
       }

@@ -50,6 +50,14 @@ export function getCurrentSyncIntervalMinutes(
     : config.syncProfile.overnightIntervalMinutes;
 }
 
+/**
+ * eBay Trading API daily limits reset once per calendar day (typically midnight
+ * Pacific). When we record a rate-limit hit we now also persist the actual
+ * reset time (`lastRateLimitResetAt`) straight from the eBay
+ * `GetApiAccessRules → PeriodicEndDate` response. The cooldown lasts until
+ * that reset, NOT a fixed 90-minute window. If the exact reset time isn't
+ * available we fall back to "next midnight Pacific".
+ */
 export function getEbayRateLimitCooldownUntil(
   platform: string,
   config: Pick<IntegrationConfigRecord, "syncProfile" | "syncState">,
@@ -62,12 +70,83 @@ export function getEbayRateLimitCooldownUntil(
   const rateLimitAt = new Date(config.syncState.lastRateLimitAt);
   if (Number.isNaN(rateLimitAt.getTime())) return null;
 
-  const intervalMinutes = getCurrentSyncIntervalMinutes(now, config);
-  const cooldownMinutes = Math.max(intervalMinutes, 90);
-  const cooldownUntil = new Date(rateLimitAt.getTime() + cooldownMinutes * 60 * 1000);
+  // 1. Prefer the stored eBay reset time (from PeriodicEndDate)
+  if (config.syncState.lastRateLimitResetAt) {
+    const resetAt = new Date(config.syncState.lastRateLimitResetAt);
+    if (!Number.isNaN(resetAt.getTime()) && resetAt.getTime() > now.getTime()) {
+      return resetAt;
+    }
+    // Reset time has passed — no cooldown
+    if (!Number.isNaN(resetAt.getTime()) && resetAt.getTime() <= now.getTime()) {
+      return null;
+    }
+  }
 
+  // 2. Fallback: compute the next midnight Pacific after the rate-limit hit.
+  //    eBay daily counters reset at 00:00 America/Los_Angeles.
+  const cooldownUntil = getNextEbayDailyReset(rateLimitAt);
   if (cooldownUntil.getTime() <= now.getTime()) return null;
   return cooldownUntil;
+}
+
+/**
+ * Compute the next midnight Pacific (America/Los_Angeles) at or after `from`.
+ * This is the eBay Trading API daily counter reset boundary.
+ */
+export function getNextEbayDailyReset(from: Date): Date {
+  const tz = "America/Los_Angeles";
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: tz,
+    hour12: false,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  }).formatToParts(from);
+
+  const val = (type: string) =>
+    Number(parts.find((p) => p.type === type)?.value ?? "0");
+
+  const year = val("year");
+  const month = val("month");
+  const day = val("day");
+  const hour = val("hour");
+
+  // If we're past midnight (hour > 0 or any minutes/seconds), next reset is
+  // tomorrow midnight. If exactly midnight, treat as the reset just happening.
+  const nextDay = hour > 0 ? day + 1 : day + 1;
+
+  // Build "YYYY-MM-DDT00:00:00" in Pacific, then convert to UTC
+  const midnightPacificGuessUtc = Date.UTC(year, month - 1, nextDay, 0, 0, 0);
+  const offsetMs = getTimeZoneOffsetMs(new Date(midnightPacificGuessUtc), tz);
+  return new Date(midnightPacificGuessUtc - offsetMs);
+}
+
+function getTimeZoneOffsetMs(date: Date, timeZone: string) {
+  const fmt = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    hour12: false,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+  const parts = fmt.formatToParts(date);
+  const val = (type: string) =>
+    Number(parts.find((p) => p.type === type)?.value ?? "0");
+  const asUtc = Date.UTC(
+    val("year"),
+    val("month") - 1,
+    val("day"),
+    val("hour"),
+    val("minute"),
+    val("second"),
+  );
+  return asUtc - date.getTime();
 }
 
 export function formatCooldownRetryAt(value: Date | string | null) {
@@ -94,6 +173,7 @@ export function formatCooldownRetryAt(value: Date | string | null) {
 export async function propagateEbayRateLimitToAllSharedIntegrations(
   sourceIntegrationId: string,
   message: string,
+  rateLimitResetAt?: string | null,
 ) {
   const sourceIntegration = await db.integration.findUnique({
     where: { id: sourceIntegrationId },
@@ -130,6 +210,7 @@ export async function propagateEbayRateLimitToAllSharedIntegrations(
         const updated = mergeIntegrationConfig(integration.platform as Platform, integration.config, {
           syncState: {
             lastRateLimitAt: now,
+            lastRateLimitResetAt: rateLimitResetAt ?? null,
             lastRateLimitMessage: message,
           },
         });
