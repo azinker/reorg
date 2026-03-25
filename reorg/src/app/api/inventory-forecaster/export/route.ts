@@ -2,6 +2,9 @@ import { NextResponse, type NextRequest } from "next/server";
 import { buildInventoryForecastWorkbook, inventoryForecastExportFileName } from "@/lib/inventory-forecast/export";
 import { forecastResultSchema } from "@/lib/inventory-forecast/schemas";
 
+export const runtime = "nodejs";
+export const maxDuration = 120;
+
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();

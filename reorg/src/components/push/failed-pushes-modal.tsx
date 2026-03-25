@@ -23,6 +23,7 @@ type FailedPushItem = PushItem & {
   failureCategory: string;
   failureSummary: string;
   recommendedAction: string;
+  isFormatInvalid?: boolean;
 };
 
 interface FailedPushesModalProps {
@@ -87,8 +88,13 @@ export function FailedPushesModal({
 
   const hasActiveFilter = filterCategory || filterPlatform || filterField;
 
+  // Any UPC failure can be saved locally — format-invalid ones especially should never be retried
   const validationUpcItems = useMemo(
-    () => filtered.filter((f) => f.field === "upc" && (f.failureCategory === "validation" || f.failureCategory === "marketplace")),
+    () => filtered.filter((f) => f.field === "upc"),
+    [filtered],
+  );
+  const formatInvalidUpcItems = useMemo(
+    () => filtered.filter((f) => f.field === "upc" && f.isFormatInvalid),
     [filtered],
   );
 
@@ -115,7 +121,7 @@ export function FailedPushesModal({
   );
 
   const selectedUpcValidationItems = useMemo(
-    () => selectedItems.filter((f) => f.field === "upc" && (f.failureCategory === "validation" || f.failureCategory === "marketplace")),
+    () => selectedItems.filter((f) => f.field === "upc"),
     [selectedItems],
   );
 
@@ -259,13 +265,22 @@ export function FailedPushesModal({
               </>
             )}
 
-            {selectedKeys.size === 0 && validationUpcItems.length > 0 && (
+            {selectedKeys.size === 0 && formatInvalidUpcItems.length > 0 && (
+              <button
+                onClick={() => onSaveLocalBatch(formatInvalidUpcItems)}
+                className="ml-auto flex items-center gap-1 rounded-md border border-red-500/30 bg-red-500/10 px-2.5 py-1 text-[11px] font-medium text-red-300 transition-colors hover:bg-red-500/20 cursor-pointer"
+              >
+                <Save className="h-3 w-3" />
+                Save Invalid-Format UPCs Locally ({formatInvalidUpcItems.length})
+              </button>
+            )}
+            {selectedKeys.size === 0 && validationUpcItems.length > 0 && formatInvalidUpcItems.length === 0 && (
               <button
                 onClick={() => onSaveLocalBatch(validationUpcItems)}
                 className="ml-auto flex items-center gap-1 rounded-md border border-amber-500/30 bg-amber-500/10 px-2.5 py-1 text-[11px] font-medium text-amber-300 transition-colors hover:bg-amber-500/20 cursor-pointer"
               >
                 <Save className="h-3 w-3" />
-                Save All Rejected UPCs Locally ({validationUpcItems.length})
+                Save All UPCs Locally ({validationUpcItems.length})
               </button>
             )}
           </div>
@@ -284,59 +299,67 @@ export function FailedPushesModal({
               {filtered.map((failure) => {
                 const pushItem = stripExtraFields(failure);
                 const isSelected = selectedKeys.has(failure.retryKey);
-                const isUpcValidation = failure.field === "upc" && (failure.failureCategory === "validation" || failure.failureCategory === "marketplace");
+                const isUpc = failure.field === "upc";
+                const isFormatInvalid = failure.isFormatInvalid === true;
 
-                return (
-                  <article
-                    key={failure.retryKey}
-                    className={cn(
-                      "rounded-xl border px-4 py-3 transition-colors",
-                      isSelected ? "border-primary/40 bg-primary/5" : "border-red-500/20 bg-red-500/5",
-                    )}
-                  >
-                    <div className="flex items-start gap-3">
-                      <input
-                        type="checkbox"
-                        checked={isSelected}
-                        onChange={() => toggleSelect(failure.retryKey)}
-                        className="mt-1 h-3.5 w-3.5 cursor-pointer rounded border-border"
-                      />
-                      <div className="min-w-0 flex-1">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="rounded bg-red-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-red-300">
-                            {PLATFORM_SHORT[failure.platform]}
-                          </span>
-                          <span className="text-sm font-semibold text-foreground">{failure.sku}</span>
-                          <span className="text-xs text-muted-foreground">{failure.fieldLabel}</span>
-                          <span className="rounded bg-amber-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-300">
-                            {categoryLabels[failure.failureCategory] ?? failure.failureCategory.replace("-", " ")}
-                          </span>
-                        </div>
-                        <p className="mt-1 text-sm text-foreground">
-                          {failure.oldDisplay} <span className="text-muted-foreground mx-1">&rarr;</span> {failure.newDisplay}
-                        </p>
-                        <p className="mt-1 text-xs text-muted-foreground">{failure.failureSummary}</p>
-                        <p className="mt-1 text-[11px] text-red-300/80 break-all">{failure.error}</p>
-                      </div>
-                      <div className="flex shrink-0 flex-col gap-1.5">
-                        <button
-                          onClick={() => onRetryOne(pushItem)}
-                          className="rounded-md bg-primary px-3 py-1.5 text-[11px] font-medium text-primary-foreground transition-colors hover:bg-primary/90 cursor-pointer"
-                        >
-                          Retry
-                        </button>
-                        {isUpcValidation && (
-                          <button
-                            onClick={() => onSaveLocalBatch([failure])}
-                            className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-[11px] font-medium text-amber-300 transition-colors hover:bg-amber-500/20 cursor-pointer"
-                          >
-                            Save Local
-                          </button>
+                    return (
+                      <article
+                        key={failure.retryKey}
+                        className={cn(
+                          "rounded-xl border px-4 py-3 transition-colors",
+                          isSelected ? "border-primary/40 bg-primary/5" : isFormatInvalid ? "border-amber-500/20 bg-amber-500/5" : "border-red-500/20 bg-red-500/5",
                         )}
-                      </div>
-                    </div>
-                  </article>
-                );
+                      >
+                        <div className="flex items-start gap-3">
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={() => toggleSelect(failure.retryKey)}
+                            className="mt-1 h-3.5 w-3.5 cursor-pointer rounded border-border"
+                          />
+                          <div className="min-w-0 flex-1">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="rounded bg-red-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-red-300">
+                                {PLATFORM_SHORT[failure.platform]}
+                              </span>
+                              <span className="text-sm font-semibold text-foreground">{failure.sku}</span>
+                              <span className="text-xs text-muted-foreground">{failure.fieldLabel}</span>
+                              <span className="rounded bg-amber-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-300">
+                                {categoryLabels[failure.failureCategory] ?? failure.failureCategory.replace("-", " ")}
+                              </span>
+                              {isFormatInvalid && (
+                                <span className="rounded bg-red-600/20 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-red-300">
+                                  Invalid Format
+                                </span>
+                              )}
+                            </div>
+                            <p className="mt-1 text-sm text-foreground">
+                              {failure.oldDisplay} <span className="text-muted-foreground mx-1">&rarr;</span> {failure.newDisplay}
+                            </p>
+                            <p className="mt-1 text-xs text-muted-foreground">{failure.failureSummary}</p>
+                            {!isFormatInvalid && <p className="mt-1 text-[11px] text-red-300/80 break-all">{failure.error}</p>}
+                          </div>
+                          <div className="flex shrink-0 flex-col gap-1.5">
+                            {!isFormatInvalid && (
+                              <button
+                                onClick={() => onRetryOne(pushItem)}
+                                className="rounded-md bg-primary px-3 py-1.5 text-[11px] font-medium text-primary-foreground transition-colors hover:bg-primary/90 cursor-pointer"
+                              >
+                                Retry
+                              </button>
+                            )}
+                            {isUpc && (
+                              <button
+                                onClick={() => onSaveLocalBatch([failure])}
+                                className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-[11px] font-medium text-amber-300 transition-colors hover:bg-amber-500/20 cursor-pointer"
+                              >
+                                Save Local
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      </article>
+                    );
               })}
             </div>
           )}

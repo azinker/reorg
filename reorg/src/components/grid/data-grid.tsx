@@ -71,6 +71,7 @@ type FailedPushItem = PushItem & {
   failureCategory: string;
   failureSummary: string;
   recommendedAction: string;
+  isFormatInvalid?: boolean;
 };
 
 type NormalizedLiveUpcChoice = LiveUpcChoice & {

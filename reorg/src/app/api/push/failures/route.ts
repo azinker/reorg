@@ -132,6 +132,7 @@ export async function GET() {
     const failureHelp = classifyPushFailure(
       result.error ?? "Push failed.",
       PLATFORM_FULL[result.platform] ?? PLATFORM_SHORT[result.platform] ?? result.platform,
+      { field: result.field, newValue: result.newValue },
     );
 
     return [
@@ -155,6 +156,7 @@ export async function GET() {
         failureCategory: failureHelp.category,
         failureSummary: failureHelp.summary,
         recommendedAction: failureHelp.recommendedAction,
+        isFormatInvalid: failureHelp.isFormatInvalid ?? false,
         stagedChangeId: result.stagedChangeId,
         masterRowId: result.masterRowId || listing?.masterRowId || "",
         marketplaceListingId: result.marketplaceListingId,

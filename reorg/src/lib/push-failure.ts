@@ -11,19 +11,51 @@ export type PushFailureHelp = {
   category: PushFailureCategory;
   summary: string;
   recommendedAction: string;
+  /** True when the pushed value is pre-validated as invalid format (e.g. bad UPC digit count). */
+  isFormatInvalid?: boolean;
 };
 
 function normalizeError(error: string | null | undefined) {
   return (error ?? "").trim();
 }
 
+/**
+ * Validate UPC format locally without calling eBay.
+ * Valid formats: 12-digit UPC-A or 13-digit EAN-13, digits only.
+ * Returns null if valid, or a human-readable reason if invalid.
+ */
+export function validateUpcFormat(value: string | number | null | undefined): string | null {
+  if (value == null || value === "") return "No UPC value provided.";
+  const str = String(value).trim();
+  if (!/^\d+$/.test(str)) return `"${str}" contains non-digit characters — UPCs must be numbers only.`;
+  if (str.length === 12) return null; // valid UPC-A
+  if (str.length === 13) return null; // valid EAN-13
+  if (str.length < 12) return `"${str}" is only ${str.length} digit${str.length === 1 ? "" : "s"} — UPCs must be 12 digits (UPC-A) or 13 digits (EAN-13). This value is too short and will be rejected by eBay.`;
+  return `"${str}" is ${str.length} digits — UPCs must be 12 digits (UPC-A) or 13 digits (EAN-13). This value is too long and will be rejected by eBay.`;
+}
+
 export function classifyPushFailure(
   error: string | null | undefined,
   platformLabel?: string | null,
+  options?: { field?: string; newValue?: string | number | null },
 ): PushFailureHelp {
   const normalized = normalizeError(error);
   const lower = normalized.toLowerCase();
   const platform = platformLabel ?? "the marketplace";
+
+  // Pre-validate UPC format locally — if invalid, classify as validation regardless
+  // of what eBay returned (e.g. rate-limit errors still hide the real rejection cause).
+  if (options?.field === "upc") {
+    const formatError = validateUpcFormat(options.newValue);
+    if (formatError) {
+      return {
+        category: "validation",
+        summary: `Invalid UPC format — ${platform} will reject this value even after the rate limit resets.`,
+        recommendedAction: `${formatError} Use "Save Locally" to store it on the dashboard without pushing to ${platform}.`,
+        isFormatInvalid: true,
+      };
+    }
+  }
 
   if (!normalized) {
     return {
@@ -65,10 +97,13 @@ export function classifyPushFailure(
     lower.includes("too many requests") ||
     lower.includes("429")
   ) {
+    const upcNote = options?.field === "upc"
+      ? " If the UPC value is valid format (12 or 13 digits), it will push once the limit resets. If the format is wrong, use Save Locally instead."
+      : "";
     return {
       category: "rate-limit",
-      summary: `${platform} throttled the push because too many requests were sent too quickly.`,
-      recommendedAction: "Wait for the cooldown window, then retry only the failed changes.",
+      summary: `${platform} throttled the push because the daily API call limit was reached.`,
+      recommendedAction: `Wait for the eBay API quota to reset (typically daily), then retry.${upcNote}`,
     };
   }
 
@@ -90,7 +125,7 @@ export function classifyPushFailure(
     return {
       category: "validation",
       summary: `${platform} rejected the pushed value.`,
-      recommendedAction: "Review the field value and marketplace rules, then retry with a valid value.",
+      recommendedAction: "Review the field value and marketplace rules, then retry with a valid value or use Save Locally.",
     };
   }
 
