@@ -34,6 +34,7 @@ const masterRowWithRelations = Prisma.validator<Prisma.MasterRowDefaultArgs>()({
           },
         },
         childListings: {
+          where: { isVariation: true },
           select: {
             id: true,
             platformItemId: true,
@@ -626,8 +627,10 @@ function buildGridRow(
     return null;
   }
 
-  const parentListings = master.listings.filter((l: DBListing) => !l.parentListingId);
-  if (parentListings.length === 0 && !master.listings.some((listing: DBListing) => listing.parentListingId)) {
+  const parentListings = master.listings.filter((l: DBListing) =>
+    !l.parentListingId || !l.isVariation,
+  );
+  if (parentListings.length === 0) {
     return null;
   }
   const totalChildListings = parentListings.reduce((sum: number, l: DBListing) => sum + (l.childListings?.length ?? 0), 0);
@@ -1058,8 +1061,9 @@ export async function getGridData(): Promise<GridRow[]> {
 
   for await (const batch of masterRowBatches) {
     const parentRows = batch.filter((mr) => {
-      const hasAnyChildListing = mr.listings.some((l: DBListing) => l.parentListingId);
-      return !hasAnyChildListing;
+      const isEntirelyChild = mr.listings.length > 0 &&
+        mr.listings.every((l: DBListing) => l.parentListingId && l.isVariation);
+      return !isEntirelyChild;
     });
     const childMasterRowsBySku = await fetchBatchChildMasterRowsBySku(parentRows);
 

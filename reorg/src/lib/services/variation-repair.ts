@@ -236,14 +236,18 @@ async function ensureParentListing(args: {
  *  1. Unlink listings with isVariation=false that got a parentListingId.
  *  2. Remove now-orphaned synthetic parent listings.
  *  3. Deactivate synthetic MasterRows that lost all their listings.
+ *
+ * When called without integrationId, repairs ALL integrations at once.
  */
-async function cleanupFalseVariationFamilies(integrationId: string) {
+export async function cleanupFalseVariationFamilies(integrationId?: string) {
+  const whereClause: Prisma.MarketplaceListingWhereInput = {
+    isVariation: false,
+    parentListingId: { not: null },
+    ...(integrationId ? { integrationId } : {}),
+  };
+
   const falseChildren = await db.marketplaceListing.findMany({
-    where: {
-      integrationId,
-      isVariation: false,
-      parentListingId: { not: null },
-    },
+    where: whereClause,
     select: { id: true, parentListingId: true },
   });
 
