@@ -3,15 +3,12 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import {
   RefreshCw,
-  CheckCircle,
   XCircle,
-  Clock,
   Loader2,
   Copy,
   ChevronDown,
   ChevronUp,
   AlertTriangle,
-  TimerReset,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { PageTour } from "@/components/onboarding/page-tour";
@@ -29,18 +26,11 @@ const LOGO_MAP: Record<string, string> = {
 };
 
 const stores = [
-  { id: "tpp", name: "The Perfect Part", acronym: "TPP", platform: "eBay", apiPlatform: "TPP_EBAY", theme: "blue" },
-  { id: "tt", name: "Telitetech", acronym: "TT", platform: "eBay", apiPlatform: "TT_EBAY", theme: "emerald" },
-  { id: "bc", name: "BigCommerce", acronym: "BC", platform: "BigCommerce", apiPlatform: "BIGCOMMERCE", theme: "orange" },
-  { id: "shpfy", name: "Shopify", acronym: "SHPFY", platform: "Shopify", apiPlatform: "SHOPIFY", theme: "lime" },
+  { id: "tpp", name: "The Perfect Part", acronym: "TPP", platform: "eBay", apiPlatform: "TPP_EBAY" },
+  { id: "tt", name: "Telitetech", acronym: "TT", platform: "eBay", apiPlatform: "TT_EBAY" },
+  { id: "bc", name: "BigCommerce", acronym: "BC", platform: "BigCommerce", apiPlatform: "BIGCOMMERCE" },
+  { id: "shpfy", name: "Shopify", acronym: "SHPFY", platform: "Shopify", apiPlatform: "SHOPIFY" },
 ] as const;
-
-const themeClasses = {
-  blue: { badge: "bg-blue-500/15 text-blue-400 border-blue-500/30" },
-  emerald: { badge: "bg-emerald-500/15 text-emerald-400 border-emerald-500/30" },
-  orange: { badge: "bg-orange-500/15 text-orange-400 border-orange-500/30" },
-  lime: { badge: "bg-lime-500/15 text-lime-400 border-lime-500/30" },
-} as const;
 
 type IntegrationStatus = {
   platform: string;
@@ -244,10 +234,9 @@ type SchedulerStatus = {
   }>;
 };
 
-function formatDateTime(value: string | null) {
-  if (!value) return "Never";
-  return new Date(value).toLocaleString();
-}
+/* ------------------------------------------------------------------ */
+/*  Utility helpers                                                    */
+/* ------------------------------------------------------------------ */
 
 function formatDurationMs(ms: number) {
   if (!Number.isFinite(ms) || ms <= 0) return "0s";
@@ -260,76 +249,18 @@ function formatDurationMs(ms: number) {
   return `${seconds}s`;
 }
 
-function formatModeLabel(mode: string | null) {
-  if (!mode) return "Unknown";
-  if (mode === "incremental") return "Incremental";
-  if (mode === "full") return "Full";
-  return mode
-    .split(":")
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(" ");
-}
-
-function formatDueCountdown(minutesUntilDue: number | null, due: boolean, running: boolean) {
-  if (running) return "Running now";
-  if (due) return "Due now";
-  if (minutesUntilDue == null) return "Not scheduled";
-  if (minutesUntilDue === 0) return "Due within 1m";
-  if (minutesUntilDue < 60) return `Due in ${minutesUntilDue}m`;
-  const hours = Math.floor(minutesUntilDue / 60);
-  const minutes = minutesUntilDue % 60;
-  return minutes > 0 ? `Due in ${hours}h ${minutes}m` : `Due in ${hours}h`;
-}
-
-function getAutomationBadgeClasses(
-  status: SchedulerStatus["automationEvents"][number]["status"],
-) {
-  if (status === "failed") return "border-red-500/30 bg-red-500/10 text-red-400";
-  if (status === "warning") return "border-amber-500/30 bg-amber-500/10 text-amber-400";
-  if (status === "dry_run") return "border-blue-500/30 bg-blue-500/10 text-blue-400";
-  if (status === "started" || status === "running") {
-    return "border-violet-500/30 bg-violet-500/10 text-violet-400";
-  }
-  if (status === "debounced" || status === "ignored") {
-    return "border-border bg-muted/50 text-muted-foreground";
-  }
-  return "border-emerald-500/30 bg-emerald-500/10 text-emerald-400";
-}
-
-function getReadableJobStatus(status: string) {
-  if (status === "RUNNING") return "Updating now";
-  if (status === "COMPLETED") return "Last scheduled update finished";
-  if (status === "FAILED") return "Last scheduled update did not finish";
-  return status;
-}
-
-function getReadableWebhookStatus(status: string) {
-  if (status === "started") return "started a refresh";
-  if (status === "running") return "covered by a current refresh";
-  if (status === "debounced") return "already covered";
-  if (status === "ignored") return "recorded only";
-  if (status === "completed") return "completed";
-  if (status === "failed") return "failed";
-  return status;
-}
-
-function getWebhookProofClasses(
-  status: "none" | "before_last_pull" | "after_last_pull",
-) {
-  if (status === "after_last_pull") {
-    return "border-blue-500/20 bg-blue-500/5 text-blue-300";
-  }
-  return "border-border bg-muted/40 text-muted-foreground";
-}
-
-function getHealthClasses(status: "healthy" | "delayed" | "attention") {
-  if (status === "attention") {
-    return "border-red-500/30 bg-red-500/10 text-red-300";
-  }
-  if (status === "delayed") {
-    return "border-amber-500/30 bg-amber-500/10 text-amber-300";
-  }
-  return "border-emerald-500/30 bg-emerald-500/10 text-emerald-300";
+function formatRelativeTime(value: string | null, nowMs: number) {
+  if (!value) return "Never";
+  const diffMs = nowMs - new Date(value).getTime();
+  if (diffMs < 0) return "Just now";
+  const minutes = Math.floor(diffMs / 60000);
+  if (minutes < 1) return "Just now";
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  const rem = minutes % 60;
+  if (hours < 24) return rem > 0 ? `${hours}h ${rem}m ago` : `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
 }
 
 function getJobDurationMs(job: SyncJobInfo | null, now: number) {
@@ -340,194 +271,12 @@ function getJobDurationMs(job: SyncJobInfo | null, now: number) {
   return Math.max(0, finishedAt - startedAt);
 }
 
-function getLocalDateTimeParts(date: Date, timeZone: string) {
-  const formatter = new Intl.DateTimeFormat("en-US", {
-    timeZone,
-    hour12: false,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  });
-  const parts = formatter.formatToParts(date);
-  const value = (type: string) =>
-    Number(parts.find((part) => part.type === type)?.value ?? "0");
-  return {
-    year: value("year"),
-    month: value("month"),
-    day: value("day"),
-    hour: value("hour"),
-    minute: value("minute"),
-    second: value("second"),
-  };
-}
-
-function getTimeZoneOffsetMs(date: Date, timeZone: string) {
-  const parts = getLocalDateTimeParts(date, timeZone);
-  const asUtc = Date.UTC(
-    parts.year,
-    parts.month - 1,
-    parts.day,
-    parts.hour,
-    parts.minute,
-    parts.second,
-  );
-  return asUtc - date.getTime();
-}
-
-function zonedDateTimeToUtc(
-  timeZone: string,
-  year: number,
-  month: number,
-  day: number,
-  hour: number,
-  minute: number,
-  second = 0,
-) {
-  const utcGuess = Date.UTC(year, month - 1, day, hour, minute, second);
-  const offset = getTimeZoneOffsetMs(new Date(utcGuess), timeZone);
-  return new Date(utcGuess - offset);
-}
-
-function addDaysToParts(
-  parts: ReturnType<typeof getLocalDateTimeParts>,
-  days: number,
-  timeZone: string,
-) {
-  const baseUtc = zonedDateTimeToUtc(
-    timeZone,
-    parts.year,
-    parts.month,
-    parts.day,
-    12,
-    0,
-    0,
-  );
-  baseUtc.setUTCDate(baseUtc.getUTCDate() + days);
-  return getLocalDateTimeParts(baseUtc, timeZone);
-}
-
-function getNextPullAt(profile: SyncProfile, now: Date, platform: string) {
-  if (!profile.autoSyncEnabled) return null;
-  if (platform === "TPP_EBAY" || platform === "TT_EBAY") {
-    return getNextEbayAutoSyncAt(now, profile.timezone);
-  }
-
-  const nowParts = getLocalDateTimeParts(now, profile.timezone);
-  const candidates: Date[] = [];
-
-  for (let dayOffset = 0; dayOffset <= 2; dayOffset += 1) {
-    const dayParts = addDaysToParts(nowParts, dayOffset, profile.timezone);
-
-    for (
-      let minute = profile.dayStartHour * 60;
-      minute < profile.dayEndHour * 60;
-      minute += profile.dayIntervalMinutes
-    ) {
-      candidates.push(
-        zonedDateTimeToUtc(
-          profile.timezone,
-          dayParts.year,
-          dayParts.month,
-          dayParts.day,
-          Math.floor(minute / 60),
-          minute % 60,
-        ),
-      );
-    }
-
-    const overnightEnd = profile.dayStartHour * 60 + 24 * 60;
-    for (
-      let minute = profile.dayEndHour * 60;
-      minute < overnightEnd;
-      minute += profile.overnightIntervalMinutes
-    ) {
-      const targetDayParts =
-        minute >= 24 * 60
-          ? addDaysToParts(dayParts, 1, profile.timezone)
-          : dayParts;
-      const normalizedMinute = minute % (24 * 60);
-      candidates.push(
-        zonedDateTimeToUtc(
-          profile.timezone,
-          targetDayParts.year,
-          targetDayParts.month,
-          targetDayParts.day,
-          Math.floor(normalizedMinute / 60),
-          normalizedMinute % 60,
-        ),
-      );
-    }
-  }
-
-  const nowTime = now.getTime();
-  return candidates
-    .filter((candidate) => candidate.getTime() > nowTime)
-    .sort((a, b) => a.getTime() - b.getTime())[0] ?? null;
-}
-
-function formatCountdown(target: Date | null, now: number) {
-  if (!target) return "Not scheduled";
-  const remaining = target.getTime() - now;
-  if (remaining <= 0) return "Due now";
-
-  const totalSeconds = Math.floor(remaining / 1000);
-  const hours = Math.floor(totalSeconds / 3600);
-  const minutes = Math.floor((totalSeconds % 3600) / 60);
-  const seconds = totalSeconds % 60;
-
-  if (hours > 0) return `${hours}h ${minutes}m ${seconds}s`;
-  return `${minutes}m ${seconds}s`;
-}
-
-function formatSchedule(profile: SyncProfile, platform: string) {
-  if (platform === "TPP_EBAY" || platform === "TT_EBAY") {
-    return formatEbayAutoSyncSchedule();
-  }
-
-  const overnightWindowMinutes =
-    (24 - profile.dayEndHour + profile.dayStartHour) * 60;
-  const overnightLabel =
-    profile.overnightIntervalMinutes >= overnightWindowMinutes
-      ? "Once overnight"
-      : profile.overnightIntervalMinutes >= 60 &&
-          profile.overnightIntervalMinutes % 60 === 0
-        ? `Every ${profile.overnightIntervalMinutes / 60}h overnight`
-        : `Every ${profile.overnightIntervalMinutes}m overnight`;
-
-  const daytimeLabel =
-    profile.dayIntervalMinutes >= 60 && profile.dayIntervalMinutes % 60 === 0
-      ? `Every ${profile.dayIntervalMinutes / 60}h`
-      : `Every ${profile.dayIntervalMinutes}m`;
-
-  return `${daytimeLabel} from ${profile.dayStartHour}:00-${profile.dayEndHour}:00, ${overnightLabel}`;
-}
-
-function formatRateLimitRemaining(remaining: number, limit: number) {
-  if (limit <= 0) return "Unknown";
-  return `${remaining.toLocaleString()} / ${limit.toLocaleString()}`;
-}
-
-function usesWebhookWakeup(profile: SyncProfile) {
-  return (
-    profile.incrementalStrategy === "shopify_webhook_reconcile" ||
-    profile.incrementalStrategy === "bigcommerce_webhook_reconcile"
-  );
-}
-
 function getRelevantFallbackReason(
   profile: SyncProfile,
   syncState: IntegrationSyncState | null | undefined,
 ) {
   if (!syncState?.lastFallbackReason) return null;
-  if (
-    profile.preferredMode === "full" &&
-    syncState.lastEffectiveMode === "full"
-  ) {
-    return null;
-  }
+  if (profile.preferredMode === "full" && syncState.lastEffectiveMode === "full") return null;
   return syncState.lastFallbackReason;
 }
 
@@ -535,51 +284,135 @@ function getCompletionSummary(
   job: SyncJobInfo | null,
   fallbackReason: string | null,
 ): { label: string; tone: CompletionTone; detail: string } {
-  if (!job) {
-    return {
-      label: "No sync yet",
-      tone: "info",
-      detail: "No completed sync has been recorded for this store yet.",
-    };
-  }
-
+  if (!job) return { label: "No sync yet", tone: "info", detail: "Run a sync to pull data from this store." };
   const issueCount = Array.isArray(job.errors) ? job.errors.length : 0;
-
-  if (job.status === "RUNNING") {
-    return {
-      label: "Sync running",
-      tone: "info",
-      detail: "Pull is in progress now.",
-    };
-  }
-
+  if (job.status === "RUNNING") return { label: "Syncing", tone: "info", detail: "Pull is in progress." };
   if (job.status === "FAILED") {
     return {
-      label: "Sync failed",
+      label: "Failed",
       tone: "error",
-      detail:
-        issueCount > 0
-          ? `${issueCount} issue${issueCount === 1 ? "" : "s"} blocked completion.`
-          : "The last pull did not complete successfully.",
+      detail: issueCount > 0
+        ? `${issueCount} issue${issueCount === 1 ? "" : "s"} blocked completion.`
+        : "Last pull did not complete.",
     };
   }
-
   if (issueCount > 0) {
     return {
-      label: "Semi-complete",
+      label: "Completed with issues",
       tone: "warning",
-      detail: `100% finished, but ${issueCount} row${issueCount === 1 ? "" : "s"} had issues and may have been skipped.`,
+      detail: `Done, but ${issueCount} row${issueCount === 1 ? "" : "s"} had issues.`,
     };
   }
-
   return {
-    label: "100% complete",
+    label: "Complete",
     tone: "success",
-    detail: fallbackReason
-      ? "Completed successfully with a safe fallback path."
-      : "Completed successfully with no reported errors.",
+    detail: fallbackReason ? "Completed with safe fallback." : "All items synced successfully.",
   };
 }
+
+/* ------------------------------------------------------------------ */
+/*  Schedule / countdown helpers                                       */
+/* ------------------------------------------------------------------ */
+
+function getLocalDateTimeParts(date: Date, timeZone: string) {
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    timeZone, hour12: false,
+    year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", second: "2-digit",
+  });
+  const parts = formatter.formatToParts(date);
+  const v = (type: string) => Number(parts.find((p) => p.type === type)?.value ?? "0");
+  return { year: v("year"), month: v("month"), day: v("day"), hour: v("hour"), minute: v("minute"), second: v("second") };
+}
+
+function getTimeZoneOffsetMs(date: Date, timeZone: string) {
+  const p = getLocalDateTimeParts(date, timeZone);
+  return Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second) - date.getTime();
+}
+
+function zonedDateTimeToUtc(tz: string, y: number, mo: number, d: number, h: number, mi: number, s = 0) {
+  const guess = Date.UTC(y, mo - 1, d, h, mi, s);
+  return new Date(guess - getTimeZoneOffsetMs(new Date(guess), tz));
+}
+
+function addDaysToParts(parts: ReturnType<typeof getLocalDateTimeParts>, days: number, tz: string) {
+  const b = zonedDateTimeToUtc(tz, parts.year, parts.month, parts.day, 12, 0, 0);
+  b.setUTCDate(b.getUTCDate() + days);
+  return getLocalDateTimeParts(b, tz);
+}
+
+function getNextPullAt(profile: SyncProfile, now: Date, platform: string) {
+  if (!profile.autoSyncEnabled) return null;
+  if (platform === "TPP_EBAY" || platform === "TT_EBAY") return getNextEbayAutoSyncAt(now, profile.timezone);
+
+  const nowParts = getLocalDateTimeParts(now, profile.timezone);
+  const candidates: Date[] = [];
+
+  for (let dayOffset = 0; dayOffset <= 2; dayOffset += 1) {
+    const dayParts = addDaysToParts(nowParts, dayOffset, profile.timezone);
+
+    for (let m = profile.dayStartHour * 60; m < profile.dayEndHour * 60; m += profile.dayIntervalMinutes) {
+      candidates.push(zonedDateTimeToUtc(profile.timezone, dayParts.year, dayParts.month, dayParts.day, Math.floor(m / 60), m % 60));
+    }
+
+    const overnightEnd = profile.dayStartHour * 60 + 24 * 60;
+    for (let m = profile.dayEndHour * 60; m < overnightEnd; m += profile.overnightIntervalMinutes) {
+      const tp = m >= 24 * 60 ? addDaysToParts(dayParts, 1, profile.timezone) : dayParts;
+      const nm = m % (24 * 60);
+      candidates.push(zonedDateTimeToUtc(profile.timezone, tp.year, tp.month, tp.day, Math.floor(nm / 60), nm % 60));
+    }
+  }
+
+  const nowTime = now.getTime();
+  return candidates.filter((c) => c.getTime() > nowTime).sort((a, b) => a.getTime() - b.getTime())[0] ?? null;
+}
+
+function formatCountdown(target: Date | null, now: number) {
+  if (!target) return "—";
+  const remaining = target.getTime() - now;
+  if (remaining <= 0) return "Due now";
+  const totalSeconds = Math.floor(remaining / 1000);
+  const h = Math.floor(totalSeconds / 3600);
+  const m = Math.floor((totalSeconds % 3600) / 60);
+  const s = totalSeconds % 60;
+  if (h > 0) return `${h}h ${m}m ${s}s`;
+  return `${m}m ${s}s`;
+}
+
+function formatSchedule(profile: SyncProfile, platform: string) {
+  if (platform === "TPP_EBAY" || platform === "TT_EBAY") return formatEbayAutoSyncSchedule();
+  const overnightWindowMinutes = (24 - profile.dayEndHour + profile.dayStartHour) * 60;
+  const overnightLabel =
+    profile.overnightIntervalMinutes >= overnightWindowMinutes ? "Once overnight"
+      : profile.overnightIntervalMinutes >= 60 && profile.overnightIntervalMinutes % 60 === 0
+        ? `Every ${profile.overnightIntervalMinutes / 60}h overnight`
+        : `Every ${profile.overnightIntervalMinutes}m overnight`;
+  const daytimeLabel =
+    profile.dayIntervalMinutes >= 60 && profile.dayIntervalMinutes % 60 === 0
+      ? `Every ${profile.dayIntervalMinutes / 60}h`
+      : `Every ${profile.dayIntervalMinutes}m`;
+  return `${daytimeLabel} (${profile.dayStartHour}:00–${profile.dayEndHour}:00), ${overnightLabel}`;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Tooltip helper                                                     */
+/* ------------------------------------------------------------------ */
+
+function Tip({ children, text }: { children: React.ReactNode; text: string }) {
+  return (
+    <div className="group/tip relative inline-flex">
+      {children}
+      <div className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-2.5 w-60 -translate-x-1/2 rounded-lg border border-border bg-popover px-3 py-2 text-xs leading-relaxed text-popover-foreground opacity-0 shadow-lg transition-opacity duration-200 group-hover/tip:opacity-100">
+        {text}
+        <div className="absolute left-1/2 top-full -translate-x-1/2 border-[5px] border-transparent border-t-border" />
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  Main component                                                     */
+/* ------------------------------------------------------------------ */
 
 export default function SyncPage() {
   const isPageVisible = usePageVisibility();
@@ -589,9 +422,7 @@ export default function SyncPage() {
   const [syncing, setSyncing] = useState<Record<string, SyncPageState>>({});
   const [results, setResults] = useState<Record<string, string>>({});
   const [liveJobs, setLiveJobs] = useState<Record<string, SyncJobInfo | null>>({});
-  const [syncMeta, setSyncMeta] = useState<Record<string, SyncRouteData | null>>(
-    {},
-  );
+  const [syncMeta, setSyncMeta] = useState<Record<string, SyncRouteData | null>>({});
   const [errorsExpanded, setErrorsExpanded] = useState<Record<string, boolean>>({});
   const [copied, setCopied] = useState<string | null>(null);
   const [syncAllRunning, setSyncAllRunning] = useState(false);
@@ -599,14 +430,14 @@ export default function SyncPage() {
   const pollTimers = useRef<Record<string, ReturnType<typeof setInterval>>>({});
   const initialCheckDone = useRef(false);
 
+  /* ---- data fetchers ---- */
+
   const fetchIntegrations = useCallback(async () => {
     try {
       const res = await fetch("/api/integrations");
       const json = await res.json();
       if (json.data) setIntegrations(json.data);
-    } catch {
-      // ignore
-    }
+    } catch { /* ignore */ }
   }, []);
 
   const fetchSchedulerSetting = useCallback(async () => {
@@ -614,9 +445,7 @@ export default function SyncPage() {
       const res = await fetch("/api/settings?key=scheduler_enabled");
       const json = await res.json();
       setSchedulerEnabled(Boolean(json.data));
-    } catch {
-      setSchedulerEnabled(false);
-    }
+    } catch { setSchedulerEnabled(false); }
   }, []);
 
   const fetchSchedulerStatus = useCallback(async (forceRefresh = false) => {
@@ -627,22 +456,20 @@ export default function SyncPage() {
       );
       const json = await res.json();
       setSchedulerStatus((json.data ?? null) as SchedulerStatus | null);
-    } catch {
-      setSchedulerStatus(null);
-    }
+    } catch { setSchedulerStatus(null); }
   }, []);
 
   useEffect(() => {
     fetchIntegrations();
     fetchSchedulerSetting();
     fetchSchedulerStatus();
-    const schedulerTimer = setInterval(() => {
+    const timer = setInterval(() => {
       if (document.visibilityState !== "visible") return;
       void fetchSchedulerStatus();
     }, 60_000);
     return () => {
       Object.values(pollTimers.current).forEach(clearInterval);
-      clearInterval(schedulerTimer);
+      clearInterval(timer);
     };
   }, [fetchIntegrations, fetchSchedulerSetting, fetchSchedulerStatus]);
 
@@ -652,30 +479,14 @@ export default function SyncPage() {
   }, []);
 
   const getStatus = (apiPlatform: string) =>
-    integrations.find((integration) => integration.platform === apiPlatform);
+    integrations.find((i) => i.platform === apiPlatform);
 
-  function copyErrors(apiPlatform: string) {
-    const job = liveJobs[apiPlatform];
-    if (!job?.errors?.length) return;
-
-    const text = job.errors
-      .map((error) => `Item: ${error.sku}\nError: ${error.message}`)
-      .join("\n\n---\n\n");
-    const header = `=== ${apiPlatform} Sync Errors (${job.errors.length}) ===\nJob ID: ${job.id}\nCompleted: ${job.completedAt ?? "N/A"}\n\n`;
-
-    navigator.clipboard.writeText(header + text).then(() => {
-      setCopied(apiPlatform);
-      setTimeout(() => setCopied(null), 2000);
-    });
-  }
+  /* ---- store status loader ---- */
 
   const loadStoreStatus = useCallback(async (apiPlatform: string) => {
-    const res = await fetch(`/api/sync/${apiPlatform}?ts=${Date.now()}`, {
-      cache: "no-store",
-    });
+    const res = await fetch(`/api/sync/${apiPlatform}?ts=${Date.now()}`, { cache: "no-store" });
     const json = await res.json();
     const data = (json.data ?? null) as SyncRouteData | null;
-
     if (!data) return null;
 
     setSyncMeta((prev) => ({ ...prev, [apiPlatform]: data }));
@@ -688,13 +499,9 @@ export default function SyncPage() {
       const issueCount = Array.isArray(job.errors) ? job.errors.length : 0;
       const message =
         job.status === "COMPLETED"
-          ? `Last sync: ${job.itemsProcessed} processed, ${job.itemsCreated} created, ${job.itemsUpdated} updated${issueCount > 0 ? `, ${issueCount} issues` : ""}`
-          : "Last sync failed - see details below";
-
-      setSyncing((prev) => ({
-        ...prev,
-        [apiPlatform]: job.status === "COMPLETED" ? "done" : "error",
-      }));
+          ? `Done — ${job.itemsProcessed} processed, ${job.itemsCreated} created, ${job.itemsUpdated} updated${issueCount > 0 ? `, ${issueCount} issues` : ""}`
+          : "Last sync failed — see details below";
+      setSyncing((prev) => ({ ...prev, [apiPlatform]: job.status === "COMPLETED" ? "done" : "error" }));
       setResults((prev) => ({ ...prev, [apiPlatform]: message }));
     }
 
@@ -704,49 +511,35 @@ export default function SyncPage() {
   useEffect(() => {
     if (!isPageVisible) return;
     void fetchSchedulerStatus();
-    for (const store of stores) {
-      void loadStoreStatus(store.apiPlatform);
-    }
+    for (const store of stores) void loadStoreStatus(store.apiPlatform);
   }, [fetchSchedulerStatus, isPageVisible, loadStoreStatus]);
+
+  /* ---- sync polling ---- */
 
   const pollSyncStatus = useCallback(
     (apiPlatform: string) => {
-      if (pollTimers.current[apiPlatform]) {
-        clearInterval(pollTimers.current[apiPlatform]);
-      }
+      if (pollTimers.current[apiPlatform]) clearInterval(pollTimers.current[apiPlatform]);
 
       const timer = setInterval(async () => {
         if (!isPageVisible) return;
         try {
           const data = await loadStoreStatus(apiPlatform);
           const job = data?.lastJob ?? null;
-
           if (job && (job.status === "COMPLETED" || job.status === "FAILED")) {
             clearInterval(pollTimers.current[apiPlatform]);
             delete pollTimers.current[apiPlatform];
-
             const issueCount = Array.isArray(job.errors) ? job.errors.length : 0;
             const message =
               job.status === "COMPLETED"
-                ? `Done - ${job.itemsProcessed} processed, ${job.itemsCreated} created, ${job.itemsUpdated} updated${issueCount > 0 ? `, ${issueCount} issues` : ""}`
-                : "Failed - see details below";
-
-            setSyncing((prev) => ({
-              ...prev,
-              [apiPlatform]: job.status === "COMPLETED" ? "done" : "error",
-            }));
+                ? `Done — ${job.itemsProcessed} processed, ${job.itemsCreated} created, ${job.itemsUpdated} updated${issueCount > 0 ? `, ${issueCount} issues` : ""}`
+                : "Failed — see details below";
+            setSyncing((prev) => ({ ...prev, [apiPlatform]: job.status === "COMPLETED" ? "done" : "error" }));
             setResults((prev) => ({ ...prev, [apiPlatform]: message }));
-
-            if (issueCount > 0) {
-              setErrorsExpanded((prev) => ({ ...prev, [apiPlatform]: true }));
-            }
-
+            if (issueCount > 0) setErrorsExpanded((prev) => ({ ...prev, [apiPlatform]: true }));
             fetchIntegrations();
             fetchSchedulerStatus(true);
           }
-        } catch {
-          // ignore
-        }
+        } catch { /* ignore */ }
       }, 2000);
 
       pollTimers.current[apiPlatform] = timer;
@@ -757,14 +550,12 @@ export default function SyncPage() {
   useEffect(() => {
     if (initialCheckDone.current) return;
     initialCheckDone.current = true;
-
     (async () => {
       for (const store of stores) {
         try {
           const data = await loadStoreStatus(store.apiPlatform);
           const job = data?.lastJob ?? null;
           if (!job) continue;
-
           if (job.status === "RUNNING") {
             setSyncing((prev) => ({ ...prev, [store.apiPlatform]: "syncing" }));
             pollSyncStatus(store.apiPlatform);
@@ -773,20 +564,16 @@ export default function SyncPage() {
             const message =
               job.status === "COMPLETED"
                 ? `Last sync: ${job.itemsProcessed} processed, ${job.itemsCreated} created, ${job.itemsUpdated} updated${issueCount > 0 ? `, ${issueCount} issues` : ""}`
-                : "Last sync failed - see details below";
-
-            setSyncing((prev) => ({
-              ...prev,
-              [store.apiPlatform]: job.status === "COMPLETED" ? "done" : "error",
-            }));
+                : "Last sync failed — see details below";
+            setSyncing((prev) => ({ ...prev, [store.apiPlatform]: job.status === "COMPLETED" ? "done" : "error" }));
             setResults((prev) => ({ ...prev, [store.apiPlatform]: message }));
           }
-        } catch {
-          // ignore
-        }
+        } catch { /* ignore */ }
       }
     })();
   }, [loadStoreStatus, pollSyncStatus]);
+
+  /* ---- sync actions ---- */
 
   const syncStore = useCallback(
     async (apiPlatform: string, mode?: "full" | "incremental") => {
@@ -802,30 +589,16 @@ export default function SyncPage() {
           body: mode ? JSON.stringify({ mode }) : undefined,
         });
         const text = await res.text();
-        let json: {
-          data?: Record<string, unknown>;
-          error?: string;
-        };
-
-        try {
-          json = text ? JSON.parse(text) : {};
-        } catch {
+        let json: { data?: Record<string, unknown>; error?: string };
+        try { json = text ? JSON.parse(text) : {}; } catch {
           setSyncing((prev) => ({ ...prev, [apiPlatform]: "error" }));
-          setResults((prev) => ({
-            ...prev,
-            [apiPlatform]: res.ok
-              ? "Invalid response from server"
-              : `Sync failed (${res.status}). Check server logs.`,
-          }));
+          setResults((prev) => ({ ...prev, [apiPlatform]: res.ok ? "Invalid response" : `Sync failed (${res.status})` }));
           return;
         }
 
         if (!res.ok) {
           setSyncing((prev) => ({ ...prev, [apiPlatform]: "error" }));
-          setResults((prev) => ({
-            ...prev,
-            [apiPlatform]: json.error ?? "Sync failed",
-          }));
+          setResults((prev) => ({ ...prev, [apiPlatform]: json.error ?? "Sync failed" }));
           await loadStoreStatus(apiPlatform);
           fetchSchedulerStatus(true);
           return;
@@ -833,20 +606,16 @@ export default function SyncPage() {
 
         const data = json.data;
         if (data?.status === "STARTED" || data?.status === "ALREADY_RUNNING") {
-          const fallbackReason =
-            typeof data.fallbackReason === "string" ? data.fallbackReason : null;
-          if (fallbackReason) {
-            setResults((prev) => ({ ...prev, [apiPlatform]: fallbackReason }));
-          }
+          const fb = typeof data.fallbackReason === "string" ? data.fallbackReason : null;
+          if (fb) setResults((prev) => ({ ...prev, [apiPlatform]: fb }));
           pollSyncStatus(apiPlatform);
           return;
         }
 
         const modeLabel = mode === "full" ? "Full sync" : "Sync";
         const message = data
-          ? `${modeLabel} done - ${data.itemsProcessed ?? 0} processed, ${data.itemsCreated ?? 0} created, ${data.itemsUpdated ?? 0} updated`
+          ? `${modeLabel} done — ${data.itemsProcessed ?? 0} processed, ${data.itemsCreated ?? 0} created, ${data.itemsUpdated ?? 0} updated`
           : "Sync completed";
-
         setSyncing((prev) => ({ ...prev, [apiPlatform]: "done" }));
         setResults((prev) => ({ ...prev, [apiPlatform]: message }));
         fetchIntegrations();
@@ -854,10 +623,7 @@ export default function SyncPage() {
         await loadStoreStatus(apiPlatform);
       } catch (error) {
         setSyncing((prev) => ({ ...prev, [apiPlatform]: "error" }));
-        setResults((prev) => ({
-          ...prev,
-          [apiPlatform]: error instanceof Error ? error.message : "Network error",
-        }));
+        setResults((prev) => ({ ...prev, [apiPlatform]: error instanceof Error ? error.message : "Network error" }));
       }
     },
     [fetchIntegrations, fetchSchedulerStatus, loadStoreStatus, pollSyncStatus],
@@ -866,42 +632,21 @@ export default function SyncPage() {
   const cancelSync = useCallback(
     async (apiPlatform: string) => {
       try {
-        const res = await fetch(`/api/sync/${apiPlatform}`, {
-          method: "DELETE",
-        });
-        const json = (await res.json().catch(() => ({}))) as {
-          data?: { message?: string };
-          error?: string;
-        };
-
+        const res = await fetch(`/api/sync/${apiPlatform}`, { method: "DELETE" });
+        const json = (await res.json().catch(() => ({}))) as { data?: { message?: string }; error?: string };
         if (!res.ok) {
           setSyncing((prev) => ({ ...prev, [apiPlatform]: "error" }));
-          setResults((prev) => ({
-            ...prev,
-            [apiPlatform]: json.error ?? "Failed to cancel sync",
-          }));
+          setResults((prev) => ({ ...prev, [apiPlatform]: json.error ?? "Failed to cancel" }));
           return;
         }
-
-        if (pollTimers.current[apiPlatform]) {
-          clearInterval(pollTimers.current[apiPlatform]);
-          delete pollTimers.current[apiPlatform];
-        }
-
+        if (pollTimers.current[apiPlatform]) { clearInterval(pollTimers.current[apiPlatform]); delete pollTimers.current[apiPlatform]; }
         setSyncing((prev) => ({ ...prev, [apiPlatform]: "done" }));
-        setResults((prev) => ({
-          ...prev,
-          [apiPlatform]: json.data?.message ?? "Sync cancelled",
-        }));
+        setResults((prev) => ({ ...prev, [apiPlatform]: json.data?.message ?? "Sync cancelled" }));
         await loadStoreStatus(apiPlatform);
         fetchSchedulerStatus(true);
       } catch (error) {
         setSyncing((prev) => ({ ...prev, [apiPlatform]: "error" }));
-        setResults((prev) => ({
-          ...prev,
-          [apiPlatform]:
-            error instanceof Error ? error.message : "Failed to cancel sync",
-        }));
+        setResults((prev) => ({ ...prev, [apiPlatform]: error instanceof Error ? error.message : "Failed to cancel" }));
       }
     },
     [fetchSchedulerStatus, loadStoreStatus],
@@ -909,400 +654,85 @@ export default function SyncPage() {
 
   const syncAll = useCallback(async () => {
     setSyncAllRunning(true);
-    const connectedStores = stores.filter((store) => getStatus(store.apiPlatform)?.connected);
-    await Promise.allSettled(
-      connectedStores.map((store) => syncStore(store.apiPlatform)),
-    );
+    const connected = stores.filter((s) => getStatus(s.apiPlatform)?.connected);
+    await Promise.allSettled(connected.map((s) => syncStore(s.apiPlatform)));
     setSyncAllRunning(false);
   }, [integrations, syncStore]);
 
+  function copyErrors(apiPlatform: string) {
+    const job = liveJobs[apiPlatform];
+    if (!job?.errors?.length) return;
+    const text = job.errors.map((e) => `Item: ${e.sku}\nError: ${e.message}`).join("\n\n---\n\n");
+    const header = `=== ${apiPlatform} Sync Errors (${job.errors.length}) ===\nJob ID: ${job.id}\n\n`;
+    navigator.clipboard.writeText(header + text).then(() => {
+      setCopied(apiPlatform);
+      setTimeout(() => setCopied(null), 2000);
+    });
+  }
+
+  /* ---- derived values ---- */
+
+  const healthSummary = schedulerStatus?.healthSummary;
+  const showHealthAlert = healthSummary && healthSummary.status !== "healthy";
+
+  /* ================================================================ */
+  /*  RENDER                                                           */
+  /* ================================================================ */
+
   return (
-    <div className="p-6">
-      <div className="mb-6" data-tour="sync-header">
-        <h1 className="text-2xl font-bold tracking-tight text-foreground">Sync</h1>
-        <p className="text-sm text-muted-foreground">
-          Pull-only sync controls - fetch latest data from connected marketplaces
-        </p>
-      </div>
-
-      <div className="mb-6 flex items-center gap-3 rounded-lg border border-border bg-muted/50 px-4 py-3" data-tour="sync-pull-only">
-        <CheckCircle className="h-5 w-5 shrink-0 text-muted-foreground" aria-hidden />
-        <p className="text-sm text-muted-foreground">
-          Sync is pull-only. It never pushes changes to marketplaces.
-        </p>
-      </div>
-
-      <div className="mb-8" data-tour="sync-actions">
-        <button
-          type="button"
-          disabled={syncAllRunning}
-          onClick={syncAll}
-          className="inline-flex cursor-pointer items-center gap-2 rounded-lg bg-primary px-6 py-3 text-sm font-medium text-primary-foreground shadow-sm transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          {syncAllRunning ? (
-            <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
-          ) : (
-            <RefreshCw className="h-4 w-4" aria-hidden />
-          )}
-          {syncAllRunning ? "Syncing All..." : "Sync All"}
-        </button>
-      </div>
-
-      <div className="mb-8 rounded-lg border border-border bg-card p-4" data-tour="sync-scheduler">
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div>
-            <div className="flex items-center gap-2">
-              <TimerReset className={cn(
-                "h-4 w-4",
-                schedulerStatus?.runningCount ? "animate-spin text-blue-400" : "text-muted-foreground"
-              )} />
-              <h2 className="text-sm font-semibold text-foreground">Automatic Background Updates</h2>
-              <span className={cn(
-                "inline-flex items-center rounded border px-2 py-0.5 text-[11px] font-medium",
-                schedulerEnabled
-                  ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-400"
-                  : "border-amber-500/30 bg-amber-500/10 text-amber-400"
-              )}>
-                {schedulerEnabled ? "Auto updates on" : "Auto updates off"}
-              </span>
-            </div>
-            <p className="mt-1 text-xs text-muted-foreground">
-              Last automatic check: {formatDateTime(schedulerStatus?.lastTickAt ?? null)}
-              {schedulerStatus?.lastOutcome ? ` | Result: ${schedulerStatus.lastOutcome}` : ""}
-            </p>
-          </div>
-          <div className="grid min-w-[260px] grid-cols-2 gap-2 text-xs sm:grid-cols-4">
-            <div className="rounded border border-border bg-muted/40 px-3 py-2">
-              <div className="text-muted-foreground">Ready At Last Check</div>
-              <div className="mt-1 text-sm font-semibold tabular-nums text-foreground">
-                {schedulerStatus?.lastDueCount ?? 0}
-              </div>
-            </div>
-            <div className="rounded border border-border bg-muted/40 px-3 py-2">
-              <div className="text-muted-foreground">Started At Last Check</div>
-              <div className="mt-1 text-sm font-semibold tabular-nums text-foreground">
-                {schedulerStatus?.lastDispatchedCount ?? 0}
-              </div>
-            </div>
-            <div className="rounded border border-border bg-muted/40 px-3 py-2">
-              <div className="text-muted-foreground">Updating Now</div>
-              <div className="mt-1 text-sm font-semibold tabular-nums text-foreground">
-                {schedulerStatus?.runningCount ?? 0}
-              </div>
-            </div>
-            <div className="rounded border border-border bg-muted/40 px-3 py-2">
-              <div className="text-muted-foreground">Last Result</div>
-              <div className="mt-1 text-sm font-semibold text-foreground">
-                {schedulerStatus?.lastOutcome ?? "—"}
-              </div>
-            </div>
-          </div>
+    <div className="min-h-screen p-6" data-tour="sync-header">
+      {/* ---- header ---- */}
+      <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight text-foreground">Sync</h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Pull-only — fetches the latest data from your connected marketplaces
+          </p>
         </div>
-        {schedulerStatus?.lastError && (
-          <div className="mt-3 rounded border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-400">
-            Last automatic update error: {schedulerStatus.lastError}
-          </div>
-        )}
-        <div className="mt-3 grid gap-2 text-xs sm:grid-cols-2">
-          <div className="rounded border border-border bg-muted/20 px-3 py-2">
-            <div className="text-muted-foreground">Stores Ready To Update Right Now</div>
-            <div className="mt-1 text-sm font-semibold tabular-nums text-foreground">
-              {schedulerStatus?.dueNowCount ?? 0}
-            </div>
-          </div>
-          <div className="rounded border border-border bg-muted/20 px-3 py-2">
-            <div className="text-muted-foreground">Most Recent Automatic Check Result</div>
-            <div className="mt-1 text-sm font-semibold text-foreground">
-              {schedulerStatus?.lastOutcome ?? "—"}
-            </div>
-          </div>
-        </div>
-        {schedulerStatus &&
-          schedulerStatus.dueNowCount > 0 &&
-          schedulerStatus.lastDueCount !== schedulerStatus.dueNowCount && (
-            <div className="mt-3 rounded border border-blue-500/30 bg-blue-500/10 px-3 py-2 text-xs text-blue-300">
-              {schedulerStatus.dueNowCount} store
-              {schedulerStatus.dueNowCount === 1 ? "" : "s"} became ready after the
-              last automatic check. They will start on the next scheduler tick.
-            </div>
-          )}
-        {schedulerStatus?.healthSummary && (
+        <div className="flex items-center gap-3">
           <div
             className={cn(
-              "mt-3 rounded border px-3 py-2 text-xs",
-              getHealthClasses(schedulerStatus.healthSummary.status),
+              "flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium",
+              schedulerEnabled
+                ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-400"
+                : "border-muted-foreground/30 bg-muted/50 text-muted-foreground",
             )}
           >
-            <div className="font-semibold">
-              Store update health: {schedulerStatus.healthSummary.headline}
-            </div>
-            <div className="mt-1">{schedulerStatus.healthSummary.detail}</div>
-            <div className="mt-1">
-              Next step: {schedulerStatus.healthSummary.recommendedAction}
-            </div>
-            <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px] uppercase tracking-wide">
-              <span>Healthy {schedulerStatus.healthSummary.healthyCount}</span>
-              <span>Delayed {schedulerStatus.healthSummary.delayedCount}</span>
-              <span>Attention {schedulerStatus.healthSummary.attentionCount}</span>
-            </div>
+            <span className={cn("h-1.5 w-1.5 rounded-full", schedulerEnabled ? "bg-emerald-400 animate-pulse" : "bg-muted-foreground")} />
+            Auto-sync {schedulerEnabled ? "on" : "off"}
           </div>
-        )}
-        {!!schedulerStatus?.integrationHealth?.length && (
-          <div className="mt-4 rounded border border-border bg-muted/20 p-3" data-tour="sync-freshness">
-            <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-              Store Freshness
-            </div>
-            <div className="mb-3 text-xs text-muted-foreground">
-              This shows whether each store is refreshing within its expected window, plus whether Shopify and BigCommerce are still sending change notices.
-            </div>
-            <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-4">
-              {schedulerStatus.integrationHealth.slice(0, 4).map((item) => (
-                <div
-                  key={item.integrationId}
-                  className="rounded border border-border bg-background/40 px-3 py-2 text-xs"
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="font-semibold text-foreground">{item.label}</span>
-                    <span
-                      className={cn(
-                        "rounded border px-1.5 py-0.5 text-[10px] font-medium uppercase",
-                        getHealthClasses(item.combinedStatus),
-                      )}
-                    >
-                      {item.combinedStatus}
-                    </span>
-                  </div>
-                  <div className="mt-2 text-foreground/90">{item.syncMessage}</div>
-                  <div className="mt-1 text-muted-foreground">
-                    Last completed pull: {formatDateTime(item.lastSyncAt)}
-                  </div>
-                  {item.combinedStatus !== "healthy" ? (
-                    <div
-                      className={cn(
-                        "mt-2 rounded border px-2 py-1.5 text-[11px]",
-                        item.combinedStatus === "attention"
-                          ? "border-red-500/20 bg-red-500/5 text-red-300"
-                          : "border-amber-500/20 bg-amber-500/5 text-amber-300",
-                      )}
-                    >
-                      Next step: {item.recommendedAction}
-                    </div>
-                  ) : null}
-                  <div className="mt-1 text-muted-foreground">
-                    {item.running
-                      ? "A pull is running now."
-                      : item.due
-                        ? "Another pull is due now."
-                        : item.nextDueAt
-                          ? `Next automatic check: ${formatDateTime(item.nextDueAt)}`
-                          : "No next automatic check scheduled."}
-                  </div>
-                  {item.webhookExpected ? (
-                    <div
-                      className={cn(
-                        "mt-2 rounded border px-2 py-1 text-[11px]",
-                        item.webhookStatus === "ok"
-                          ? "border-emerald-500/20 bg-emerald-500/5 text-emerald-300"
-                          : item.webhookStatus === "quiet"
-                            ? "border-amber-500/20 bg-amber-500/5 text-amber-300"
-                            : "border-border bg-muted/40 text-muted-foreground",
-                      )}
-                    >
-                      {item.webhookMessage}
-                    </div>
-                  ) : null}
-                  {item.webhookExpected ? (
-                    <div className="mt-2 rounded border border-border bg-background/40 px-2 py-1 text-[11px] text-muted-foreground">
-                      {item.recentWebhookCount24h > 0
-                        ? `${item.recentWebhookCount24h.toLocaleString()} marketplace notice${item.recentWebhookCount24h === 1 ? "" : "s"} recorded in the last 24h.`
-                        : "No marketplace notices recorded in the last 24h."}
-                      {item.lastWebhookMessage ? ` Latest result: ${item.lastWebhookMessage}` : ""}
-                    </div>
-                  ) : null}
-                  {item.webhookExpected ? (
-                    <div
-                      className={cn(
-                        "mt-2 rounded border px-2 py-1 text-[11px]",
-                        getWebhookProofClasses(item.webhookProofStatus),
-                      )}
-                    >
-                      <div>{item.webhookProofMessage}</div>
-                      {item.lastWebhookTopic ? (
-                        <div className="mt-1 text-[10px] uppercase tracking-wide opacity-80">
-                          Topic: {item.lastWebhookTopic}
-                          {item.lastWebhookEventStatus
-                            ? ` • ${getReadableWebhookStatus(item.lastWebhookEventStatus)}`
-                            : ""}
-                        </div>
-                      ) : null}
-                    </div>
-                  ) : null}
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-        {!!schedulerStatus?.recentJobs?.length && (
-          <div className="mt-4 rounded border border-border bg-muted/20 p-3" data-tour="sync-jobs">
-            <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-              Latest Scheduled Update Per Store
-            </div>
-            <div className="mb-3 text-xs text-muted-foreground">
-              This section only shows scheduled safety-check pulls. A store can still update successfully from webhooks even if its last scheduled pull did not finish.
-            </div>
-            <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-4">
-            {schedulerStatus.recentJobs.slice(0, 4).map((job) => (
-              <div key={job.id} className="rounded border border-border bg-muted/30 px-3 py-2 text-xs">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="font-semibold text-foreground">{job.label}</span>
-                  <span className={cn(
-                    "rounded border px-1.5 py-0.5 text-[10px] font-medium uppercase",
-                    job.mode === "incremental"
-                      ? "border-blue-500/30 bg-blue-500/10 text-blue-400"
-                      : "border-amber-500/30 bg-amber-500/10 text-amber-400"
-                  )}>
-                    {job.mode}
-                  </span>
-                </div>
-                <div className="mt-1 text-muted-foreground">
-                  {getReadableJobStatus(job.status)} • {job.itemsProcessed.toLocaleString()} items checked
-                </div>
-                <div className="mt-1 text-muted-foreground">
-                  {job.status === "RUNNING" ? "Started" : "Finished"}: {formatDateTime(job.status === "RUNNING" ? job.startedAt : job.completedAt)}
-                </div>
-                {job.recoveredAfterScheduledFailure ? (
-                  <div className="mt-1 text-emerald-400">
-                    Newer store updates succeeded after this scheduled issue.
-                  </div>
-                ) : null}
-              </div>
-            ))}
-            </div>
-          </div>
-        )}
-        {!!schedulerStatus?.upcoming?.length && (
-          <div className="mt-4 rounded border border-border bg-muted/20 p-3" data-tour="sync-upcoming">
-            <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-              What Happens Next
-            </div>
-            <div className="mb-3 text-xs text-muted-foreground">
-              This shows which store is updating now and which stores are waiting for their next automatic check.
-            </div>
-            <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-4">
-              {schedulerStatus.upcoming.slice(0, 4).map((item) => (
-                <div
-                  key={item.integrationId}
-                  className="rounded border border-border bg-background/40 px-3 py-2 text-xs"
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="font-semibold text-foreground">{item.label}</span>
-                    <span
-                      className={cn(
-                        "rounded border px-1.5 py-0.5 text-[10px] font-medium uppercase",
-                        item.running
-                          ? "border-blue-500/30 bg-blue-500/10 text-blue-400"
-                          : item.due
-                            ? "border-amber-500/30 bg-amber-500/10 text-amber-400"
-                            : "border-emerald-500/30 bg-emerald-500/10 text-emerald-400",
-                      )}
-                    >
-                      {item.running ? "updating" : item.due ? "ready" : "waiting"}
-                    </span>
-                  </div>
-                  <div className="mt-1 text-muted-foreground">
-                    {formatModeLabel(item.effectiveMode)} update • every {item.intervalMinutes} minutes
-                  </div>
-                  <div className="mt-1 text-foreground/80">
-                    {formatDueCountdown(item.minutesUntilDue, item.due, item.running)}
-                  </div>
-                  <div className="mt-1 text-muted-foreground">
-                    {item.nextDueAt ? `Next check: ${formatDateTime(item.nextDueAt)}` : item.reason}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-        {!!schedulerStatus?.recentWebhooks?.length && (
-          <div className="mt-4 rounded border border-border bg-muted/20 p-3" data-tour="sync-webhooks">
-            <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-              Recent Store Change Notices
-            </div>
-            <div className="mb-3 text-xs text-muted-foreground">
-              These are marketplace notices that tell reorG something changed and may need a refresh.
-            </div>
-            <div className="grid gap-2 md:grid-cols-2">
-              {schedulerStatus.recentWebhooks.slice(0, 4).map((webhook) => (
-                <div
-                  key={webhook.id}
-                  className="rounded border border-border bg-background/40 px-3 py-2 text-xs"
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="font-semibold text-foreground">
-                      {webhook.platform}
-                    </span>
-                    <span className="text-muted-foreground">
-                      {formatDateTime(webhook.receivedAt)}
-                    </span>
-                  </div>
-                  <div className="mt-1 text-muted-foreground">
-                    {webhook.topic} | {getReadableWebhookStatus(webhook.status)}
-                  </div>
-                  <div className="mt-1 text-foreground/80">
-                    {webhook.message}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-        {!!schedulerStatus?.automationEvents?.length && (
-          <div className="mt-4 rounded border border-border bg-muted/20 p-3" data-tour="sync-automation-events">
-            <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-              Why The System Did What It Did
-            </div>
-            <div className="mb-3 text-xs text-muted-foreground">
-              These are the recent automatic decisions reorG made, such as starting a refresh, skipping a duplicate notice, or finishing a targeted update.
-            </div>
-            <div className="grid gap-2 md:grid-cols-2">
-              {schedulerStatus.automationEvents.slice(0, 6).map((event) => (
-                <div
-                  key={event.id}
-                  className="rounded border border-border bg-background/40 px-3 py-2 text-xs"
-                >
-                  <div className="flex items-start justify-between gap-2">
-                    <div>
-                      <div className="font-semibold text-foreground">
-                        {event.title}
-                        {event.platform ? (
-                          <span className="ml-1 text-muted-foreground">{event.platform}</span>
-                        ) : null}
-                      </div>
-                      <div className="mt-1 text-muted-foreground">{event.detail}</div>
-                    </div>
-                    <span
-                      className={cn(
-                        "rounded border px-1.5 py-0.5 text-[10px] font-medium uppercase",
-                        getAutomationBadgeClasses(event.status),
-                      )}
-                    >
-                      {event.status.replace("_", " ")}
-                    </span>
-                  </div>
-                  <div className="mt-2 text-muted-foreground">
-                    {formatDateTime(event.occurredAt)}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
+          <Tip text="Triggers a quick sync on every connected store at once. Uses each store's preferred mode (incremental or full).">
+            <button
+              type="button"
+              disabled={syncAllRunning}
+              onClick={syncAll}
+              className="inline-flex cursor-pointer items-center gap-2 rounded-lg bg-violet-600 px-5 py-2.5 text-sm font-medium text-white shadow-sm transition-colors hover:bg-violet-500 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {syncAllRunning ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+              {syncAllRunning ? "Syncing All..." : "Sync All"}
+            </button>
+          </Tip>
+        </div>
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2" data-tour="sync-stores">
+      {/* ---- health alert (only when there are issues) ---- */}
+      {showHealthAlert && (
+        <div
+          className={cn(
+            "mb-6 rounded-lg border px-4 py-3 text-sm",
+            healthSummary.status === "attention"
+              ? "border-red-500/30 bg-red-500/10 text-red-300"
+              : "border-amber-500/30 bg-amber-500/10 text-amber-300",
+          )}
+        >
+          <strong>{healthSummary.headline}:</strong> {healthSummary.detail}
+          <span className="ml-3 opacity-80">→ {healthSummary.recommendedAction}</span>
+        </div>
+      )}
+
+      {/* ---- store cards ---- */}
+      <div className="grid gap-5 md:grid-cols-2" data-tour="sync-stores">
         {stores.map((store) => {
-          const theme = themeClasses[store.theme];
-          const logoSrc = LOGO_MAP[store.platform];
           const status = getStatus(store.apiPlatform);
           const connected = status?.connected ?? false;
           const storeSync = syncing[store.apiPlatform] ?? "idle";
@@ -1312,492 +742,301 @@ export default function SyncPage() {
           const syncProfile = meta?.syncProfile ?? null;
           const syncState = meta?.syncState ?? null;
           const cooldown = meta?.cooldown ?? null;
-          const rateLimits = meta?.rateLimits ?? null;
-          const reservedGetItemCalls = meta?.quotaPolicy?.reservedGetItemCalls ?? null;
-          const pendingBacklogCount = syncState?.pendingIncrementalItemIds?.length ?? 0;
-          const pendingBacklogWindowEndedAt = syncState?.pendingIncrementalWindowEndedAt ?? null;
-          const webhookState = meta?.webhookState ?? null;
-          const webhookHealth = meta?.webhookHealth ?? null;
           const isSyncing = storeSync === "syncing";
           const jobErrors = (liveJob?.errors ?? []) as SyncError[];
           const showErrors = errorsExpanded[store.apiPlatform] && jobErrors.length > 0;
           const durationMs = getJobDurationMs(liveJob, nowMs);
-          const nextPullAt = cooldown?.active
-            ? cooldown.until
-              ? new Date(cooldown.until)
-              : null
-            : syncProfile
-              ? getNextPullAt(syncProfile, new Date(nowMs), store.apiPlatform)
-              : null;
-          const relevantFallbackReason = syncProfile
-            ? getRelevantFallbackReason(syncProfile, syncState)
-            : null;
-          const completionSummary = getCompletionSummary(
-            liveJob,
-            relevantFallbackReason,
-          );
           const cooldownActive = Boolean(cooldown?.active);
-          const summaryClasses =
-            completionSummary.tone === "success"
-              ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-400"
-              : completionSummary.tone === "warning"
-                ? "border-amber-500/30 bg-amber-500/10 text-amber-400"
-                : completionSummary.tone === "error"
-                  ? "border-destructive/30 bg-destructive/10 text-destructive"
-                  : "border-blue-500/30 bg-blue-500/10 text-blue-400";
+          const nextPullAt = cooldownActive
+            ? cooldown?.until ? new Date(cooldown.until) : null
+            : syncProfile ? getNextPullAt(syncProfile, new Date(nowMs), store.apiPlatform) : null;
+          const relevantFallbackReason = syncProfile ? getRelevantFallbackReason(syncProfile, syncState) : null;
+          const completionSummary = getCompletionSummary(liveJob, relevantFallbackReason);
+          const healthItem = schedulerStatus?.integrationHealth?.find((h) => h.platform === store.apiPlatform);
+          const healthStatus = healthItem?.combinedStatus ?? (connected ? "healthy" : undefined);
+          const logoSrc = LOGO_MAP[store.platform];
+          const pendingBacklogCount = syncState?.pendingIncrementalItemIds?.length ?? 0;
 
           return (
             <article
               key={store.id}
               className={cn(
-                "rounded-lg border border-border bg-card p-6 transition-colors duration-200",
-                "hover:border-border/80 hover:bg-card/95",
+                "relative overflow-hidden rounded-xl border bg-card transition-all duration-300",
+                isSyncing
+                  ? "border-violet-500/40 shadow-[0_0_20px_rgba(139,92,246,0.06)]"
+                  : "border-border hover:border-violet-500/20",
               )}
             >
-              <div className="mb-4 flex items-center justify-between gap-2">
-                <div className="flex min-w-0 items-center gap-2">
-                  {logoSrc ? (
-                    <img
-                      src={logoSrc}
-                      alt={store.platform}
-                      width={20}
-                      height={20}
-                      style={{ width: 20, height: 20, minWidth: 20 }}
-                      className="shrink-0"
-                    />
-                  ) : null}
-                  <h3 className="truncate text-base font-semibold text-foreground">
-                    {store.name}
-                  </h3>
-                  <span
-                    className={cn(
-                      "shrink-0 rounded border px-2 py-0.5 text-xs font-medium",
-                      theme.badge,
+              {/* purple accent line when syncing */}
+              {isSyncing && (
+                <div className="absolute inset-x-0 top-0 h-[2px] bg-gradient-to-r from-violet-600 via-purple-500 to-violet-600 animate-pulse" />
+              )}
+
+              <div className="p-5">
+                {/* ---- card header ---- */}
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex min-w-0 items-center gap-2.5">
+                    {logoSrc && (
+                      <img src={logoSrc} alt={store.platform} width={22} height={22} className="shrink-0" style={{ width: 22, height: 22 }} />
                     )}
-                  >
-                    {store.acronym}
-                  </span>
-                </div>
-                <div className="flex shrink-0 items-center gap-1.5">
-                  {connected ? (
-                    <>
-                      <CheckCircle className="h-4 w-4 shrink-0 text-emerald-500" aria-hidden />
-                      <span className="text-xs text-emerald-500">Connected</span>
-                    </>
-                  ) : (
-                    <>
-                      <XCircle className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
-                      <span className="text-xs text-muted-foreground">Not Connected</span>
-                    </>
-                  )}
-                </div>
-              </div>
-
-              <div className="mb-4 flex flex-wrap items-center gap-4 text-sm">
-                <div className="flex items-center gap-1.5 text-muted-foreground">
-                  <Clock className="h-4 w-4 shrink-0" aria-hidden />
-                  <span>Last synced: {formatDateTime(status?.lastSyncAt ?? null)}</span>
-                </div>
-              </div>
-
-              <div className={cn("mb-4 rounded-md border px-3 py-3", summaryClasses)}>
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div>
-                    <div className="text-sm font-semibold">{completionSummary.label}</div>
-                    <div className="mt-0.5 text-xs opacity-90">{completionSummary.detail}</div>
-                  </div>
-                  {durationMs !== null ? (
-                    <div className="rounded border border-current/20 px-2 py-1 text-[11px] font-semibold tabular-nums">
-                      Duration: {formatDurationMs(durationMs)}
-                    </div>
-                  ) : null}
-                </div>
-                {liveJob ? (
-                  <div className="mt-3 grid grid-cols-2 gap-2 text-[11px] sm:grid-cols-4">
-                    <div className="rounded border border-current/15 bg-background/30 px-2 py-1.5">
-                      <div className="opacity-70">Processed</div>
-                      <div className="mt-0.5 text-sm font-semibold tabular-nums">{liveJob.itemsProcessed}</div>
-                    </div>
-                    <div className="rounded border border-current/15 bg-background/30 px-2 py-1.5">
-                      <div className="opacity-70">Created</div>
-                      <div className="mt-0.5 text-sm font-semibold tabular-nums">{liveJob.itemsCreated}</div>
-                    </div>
-                    <div className="rounded border border-current/15 bg-background/30 px-2 py-1.5">
-                      <div className="opacity-70">Updated</div>
-                      <div className="mt-0.5 text-sm font-semibold tabular-nums">{liveJob.itemsUpdated}</div>
-                    </div>
-                    <div className="rounded border border-current/15 bg-background/30 px-2 py-1.5">
-                      <div className="opacity-70">{jobErrors.length > 0 ? "Issues" : "Errors"}</div>
-                      <div className="mt-0.5 text-sm font-semibold tabular-nums">{jobErrors.length}</div>
-                    </div>
-                  </div>
-                ) : null}
-              </div>
-
-              {syncProfile ? (
-                <div className="mb-4 grid gap-3 rounded-md border border-border bg-muted/30 px-3 py-3 text-xs text-muted-foreground sm:grid-cols-3">
-                  <div>
-                    <div className="font-semibold text-foreground/90">Next pull</div>
-                    <div className="mt-1 text-sm font-semibold text-foreground tabular-nums">
-                      {connected && syncProfile.autoSyncEnabled && schedulerEnabled
-                        ? formatCountdown(nextPullAt, nowMs)
-                        : connected && syncProfile.autoSyncEnabled
-                          ? "Scheduler off"
-                          : "Not scheduled"}
-                    </div>
-                    <div className="mt-1">
-                      {cooldownActive && cooldown?.retryLabel
-                        ? `Manual eBay retries are paused until about ${cooldown.retryLabel}.`
-                        : connected && syncProfile.autoSyncEnabled && schedulerEnabled && nextPullAt
-                          ? `Due around ${nextPullAt.toLocaleString()}`
-                          : connected && syncProfile.autoSyncEnabled
-                            ? "Pull cadence is configured, but automatic pulls are not enabled yet."
-                            : "Auto-pull is not active for this store yet."}
-                    </div>
-                  </div>
-                  <div>
-                    <div className="font-semibold text-foreground/90">Pull cadence</div>
-                    <div className="mt-1">{formatSchedule(syncProfile, store.apiPlatform)}</div>
-                    <div className="mt-1">
-                      Preferred mode: {syncProfile.preferredMode}
-                      {syncState?.lastEffectiveMode ? ` | Last mode used: ${syncState.lastEffectiveMode}` : ""}
-                    </div>
-                  </div>
-                  <div>
-                    <div className="font-semibold text-foreground/90">Change wake-up</div>
-                    <div className="mt-1 text-sm font-semibold text-foreground">
-                      {usesWebhookWakeup(syncProfile)
-                        ? syncState?.lastWebhookAt
-                          ? formatDateTime(syncState.lastWebhookAt)
-                          : "Waiting for first webhook"
-                        : syncState?.lastIncrementalSyncAt
-                          ? formatDateTime(syncState.lastIncrementalSyncAt)
-                          : "Scheduled pulls only"}
-                    </div>
-                    <div className="mt-1">
-                      {usesWebhookWakeup(syncProfile)
-                        ? "Marketplace webhooks can trigger an earlier pull-only refresh between scheduled runs."
-                        : "This store relies on its scheduled cadence unless you start a manual pull."}
-                    </div>
-                    {usesWebhookWakeup(syncProfile) && meta?.lastWebhookEvent ? (
-                      <div
-                        className={cn(
-                          "mt-2 rounded border px-2 py-1.5 text-[11px]",
-                          getWebhookProofClasses(meta.lastWebhookEvent.relationToLastSync),
-                        )}
-                      >
-                        <div>
-                          Latest notice: {meta.lastWebhookEvent.topic ?? "Unknown topic"} at{" "}
-                          {formatDateTime(meta.lastWebhookEvent.receivedAt)}
-                        </div>
-                        <div className="mt-1">
-                          {meta.lastWebhookEvent.relationToLastSync === "after_last_pull"
-                            ? "It arrived after the last completed pull, so it can wake the next earlier refresh."
-                            : meta.lastWebhookEvent.relationToLastSync === "before_last_pull"
-                              ? "No newer marketplace notice has arrived since the last completed pull."
-                              : "No marketplace notice has been recorded yet."}
-                        </div>
-                        {meta.lastWebhookEvent.status ? (
-                          <div className="mt-1 text-[10px] uppercase tracking-wide opacity-80">
-                            {getReadableWebhookStatus(meta.lastWebhookEvent.status)}
-                          </div>
-                        ) : null}
-                      </div>
-                    ) : null}
-                    {usesWebhookWakeup(syncProfile) && webhookState ? (
-                      <div className="mt-2 rounded border border-border/60 bg-background/40 px-2 py-1.5">
-                        <div>
-                          Registration: {webhookState.topics.length > 0 ? "Configured" : "Not registered yet"}
-                        </div>
-                        <div className="break-all">
-                          Destination: {webhookState.destination ?? "Not set"}
-                        </div>
-                        <div>
-                          Last ensured: {formatDateTime(webhookState.lastEnsuredAt)}
-                        </div>
-                        {webhookState.lastEnsureError ? (
-                          <div className="text-red-400">
-                            Ensure error: {webhookState.lastEnsureError}
-                          </div>
-                        ) : null}
-                        {webhookHealth?.expectedDestination ? (
-                          <div
-                            className={cn(
-                              "mt-2 rounded border px-2 py-1.5",
-                              webhookHealth.status === "warning"
-                                ? "border-amber-500/30 bg-amber-500/10 text-amber-400"
-                                : "border-emerald-500/30 bg-emerald-500/10 text-emerald-400",
-                            )}
-                          >
-                            <div>{webhookHealth.message}</div>
-                            {webhookHealth.status === "warning" ? (
-                              <div className="mt-1 break-all text-[11px]">
-                                Expected: {webhookHealth.expectedDestination}
-                              </div>
-                            ) : null}
-                          </div>
-                        ) : null}
-                      </div>
-                    ) : null}
-                  </div>
-                </div>
-              ) : null}
-
-              {relevantFallbackReason && !isSyncing ? (
-                <div className="mb-4 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-400">
-                  Last fallback note: {relevantFallbackReason}
-                </div>
-              ) : null}
-
-              {pendingBacklogCount > 0 ? (
-                <div className="mb-4 rounded-md border border-blue-500/30 bg-blue-500/10 px-3 py-2 text-xs text-blue-300">
-                  <div className="font-medium text-blue-200">
-                    {pendingBacklogCount.toLocaleString()} changed eBay listing
-                    {pendingBacklogCount === 1 ? "" : "s"} queued for the next pull
-                  </div>
-                  <div className="mt-1">
-                    reorG already saved part of this refresh and is pacing the rest across later pulls
-                    to stay inside the shared eBay quota.
-                    {pendingBacklogWindowEndedAt
-                      ? ` Current queued window ends at ${formatDateTime(pendingBacklogWindowEndedAt)}.`
-                      : ""}
-                  </div>
-                </div>
-              ) : null}
-
-              {cooldownActive ? (
-                <div className="mb-4 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
-                  <div className="font-medium text-amber-200">eBay API cooldown active</div>
-                  <div className="mt-1">
-                    eBay asked reorG to slow down after hitting its call-usage limit.
-                    {cooldown?.retryLabel
-                      ? ` Manual pulls will be available again around ${cooldown.retryLabel}.`
-                      : " Manual pulls will be available again after the cooldown window."}
-                  </div>
-                  {cooldown?.message ? (
-                    <div className="mt-1 break-words text-[11px] text-amber-400/90">
-                      Last eBay response: {cooldown.message}
-                    </div>
-                  ) : null}
-                </div>
-              ) : null}
-
-              {rateLimits ? (
-                <div className="mb-4 rounded-md border border-border bg-muted/30 px-3 py-3 text-xs text-muted-foreground">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div className="font-semibold text-foreground/90">eBay API usage</div>
-                    <div>
-                      Checked {formatDateTime(rateLimits.fetchedAt)}
-                    </div>
-                  </div>
-                  <div className="mt-3 grid gap-2 sm:grid-cols-3">
-                    {rateLimits.methods.map((method) => (
-                      <div
-                        key={method.name}
-                        className={cn(
-                          "rounded border px-2 py-2",
-                          method.status === "exhausted"
-                            ? "border-red-500/30 bg-red-500/10 text-red-300"
-                            : method.status === "tight"
-                              ? "border-amber-500/30 bg-amber-500/10 text-amber-300"
-                              : "border-emerald-500/30 bg-emerald-500/10 text-emerald-300",
-                        )}
-                      >
-                        <div className="font-semibold">{method.name}</div>
-                        <div className="mt-1 text-[11px]">
-                          Remaining: {formatRateLimitRemaining(method.remaining, method.limit)}
-                        </div>
-                        <div className="mt-1 text-[11px]">
-                          Used: {method.count.toLocaleString()}
-                        </div>
-                        <div className="mt-1 text-[11px]">
-                          Reset: {formatDateTime(method.reset)}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                  {rateLimits.nextResetAt ? (
-                    <div className="mt-2 text-[11px]">
-                      Next known Trading API reset: {formatDateTime(rateLimits.nextResetAt)}
-                    </div>
-                  ) : null}
-                  {reservedGetItemCalls ? (
-                    <div className="mt-2 text-[11px]">
-                      Auto-pulls keep about {reservedGetItemCalls.toLocaleString()} GetItem calls in
-                      reserve for later targeted refreshes and recovery work.
-                    </div>
-                  ) : null}
-                </div>
-              ) : null}
-
-              {isSyncing && liveJob && liveJob.status === "RUNNING" ? (
-                <div className="mb-4 rounded-md border border-blue-500/30 bg-blue-500/10 px-3 py-2.5">
-                  <div className="flex items-center gap-2">
-                    <Loader2 className="h-3.5 w-3.5 animate-spin text-blue-400" />
-                    <span className="text-xs font-medium text-blue-400">
-                      {liveJob.itemsProcessed === 0 ? "Starting pull..." : "Syncing..."}
+                    <h3 className="truncate text-lg font-semibold text-foreground">{store.name}</h3>
+                    <span className="shrink-0 rounded-md border border-violet-500/30 bg-violet-500/10 px-2 py-0.5 text-[11px] font-bold text-violet-400">
+                      {store.acronym}
                     </span>
                   </div>
-                  {liveJob.itemsProcessed === 0 ? (
-                    <div className="mt-1 text-[11px] text-blue-300/90">
-                      Connected and waiting for the first batch to finish so progress can be shown.
-                    </div>
-                  ) : null}
-                  <div className="mt-1.5 grid grid-cols-3 gap-2 text-xs tabular-nums">
-                    <div>
-                      <span className="text-muted-foreground">Processed</span>
-                      <div className="text-sm font-bold text-blue-400">{liveJob.itemsProcessed}</div>
-                    </div>
-                    <div>
-                      <span className="text-muted-foreground">Created</span>
-                      <div className="text-sm font-bold text-emerald-400">{liveJob.itemsCreated}</div>
-                    </div>
-                    <div>
-                      <span className="text-muted-foreground">Updated</span>
-                      <div className="text-sm font-bold text-amber-400">{liveJob.itemsUpdated}</div>
-                    </div>
-                  </div>
-                  {jobErrors.length > 0 ? (
-                    <div className="mt-2 flex items-center gap-1 text-xs text-red-400">
-                      <AlertTriangle className="h-3 w-3" />
-                      <span>{jobErrors.length} issue{jobErrors.length > 1 ? "s" : ""} so far</span>
-                    </div>
-                  ) : null}
-                </div>
-              ) : null}
-
-              {isSyncing && !liveJob ? (
-                <div className="mb-4 rounded-md border border-blue-500/30 bg-blue-500/10 px-3 py-2">
-                  <div className="flex items-center gap-2">
-                    <Loader2 className="h-3.5 w-3.5 animate-spin text-blue-400" />
-                    <span className="text-xs font-medium text-blue-400">Starting sync...</span>
-                  </div>
-                </div>
-              ) : null}
-
-              {result && !isSyncing ? (
-                <div
-                  className={cn(
-                    "mb-4 rounded-md px-3 py-2 text-xs",
-                    storeSync === "error"
-                      ? "bg-destructive/10 text-destructive"
-                      : "bg-emerald-500/10 text-emerald-400",
-                  )}
-                >
-                  {result}
-                </div>
-              ) : null}
-
-              {!isSyncing && jobErrors.length > 0 ? (
-                <div className="mb-4">
-                  <button
-                    onClick={() =>
-                      setErrorsExpanded((prev) => ({
-                        ...prev,
-                        [store.apiPlatform]: !prev[store.apiPlatform],
-                      }))
-                    }
-                    className="flex w-full cursor-pointer items-center justify-between rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs font-medium text-red-400 transition-colors hover:bg-red-500/15"
-                  >
-                    <div className="flex items-center gap-1.5">
-                      <AlertTriangle className="h-3.5 w-3.5" />
-                      <span>{jobErrors.length} issue{jobErrors.length > 1 ? "s" : ""}</span>
-                    </div>
-                    {showErrors ? (
-                      <ChevronUp className="h-3.5 w-3.5" />
-                    ) : (
-                      <ChevronDown className="h-3.5 w-3.5" />
+                  <div className="flex shrink-0 items-center gap-2">
+                    {healthStatus && (
+                      <span
+                        className={cn(
+                          "rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
+                          healthStatus === "healthy"
+                            ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-400"
+                            : healthStatus === "delayed"
+                              ? "border-amber-500/30 bg-amber-500/10 text-amber-400"
+                              : "border-red-500/30 bg-red-500/10 text-red-400",
+                        )}
+                      >
+                        {healthStatus}
+                      </span>
                     )}
-                  </button>
+                    <span className={cn("flex items-center gap-1 text-xs font-medium", connected ? "text-emerald-400" : "text-muted-foreground")}>
+                      <span className={cn("h-1.5 w-1.5 rounded-full", connected ? "bg-emerald-400" : "bg-muted-foreground")} />
+                      {connected ? "Live" : "Offline"}
+                    </span>
+                  </div>
+                </div>
 
-                  {showErrors ? (
-                    <div className="mt-2 rounded-md border border-border bg-background p-3">
-                      <div className="mb-2 flex items-center justify-between">
-                        <span className="text-[10px] font-bold uppercase text-muted-foreground">
-                          Error Log
+                {/* ---- stats: next pull + last sync ---- */}
+                <div className="mt-5 grid grid-cols-2 gap-3">
+                  <div className="rounded-lg border border-violet-500/15 bg-violet-500/[0.03] p-3">
+                    <div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Next Pull</div>
+                    <div className="mt-1.5 text-xl font-bold tabular-nums text-violet-400">
+                      {connected && syncProfile?.autoSyncEnabled && schedulerEnabled
+                        ? formatCountdown(nextPullAt, nowMs)
+                        : cooldownActive ? "Cooldown" : "—"}
+                    </div>
+                    <div className="mt-1 text-[11px] leading-snug text-muted-foreground">
+                      {syncProfile ? formatSchedule(syncProfile, store.apiPlatform) : "No schedule configured"}
+                    </div>
+                    {syncState?.lastEffectiveMode && (
+                      <div className="mt-1.5">
+                        <span className="rounded border border-violet-500/20 bg-violet-500/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-violet-400">
+                          {syncState.lastEffectiveMode}
                         </span>
-                        <button
-                          onClick={() => copyErrors(store.apiPlatform)}
-                          className="flex cursor-pointer items-center gap-1 rounded border border-border bg-muted px-2 py-1 text-[10px] font-medium text-muted-foreground transition-colors hover:text-foreground"
-                        >
-                          <Copy className="h-3 w-3" />
-                          {copied === store.apiPlatform ? "Copied!" : "Copy All Errors"}
-                        </button>
                       </div>
-                      <div className="max-h-60 overflow-auto space-y-1.5 text-[11px] font-mono">
-                        {jobErrors.map((error, index) => (
-                          <div
-                            key={index}
-                            className="rounded border border-border/50 bg-card/50 px-2 py-1.5"
-                          >
-                            <span className="font-bold text-red-400">{error.sku}</span>
-                            <span className="text-muted-foreground"> - </span>
-                            <span className="text-foreground/80 break-all">{error.message}</span>
-                          </div>
-                        ))}
+                    )}
+                  </div>
+
+                  <div className="rounded-lg border border-emerald-500/15 bg-emerald-500/[0.03] p-3">
+                    <div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Last Sync</div>
+                    <div className="mt-1.5 text-xl font-bold tabular-nums text-foreground">
+                      {formatRelativeTime(status?.lastSyncAt ?? null, nowMs)}
+                    </div>
+                    <div className="mt-1 text-[11px] leading-snug text-muted-foreground">
+                      {liveJob && liveJob.status !== "RUNNING"
+                        ? `${liveJob.itemsProcessed.toLocaleString()} items${durationMs ? ` · ${formatDurationMs(durationMs)}` : ""}`
+                        : "—"}
+                    </div>
+                    <div className="mt-1.5">
+                      <span
+                        className={cn(
+                          "rounded border px-1.5 py-0.5 text-[10px] font-semibold uppercase",
+                          completionSummary.tone === "success" ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-400"
+                            : completionSummary.tone === "warning" ? "border-amber-500/20 bg-amber-500/10 text-amber-400"
+                            : completionSummary.tone === "error" ? "border-red-500/20 bg-red-500/10 text-red-400"
+                            : "border-border bg-muted/50 text-muted-foreground",
+                        )}
+                      >
+                        {completionSummary.label}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* ---- live progress (during sync) ---- */}
+                {isSyncing && liveJob?.status === "RUNNING" && (
+                  <div className="mt-4 rounded-lg border border-violet-500/30 bg-violet-500/[0.04] p-4">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Loader2 className="h-4 w-4 animate-spin text-violet-400" />
+                        <span className="text-sm font-semibold text-violet-400">
+                          {liveJob.itemsProcessed === 0 ? "Starting..." : "Syncing..."}
+                        </span>
+                      </div>
+                      {durationMs !== null && (
+                        <span className="text-xs tabular-nums text-muted-foreground">{formatDurationMs(durationMs)}</span>
+                      )}
+                    </div>
+                    {liveJob.itemsProcessed === 0 && (
+                      <p className="mt-1 text-[11px] text-violet-400/70">
+                        Connected — waiting for the first batch to report progress.
+                      </p>
+                    )}
+                    <div className="mt-3 h-1 overflow-hidden rounded-full bg-violet-500/20">
+                      <div className="h-full w-full animate-[pulse_1.5s_ease-in-out_infinite] rounded-full bg-gradient-to-r from-violet-600 via-purple-500 to-violet-600" />
+                    </div>
+                    <div className="mt-3 grid grid-cols-3 gap-2 text-center">
+                      <div>
+                        <div className="text-lg font-bold tabular-nums text-violet-400">{liveJob.itemsProcessed.toLocaleString()}</div>
+                        <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Processed</div>
+                      </div>
+                      <div>
+                        <div className="text-lg font-bold tabular-nums text-emerald-400">{liveJob.itemsCreated.toLocaleString()}</div>
+                        <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Created</div>
+                      </div>
+                      <div>
+                        <div className="text-lg font-bold tabular-nums text-amber-400">{liveJob.itemsUpdated.toLocaleString()}</div>
+                        <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Updated</div>
                       </div>
                     </div>
-                  ) : null}
-                </div>
-              ) : null}
+                    {jobErrors.length > 0 && (
+                      <div className="mt-3 flex items-center gap-1 text-xs text-red-400">
+                        <AlertTriangle className="h-3 w-3" />
+                        {jobErrors.length} issue{jobErrors.length > 1 ? "s" : ""} so far
+                      </div>
+                    )}
+                  </div>
+                )}
 
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div className="flex flex-wrap items-center gap-2">
-                  <button
-                    type="button"
-                    disabled={!connected || isSyncing || cooldownActive}
-                    onClick={() => syncStore(store.apiPlatform)}
+                {/* starting spinner (no job record yet) */}
+                {isSyncing && !liveJob && (
+                  <div className="mt-4 flex items-center gap-2 rounded-lg border border-violet-500/30 bg-violet-500/[0.04] px-4 py-3">
+                    <Loader2 className="h-4 w-4 animate-spin text-violet-400" />
+                    <span className="text-sm font-medium text-violet-400">Starting sync...</span>
+                  </div>
+                )}
+
+                {/* result message (after sync completes) */}
+                {result && !isSyncing && (
+                  <div
                     className={cn(
-                      "inline-flex cursor-pointer items-center gap-2 rounded-md border border-border bg-background px-4 py-2 text-sm font-medium text-foreground",
-                      "transition-colors hover:bg-muted hover:text-foreground",
-                      "disabled:cursor-not-allowed disabled:opacity-50",
+                      "mt-4 rounded-lg px-3 py-2 text-xs font-medium",
+                      storeSync === "error" ? "bg-red-500/10 text-red-400" : "bg-emerald-500/10 text-emerald-400",
                     )}
-                    aria-label={`Sync ${store.name} now`}
                   >
-                    {isSyncing ? (
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
-                    ) : cooldownActive ? (
-                      <TimerReset className="h-3.5 w-3.5" aria-hidden />
-                    ) : (
-                      <RefreshCw className="h-3.5 w-3.5" aria-hidden />
+                    {result}
+                  </div>
+                )}
+
+                {/* cooldown alert */}
+                {cooldownActive && (
+                  <div className="mt-4 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
+                    <span className="font-semibold">eBay cooldown active</span>
+                    {cooldown?.retryLabel ? ` — retries around ${cooldown.retryLabel}` : " — waiting for reset"}
+                  </div>
+                )}
+
+                {/* pending backlog */}
+                {pendingBacklogCount > 0 && (
+                  <div className="mt-4 rounded-lg border border-violet-500/30 bg-violet-500/10 px-3 py-2 text-xs text-violet-300">
+                    {pendingBacklogCount.toLocaleString()} changed listing{pendingBacklogCount === 1 ? "" : "s"} queued for next pull
+                  </div>
+                )}
+
+                {/* fallback reason */}
+                {relevantFallbackReason && !isSyncing && (
+                  <div className="mt-4 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-400">
+                    {relevantFallbackReason}
+                  </div>
+                )}
+
+                {/* errors (collapsible) */}
+                {!isSyncing && jobErrors.length > 0 && (
+                  <div className="mt-4">
+                    <button
+                      type="button"
+                      onClick={() => setErrorsExpanded((prev) => ({ ...prev, [store.apiPlatform]: !prev[store.apiPlatform] }))}
+                      className="flex w-full cursor-pointer items-center justify-between rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs font-medium text-red-400 transition-colors hover:bg-red-500/15"
+                    >
+                      <div className="flex items-center gap-1.5">
+                        <AlertTriangle className="h-3.5 w-3.5" />
+                        {jobErrors.length} issue{jobErrors.length > 1 ? "s" : ""}
+                      </div>
+                      {showErrors ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+                    </button>
+                    {showErrors && (
+                      <div className="mt-2 rounded-lg border border-border bg-background p-3">
+                        <div className="mb-2 flex items-center justify-between">
+                          <span className="text-[10px] font-bold uppercase text-muted-foreground">Error Log</span>
+                          <button
+                            type="button"
+                            onClick={() => copyErrors(store.apiPlatform)}
+                            className="flex cursor-pointer items-center gap-1 rounded border border-border bg-muted px-2 py-1 text-[10px] font-medium text-muted-foreground transition-colors hover:text-foreground"
+                          >
+                            <Copy className="h-3 w-3" />
+                            {copied === store.apiPlatform ? "Copied!" : "Copy All"}
+                          </button>
+                        </div>
+                        <div className="max-h-48 space-y-1 overflow-auto font-mono text-[11px]">
+                          {jobErrors.map((error, i) => (
+                            <div key={i} className="rounded border border-border/50 bg-card/50 px-2 py-1.5">
+                              <span className="font-bold text-red-400">{error.sku}</span>
+                              <span className="text-muted-foreground"> — </span>
+                              <span className="break-all text-foreground/80">{error.message}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
                     )}
-                    {isSyncing ? "Syncing..." : cooldownActive ? "Cooling down" : "Sync Now"}
-                  </button>
-                  <button
-                    type="button"
-                    disabled={!connected || isSyncing || cooldownActive}
-                    onClick={() => syncStore(store.apiPlatform, "full")}
-                    className={cn(
-                      "inline-flex cursor-pointer items-center gap-2 rounded-md border border-primary/40 bg-primary/10 px-4 py-2 text-sm font-medium text-primary",
-                      "transition-colors hover:bg-primary/15",
-                      "disabled:cursor-not-allowed disabled:opacity-50",
-                    )}
-                    aria-label={`Run full sync for ${store.name}`}
-                  >
-                    <RefreshCw className="h-3.5 w-3.5" aria-hidden />
-                    Full Sync
-                  </button>
-                  <button
-                    type="button"
-                    disabled={!connected || !isSyncing}
-                    onClick={() => cancelSync(store.apiPlatform)}
-                    className={cn(
-                      "inline-flex cursor-pointer items-center gap-2 rounded-md border border-red-500/40 bg-red-500/10 px-4 py-2 text-sm font-medium text-red-300",
-                      "transition-colors hover:bg-red-500/15",
-                      "disabled:cursor-not-allowed disabled:opacity-50",
-                    )}
-                    aria-label={`Cancel sync for ${store.name}`}
-                  >
-                    <XCircle className="h-3.5 w-3.5" aria-hidden />
-                    Cancel Sync
-                  </button>
+                  </div>
+                )}
+
+                {/* ---- action buttons with tooltips ---- */}
+                <div className="mt-5 flex flex-wrap items-center gap-2">
+                  <Tip text="Quick sync — pulls only the most recent changes since the last update. Fast and efficient for routine refreshes.">
+                    <button
+                      type="button"
+                      disabled={!connected || isSyncing || cooldownActive}
+                      onClick={() => syncStore(store.apiPlatform)}
+                      className={cn(
+                        "inline-flex cursor-pointer items-center gap-2 rounded-lg border px-4 py-2 text-sm font-medium transition-colors",
+                        "border-violet-500/30 bg-violet-500/10 text-violet-400 hover:bg-violet-500/20",
+                        "disabled:cursor-not-allowed disabled:opacity-40",
+                      )}
+                    >
+                      {isSyncing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+                      {isSyncing ? "Syncing..." : "Sync"}
+                    </button>
+                  </Tip>
+
+                  <Tip text="Full catalog sync — re-downloads every listing from the marketplace from scratch. Use when data looks out of date or after major changes.">
+                    <button
+                      type="button"
+                      disabled={!connected || isSyncing || cooldownActive}
+                      onClick={() => syncStore(store.apiPlatform, "full")}
+                      className={cn(
+                        "inline-flex cursor-pointer items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-colors",
+                        "bg-violet-600 text-white hover:bg-violet-500",
+                        "disabled:cursor-not-allowed disabled:opacity-40",
+                      )}
+                    >
+                      <RefreshCw className="h-3.5 w-3.5" />
+                      Full Sync
+                    </button>
+                  </Tip>
+
+                  <Tip text="Stops the current sync. All progress made so far is saved — nothing is lost or rolled back.">
+                    <button
+                      type="button"
+                      disabled={!connected || !isSyncing}
+                      onClick={() => cancelSync(store.apiPlatform)}
+                      className={cn(
+                        "inline-flex cursor-pointer items-center gap-2 rounded-lg border px-4 py-2 text-sm font-medium transition-colors",
+                        "border-red-500/30 bg-red-500/10 text-red-300 hover:bg-red-500/15",
+                        "disabled:cursor-not-allowed disabled:opacity-40",
+                      )}
+                    >
+                      <XCircle className="h-3.5 w-3.5" />
+                      Cancel
+                    </button>
+                  </Tip>
                 </div>
-                <span className="text-xs text-muted-foreground">Pull-only</span>
               </div>
             </article>
           );
         })}
       </div>
+
       <PageTour page="sync" steps={PAGE_TOUR_STEPS.sync} ready />
     </div>
   );

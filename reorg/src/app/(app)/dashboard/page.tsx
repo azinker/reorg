@@ -6,7 +6,6 @@ import { PageTour } from "@/components/onboarding/page-tour";
 import { PAGE_TOUR_STEPS } from "@/components/onboarding/page-tour-steps";
 import { useDashboardConnection } from "@/contexts/dashboard-connection-context";
 import type { GridRow, Platform } from "@/lib/grid-types";
-import { MOCK_ROWS } from "@/lib/mock-data";
 import { usePageVisibility } from "@/lib/use-page-visibility";
 import { Loader2, RefreshCw } from "lucide-react";
 
@@ -15,7 +14,7 @@ const SCHEDULER_HEALTH_POLL_MS = 120_000;
 
 interface GridPayload {
   rows: GridRow[];
-  source: "db" | "mock" | "error";
+  source: "db" | "error";
   error: string | null;
 }
 
@@ -31,11 +30,6 @@ interface SchedulerHealthPayload {
 }
 
 async function fetchGridData(): Promise<GridPayload> {
-  const isLocalDev =
-    process.env.NEXT_PUBLIC_APP_ENV === "local" ||
-    (typeof window !== "undefined" &&
-      window.location.hostname.toLowerCase().includes("localhost"));
-
   try {
     const res = await fetch("/api/grid", { cache: "no-store" });
     if (!res.ok) throw new Error(`API returned ${res.status}`);
@@ -45,10 +39,6 @@ async function fetchGridData(): Promise<GridPayload> {
       return { rows: dbRows, source: "db", error: null };
     }
 
-    if (isLocalDev) {
-      return { rows: MOCK_ROWS, source: "mock", error: null };
-    }
-
     return {
       rows: [],
       source: "error",
@@ -56,11 +46,6 @@ async function fetchGridData(): Promise<GridPayload> {
     };
   } catch (err) {
     console.error("Failed to load grid data from API:", err);
-
-    if (isLocalDev) {
-      return { rows: MOCK_ROWS, source: "mock", error: String(err) };
-    }
-
     return { rows: [], source: "error", error: String(err) };
   }
 }
@@ -126,12 +111,12 @@ export default function DashboardPage() {
   const isPageVisible = usePageVisibility();
   const [rows, setRows] = useState<GridRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [source, setSource] = useState<"db" | "mock" | "error" | null>(null);
+  const [source, setSource] = useState<"db" | "error" | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [schedulerHealth, setSchedulerHealth] = useState<SchedulerHealthPayload["healthSummary"] | null>(null);
   const [loadingProgress, setLoadingProgress] = useState(8);
   const versionRef = useRef<string | null>(null);
-  const sourceRef = useRef<"db" | "mock" | "error" | null>(null);
+  const sourceRef = useRef<"db" | "error" | null>(null);
   const refreshInFlightRef = useRef(false);
 
   useEffect(() => {

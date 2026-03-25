@@ -112,18 +112,7 @@ async function shopifyGraphQL<T>(
   return json.data;
 }
 
-function assertSafeWebhookDestination(destination: string) {
-  const appEnv = getAppEnv();
-
-  if (
-    appEnv === "local" &&
-    destination.includes("ngrok-free.dev") &&
-    process.env.ALLOW_LOCAL_WEBHOOK_DESTINATION !== "true"
-  ) {
-    throw new Error(
-      "Refusing to register local ngrok webhook destinations without ALLOW_LOCAL_WEBHOOK_DESTINATION=true.",
-    );
-  }
+function assertSafeWebhookDestination(_destination: string) {
 }
 
 async function ensureShopifyWebhooks(

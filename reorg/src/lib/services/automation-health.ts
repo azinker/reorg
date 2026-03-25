@@ -608,19 +608,24 @@ export async function buildAutomationHealthSnapshot(
         recentFailure &&
         !item.running &&
         (!lastSyncAt || recentFailure.failedAt.getTime() > lastSyncAt.getTime());
+      const isEbayRateLimitCooldown =
+        failedAfterLastSuccess &&
+        recentFailure.message != null &&
+        isEbayUsageLimitMessage(recentFailure.message);
       const syncMonitorBase = failedAfterLastSuccess
         ? {
             ...sync,
-            status: "attention" as const,
+            status: isEbayRateLimitCooldown
+              ? ("healthy" as const)
+              : ("attention" as const),
             syncStatus: "stale" as const,
-            syncMessage:
-              recentFailure.message && isEbayUsageLimitMessage(recentFailure.message)
-                ? rateLimitCooldownUntil
-                  ? `Latest pull hit eBay API usage limits. Next retry window opens around ${formatCooldownRetryAt(rateLimitCooldownUntil) ?? "the next automatic check"}.`
-                  : "Latest pull hit eBay API usage limits. The next retry should happen after the cooldown window."
-                : recentFailure.message
-                  ? `Latest pull failed: ${recentFailure.message}`
-                  : "Latest pull failed before this store recorded a newer successful update.",
+            syncMessage: isEbayRateLimitCooldown
+              ? rateLimitCooldownUntil
+                ? `eBay API cooldown — resumes automatically around ${formatCooldownRetryAt(rateLimitCooldownUntil) ?? "the next automatic check"}.`
+                : "eBay API cooldown — will resume automatically after the cooldown window."
+              : recentFailure.message
+                ? `Latest pull failed: ${recentFailure.message}`
+                : "Latest pull failed before this store recorded a newer successful update.",
           }
         : sync;
       const syncMonitorBaseAdjusted =

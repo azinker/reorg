@@ -97,7 +97,6 @@ reorg/
 
 | Environment | Domain | Write Access |
 |-------------|--------|-------------|
-| Local | localhost:3000 | Configurable |
 | Production | reorg.theperfectpart.net | Controlled via write locks |
 
 ---

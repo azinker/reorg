@@ -61,7 +61,6 @@ export function TopBar({ user, onOpenSidebar }: TopBarProps) {
   const themeValue = mounted ? theme : "system";
 
   const isConnected = connectionInfo?.source === "db";
-  const isNotConnected = connectionInfo?.source === "mock";
   const hasConnectionIssue = connectionInfo?.source === "error";
   const summary = connectionInfo?.summary ?? null;
   const hasTooltip = isConnected && summary != null;
