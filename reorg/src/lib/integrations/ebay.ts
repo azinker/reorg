@@ -177,15 +177,23 @@ export class EbayAdapter implements MarketplaceAdapter {
     const token = await this.getAccessToken();
     const url = `${this.baseUrl}${endpoint}`;
 
-    const response = await fetch(url, {
-      ...options,
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-        Accept: "application/json",
-        ...options.headers,
-      },
-    });
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 30_000);
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        ...options,
+        signal: controller.signal,
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+          Accept: "application/json",
+          ...options.headers,
+        },
+      });
+    } finally {
+      clearTimeout(timeout);
+    }
 
     if (response.status === 429) {
       const retryAfter = parseInt(response.headers.get("Retry-After") || "60", 10);
@@ -261,52 +269,59 @@ export class EbayAdapter implements MarketplaceAdapter {
     allowTokenRefresh = true,
   ): Promise<Record<string, unknown> | undefined> {
     const token = await this.getAccessToken();
-    const response = await fetch(this.tradingUrl, {
-      method: "POST",
-      headers: {
-        "X-EBAY-API-IAF-TOKEN": token,
-        "X-EBAY-API-SITEID": SITE_ID,
-        "X-EBAY-API-COMPATIBILITY-LEVEL": COMPAT_LEVEL,
-        "X-EBAY-API-CALL-NAME": callName,
-        "Content-Type": "text/xml",
-      },
-      body,
-    });
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 30_000);
+    try {
+      const response = await fetch(this.tradingUrl, {
+        method: "POST",
+        signal: controller.signal,
+        headers: {
+          "X-EBAY-API-IAF-TOKEN": token,
+          "X-EBAY-API-SITEID": SITE_ID,
+          "X-EBAY-API-COMPATIBILITY-LEVEL": COMPAT_LEVEL,
+          "X-EBAY-API-CALL-NAME": callName,
+          "Content-Type": "text/xml",
+        },
+        body,
+      });
 
-    const xml = await response.text();
-    if (!response.ok) {
-      throw new EbayTradingApiError(
-        `${callName} failed: ${response.status} ${xml.slice(0, 400)}`,
-        undefined,
-        xml,
+      const xml = await response.text();
+      if (!response.ok) {
+        throw new EbayTradingApiError(
+          `${callName} failed: ${response.status} ${xml.slice(0, 400)}`,
+          undefined,
+          xml,
+        );
+      }
+
+      const parsed = parser.parse(xml);
+      const rootKey = `${callName}Response`;
+      const tradingResponse = parsed?.[rootKey];
+      const errors = normalizeTradingErrors(tradingResponse?.Errors);
+      const errorCode = errors.map((entry) => readTradingText(entry, "ErrorCode")).find(Boolean);
+      const severityErrors = errors.filter(
+        (entry) => (readTradingText(entry, "SeverityCode") ?? "Error").toLowerCase() !== "warning",
       );
+      const errorMessage =
+        errors
+          .map((entry) => readTradingText(entry, "LongMessage") ?? readTradingText(entry, "ShortMessage"))
+          .find(Boolean) ??
+        `${callName} returned an unknown Trading API error.`;
+      const ack = readTradingText(tradingResponse, "Ack");
+
+      if (errorCode === "21916984" && allowTokenRefresh) {
+        this.clearAccessTokenCache();
+        return this.tradingApiCall(callName, body, false);
+      }
+
+      if (ack === "Failure" || severityErrors.length > 0) {
+        throw new EbayTradingApiError(errorMessage, errorCode, tradingResponse);
+      }
+
+      return tradingResponse;
+    } finally {
+      clearTimeout(timeoutId);
     }
-
-    const parsed = parser.parse(xml);
-    const rootKey = `${callName}Response`;
-    const tradingResponse = parsed?.[rootKey];
-    const errors = normalizeTradingErrors(tradingResponse?.Errors);
-    const errorCode = errors.map((entry) => readTradingText(entry, "ErrorCode")).find(Boolean);
-    const severityErrors = errors.filter(
-      (entry) => (readTradingText(entry, "SeverityCode") ?? "Error").toLowerCase() !== "warning",
-    );
-    const errorMessage =
-      errors
-        .map((entry) => readTradingText(entry, "LongMessage") ?? readTradingText(entry, "ShortMessage"))
-        .find(Boolean) ??
-      `${callName} returned an unknown Trading API error.`;
-    const ack = readTradingText(tradingResponse, "Ack");
-
-    if (errorCode === "21916984" && allowTokenRefresh) {
-      this.clearAccessTokenCache();
-      return this.tradingApiCall(callName, body, false);
-    }
-
-    if (ack === "Failure" || severityErrors.length > 0) {
-      throw new EbayTradingApiError(errorMessage, errorCode, tradingResponse);
-    }
-
-    return tradingResponse;
   }
 
   async testConnection(): Promise<{ ok: boolean; message: string }> {

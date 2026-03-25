@@ -91,9 +91,11 @@ const childMasterRowFullSelect = Prisma.validator<Prisma.MasterRowDefaultArgs>()
         salePrice: true,
         adRate: true,
         inventory: true,
+        rawData: true,
         integration: {
           select: {
             platform: true,
+            isMaster: true,
           },
         },
       },
@@ -426,6 +428,41 @@ async function fetchChildMasterRows(parentListings: DBMasterRow["listings"]) {
     .filter((childMaster): childMaster is DBChildMasterRowFull => childMaster != null);
 }
 
+function extractVariationAttributes(
+  listings: DBChildMasterRowFull["listings"],
+): { name: string; value: string }[] | undefined {
+  const masterListing = listings.find((l) => l.integration.isMaster);
+  if (!masterListing?.rawData || typeof masterListing.rawData !== "object") return undefined;
+
+  const raw = masterListing.rawData as Record<string, unknown>;
+
+  // eBay TPP child variation: rawData = the Variation node directly
+  // eBay TT child variation: rawData = { item, variation, parentItemId }
+  const variation = (raw.variation ?? raw) as Record<string, unknown>;
+  const specifics = variation.VariationSpecifics as Record<string, unknown> | undefined;
+  if (!specifics) return undefined;
+
+  const nameValueList = specifics.NameValueList;
+  const entries: unknown[] = Array.isArray(nameValueList) ? nameValueList : nameValueList ? [nameValueList] : [];
+
+  const attrs: { name: string; value: string }[] = [];
+  for (const entry of entries) {
+    if (!entry || typeof entry !== "object") continue;
+    const rec = entry as Record<string, unknown>;
+    const name = rec.Name;
+    const rawValue = rec.Value;
+    if (name == null) continue;
+
+    const nameStr = String(name);
+    const valueStr = Array.isArray(rawValue) ? String(rawValue[0] ?? "") : String(rawValue ?? "");
+    if (nameStr && valueStr) {
+      attrs.push({ name: nameStr, value: valueStr });
+    }
+  }
+
+  return attrs.length > 0 ? attrs : undefined;
+}
+
 function buildFullChildRows(
   childMasters: DBChildMasterRowFull[],
   shippingRateMap: Map<string, number>,
@@ -486,6 +523,7 @@ function buildFullChildRows(
     });
 
     const childInv = allListings.find((l) => l.inventory != null)?.inventory ?? null;
+    const variationAttributes = extractVariationAttributes(allListings);
 
     rows.push({
       id: `child-${cm.id}`,
@@ -502,6 +540,7 @@ function buildFullChildRows(
       shippingCost: childShipCost,
       platformFeeRate: feeRate,
       inventory: childInv,
+      variationAttributes,
       isVariation: true,
       isParent: false,
       childRowsHydrated: true,

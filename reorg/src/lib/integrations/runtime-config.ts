@@ -92,7 +92,7 @@ const DEFAULT_SYNC_PROFILES: Record<Platform, SyncProfile> = {
     dayEndHour: 21,
     dayIntervalMinutes: 240,
     overnightIntervalMinutes: 600,
-    preferredMode: "incremental",
+    preferredMode: "full",
     fullReconcileIntervalHours: 24,
     incrementalStrategy: "shopify_webhook_reconcile",
   },

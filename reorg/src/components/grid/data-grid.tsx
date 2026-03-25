@@ -3579,7 +3579,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
 
                   {/* SKU */}
                   {isColVisible("sku") && (
-                    <div className={cn(COL_WIDTHS.sku, "flex items-center pl-3 pr-4 overflow-hidden", cellPy)}>
+                    <div className={cn(COL_WIDTHS.sku, "flex flex-col justify-center pl-3 pr-4 overflow-hidden", cellPy)}>
                       {isParent ? (
                         <button
                           onClick={() => void toggleExpand(row.id)}
@@ -3597,11 +3597,27 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
                           )}
                         </button>
                       ) : (
-                        <CopyValue value={row.sku} className="max-w-full gap-1.5">
-                          <span className="scalable-text block min-w-0 flex-1 whitespace-normal break-all font-mono font-medium leading-snug">
-                            {row.sku}
-                          </span>
-                        </CopyValue>
+                        <>
+                          <CopyValue value={row.sku} className="max-w-full gap-1.5">
+                            <span className="scalable-text block min-w-0 flex-1 whitespace-normal break-all font-mono font-medium leading-snug">
+                              {row.sku}
+                            </span>
+                          </CopyValue>
+                          {isChild && row.variationAttributes && row.variationAttributes.length > 0 && (
+                            <div className="mt-1 flex flex-wrap gap-1">
+                              {row.variationAttributes.map((attr) => (
+                                <span
+                                  key={attr.name}
+                                  className="inline-flex items-center gap-0.5 rounded bg-purple-500/15 px-1.5 py-0.5 text-[10px] leading-tight text-purple-300 border border-purple-500/20"
+                                  title={`${attr.name}: ${attr.value}`}
+                                >
+                                  <span className="font-medium text-purple-400/70">{attr.name}:</span>
+                                  <span className="font-semibold">{attr.value}</span>
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                        </>
                       )}
                     </div>
                   )}

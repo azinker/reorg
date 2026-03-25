@@ -1257,7 +1257,21 @@ export async function executePush(
       }));
 
     if (priceUpdates.length > 0) {
-      const priceResult = await adapter.pushPriceUpdates(priceUpdates);
+      let priceResult: Awaited<ReturnType<typeof adapter.pushPriceUpdates>>;
+      try {
+        priceResult = await adapter.pushPriceUpdates(priceUpdates);
+      } catch (adapterError) {
+        priceResult = {
+          success: false,
+          itemsUpdated: 0,
+          errors: priceUpdates.map((u) => ({
+            platformItemId: u.platformItemId,
+            platformVariantId: u.platformVariantId,
+            message: adapterError instanceof Error ? adapterError.message : "Push request timed out or failed.",
+            rawError: adapterError,
+          })),
+        };
+      }
       for (const update of priceUpdates) {
         const change = changes.find(
           (entry) =>
@@ -1290,7 +1304,20 @@ export async function executePush(
     }
 
     if (adRateUpdates.length > 0) {
-      const adResult = await adapter.pushAdRateUpdates(adRateUpdates);
+      let adResult: Awaited<ReturnType<typeof adapter.pushAdRateUpdates>>;
+      try {
+        adResult = await adapter.pushAdRateUpdates(adRateUpdates);
+      } catch (adapterError) {
+        adResult = {
+          success: false,
+          itemsUpdated: 0,
+          errors: adRateUpdates.map((u) => ({
+            platformItemId: u.platformItemId,
+            message: adapterError instanceof Error ? adapterError.message : "Push request timed out or failed.",
+            rawError: adapterError,
+          })),
+        };
+      }
       for (const update of adRateUpdates) {
         const change = changes.find(
           (entry) => matchesPushChange(entry, "adRate", update.platformItemId),
@@ -1313,7 +1340,21 @@ export async function executePush(
     }
 
     if (upcUpdates.length > 0) {
-      const upcResult = await adapter.pushUpcUpdates(upcUpdates);
+      let upcResult: Awaited<ReturnType<typeof adapter.pushUpcUpdates>>;
+      try {
+        upcResult = await adapter.pushUpcUpdates(upcUpdates);
+      } catch (adapterError) {
+        upcResult = {
+          success: false,
+          itemsUpdated: 0,
+          errors: upcUpdates.map((u) => ({
+            platformItemId: u.platformItemId,
+            platformVariantId: u.platformVariantId,
+            message: adapterError instanceof Error ? adapterError.message : "Push request timed out or failed.",
+            rawError: adapterError,
+          })),
+        };
+      }
       for (const update of upcUpdates) {
         const change = changes.find((entry) =>
           matchesPushChange(

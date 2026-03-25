@@ -24,22 +24,45 @@ async function postSyncExecute(
   }
 
   const url = `${creds.base}/api/sync/${integrationId}/execute`;
+  const MAX_ATTEMPTS = 2;
+  const DISPATCH_TIMEOUT_MS = 15_000;
 
-  try {
-    await Promise.race([
-      fetch(url, {
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), DISPATCH_TIMEOUT_MS);
+    try {
+      await fetch(url, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${creds.secret}`,
         },
         body: JSON.stringify(body),
-      }),
-      new Promise<void>((resolve) => setTimeout(resolve, 5000)),
-    ]);
-  } catch (err) {
-    console.error("[sync-continuation] Execute request failed:", err);
+        signal: controller.signal,
+      });
+      // Server responded (unlikely for inline sync, but possible)
+      return;
+    } catch (err) {
+      if (err instanceof Error && err.name === "AbortError") {
+        // Timed out — the request was sent and received by the server;
+        // we just didn't wait for the full response (sync runs inline).
+        return;
+      }
+      console.error(
+        `[sync-continuation] Attempt ${attempt}/${MAX_ATTEMPTS} failed:`,
+        err,
+      );
+      if (attempt < MAX_ATTEMPTS) {
+        await new Promise((r) => setTimeout(r, 2_000));
+      }
+    } finally {
+      clearTimeout(timeoutId);
+    }
   }
+
+  console.error(
+    `[sync-continuation] All ${MAX_ATTEMPTS} attempts failed for ${integrationId}. Continuation may be lost.`,
+  );
 }
 
 /**

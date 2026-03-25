@@ -76,6 +76,7 @@ export interface GridRow {
   shippingCost: number | null;
   platformFeeRate: number;
   inventory: number | null;
+  variationAttributes?: { name: string; value: string }[];
   isVariation: boolean;
   isParent: boolean;
   childRows?: GridRow[];
