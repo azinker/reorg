@@ -170,16 +170,23 @@ export function invalidateEbayRateLimitSnapshotCache(
   snapshotCache.delete(key);
 }
 
-/** Shown when GetApiAccessRules is unavailable but we know GetItem is in a cooldown window. */
+/**
+ * Shown when GetApiAccessRules is unavailable but we know GetItem is in a
+ * cooldown window. All non-GetItem method counts are shown as UNKNOWN (limit 0)
+ * because GetApiAccessRules failing means we genuinely cannot determine their
+ * usage — ReviseFixedPriceItem, GetSellerList, and GetSellerEvents may each
+ * also be exhausted. Never show fake ~0 values that imply available quota.
+ */
 export function buildGetItemCooldownRateLimitsSnapshot(cooldownUntil: Date): EbayTradingRateLimitSnapshot {
   const resetIso = cooldownUntil.toISOString();
   return {
     fetchedAt: new Date().toISOString(),
     methods: MONITORED_EBAY_METHODS.map((name) => ({
       name,
+      // limit=0 signals "unknown" to the UI so it renders "—" instead of a fake count
       count: name === "GetItem" ? 5000 : 0,
-      limit: 5000,
-      remaining: name === "GetItem" ? 0 : 5000,
+      limit: name === "GetItem" ? 5000 : 0,
+      remaining: 0,
       reset: resetIso,
       timeWindowSeconds: 86400,
       status: (name === "GetItem" ? "exhausted" : "healthy") as EbayMethodRateLimit["status"],
@@ -188,7 +195,7 @@ export function buildGetItemCooldownRateLimitsSnapshot(cooldownUntil: Date): Eba
     nextResetAt: resetIso,
     isDegradedEstimate: true,
     degradedNote:
-      "Live per-method counts from eBay could not be loaded. GetItem is over quota — shown as fully consumed. Other method counts are estimates only; exact usage appears after the cooldown resets.",
+      "Live per-method counts from eBay could not be loaded. GetItem is over quota — shown as fully consumed. Other method counts are unknown (shown as —); they may also be exhausted. Exact usage appears after the quota resets.",
   };
 }
 

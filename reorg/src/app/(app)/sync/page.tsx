@@ -951,24 +951,29 @@ export default function SyncPage() {
                     {rateLimits && rateLimits.methods.length > 0 ? (
                       <div className="mt-2 space-y-2">
                         {rateLimits.methods.map((method) => {
-                          // Bar represents usage consumed (not remaining), so 0 remaining = full red bar
-                          const pct = method.status === "exhausted"
-                            ? 100
-                            : method.limit > 0
-                              ? Math.round(((method.limit - method.remaining) / method.limit) * 100)
-                              : 0;
+                          // limit=0 means we don't know usage for this method (degraded snapshot)
+                          const isUnknown = method.limit === 0;
+                          // Bar represents usage consumed; 0 remaining = full red bar
+                          const pct = isUnknown
+                            ? 0
+                            : method.status === "exhausted"
+                              ? 100
+                              : method.limit > 0
+                                ? Math.round(((method.limit - method.remaining) / method.limit) * 100)
+                                : 0;
                           const barColor =
                             method.status === "exhausted" ? "bg-red-500"
                               : method.status === "tight" ? "bg-amber-500"
+                              : isUnknown ? "bg-muted/20"
                               : "bg-emerald-500";
                           const textColor =
                             method.status === "exhausted" ? "text-red-400"
                               : method.status === "tight" ? "text-amber-400"
+                              : isUnknown ? "text-muted-foreground/60"
                               : "text-emerald-400";
-                          // Show "used / limit" so full bar = fully consumed quota
                           const usedCount = method.limit > 0 ? method.limit - method.remaining : 0;
-                          const countLabel = method.limit === 0
-                            ? "—"
+                          const countLabel = isUnknown
+                            ? "Unknown"
                             : rateLimits.isDegradedEstimate
                               ? `~${usedCount.toLocaleString()} used / ~${method.limit.toLocaleString()}`
                               : `${usedCount.toLocaleString()} used / ${method.limit.toLocaleString()}`;
@@ -1084,9 +1089,9 @@ export default function SyncPage() {
                 {/* cooldown alert */}
                 {cooldownActive && (
                   <div className="mt-4 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
-                    <span className="font-semibold">GetItem daily limit reached</span>
+                    <span className="font-semibold">eBay daily quota reached</span>
                     {cooldown?.retryLabel ? ` — resets around ${cooldown.retryLabel}` : " — waiting for quota reset"}
-                    <span className="ml-1 opacity-80">· Full Sync blocked · Incremental Sync still available</span>
+                    <span className="ml-1 opacity-80">· Other method counts are unknown until quota resets</span>
                   </div>
                 )}
 
