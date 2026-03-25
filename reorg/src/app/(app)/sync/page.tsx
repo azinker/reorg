@@ -428,6 +428,7 @@ export default function SyncPage() {
   const [syncAllRunning, setSyncAllRunning] = useState(false);
   const [nowMs, setNowMs] = useState(() => Date.now());
   const pollTimers = useRef<Record<string, ReturnType<typeof setInterval>>>({});
+  const preSyncJobIds = useRef<Record<string, string | null>>({});
   const initialCheckDone = useRef(false);
 
   /* ---- data fetchers ---- */
@@ -493,9 +494,16 @@ export default function SyncPage() {
     setLiveJobs((prev) => ({ ...prev, [apiPlatform]: data.lastJob }));
 
     const job = data.lastJob;
+    const waitingForNew = apiPlatform in preSyncJobIds.current;
+
     if (job?.status === "RUNNING") {
+      if (waitingForNew) delete preSyncJobIds.current[apiPlatform];
       setSyncing((prev) => ({ ...prev, [apiPlatform]: "syncing" }));
-    } else if (job?.status === "COMPLETED" || job?.status === "FAILED") {
+    } else if (job && (job.status === "COMPLETED" || job.status === "FAILED")) {
+      if (waitingForNew && job.id === preSyncJobIds.current[apiPlatform]) {
+        return data;
+      }
+      if (waitingForNew) delete preSyncJobIds.current[apiPlatform];
       const issueCount = Array.isArray(job.errors) ? job.errors.length : 0;
       const message =
         job.status === "COMPLETED"
@@ -525,9 +533,14 @@ export default function SyncPage() {
         try {
           const data = await loadStoreStatus(apiPlatform);
           const job = data?.lastJob ?? null;
-          if (job && (job.status === "COMPLETED" || job.status === "FAILED")) {
+          if (
+            job &&
+            (job.status === "COMPLETED" || job.status === "FAILED") &&
+            !(apiPlatform in preSyncJobIds.current && job.id === preSyncJobIds.current[apiPlatform])
+          ) {
             clearInterval(pollTimers.current[apiPlatform]);
             delete pollTimers.current[apiPlatform];
+            delete preSyncJobIds.current[apiPlatform];
             const issueCount = Array.isArray(job.errors) ? job.errors.length : 0;
             const message =
               job.status === "COMPLETED"
@@ -577,6 +590,9 @@ export default function SyncPage() {
 
   const syncStore = useCallback(
     async (apiPlatform: string, mode?: "full" | "incremental") => {
+      const currentJob = liveJobs[apiPlatform];
+      preSyncJobIds.current[apiPlatform] = currentJob?.id ?? null;
+
       setSyncing((prev) => ({ ...prev, [apiPlatform]: "syncing" }));
       setResults((prev) => ({ ...prev, [apiPlatform]: "" }));
       setLiveJobs((prev) => ({ ...prev, [apiPlatform]: null }));
@@ -591,12 +607,14 @@ export default function SyncPage() {
         const text = await res.text();
         let json: { data?: Record<string, unknown>; error?: string };
         try { json = text ? JSON.parse(text) : {}; } catch {
+          delete preSyncJobIds.current[apiPlatform];
           setSyncing((prev) => ({ ...prev, [apiPlatform]: "error" }));
           setResults((prev) => ({ ...prev, [apiPlatform]: res.ok ? "Invalid response" : `Sync failed (${res.status})` }));
           return;
         }
 
         if (!res.ok) {
+          delete preSyncJobIds.current[apiPlatform];
           setSyncing((prev) => ({ ...prev, [apiPlatform]: "error" }));
           setResults((prev) => ({ ...prev, [apiPlatform]: json.error ?? "Sync failed" }));
           await loadStoreStatus(apiPlatform);
@@ -609,6 +627,7 @@ export default function SyncPage() {
           const fb = typeof data.fallbackReason === "string" ? data.fallbackReason : null;
           if (fb) setResults((prev) => ({ ...prev, [apiPlatform]: fb }));
           pollSyncStatus(apiPlatform);
+          setTimeout(() => { delete preSyncJobIds.current[apiPlatform]; }, 60_000);
           return;
         }
 
@@ -622,11 +641,12 @@ export default function SyncPage() {
         fetchSchedulerStatus(true);
         await loadStoreStatus(apiPlatform);
       } catch (error) {
+        delete preSyncJobIds.current[apiPlatform];
         setSyncing((prev) => ({ ...prev, [apiPlatform]: "error" }));
         setResults((prev) => ({ ...prev, [apiPlatform]: error instanceof Error ? error.message : "Network error" }));
       }
     },
-    [fetchIntegrations, fetchSchedulerStatus, loadStoreStatus, pollSyncStatus],
+    [fetchIntegrations, fetchSchedulerStatus, liveJobs, loadStoreStatus, pollSyncStatus],
   );
 
   const cancelSync = useCallback(
