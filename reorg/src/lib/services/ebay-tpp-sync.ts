@@ -1115,6 +1115,10 @@ function str(obj: unknown, key: string): string | undefined {
   if (obj == null || typeof obj !== "object") return undefined;
   const value = (obj as Record<string, unknown>)[key];
   if (value == null) return undefined;
+  if (Array.isArray(value)) {
+    const first = value[0];
+    return first != null ? String(first) : undefined;
+  }
   if (typeof value === "object") {
     const text = (value as Record<string, unknown>)["#text"];
     return text != null ? String(text) : undefined;
@@ -1226,17 +1230,28 @@ function extractVariationImageUrl(
   const specifics = obj(variation, "VariationSpecifics");
   if (specifics && variationPictures) {
     const pictureSets = arr(variationPictures, "VariationSpecificPictureSet");
+    const pictureDimension = str(variationPictures, "VariationSpecificName")?.trim().toLowerCase();
     const nameValueList = arr(specifics, "NameValueList");
+
     for (const nameValue of nameValueList) {
-      const value = str(nameValue, "Value");
-      if (!value) continue;
+      const name = str(nameValue, "Name")?.trim().toLowerCase();
+      if (pictureDimension && name && name !== pictureDimension) continue;
+
+      const rawValue = (nameValue as Record<string, unknown>)?.Value;
+      const values: string[] = [];
+      if (Array.isArray(rawValue)) {
+        for (const v of rawValue) if (v != null) values.push(String(v).trim().toLowerCase());
+      } else if (rawValue != null) {
+        values.push(String(rawValue).trim().toLowerCase());
+      }
+      if (values.length === 0) continue;
+
       for (const pictureSet of pictureSets) {
-        const pictureValue = str(pictureSet, "VariationSpecificValue");
-        if (pictureValue === value) {
-          const urls = arr(pictureSet, "PictureURL");
-          for (const url of urls) {
-            if (typeof url === "string" && url.startsWith("http")) return url;
-          }
+        const pictureValue = str(pictureSet, "VariationSpecificValue")?.trim().toLowerCase();
+        if (!pictureValue || !values.includes(pictureValue)) continue;
+        const urls = arr(pictureSet, "PictureURL");
+        for (const url of urls) {
+          if (typeof url === "string" && url.startsWith("http")) return url;
         }
       }
     }

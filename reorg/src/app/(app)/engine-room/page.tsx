@@ -68,7 +68,7 @@ type PushJobRow = {
   completedAt: string | null;
   user: string;
   dryRun: boolean;
-  status: "dry_run" | "executing" | "completed" | "partial" | "failed" | "blocked";
+  status: "dry_run" | "executing" | "completed" | "partial" | "failed" | "blocked" | "cancelled";
   totalChanges: number;
   distinctListings: number;
   successfulChanges: number;
@@ -307,6 +307,7 @@ function StatusBadge({ status }: { status: string }) {
     failed: { icon: XCircle, cls: "bg-red-500/15 text-red-400 border-red-500/30", label: "Failed" },
     queued: { icon: Clock, cls: "bg-amber-500/15 text-amber-400 border-amber-500/30", label: "Queued" },
     pending_review: { icon: FileText, cls: "bg-purple-500/15 text-purple-400 border-purple-500/30", label: "Pending Review" },
+    cancelled: { icon: XCircle, cls: "bg-orange-500/15 text-orange-400 border-orange-500/30", label: "Cancelled" },
   };
   const c = config[status] ?? config.completed;
   const Icon = c.icon;
@@ -617,7 +618,9 @@ function PushJobsPanel({
                           ? "completed"
                           : job.status === "partial"
                             ? "pending_review"
-                            : "failed"
+                            : job.status === "cancelled"
+                              ? "cancelled"
+                              : "failed"
                   }
                 />
               </td>
@@ -677,6 +680,40 @@ function PushJobsPanel({
           );
           if (item) openRetryReview([item]);
         }}
+        onCancelJob={async (job) => {
+          try {
+            const res = await fetch("/api/push/cancel", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ pushJobId: job.id }),
+            });
+            const payload = await res.json().catch(() => ({}));
+            if (payload?.data?.cancelled) {
+              setSelectedJob(null);
+              onRefresh?.();
+            }
+          } catch (err) {
+            console.error("Failed to cancel push job:", err);
+          }
+        }}
+        onRetryAllPlanned={(job) => {
+          const planned = job.changes
+            .filter((c) => c.success === null)
+            .map((c) => ({
+              stagedChangeId: c.stagedChangeId ?? undefined,
+              masterRowId: c.masterRowId ?? undefined,
+              marketplaceListingId: c.marketplaceListingId ?? undefined,
+              platformVariantId: c.platformVariantId ?? undefined,
+              sku: c.sku,
+              title: c.title,
+              platform: c.platform as PushItem["platform"],
+              listingId: c.listingId,
+              field: c.field,
+              oldValue: c.oldValue,
+              newValue: c.newValue,
+            }));
+          if (planned.length > 0) openRetryReview(planned);
+        }}
       />
 
       <PushConfirmModal
@@ -697,15 +734,21 @@ function PushJobDetailsModal({
   onClose,
   onRetryFailedOnly,
   onRetrySingle,
+  onCancelJob,
+  onRetryAllPlanned,
 }: {
   job: PushJobRow | null;
   onClose: () => void;
   onRetryFailedOnly: (job: PushJobRow) => void;
   onRetrySingle: (job: PushJobRow, changeKey: string) => void;
+  onCancelJob: (job: PushJobRow) => void;
+  onRetryAllPlanned: (job: PushJobRow) => void;
 }) {
   if (!job) return null;
 
   const failedChanges = job.changes.filter((change) => change.success === false);
+  const plannedChanges = job.changes.filter((change) => change.success === null);
+  const isStuck = job.status === "executing" || (job.status === "cancelled" && plannedChanges.length > 0);
 
   return (
     <>
@@ -743,7 +786,9 @@ function PushJobDetailsModal({
                           ? "completed"
                           : job.status === "partial"
                             ? "pending_review"
-                            : "failed"
+                            : job.status === "cancelled"
+                              ? "cancelled"
+                              : "failed"
                   }
                 />
               </div>
@@ -792,16 +837,38 @@ function PushJobDetailsModal({
                   Review the exact SKU, field, old value, new value, and result for every change in this push job.
                 </p>
               </div>
-              {failedChanges.length > 0 ? (
-                <button
-                  type="button"
-                  onClick={() => onRetryFailedOnly(job)}
-                  className="inline-flex cursor-pointer items-center gap-1 rounded-md border border-border px-3 py-2 text-sm font-medium text-foreground transition-colors hover:bg-accent"
-                >
-                  <RotateCcw className="h-4 w-4" />
-                  Retry Failed Only
-                </button>
-              ) : null}
+              <div className="flex flex-wrap gap-2">
+                {isStuck && (
+                  <button
+                    type="button"
+                    onClick={() => onCancelJob(job)}
+                    className="inline-flex cursor-pointer items-center gap-1 rounded-md border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm font-medium text-red-300 transition-colors hover:bg-red-500/20"
+                  >
+                    <X className="h-4 w-4" />
+                    Cancel Push
+                  </button>
+                )}
+                {plannedChanges.length > 0 && job.status !== "executing" && (
+                  <button
+                    type="button"
+                    onClick={() => onRetryAllPlanned(job)}
+                    className="inline-flex cursor-pointer items-center gap-1 rounded-md border border-border px-3 py-2 text-sm font-medium text-foreground transition-colors hover:bg-accent"
+                  >
+                    <RotateCcw className="h-4 w-4" />
+                    Retry Unfinished ({plannedChanges.length})
+                  </button>
+                )}
+                {failedChanges.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => onRetryFailedOnly(job)}
+                    className="inline-flex cursor-pointer items-center gap-1 rounded-md border border-border px-3 py-2 text-sm font-medium text-foreground transition-colors hover:bg-accent"
+                  >
+                    <RotateCcw className="h-4 w-4" />
+                    Retry Failed Only
+                  </button>
+                )}
+              </div>
             </div>
 
             <div className="overflow-x-auto rounded-xl border border-border">
@@ -838,7 +905,12 @@ function PushJobDetailsModal({
                         <td className="px-3 py-3 align-top text-sm font-semibold text-foreground">{formatPushValue(change.field, change.newValue)}</td>
                         <td className="px-3 py-3 align-top">
                           {change.success === null ? (
-                            <span className="text-xs text-muted-foreground">Planned</span>
+                            <span className={cn(
+                              "text-xs",
+                              job.status === "executing" ? "text-amber-400" : "text-muted-foreground",
+                            )}>
+                              {job.status === "executing" ? "Waiting..." : "Not executed"}
+                            </span>
                           ) : change.success ? (
                             <StatusBadge status="completed" />
                           ) : (
@@ -864,7 +936,7 @@ function PushJobDetailsModal({
                           )}
                         </td>
                         <td className="px-3 py-3 align-top text-right">
-                          {change.success === false ? (
+                          {change.success === false || (change.success === null && job.status !== "executing") ? (
                             <button
                               type="button"
                               onClick={() => onRetrySingle(job, changeKey)}

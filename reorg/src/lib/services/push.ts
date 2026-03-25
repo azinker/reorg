@@ -1,7 +1,7 @@
 import { db } from "@/lib/db";
 import { checkWriteSafety } from "@/lib/safety";
 import type { MarketplaceAdapter, PriceUpdate, AdRateUpdate, UpcUpdate } from "@/lib/integrations/types";
-import type { Integration, Platform } from "@prisma/client";
+import { Prisma, type Integration, type Platform } from "@prisma/client";
 import {
   getEbayCooldownUntilFromSnapshot,
   getEbayCredentialFingerprint,
@@ -141,6 +141,34 @@ const RECOMMENDED_LIVE_PUSH_LISTINGS = 25;
 const HARD_LIVE_PUSH_LISTINGS = 50;
 const RECOMMENDED_LIVE_PUSH_CHANGES = 50;
 const HARD_LIVE_PUSH_CHANGES = 100;
+
+function patchRawDataUpc(
+  raw: Record<string, unknown>,
+  newUpc: string,
+): Record<string, unknown> | null {
+  const variation =
+    raw.variation && typeof raw.variation === "object" && !Array.isArray(raw.variation)
+      ? { ...(raw.variation as Record<string, unknown>) }
+      : null;
+
+  if (variation) {
+    const existing =
+      variation.VariationProductListingDetails &&
+      typeof variation.VariationProductListingDetails === "object"
+        ? { ...(variation.VariationProductListingDetails as Record<string, unknown>) }
+        : {};
+    existing.UPC = newUpc;
+    variation.VariationProductListingDetails = existing;
+    return { ...raw, variation };
+  }
+
+  const existing =
+    raw.ProductListingDetails && typeof raw.ProductListingDetails === "object"
+      ? { ...(raw.ProductListingDetails as Record<string, unknown>) }
+      : {};
+  (existing as Record<string, unknown>).UPC = newUpc;
+  return { ...raw, ProductListingDetails: existing };
+}
 
 function matchesPushChange(
   change: PushChangeItem,
@@ -1348,6 +1376,39 @@ export async function executePush(
               : { adRate: Number(result.newValue) },
         }),
       ),
+    );
+  }
+
+  const successfulUpcListingUpdates = results.filter(
+    (r) =>
+      r.success &&
+      r.field === "upc" &&
+      Boolean(r.marketplaceListingId) &&
+      (r.platform === "TPP_EBAY" || r.platform === "TT_EBAY"),
+  );
+
+  if (successfulUpcListingUpdates.length > 0) {
+    const listings = await db.marketplaceListing.findMany({
+      where: {
+        id: { in: successfulUpcListingUpdates.map((u) => u.marketplaceListingId) },
+      },
+      select: { id: true, rawData: true },
+    });
+
+    const listingMap = new Map(listings.map((l) => [l.id, l]));
+
+    await Promise.all(
+      successfulUpcListingUpdates.map((update) => {
+        const listing = listingMap.get(update.marketplaceListingId);
+        if (!listing?.rawData || typeof listing.rawData !== "object") return null;
+        const raw = listing.rawData as Record<string, unknown>;
+        const patched = patchRawDataUpc(raw, String(update.newValue));
+        if (!patched) return null;
+        return db.marketplaceListing.update({
+          where: { id: listing.id },
+          data: { rawData: patched as Prisma.InputJsonValue },
+        });
+      }),
     );
   }
 

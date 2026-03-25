@@ -626,6 +626,48 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
   const [pushModalPreviewItems, setPushModalPreviewItems] = useState<PushItem[]>([]);
   const [pushModalLaunchMode, setPushModalLaunchMode] = useState<PushLaunchMode>("review");
 
+  const pushQueueRef = useRef<Array<() => Promise<void>>>([]);
+  const pushActiveCountRef = useRef(0);
+  const PUSH_CONCURRENCY = 2;
+
+  function enqueuePush(fn: () => Promise<void>) {
+    pushQueueRef.current.push(fn);
+    drainPushQueue();
+  }
+
+  function drainPushQueue() {
+    while (
+      pushActiveCountRef.current < PUSH_CONCURRENCY &&
+      pushQueueRef.current.length > 0
+    ) {
+      const next = pushQueueRef.current.shift()!;
+      pushActiveCountRef.current++;
+      next().finally(() => {
+        pushActiveCountRef.current--;
+        drainPushQueue();
+      });
+    }
+  }
+
+  const pendingRowReloadIdsRef = useRef<Set<string>>(new Set());
+  const rowReloadTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  function scheduleRowReloads(rowIds: string[]) {
+    for (const id of rowIds) pendingRowReloadIdsRef.current.add(id);
+    if (rowReloadTimerRef.current) clearTimeout(rowReloadTimerRef.current);
+    rowReloadTimerRef.current = setTimeout(() => {
+      const ids = [...pendingRowReloadIdsRef.current];
+      pendingRowReloadIdsRef.current.clear();
+      rowReloadTimerRef.current = null;
+      if (ids.length === 0) return;
+      const batch = ids.slice(0, 5);
+      const rest = ids.slice(5);
+      void Promise.allSettled(batch.map((id) => reloadRowSnapshot(id))).then(() => {
+        if (rest.length > 0) scheduleRowReloads(rest);
+      });
+    }, 600);
+  }
+
   function isInteractionLocked() {
     return activeGridInteractionIds.size > 0 || pushModalOpen;
   }
@@ -1530,7 +1572,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
     return payload.data as PushApiData;
   }
 
-  async function startInlineFastPush(
+  function startInlineFastPush(
     rowId: string,
     platform: string,
     listingId: string,
@@ -1545,24 +1587,27 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
       return;
     }
 
-    setQuickPushState(key, { phase: "dry-run", detail: "Running dry run inline..." });
+    setQuickPushState(key, { phase: "dry-run", detail: "Queued — waiting for slot..." });
 
-    try {
-      const result = await submitPushRequest([pushItem], true, false);
-      if (result.status === "blocked") {
+    enqueuePush(async () => {
+      setQuickPushState(key, { phase: "dry-run", detail: "Running dry run inline..." });
+      try {
+        const result = await submitPushRequest([pushItem], true, false);
+        if (result.status === "blocked") {
+          setQuickPushState(key, {
+            phase: "blocked",
+            detail: result.blockedReason ?? result.nextStep ?? result.message,
+          });
+          return;
+        }
+        await confirmInlineFastPush(rowId, platform, listingId, field, newValue);
+      } catch (error) {
         setQuickPushState(key, {
-          phase: "blocked",
-          detail: result.blockedReason ?? result.nextStep ?? result.message,
+          phase: "error",
+          detail: error instanceof Error ? error.message : "Fast push dry run failed.",
         });
-        return;
       }
-      await confirmInlineFastPush(rowId, platform, listingId, field, newValue);
-    } catch (error) {
-      setQuickPushState(key, {
-        phase: "error",
-        detail: error instanceof Error ? error.message : "Fast push dry run failed.",
-      });
-    }
+    });
   }
 
   async function confirmInlineFastPush(
@@ -1581,86 +1626,96 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
       return;
     }
 
-    setQuickPushState(key, { phase: "pushing", detail: "Sending the live push..." });
+    setQuickPushState(key, { phase: "success", detail: "Push sent — confirming..." });
+    scheduleQuickPushSuccessClear(key);
 
-    try {
-      const result = await submitPushRequest([pushItem], false, true);
-      if (result.status === "blocked") {
-        setQuickPushState(key, {
-          phase: "blocked",
-          detail: result.blockedReason ?? result.nextStep ?? result.message,
-        });
-        return;
-      }
-
-      applyPushOutcome(result);
-      if (result.summary.successfulChanges > 0) {
-        setQuickPushState(key, {
-          phase: "success",
-          detail: result.postPushRefresh?.detail ?? "Push completed.",
-        });
-        scheduleQuickPushSuccessClear(key);
-      } else {
+    submitPushRequest([pushItem], false, true)
+      .then((result) => {
+        if (result.status === "blocked") {
+          setQuickPushState(key, {
+            phase: "blocked",
+            detail: result.blockedReason ?? result.nextStep ?? result.message,
+          });
+          return;
+        }
+        applyPushOutcome(result);
+        if (result.summary.successfulChanges > 0) {
+          setQuickPushState(key, {
+            phase: "success",
+            detail: "Push confirmed.",
+          });
+          scheduleQuickPushSuccessClear(key);
+        } else {
+          setQuickPushState(key, {
+            phase: "error",
+            detail: result.nextStep ?? result.message,
+          });
+        }
+      })
+      .catch((error) => {
         setQuickPushState(key, {
           phase: "error",
-          detail: result.nextStep ?? result.message,
+          detail: error instanceof Error ? error.message : "Live push failed.",
         });
-      }
-    } catch (error) {
-      setQuickPushState(key, {
-        phase: "error",
-        detail: error instanceof Error ? error.message : "Live push failed.",
       });
-    }
   }
 
-  async function startInlineFastPushItems(key: string, items: PushItem[]) {
+  function startInlineFastPushItems(key: string, items: PushItem[]) {
     if (items.length === 0) {
       showToast("No staged change was ready for fast push.");
       return;
     }
 
-    setQuickPushState(key, { phase: "dry-run", detail: "Running dry run inline..." });
+    setQuickPushState(key, { phase: "dry-run", detail: "Queued — waiting for slot..." });
 
-    try {
-      const dryRunResult = await submitPushRequest(items, true, false);
-      if (dryRunResult.status === "blocked") {
-        setQuickPushState(key, {
-          phase: "blocked",
-          detail: dryRunResult.blockedReason ?? dryRunResult.nextStep ?? dryRunResult.message,
-        });
-        return;
-      }
+    enqueuePush(async () => {
+      setQuickPushState(key, { phase: "dry-run", detail: "Running dry run inline..." });
+      try {
+        const dryRunResult = await submitPushRequest(items, true, false);
+        if (dryRunResult.status === "blocked") {
+          setQuickPushState(key, {
+            phase: "blocked",
+            detail: dryRunResult.blockedReason ?? dryRunResult.nextStep ?? dryRunResult.message,
+          });
+          return;
+        }
 
-      setQuickPushState(key, { phase: "pushing", detail: "Sending the live push..." });
-      const liveResult = await submitPushRequest(items, false, true);
-      if (liveResult.status === "blocked") {
-        setQuickPushState(key, {
-          phase: "blocked",
-          detail: liveResult.blockedReason ?? liveResult.nextStep ?? liveResult.message,
-        });
-        return;
-      }
-
-      applyPushOutcome(liveResult);
-      if (liveResult.summary.successfulChanges > 0) {
-        setQuickPushState(key, {
-          phase: "success",
-          detail: liveResult.postPushRefresh?.detail ?? "Push completed.",
-        });
+        setQuickPushState(key, { phase: "success", detail: "Push sent — confirming..." });
         scheduleQuickPushSuccessClear(key);
-      } else {
+
+        submitPushRequest(items, false, true)
+          .then((liveResult) => {
+            if (liveResult.status === "blocked") {
+              setQuickPushState(key, {
+                phase: "blocked",
+                detail: liveResult.blockedReason ?? liveResult.nextStep ?? liveResult.message,
+              });
+              return;
+            }
+            applyPushOutcome(liveResult);
+            if (liveResult.summary.successfulChanges > 0) {
+              setQuickPushState(key, { phase: "success", detail: "Push confirmed." });
+              scheduleQuickPushSuccessClear(key);
+            } else {
+              setQuickPushState(key, {
+                phase: "error",
+                detail: liveResult.nextStep ?? liveResult.message,
+              });
+            }
+          })
+          .catch((error) => {
+            setQuickPushState(key, {
+              phase: "error",
+              detail: error instanceof Error ? error.message : "Live push failed.",
+            });
+          });
+      } catch (error) {
         setQuickPushState(key, {
           phase: "error",
-          detail: liveResult.nextStep ?? liveResult.message,
+          detail: error instanceof Error ? error.message : "Live push failed.",
         });
       }
-    } catch (error) {
-      setQuickPushState(key, {
-        phase: "error",
-        detail: error instanceof Error ? error.message : "Live push failed.",
-      });
-    }
+    });
   }
 
   function applyPushOutcome(result: PushApiData) {
@@ -1750,7 +1805,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
     setGridRows((prev) => prev.map((row) => applyToRow(row)));
     bumpUpcLiveRefresh(affectedRowIds);
     if (affectedRowIds.length > 0) {
-      void Promise.allSettled(affectedRowIds.map((rowId) => reloadRowSnapshot(rowId)));
+      scheduleRowReloads(affectedRowIds);
     }
 
     if (result.status === "partial") {

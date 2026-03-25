@@ -107,6 +107,18 @@ function parsePushJobChangeEntries(value: unknown): PushJobChangeEntry[] {
 
 async function buildEngineRoomData() {
   try {
+    const STALE_PUSH_THRESHOLD_MS = 5 * 60 * 1000;
+    await db.pushJob.updateMany({
+      where: {
+        status: "EXECUTING",
+        createdAt: { lt: new Date(Date.now() - STALE_PUSH_THRESHOLD_MS) },
+      },
+      data: {
+        status: "FAILED",
+        completedAt: new Date(),
+      },
+    });
+
     const [syncJobs, pushJobs, stagedChanges, auditLogs, globalLock, schedulerSettings, schedulerPlan, integrations] = await Promise.all([
       db.syncJob.findMany({
         orderBy: { createdAt: "desc" },
@@ -335,22 +347,25 @@ async function buildEngineRoomData() {
         result.status === "partial" ||
         result.status === "blocked" ||
         result.status === "completed" ||
-        result.status === "failed"
+        result.status === "failed" ||
+        result.status === "cancelled"
           ? result.status
           : null;
 
       const normalizedStatus =
-        resultStatus === "partial"
-          ? "partial"
-          : resultStatus === "blocked"
-            ? "blocked"
-            : job.status === "DRY_RUN"
-              ? "dry_run"
-              : job.status === "EXECUTING"
-                ? "executing"
-                : job.status === "FAILED"
-                  ? "failed"
-                  : "completed";
+        resultStatus === "cancelled"
+          ? "cancelled"
+          : resultStatus === "partial"
+            ? "partial"
+            : resultStatus === "blocked"
+              ? "blocked"
+              : job.status === "DRY_RUN"
+                ? "dry_run"
+                : job.status === "EXECUTING"
+                  ? "executing"
+                  : job.status === "FAILED"
+                    ? "failed"
+                    : "completed";
 
       const failedResults = Array.isArray(result.results)
         ? (result.results as Array<Record<string, unknown>>).filter((entry) => entry.success === false)

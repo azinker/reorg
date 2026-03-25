@@ -93,11 +93,45 @@ function extractSpecificsUpc(specifics: unknown): string | null {
   return null;
 }
 
+function isDoesNotApply(value: string): boolean {
+  return value === "Does not apply" || value === "N/A";
+}
+
 function extractEbayUpc(rawData: unknown): string | null {
   const raw = asRecord(rawData);
   if (!raw) return null;
   const item = asRecord(raw.item);
   const variation = asRecord(raw.variation);
+
+  if (variation) {
+    const variationListingDetails = asRecord(variation.VariationProductListingDetails);
+    const variationUpc = firstString(
+      variationListingDetails?.UPC,
+      variationListingDetails?.EAN,
+      variationListingDetails?.GTIN,
+      variationListingDetails?.ISBN,
+    );
+    if (variationUpc && !isDoesNotApply(variationUpc)) {
+      return variationUpc;
+    }
+
+    const variationSpecificsUpc = extractSpecificsUpc(variation.VariationSpecifics);
+    if (variationSpecificsUpc) {
+      return variationSpecificsUpc;
+    }
+
+    const variationRawUpc = firstString(variation.upc, variation.UPC);
+    if (variationRawUpc && !isDoesNotApply(variationRawUpc)) {
+      return variationRawUpc;
+    }
+
+    const variationItemSpecificsUpc = extractSpecificsUpc(variation.ItemSpecifics);
+    if (variationItemSpecificsUpc) {
+      return variationItemSpecificsUpc;
+    }
+
+    return null;
+  }
 
   const listingDetails = asRecord(raw.ProductListingDetails);
   const listingDetailsUpc = firstString(
@@ -106,19 +140,8 @@ function extractEbayUpc(rawData: unknown): string | null {
     listingDetails?.GTIN,
     listingDetails?.ISBN,
   );
-  if (listingDetailsUpc && listingDetailsUpc !== "Does not apply" && listingDetailsUpc !== "N/A") {
+  if (listingDetailsUpc && !isDoesNotApply(listingDetailsUpc)) {
     return listingDetailsUpc;
-  }
-
-  const nestedListingDetails = asRecord(item?.ProductListingDetails);
-  const nestedListingDetailsUpc = firstString(
-    nestedListingDetails?.UPC,
-    nestedListingDetails?.EAN,
-    nestedListingDetails?.GTIN,
-    nestedListingDetails?.ISBN,
-  );
-  if (nestedListingDetailsUpc && nestedListingDetailsUpc !== "Does not apply" && nestedListingDetailsUpc !== "N/A") {
-    return nestedListingDetailsUpc;
   }
 
   const variationListingDetails = asRecord(raw.VariationProductListingDetails);
@@ -128,19 +151,19 @@ function extractEbayUpc(rawData: unknown): string | null {
     variationListingDetails?.GTIN,
     variationListingDetails?.ISBN,
   );
-  if (variationUpc && variationUpc !== "Does not apply" && variationUpc !== "N/A") {
+  if (variationUpc && !isDoesNotApply(variationUpc)) {
     return variationUpc;
   }
 
-  const nestedVariationListingDetails = asRecord(variation?.VariationProductListingDetails);
-  const nestedVariationUpc = firstString(
-    nestedVariationListingDetails?.UPC,
-    nestedVariationListingDetails?.EAN,
-    nestedVariationListingDetails?.GTIN,
-    nestedVariationListingDetails?.ISBN,
+  const nestedListingDetails = asRecord(item?.ProductListingDetails);
+  const nestedListingDetailsUpc = firstString(
+    nestedListingDetails?.UPC,
+    nestedListingDetails?.EAN,
+    nestedListingDetails?.GTIN,
+    nestedListingDetails?.ISBN,
   );
-  if (nestedVariationUpc && nestedVariationUpc !== "Does not apply" && nestedVariationUpc !== "N/A") {
-    return nestedVariationUpc;
+  if (nestedListingDetailsUpc && !isDoesNotApply(nestedListingDetailsUpc)) {
+    return nestedListingDetailsUpc;
   }
 
   const product =
@@ -160,47 +183,21 @@ function extractEbayUpc(rawData: unknown): string | null {
     raw.GTIN,
     item?.upc,
     item?.UPC,
-    variation?.upc,
-    variation?.UPC,
   );
-  if (rawUpc && rawUpc !== "Does not apply" && rawUpc !== "N/A") {
+  if (rawUpc && !isDoesNotApply(rawUpc)) {
     return rawUpc;
   }
 
   const rawSpecificsUpc =
     extractSpecificsUpc(raw.ItemSpecifics) ??
-    extractSpecificsUpc(item?.ItemSpecifics) ??
-    extractSpecificsUpc(variation?.ItemSpecifics);
+    extractSpecificsUpc(item?.ItemSpecifics);
   if (rawSpecificsUpc) {
     return rawSpecificsUpc;
   }
 
-  const rawVariationSpecificsUpc =
-    extractSpecificsUpc(raw.VariationSpecifics) ??
-    extractSpecificsUpc(variation?.VariationSpecifics);
+  const rawVariationSpecificsUpc = extractSpecificsUpc(raw.VariationSpecifics);
   if (rawVariationSpecificsUpc) {
     return rawVariationSpecificsUpc;
-  }
-
-  const variations = asRecord(raw.Variations);
-  const variationList = variations && Array.isArray(variations.Variation) ? variations.Variation : [];
-  for (const variationEntry of variationList) {
-    const variationRecord = asRecord(variationEntry);
-    if (!variationRecord) continue;
-    const variationDetails = asRecord(variationRecord.VariationProductListingDetails);
-    const variationValue = firstString(
-      variationDetails?.UPC,
-      variationDetails?.EAN,
-      variationDetails?.GTIN,
-      variationDetails?.ISBN,
-    );
-    if (variationValue && variationValue !== "Does not apply" && variationValue !== "N/A") {
-      return variationValue;
-    }
-    const variationSpecificValue = extractSpecificsUpc(variationRecord.VariationSpecifics);
-    if (variationSpecificValue) {
-      return variationSpecificValue;
-    }
   }
 
   return null;

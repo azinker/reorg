@@ -169,6 +169,11 @@ export default function DashboardPage() {
         const gridData = await fetchGridData();
         if (cancelled) return;
 
+        if (gridData.source === "error" && sourceRef.current === "db") {
+          console.warn("[dashboard] Background grid refresh failed, keeping existing data:", gridData.error);
+          return;
+        }
+
         setRows(gridData.rows);
         setSource(gridData.source);
         setError(gridData.error);
