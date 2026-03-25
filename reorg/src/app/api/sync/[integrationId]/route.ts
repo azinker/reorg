@@ -31,7 +31,7 @@ import {
 } from "@/lib/services/sync-jobs";
 
 export const runtime = "nodejs";
-export const maxDuration = 900;
+export const maxDuration = 800;
 export const dynamic = "force-dynamic";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
