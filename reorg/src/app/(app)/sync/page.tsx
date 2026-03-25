@@ -1084,8 +1084,9 @@ export default function SyncPage() {
                 {/* cooldown alert */}
                 {cooldownActive && (
                   <div className="mt-4 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
-                    <span className="font-semibold">eBay cooldown active</span>
-                    {cooldown?.retryLabel ? ` — retries around ${cooldown.retryLabel}` : " — waiting for reset"}
+                    <span className="font-semibold">GetItem daily limit reached</span>
+                    {cooldown?.retryLabel ? ` — resets around ${cooldown.retryLabel}` : " — waiting for quota reset"}
+                    <span className="ml-1 opacity-80">· Full Sync blocked · Incremental Sync still available</span>
                   </div>
                 )}
 
@@ -1162,7 +1163,11 @@ export default function SyncPage() {
 
                 {/* ---- action buttons with tooltips ---- */}
                 <div className="mt-5 flex flex-wrap items-center gap-2">
-                  <Tip text="Quick sync — pulls only the most recent changes since the last update. Fast and efficient for routine refreshes.">
+                  <Tip text={
+                    cooldownActive
+                      ? "Incremental sync is still available — it uses GetSellerEvents and GetSellerList, which have their own separate quota (not GetItem). Safe to run."
+                      : "Quick sync — pulls only the most recent changes since the last update. Fast and efficient for routine refreshes."
+                  }>
                     <button
                       type="button"
                       disabled={!connected || isSyncing}
@@ -1178,10 +1183,14 @@ export default function SyncPage() {
                     </button>
                   </Tip>
 
-                  <Tip text="Full catalog sync — re-downloads every listing from the marketplace from scratch. Use when data looks out of date or after major changes.">
+                  <Tip text={
+                    cooldownActive
+                      ? `Full Sync is blocked — it relies heavily on GetItem which is at its daily limit. Resume after the quota resets${cooldown?.retryLabel ? ` around ${cooldown.retryLabel}` : ""}.`
+                      : "Full catalog sync — re-downloads every listing from the marketplace from scratch. Use when data looks out of date or after major changes."
+                  }>
                     <button
                       type="button"
-                      disabled={!connected || isSyncing}
+                      disabled={!connected || isSyncing || cooldownActive}
                       onClick={() => syncStore(store.apiPlatform, "full")}
                       className={cn(
                         "inline-flex cursor-pointer items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-colors",
