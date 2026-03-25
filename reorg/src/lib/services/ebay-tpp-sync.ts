@@ -10,6 +10,7 @@ import {
   buildEbayQuotaExhaustedMessage,
   getEbayMethodRate,
   getEbayTradingRateLimitSnapshotForIntegration,
+  invalidateEbayRateLimitSnapshotCache,
   type EbayTradingRateLimitSnapshot,
 } from "@/lib/services/ebay-analytics";
 import {
@@ -376,13 +377,11 @@ export async function runEbayTppSync(
         }
       }
 
-      const getItemRate = getEbayMethodRate(analyticsSnapshot, "GetItem");
-      if (getItemRate?.status === "exhausted") {
-        throw new EbayTradingApiError(
-          buildEbayQuotaExhaustedMessage("GetItem", analyticsSnapshot),
-          EBAY_USAGE_LIMIT_ERROR_CODE,
-        );
-      }
+      // Do NOT block incremental syncs just because GetItem is exhausted.
+      // GetSellerEvents uses its own separate daily quota. The incremental sync
+      // will still run GetSellerEvents to collect changed item IDs, then defer
+      // all found items to the pending backlog for the next GetItem window.
+      // (Full sync is blocked earlier via the UI and in the full-sync branch below.)
 
       const lastCursorValue =
         integrationConfig.syncState.lastCursor ??
@@ -465,10 +464,16 @@ export async function runEbayTppSync(
           incrementalWindow.itemIds.length > 0 &&
           budgetPlan.itemIdsToProcess.length === 0
         ) {
-          throw new EbayTradingApiError(
-            buildEbayQuotaExhaustedMessage("GetItem", analyticsSnapshot),
-            EBAY_USAGE_LIMIT_ERROR_CODE,
-          );
+          // GetItem quota exhausted — GetSellerEvents ran and collected
+          // changed item IDs, but there is no budget to hydrate them now.
+          // Save all found IDs to the pending backlog so the next sync
+          // (after the daily quota resets) will process them via GetItem.
+          pendingIncrementalItemIdsForCompletion = incrementalWindow.itemIds;
+          pendingIncrementalWindowEndedAtForCompletion =
+            incrementalWindow.windowEndedAt.toISOString();
+          fallbackReasonForCompletion =
+            `GetSellerEvents found ${incrementalWindow.itemIds.length} changed listing${incrementalWindow.itemIds.length !== 1 ? "s" : ""}. ` +
+            `GetItem quota is exhausted — all changes are queued for the next pull window after the daily limit resets.`;
         }
 
         let haltedIncrementalReason: string | null = null;
@@ -711,6 +716,10 @@ export async function runEbayTppSync(
         errors: JSON.parse(JSON.stringify(allErrors)),
       },
     });
+  } finally {
+    // Evict the analytics snapshot cache so the next page load fetches fresh
+    // per-method counts from eBay (reflecting what was consumed this run).
+    invalidateEbayRateLimitSnapshotCache(integration);
   }
 
   return progress;

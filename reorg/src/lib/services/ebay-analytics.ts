@@ -156,6 +156,20 @@ export function getEbayCredentialFingerprint(
   return credentials ? getCacheKey(credentials) : null;
 }
 
+/**
+ * Evict the snapshot cache for an integration so the next call to
+ * `getEbayTradingRateLimitSnapshotForIntegration` fetches live data.
+ * Call this after any eBay sync that consumed API quota.
+ */
+export function invalidateEbayRateLimitSnapshotCache(
+  integration: Pick<Integration, "config">,
+): void {
+  const credentials = extractFullCredentials(integration);
+  if (!credentials) return;
+  const key = getCacheKey(credentials);
+  snapshotCache.delete(key);
+}
+
 /** Shown when GetApiAccessRules is unavailable but we know GetItem is in a cooldown window. */
 export function buildGetItemCooldownRateLimitsSnapshot(cooldownUntil: Date): EbayTradingRateLimitSnapshot {
   const resetIso = cooldownUntil.toISOString();
