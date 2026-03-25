@@ -9,6 +9,10 @@ import { isLivePushEnabled } from "@/lib/automation-settings";
 import { isAuthBypassEnabled } from "@/lib/app-env";
 import type { Platform } from "@prisma/client";
 
+export const runtime = "nodejs";
+export const maxDuration = 300;
+export const dynamic = "force-dynamic";
+
 const pushSchema = z.object({
   changes: z.array(
     z.object({

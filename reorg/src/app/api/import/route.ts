@@ -4,6 +4,10 @@ import { db } from "@/lib/db";
 import { Platform } from "@prisma/client";
 import { buildLiveUpcSummary } from "@/lib/upc-live";
 
+export const runtime = "nodejs";
+export const maxDuration = 300;
+export const dynamic = "force-dynamic";
+
 const VALID_MODES = ["preview", "fill_blanks", "overwrite"] as const;
 type ImportMode = (typeof VALID_MODES)[number];
 
