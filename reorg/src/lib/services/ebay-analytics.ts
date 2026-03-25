@@ -307,7 +307,26 @@ export async function getEbayTradingRateLimitSnapshotForIntegration(
         degradedNote: `Last refreshed ${fallback.snapshot.fetchedAt ? new Date(fallback.snapshot.fetchedAt).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true, timeZone: "America/New_York" }) : "recently"}. Live refresh failed — counts may be slightly outdated.`,
       };
     }
-    throw error;
+    // No fallback available — return a degraded placeholder so the UI always
+    // shows bars rather than "Credits unavailable". Both eBay stores share the
+    // same app quota, so if one hits the limit the other's API calls also fail.
+    console.warn("[ebay-analytics] No fallback snapshot available, returning degraded placeholder");
+    return {
+      fetchedAt: new Date().toISOString(),
+      methods: MONITORED_EBAY_METHODS.map((name) => ({
+        name,
+        count: 0,
+        limit: name === "GetItem" ? 5000 : 0,
+        remaining: 0,
+        reset: null,
+        timeWindowSeconds: name === "GetItem" ? 86400 : null,
+        status: (name === "GetItem" ? "exhausted" : "healthy") as "exhausted" | "healthy",
+      })),
+      exhaustedMethods: ["GetItem"],
+      nextResetAt: null,
+      isDegradedEstimate: true,
+      degradedNote: "Live call counts could not be fetched from eBay. Both eBay stores share the same API quota — if one is over its daily limit, both will show this. Exact usage will be visible after the daily reset.",
+    };
   }
 }
 

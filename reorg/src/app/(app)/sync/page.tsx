@@ -899,7 +899,12 @@ export default function SyncPage() {
                     {rateLimits && rateLimits.methods.length > 0 ? (
                       <div className="mt-2 space-y-2">
                         {rateLimits.methods.map((method) => {
-                          const pct = method.limit > 0 ? Math.round((method.remaining / method.limit) * 100) : 0;
+                          // Bar represents usage consumed (not remaining), so 0 remaining = full red bar
+                          const pct = method.status === "exhausted"
+                            ? 100
+                            : method.limit > 0
+                              ? Math.round(((method.limit - method.remaining) / method.limit) * 100)
+                              : 0;
                           const barColor =
                             method.status === "exhausted" ? "bg-red-500"
                               : method.status === "tight" ? "bg-amber-500"
@@ -908,9 +913,13 @@ export default function SyncPage() {
                             method.status === "exhausted" ? "text-red-400"
                               : method.status === "tight" ? "text-amber-400"
                               : "text-emerald-400";
-                          const countLabel = rateLimits.isDegradedEstimate
-                              ? `${method.remaining.toLocaleString()} / ~${method.limit.toLocaleString()}`
-                              : `${method.remaining.toLocaleString()} / ${method.limit.toLocaleString()}`;
+                          // Show "used / limit" so full bar = fully consumed quota
+                          const usedCount = method.limit > 0 ? method.limit - method.remaining : 0;
+                          const countLabel = method.limit === 0
+                            ? "—"
+                            : rateLimits.isDegradedEstimate
+                              ? `~${usedCount.toLocaleString()} used / ~${method.limit.toLocaleString()}`
+                              : `${usedCount.toLocaleString()} used / ${method.limit.toLocaleString()}`;
                           return (
                             <div key={method.name}>
                               <div className="flex items-center justify-between text-[11px]">
