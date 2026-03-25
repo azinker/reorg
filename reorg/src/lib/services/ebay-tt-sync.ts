@@ -28,6 +28,7 @@ import {
 } from "@/lib/services/matching";
 import { removeMarketplaceListingsOlderThan } from "@/lib/services/listing-prune";
 import { repairVariationFamiliesForIntegration } from "@/lib/services/variation-repair";
+import { propagateEbayRateLimitToAllSharedIntegrations } from "@/lib/services/ebay-rate-limit";
 
 const TRADING_API = "https://api.ebay.com/ws/api.dll";
 const MARKETING_API_BASE = "https://api.ebay.com/sell/marketing/v1";
@@ -286,6 +287,10 @@ async function recordRateLimitState(
       } as unknown as Prisma.InputJsonValue,
     },
   });
+
+  // Both eBay stores share the same developer app quota — propagate cooldown
+  // to sibling eBay integrations so they all show the cooldown banner.
+  void propagateEbayRateLimitToAllSharedIntegrations(integrationId, message);
 }
 
 export async function runEbayTtSync(

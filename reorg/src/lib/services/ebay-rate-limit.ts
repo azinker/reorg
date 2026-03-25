@@ -1,6 +1,8 @@
-import type { Platform } from "@prisma/client";
+import type { Platform, Prisma } from "@prisma/client";
 import type { IntegrationConfigRecord } from "@/lib/integrations/runtime-config";
+import { getIntegrationConfig, mergeIntegrationConfig } from "@/lib/integrations/runtime-config";
 import { getEbayAutoSyncIntervalMinutes } from "@/lib/services/ebay-sync-policy";
+import { db } from "@/lib/db";
 
 export function isEbayPlatform(platform: string): platform is "TPP_EBAY" | "TT_EBAY" {
   return platform === "TPP_EBAY" || platform === "TT_EBAY";
@@ -82,4 +84,62 @@ export function formatCooldownRetryAt(value: Date | string | null) {
     timeZone: "America/New_York",
     timeZoneName: "short",
   }).format(date);
+}
+
+/**
+ * Propagate a rate-limit cooldown to ALL eBay integrations that share the same
+ * appId. Both TPP and TT use the same eBay developer app and quota pool — if
+ * one hits the limit, the other is equally affected and should show the cooldown.
+ */
+export async function propagateEbayRateLimitToAllSharedIntegrations(
+  sourceIntegrationId: string,
+  message: string,
+) {
+  const sourceIntegration = await db.integration.findUnique({
+    where: { id: sourceIntegrationId },
+    select: { config: true },
+  });
+  if (!sourceIntegration) return;
+
+  const sourceConfig = sourceIntegration.config as Record<string, unknown> | null;
+  const appId =
+    sourceConfig && typeof sourceConfig === "object" && typeof sourceConfig.appId === "string"
+      ? sourceConfig.appId
+      : null;
+  if (!appId) return;
+
+  const allEbayIntegrations = await db.integration.findMany({
+    where: { platform: { in: ["TPP_EBAY", "TT_EBAY"] as Platform[] } },
+    select: { id: true, platform: true, config: true },
+  });
+
+  const now = new Date().toISOString();
+
+  await Promise.all(
+    allEbayIntegrations
+      .filter((integration) => {
+        if (integration.id === sourceIntegrationId) return false;
+        const cfg = integration.config as Record<string, unknown> | null;
+        return cfg && typeof cfg === "object" && cfg.appId === appId;
+      })
+      .map(async (integration) => {
+        const config = getIntegrationConfig(integration);
+        const existingCooldownAt = config.syncState.lastRateLimitAt;
+        if (existingCooldownAt && new Date(existingCooldownAt) > new Date(now)) return;
+
+        const updated = mergeIntegrationConfig(integration.platform as Platform, integration.config, {
+          syncState: {
+            lastRateLimitAt: now,
+            lastRateLimitMessage: message,
+          },
+        });
+        await db.integration.update({
+          where: { id: integration.id },
+          data: { config: updated as unknown as Prisma.InputJsonValue },
+        });
+        console.log(
+          `[ebay-rate-limit] Propagated cooldown from ${sourceIntegrationId} → ${integration.id} (${integration.platform})`,
+        );
+      }),
+  );
 }
