@@ -23,6 +23,8 @@ export interface SyncExecutionOptions {
   preserveSyncState?: boolean;
   /** Next chunk of a checkpointed Shopify/BigCommerce catalog pull */
   resumeContinuation?: boolean;
+  /** Pre-created sync job ID from the route handler (avoids race condition) */
+  existingJobId?: string;
 }
 
 export interface SyncDispatchResult {
@@ -224,7 +226,7 @@ export async function startIntegrationSync(
     orderBy: { createdAt: "desc" },
   });
 
-  if (runningJob && !resumeContinuation) {
+  if (runningJob && !resumeContinuation && runningJob.id !== options.existingJobId) {
     if (isRunningJobStale(runningJob)) {
       await failStaleRunningJob(
         runningJob,

@@ -160,7 +160,12 @@ function formatDisplayValue(field: string, value: number | string | null): strin
   return formatValue(field, value);
 }
 
-function getBanner(phase: ModalPhase, result: PushApiData | null, errorMessage: string | null) {
+function getBanner(
+  phase: ModalPhase,
+  result: PushApiData | null,
+  errorMessage: string | null,
+  batchProgress: { current: number; total: number; succeeded: number; failed: number } | null = null,
+) {
   if (phase === "dry-run") {
     return {
       icon: Loader2,
@@ -171,11 +176,16 @@ function getBanner(phase: ModalPhase, result: PushApiData | null, errorMessage: 
     };
   }
   if (phase === "pushing") {
+    const detail = batchProgress && batchProgress.total > 1
+      ? `Batch ${batchProgress.current} of ${batchProgress.total} — ${batchProgress.succeeded} succeeded so far.`
+      : "Writing to marketplaces through the guarded push chain.";
     return {
       icon: Loader2,
       className: "border-amber-500/30 bg-amber-500/10 text-amber-300",
-      title: "Running live push",
-      detail: "Writing to marketplaces through the guarded push chain.",
+      title: batchProgress && batchProgress.total > 1
+        ? `Pushing batch ${batchProgress.current} / ${batchProgress.total}`
+        : "Running live push",
+      detail,
       spin: true,
     };
   }
@@ -198,14 +208,20 @@ function getBanner(phase: ModalPhase, result: PushApiData | null, errorMessage: 
     };
   }
   if (phase === "done" && result) {
+    const hasBatchInfo = batchProgress && batchProgress.total > 1;
+    const batchTitle = hasBatchInfo
+      ? `Push completed — ${batchProgress.succeeded.toLocaleString()} succeeded${batchProgress.failed > 0 ? `, ${batchProgress.failed.toLocaleString()} failed` : ""} across ${batchProgress.total} batches`
+      : result.message;
     return {
-      icon: result.status === "partial" ? AlertTriangle : CheckCircle2,
+      icon: batchProgress?.failed ? AlertTriangle : result.status === "partial" ? AlertTriangle : CheckCircle2,
       className:
-        result.status === "partial"
+        (batchProgress?.failed ?? 0) > 0 || result.status === "partial"
           ? "border-amber-500/30 bg-amber-500/10 text-amber-300"
           : "border-emerald-500/30 bg-emerald-500/10 text-emerald-300",
-      title: result.message,
-      detail: result.nextStep,
+      title: batchTitle,
+      detail: hasBatchInfo && batchProgress.failed > 0
+        ? "Some batches failed. You can retry the failed changes."
+        : result.nextStep,
       spin: false,
     };
   }
@@ -241,6 +257,12 @@ export function PushConfirmModal({
   const [activeItems, setActiveItems] = useState<PushItem[]>(items);
   const [selectedItemKeys, setSelectedItemKeys] = useState<Set<string>>(new Set(items.map(getPushItemKey)));
   const [autoDryRunStarted, setAutoDryRunStarted] = useState(false);
+  const [batchProgress, setBatchProgress] = useState<{
+    current: number;
+    total: number;
+    succeeded: number;
+    failed: number;
+  } | null>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -250,6 +272,7 @@ export function PushConfirmModal({
     setActiveItems(items);
     setSelectedItemKeys(new Set(items.map(getPushItemKey)));
     setAutoDryRunStarted(false);
+    setBatchProgress(null);
   }, [open, items]);
 
   const reviewItems = previewItems?.length ? previewItems : activeItems;
@@ -316,7 +339,7 @@ export function PushConfirmModal({
     );
   }, [activeItems, failedResults, result]);
   const canClose = phase !== "dry-run" && phase !== "pushing";
-  const banner = getBanner(phase, result, errorMessage);
+  const banner = getBanner(phase, result, errorMessage, batchProgress);
   const BannerIcon = banner.icon;
   const canConfirmLive =
     phase === "ready" &&
@@ -341,6 +364,36 @@ export function PushConfirmModal({
     });
   }
 
+  const LIVE_PUSH_BATCH_SIZE = 80;
+
+  async function sendPushBatch(changes: PushItem[], dryRun: boolean) {
+    const response = await fetch("/api/push", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        changes,
+        dryRun,
+        confirmedLivePush: !dryRun,
+      }),
+    });
+
+    const payload = await response.json().catch(() => null) as { data?: PushApiData; error?: string } | null;
+    if (!payload) {
+      throw new Error(
+        `Server returned ${response.status} — the push function may have timed out or crashed. Check Engine Room for the push job status before retrying.`,
+      );
+    }
+    if (!response.ok && !payload.data) {
+      throw new Error(payload.error ?? "Push request failed.");
+    }
+
+    const data = payload.data;
+    if (!data) {
+      throw new Error("Push route returned no data.");
+    }
+    return data;
+  }
+
   async function runRequest(dryRun: boolean) {
     if (selectedActiveItems.length === 0) {
       setErrorMessage("Select at least one staged change before running the push.");
@@ -349,51 +402,139 @@ export function PushConfirmModal({
     }
 
     setErrorMessage(null);
-    setPhase(dryRun ? "dry-run" : "pushing");
+    setBatchProgress(null);
 
-    try {
-      const response = await fetch("/api/push", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          changes: selectedActiveItems,
-          dryRun,
-          confirmedLivePush: !dryRun,
-        }),
+    if (dryRun) {
+      setPhase("dry-run");
+      try {
+        const data = await sendPushBatch(selectedActiveItems, true);
+        setResult(data);
+        if (data.status === "blocked") {
+          setPhase("blocked");
+          return;
+        }
+        setPhase("ready");
+      } catch (error) {
+        setErrorMessage(error instanceof Error ? error.message : "Push request failed.");
+        setPhase("error");
+      }
+      return;
+    }
+
+    setPhase("pushing");
+    const needsBatching = selectedActiveItems.length > LIVE_PUSH_BATCH_SIZE;
+    if (!needsBatching) {
+      try {
+        const data = await sendPushBatch(selectedActiveItems, false);
+        setResult(data);
+        if (data.status === "blocked") {
+          setPhase("blocked");
+          return;
+        }
+        setPhase("done");
+        onApplied?.(data);
+      } catch (error) {
+        setErrorMessage(error instanceof Error ? error.message : "Push request failed.");
+        setPhase("error");
+      }
+      return;
+    }
+
+    const batches: PushItem[][] = [];
+    for (let i = 0; i < selectedActiveItems.length; i += LIVE_PUSH_BATCH_SIZE) {
+      batches.push(selectedActiveItems.slice(i, i + LIVE_PUSH_BATCH_SIZE));
+    }
+
+    let totalSucceeded = 0;
+    let totalFailed = 0;
+    const allFailedItems: PushItem[] = [];
+    let lastData: PushApiData | null = null;
+
+    for (let b = 0; b < batches.length; b++) {
+      setBatchProgress({
+        current: b + 1,
+        total: batches.length,
+        succeeded: totalSucceeded,
+        failed: totalFailed,
       });
 
-      const payload = await response.json().catch(() => null) as { data?: PushApiData; error?: string } | null;
-      if (!payload) {
-        throw new Error(
-          `Server returned ${response.status} — the push function may have timed out or crashed. Check Engine Room for the push job status before retrying.`,
+      try {
+        const data = await sendPushBatch(batches[b], false);
+        lastData = data;
+
+        const batchSucceeded = data.results?.filter((r: { success: boolean }) => r.success).length ?? 0;
+        const batchFailed = data.results?.filter((r: { success: boolean }) => !r.success).length ?? 0;
+        totalSucceeded += batchSucceeded;
+        totalFailed += batchFailed;
+
+        if (batchFailed > 0 && data.results) {
+          const failedKeys = new Set(
+            data.results
+              .filter((r: { success: boolean }) => !r.success)
+              .map((r: { platform: string; listingId: string; field: string }) =>
+                `${r.platform}:${r.listingId}:${r.field}`),
+          );
+          for (const item of batches[b]) {
+            if (failedKeys.has(`${item.platform}:${item.listingId}:${item.field}`)) {
+              allFailedItems.push(item);
+            }
+          }
+        }
+
+        if (data.status === "blocked") {
+          setErrorMessage(`Batch ${b + 1} was blocked: ${(data as { blockedReason?: string }).blockedReason ?? "safety rule"}`);
+          for (let remaining = b + 1; remaining < batches.length; remaining++) {
+            allFailedItems.push(...batches[remaining]);
+            totalFailed += batches[remaining].length;
+          }
+          break;
+        }
+      } catch (error) {
+        totalFailed += batches[b].length;
+        allFailedItems.push(...batches[b]);
+        setErrorMessage(
+          `Batch ${b + 1}/${batches.length} failed: ${error instanceof Error ? error.message : "Unknown error"}. ` +
+          `${totalSucceeded} changes succeeded before the failure.`,
         );
+        for (let remaining = b + 1; remaining < batches.length; remaining++) {
+          allFailedItems.push(...batches[remaining]);
+          totalFailed += batches[remaining].length;
+        }
+        break;
       }
-      if (!response.ok && !payload.data) {
-        throw new Error(payload.error ?? "Push request failed.");
-      }
-
-      const data = payload.data;
-      if (!data) {
-        throw new Error("Push route returned no data.");
-      }
-
-      setResult(data);
-      if (data.status === "blocked") {
-        setPhase("blocked");
-        return;
-      }
-
-      if (dryRun) {
-        setPhase("ready");
-        return;
-      }
-
-      setPhase("done");
-      onApplied?.(data);
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Push request failed.");
-      setPhase("error");
     }
+
+    setBatchProgress({
+      current: batches.length,
+      total: batches.length,
+      succeeded: totalSucceeded,
+      failed: totalFailed,
+    });
+
+    if (lastData) {
+      setResult({
+        ...lastData,
+        summary: {
+          ...(lastData.summary ?? {}),
+          totalChanges: totalSucceeded + totalFailed,
+          distinctListings: new Set(selectedActiveItems.map((i) => `${i.platform}:${i.listingId}`)).size,
+          successfulChanges: totalSucceeded,
+          failedChanges: totalFailed,
+        },
+        results: [],
+      } as unknown as PushApiData);
+    }
+
+    if (totalFailed > 0 && allFailedItems.length > 0) {
+      setActiveItems(allFailedItems);
+      setSelectedItemKeys(new Set(allFailedItems.map(getPushItemKey)));
+    }
+
+    if (totalSucceeded > 0) {
+      onApplied?.(lastData ?? ({} as PushApiData));
+    }
+
+    setPhase(totalFailed === 0 ? "done" : totalSucceeded > 0 ? "done" : "error");
   }
 
   useEffect(() => {
@@ -440,9 +581,23 @@ export function PushConfirmModal({
           <section className={cn("mb-5 rounded-xl border px-4 py-3", banner.className)}>
             <div className="flex items-start gap-3">
               <BannerIcon className={cn("mt-0.5 h-5 w-5 shrink-0", banner.spin && "animate-spin")} />
-              <div>
+              <div className="flex-1">
                 <div className="text-sm font-semibold">{banner.title}</div>
                 <div className="mt-1 text-xs opacity-90">{banner.detail}</div>
+                {phase === "pushing" && batchProgress && batchProgress.total > 1 && (
+                  <div className="mt-2.5">
+                    <div className="h-2 overflow-hidden rounded-full bg-black/20">
+                      <div
+                        className="h-full rounded-full bg-amber-400 transition-all duration-500"
+                        style={{ width: `${Math.round((batchProgress.current / batchProgress.total) * 100)}%` }}
+                      />
+                    </div>
+                    <div className="mt-1 flex justify-between text-[10px] tabular-nums opacity-70">
+                      <span>{batchProgress.succeeded} succeeded{batchProgress.failed > 0 ? `, ${batchProgress.failed} failed` : ""}</span>
+                      <span>{Math.round((batchProgress.current / batchProgress.total) * 100)}%</span>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           </section>
@@ -471,13 +626,17 @@ export function PushConfirmModal({
             <div className="rounded-xl border border-border bg-background/50 p-4">
               <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Succeeded</div>
               <div className="mt-1 text-2xl font-semibold text-emerald-400">
-                {result?.summary.successfulChanges ?? 0}
+                {batchProgress && batchProgress.total > 1
+                  ? batchProgress.succeeded
+                  : (result?.summary.successfulChanges ?? 0)}
               </div>
             </div>
             <div className="rounded-xl border border-border bg-background/50 p-4">
               <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Failed</div>
               <div className="mt-1 text-2xl font-semibold text-red-400">
-                {result?.summary.failedChanges ?? 0}
+                {batchProgress && batchProgress.total > 1
+                  ? batchProgress.failed
+                  : (result?.summary.failedChanges ?? 0)}
               </div>
             </div>
           </section>

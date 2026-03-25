@@ -197,6 +197,15 @@ export async function POST(
       }
     }
 
+    const placeholderJob = await db.syncJob.create({
+      data: {
+        integrationId: integration.id,
+        status: "RUNNING",
+        triggeredBy: `manual:${modes.effectiveMode}`,
+        startedAt: new Date(),
+      },
+    });
+
     after(async () => {
       try {
         await startIntegrationSync(
@@ -206,11 +215,20 @@ export async function POST(
             effectiveMode: modes.effectiveMode,
             fallbackReason: modes.fallbackReason,
             triggerSource: "manual",
+            existingJobId: placeholderJob.id,
           },
           "inline",
         );
       } catch (error) {
         console.error(`[sync] manual ${integration.platform} sync failed`, error);
+        await db.syncJob.update({
+          where: { id: placeholderJob.id },
+          data: {
+            status: "FAILED",
+            completedAt: new Date(),
+            errors: [{ sku: "_global", message: error instanceof Error ? error.message : "Sync failed" }],
+          },
+        }).catch(() => {});
       }
     });
 
@@ -222,7 +240,7 @@ export async function POST(
         effectiveMode: modes.effectiveMode,
         fallbackReason: modes.fallbackReason,
         status: "STARTED",
-        jobId: null,
+        jobId: placeholderJob.id,
         message:
           modes.effectiveMode === "incremental"
             ? `${integration.label} incremental sync started.`

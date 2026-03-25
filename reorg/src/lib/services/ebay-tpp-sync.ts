@@ -308,14 +308,16 @@ export async function runEbayTppSync(
 
   await purgeForeignSellerListingsForIntegration(integration.id, ebayConfig);
 
-  const syncJob = await db.syncJob.create({
-    data: {
-      integrationId: integration.id,
-      status: "RUNNING",
-      triggeredBy: options.triggeredBy ?? "system",
-      startedAt: new Date(),
-    },
-  });
+  const syncJob = options.existingJobId
+    ? await db.syncJob.findUniqueOrThrow({ where: { id: options.existingJobId } })
+    : await db.syncJob.create({
+        data: {
+          integrationId: integration.id,
+          status: "RUNNING",
+          triggeredBy: options.triggeredBy ?? "system",
+          startedAt: new Date(),
+        },
+      });
 
   const progress: SyncProgress = {
     jobId: syncJob.id,

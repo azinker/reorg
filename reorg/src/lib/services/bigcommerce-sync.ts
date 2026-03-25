@@ -87,14 +87,16 @@ export async function runBigCommerceWebhookReconcile(
   const errors: string[] = [];
   let prunedListings = 0;
 
-  const syncJob = await db.syncJob.create({
-    data: {
-      integrationId: integration.id,
-      status: "RUNNING",
-      triggeredBy: options.triggeredBy ?? "webhook:incremental",
-      startedAt: new Date(),
-    },
-  });
+  const syncJob = options.existingJobId
+    ? await db.syncJob.findUniqueOrThrow({ where: { id: options.existingJobId } })
+    : await db.syncJob.create({
+        data: {
+          integrationId: integration.id,
+          status: "RUNNING",
+          triggeredBy: options.triggeredBy ?? "webhook:incremental",
+          startedAt: new Date(),
+        },
+      });
 
   let totalProcessed = 0;
   let totalCreated = 0;
