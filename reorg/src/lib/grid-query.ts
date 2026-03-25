@@ -91,11 +91,9 @@ const childMasterRowFullSelect = Prisma.validator<Prisma.MasterRowDefaultArgs>()
         salePrice: true,
         adRate: true,
         inventory: true,
-        rawData: true,
         integration: {
           select: {
             platform: true,
-            isMaster: true,
           },
         },
       },
@@ -428,13 +426,12 @@ async function fetchChildMasterRows(parentListings: DBMasterRow["listings"]) {
     .filter((childMaster): childMaster is DBChildMasterRowFull => childMaster != null);
 }
 
-function extractVariationAttributes(
-  listings: DBChildMasterRowFull["listings"],
+function parseVariationSpecifics(
+  rawData: unknown,
 ): { name: string; value: string }[] | undefined {
-  const masterListing = listings.find((l) => l.integration.isMaster);
-  if (!masterListing?.rawData || typeof masterListing.rawData !== "object") return undefined;
+  if (!rawData || typeof rawData !== "object") return undefined;
 
-  const raw = masterListing.rawData as Record<string, unknown>;
+  const raw = rawData as Record<string, unknown>;
 
   // eBay TPP child variation: rawData = the Variation node directly
   // eBay TT child variation: rawData = { item, variation, parentItemId }
@@ -463,11 +460,37 @@ function extractVariationAttributes(
   return attrs.length > 0 ? attrs : undefined;
 }
 
+async function fetchVariationAttributesBatch(
+  childMasterIds: string[],
+): Promise<Map<string, { name: string; value: string }[]>> {
+  if (childMasterIds.length === 0) return new Map();
+
+  const masterListings = await db.marketplaceListing.findMany({
+    where: {
+      masterRowId: { in: childMasterIds },
+      integration: { isMaster: true },
+    },
+    select: {
+      masterRowId: true,
+      rawData: true,
+    },
+  });
+
+  const result = new Map<string, { name: string; value: string }[]>();
+  for (const listing of masterListings) {
+    if (!listing.masterRowId || !listing.rawData) continue;
+    const attrs = parseVariationSpecifics(listing.rawData);
+    if (attrs) result.set(listing.masterRowId, attrs);
+  }
+  return result;
+}
+
 function buildFullChildRows(
   childMasters: DBChildMasterRowFull[],
   shippingRateMap: Map<string, number>,
   feeRate: number,
   parentAdRatesByPlatform: Partial<Record<Platform, number>>,
+  variationAttrsMap?: Map<string, { name: string; value: string }[]>,
 ): GridRow[] {
   
   const rows: GridRow[] = [];
@@ -523,7 +546,7 @@ function buildFullChildRows(
     });
 
     const childInv = allListings.find((l) => l.inventory != null)?.inventory ?? null;
-    const variationAttributes = extractVariationAttributes(allListings);
+    const variationAttributes = variationAttrsMap?.get(cm.id);
 
     rows.push({
       id: `child-${cm.id}`,
@@ -567,6 +590,7 @@ function buildGridRow(
   shippingRateMap: Map<string, number>,
   feeRate: number,
   childMasterRowsBySku: Map<string, DBChildMasterRowFull>,
+  variationAttrsMap?: Map<string, { name: string; value: string }[]>,
 ): GridRow | null {
   if (master.listings.length === 0) {
     return null;
@@ -667,7 +691,7 @@ function buildGridRow(
   }
 
   const childRows: GridRow[] | undefined = isVariationParent
-    ? buildBatchChildRows(parentListings, childMasterRowsBySku, shippingRateMap, feeRate, parentAdRatesByPlatform)
+    ? buildBatchChildRows(parentListings, childMasterRowsBySku, shippingRateMap, feeRate, parentAdRatesByPlatform, variationAttrsMap)
     : undefined;
 
   const itemNumberMap = new Map<string, StoreValue>();
@@ -978,12 +1002,13 @@ export async function getGridData(): Promise<GridRow[]> {
 
   for await (const batch of masterRowBatches) {
     const parentRows = batch.filter((mr) => {
-      // Exclude master rows that have ANY listing as a child of a variation parent;
-      // these appear nested under their parent's variation group instead.
       const hasAnyChildListing = mr.listings.some((l: DBListing) => l.parentListingId);
       return !hasAnyChildListing;
     });
     const childMasterRowsBySku = await fetchBatchChildMasterRowsBySku(parentRows);
+
+    const childMasterIds = [...childMasterRowsBySku.values()].map((cm) => cm.id);
+    const variationAttrsMap = await fetchVariationAttributesBatch(childMasterIds);
 
     for (const master of parentRows) {
       const stagedMap = buildStagedMap(master.stagedChanges);
@@ -993,6 +1018,7 @@ export async function getGridData(): Promise<GridRow[]> {
         shippingRateMap,
         feeRate,
         childMasterRowsBySku,
+        variationAttrsMap,
       );
       if (gridRow) {
         rows.push(gridRow);
@@ -1043,7 +1069,8 @@ export async function getGridRowById(rowId: string): Promise<GridRow | null> {
       return null;
     }
 
-    return buildFullChildRows([childMaster], shippingRateMap, feeRate, {})[0] ?? null;
+    const variationAttrsMap = await fetchVariationAttributesBatch([normalizedRowId]);
+    return buildFullChildRows([childMaster], shippingRateMap, feeRate, {}, variationAttrsMap)[0] ?? null;
   }
 
   const master = await db.masterRow.findUnique({
@@ -1056,6 +1083,8 @@ export async function getGridRowById(rowId: string): Promise<GridRow | null> {
   }
 
   const childMasterRowsBySku = await fetchBatchChildMasterRowsBySku([master]);
+  const childMasterIds = [...childMasterRowsBySku.values()].map((cm) => cm.id);
+  const variationAttrsMap = await fetchVariationAttributesBatch(childMasterIds);
 
   return buildGridRow(
     master,
@@ -1063,6 +1092,7 @@ export async function getGridRowById(rowId: string): Promise<GridRow | null> {
     shippingRateMap,
     feeRate,
     childMasterRowsBySku,
+    variationAttrsMap,
   );
 }
 
@@ -1081,10 +1111,11 @@ function buildBatchChildRows(
   shippingRateMap: Map<string, number>,
   feeRate: number,
   parentAdRatesByPlatform: Partial<Record<Platform, number>>,
+  variationAttrsMap?: Map<string, { name: string; value: string }[]>,
 ): GridRow[] {
   const childMasters = collectChildSkus(parentListings)
     .map((sku) => childMasterRowsBySku.get(sku))
     .filter((childMaster): childMaster is DBChildMasterRowFull => childMaster != null);
 
-  return buildFullChildRows(childMasters, shippingRateMap, feeRate, parentAdRatesByPlatform);
+  return buildFullChildRows(childMasters, shippingRateMap, feeRate, parentAdRatesByPlatform, variationAttrsMap);
 }
