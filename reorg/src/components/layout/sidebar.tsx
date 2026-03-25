@@ -53,6 +53,7 @@ export function Sidebar({ mobile = false, onNavigate }: SidebarProps) {
     status: "healthy" | "delayed" | "attention";
     delayedCount: number;
     attentionCount: number;
+    cooldownCount: number;
     missingWebhookCount: number;
     headline: string;
     detail: string;
@@ -104,7 +105,8 @@ export function Sidebar({ mobile = false, onNavigate }: SidebarProps) {
 
   const attentionCount =
     (healthSummary?.attentionCount ?? 0) + (healthSummary?.delayedCount ?? 0);
-  const syncIssueCount = attentionCount;
+  const cooldownCount = healthSummary?.cooldownCount ?? 0;
+  const syncIssueCount = attentionCount + cooldownCount;
 
   return (
     <aside
@@ -174,8 +176,10 @@ export function Sidebar({ mobile = false, onNavigate }: SidebarProps) {
                       <span
                         className={cn(
                           "ml-auto inline-flex min-w-5 items-center justify-center rounded-full px-1.5 py-0.5 text-[10px] font-semibold",
-                          healthSummary?.status === "attention"
-                            ? "bg-red-500/15 text-red-300"
+                          attentionCount > 0
+                            ? healthSummary?.status === "attention"
+                              ? "bg-red-500/15 text-red-300"
+                              : "bg-amber-500/15 text-amber-300"
                             : "bg-amber-500/15 text-amber-300",
                         )}
                       >
@@ -188,8 +192,10 @@ export function Sidebar({ mobile = false, onNavigate }: SidebarProps) {
                       <span
                         className={cn(
                           "ml-auto h-2 w-2 rounded-full",
-                          healthSummary?.status === "attention"
-                            ? "bg-red-400"
+                          attentionCount > 0
+                            ? healthSummary?.status === "attention"
+                              ? "bg-red-400"
+                              : "bg-amber-400"
                             : "bg-amber-400",
                         )}
                       />

@@ -42,6 +42,7 @@ export interface IntegrationHealthSnapshot {
   backlogStatus: "clear" | "queued" | "delayed" | "stale";
   backlogMessage: string;
   recommendedAction: string;
+  cooldownActive: boolean;
   combinedStatus: MonitorHealthStatus;
 }
 
@@ -50,6 +51,7 @@ export interface AutomationHealthSummary {
   healthyCount: number;
   delayedCount: number;
   attentionCount: number;
+  cooldownCount: number;
   missingWebhookCount: number;
   headline: string;
   detail: string;
@@ -740,6 +742,7 @@ export async function buildAutomationHealthSnapshot(
         backlogStatus: backlog.backlogStatus,
         backlogMessage: backlog.backlogMessage,
         recommendedAction,
+        cooldownActive: rateLimitCooldownUntil != null && rateLimitCooldownUntil.getTime() > now.getTime(),
         combinedStatus,
       } satisfies IntegrationHealthSnapshot;
     })
@@ -753,6 +756,7 @@ export async function buildAutomationHealthSnapshot(
   const healthyCount = integrationHealth.filter((item) => item.combinedStatus === "healthy").length;
   const delayedCount = integrationHealth.filter((item) => item.combinedStatus === "delayed").length;
   const attentionCount = integrationHealth.filter((item) => item.combinedStatus === "attention").length;
+  const cooldownCount = integrationHealth.filter((item) => item.cooldownActive).length;
   const attentionItems = integrationHealth.filter((item) => item.combinedStatus === "attention");
   const attentionLabels = integrationHealth
     .filter((item) => item.combinedStatus === "attention")
@@ -783,6 +787,7 @@ export async function buildAutomationHealthSnapshot(
       healthyCount,
       delayedCount,
       attentionCount,
+      cooldownCount,
       missingWebhookCount,
       headline: "Attention needed",
       detail:
@@ -809,6 +814,7 @@ export async function buildAutomationHealthSnapshot(
       healthyCount,
       delayedCount,
       attentionCount,
+      cooldownCount,
       missingWebhookCount,
       headline: "Running behind",
       detail: onlyWebhookCoverageIssue
@@ -821,15 +827,22 @@ export async function buildAutomationHealthSnapshot(
     };
   } else {
     summary = {
-      status: "healthy",
+      status: cooldownCount > 0 ? "delayed" : "healthy",
       healthyCount,
       delayedCount,
       attentionCount,
+      cooldownCount,
       missingWebhookCount,
-      headline: "Healthy",
-      detail: "All connected stores are refreshing within their expected window.",
-      recommendedAction: "No action needed.",
-      affectedLabels: [],
+      headline: cooldownCount > 0 ? "eBay cooldown active" : "Healthy",
+      detail: cooldownCount > 0
+        ? `${cooldownCount} eBay store${cooldownCount > 1 ? "s are" : " is"} waiting for the API quota to reset.`
+        : "All connected stores are refreshing within their expected window.",
+      recommendedAction: cooldownCount > 0
+        ? "No action needed — pulls will resume automatically after the reset window."
+        : "No action needed.",
+      affectedLabels: cooldownCount > 0
+        ? integrationHealth.filter((item) => item.cooldownActive).map((item) => item.label)
+        : [],
     };
   }
 

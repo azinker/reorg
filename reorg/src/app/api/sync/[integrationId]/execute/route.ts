@@ -9,7 +9,7 @@ import { auth } from "@/lib/auth";
 const CHUNKED_PLATFORMS = new Set(["SHOPIFY", "BIGCOMMERCE"]);
 
 export const runtime = "nodejs";
-export const maxDuration = 800;
+export const maxDuration = 900;
 export const dynamic = "force-dynamic";
 
 const postSchema = z
