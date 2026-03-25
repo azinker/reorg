@@ -506,39 +506,78 @@ function SyncJobsPanel({ jobs }: { jobs: SyncJobRow[] }) {
 }
 
 function PushQueuePanel({ items }: { items: PushQueueRow[] }) {
+  const [search, setSearch] = useState("");
+  const [platformFilter, setPlatformFilter] = useState("all");
+
+  const platforms = ["all", ...Array.from(new Set(items.map((i) => i.platform))).sort()];
+  const filtered = items.filter((item) => {
+    if (platformFilter !== "all" && item.platform !== platformFilter) return false;
+    if (search) {
+      const q = search.toLowerCase();
+      return item.sku.toLowerCase().includes(q) || item.field.toLowerCase().includes(q);
+    }
+    return true;
+  });
+
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="border-b border-border text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">
-            <th className="pb-3 pr-4">ID</th>
-            <th className="pb-3 pr-4">SKU</th>
-            <th className="pb-3 pr-4">Field</th>
-            <th className="pb-3 pr-4">Old Value</th>
-            <th className="pb-3 pr-4">New Value</th>
-            <th className="pb-3 pr-4">Platform</th>
-            <th className="pb-3 pr-4">Edited By</th>
-            <th className="pb-3">Status</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-border/50">
-          {items.map((item) => (
-            <tr key={item.id} className="text-foreground">
-              <td className="py-3 pr-4 font-mono text-xs text-muted-foreground">{item.id.slice(0, 8)}</td>
-              <td className="py-3 pr-4 font-mono text-xs">{item.sku}</td>
-              <td className="py-3 pr-4">{item.field}</td>
-              <td className="py-3 pr-4 text-muted-foreground line-through">{item.oldValue}</td>
-              <td className="py-3 pr-4 font-medium text-emerald-400">{item.newValue}</td>
-              <td className="py-3 pr-4">{item.platform}</td>
-              <td className="py-3 pr-4 text-xs text-muted-foreground">{item.editedBy}</td>
-              <td className="py-3"><StatusBadge status={item.status} /></td>
-            </tr>
+    <div>
+      {/* Filters */}
+      <div className="mb-4 flex flex-wrap items-center gap-3">
+        <input
+          type="text"
+          placeholder="Search SKU or field…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className="h-8 rounded-md border border-border bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+        />
+        <select
+          value={platformFilter}
+          onChange={(e) => setPlatformFilter(e.target.value)}
+          className="h-8 rounded-md border border-border bg-background px-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+        >
+          {platforms.map((p) => (
+            <option key={p} value={p}>{p === "all" ? "All Platforms" : p}</option>
           ))}
-        </tbody>
-      </table>
-      {items.length === 0 && (
-        <p className="py-6 text-center text-sm text-muted-foreground">Push queue is empty.</p>
-      )}
+        </select>
+        <span className="text-xs text-muted-foreground">
+          {filtered.length} of {items.length} staged change{items.length !== 1 ? "s" : ""}
+        </span>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-border text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">
+              <th className="pb-3 pr-4">ID</th>
+              <th className="pb-3 pr-4">SKU</th>
+              <th className="pb-3 pr-4">Field</th>
+              <th className="pb-3 pr-4">Old Value</th>
+              <th className="pb-3 pr-4">New Value</th>
+              <th className="pb-3 pr-4">Platform</th>
+              <th className="pb-3 pr-4">Edited By</th>
+              <th className="pb-3">Status</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-border/50">
+            {filtered.map((item) => (
+              <tr key={item.id} className="text-foreground">
+                <td className="py-3 pr-4 font-mono text-xs text-muted-foreground">{item.id.slice(0, 8)}</td>
+                <td className="py-3 pr-4 font-mono text-xs">{item.sku}</td>
+                <td className="py-3 pr-4">{item.field}</td>
+                <td className="py-3 pr-4 text-muted-foreground line-through">{item.oldValue}</td>
+                <td className="py-3 pr-4 font-medium text-emerald-400">{item.newValue}</td>
+                <td className="py-3 pr-4">{item.platform}</td>
+                <td className="py-3 pr-4 text-xs text-muted-foreground">{item.editedBy}</td>
+                <td className="py-3"><StatusBadge status={item.status} /></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {filtered.length === 0 && (
+          <p className="py-6 text-center text-sm text-muted-foreground">
+            {items.length === 0 ? "Push queue is empty." : "No items match the current filters."}
+          </p>
+        )}
+      </div>
     </div>
   );
 }
@@ -1138,6 +1177,15 @@ export default function EngineRoomPage() {
     return (json.data ?? null) as EngineRoomData | null;
   }, []);
 
+  const refreshData = useCallback(async () => {
+    try {
+      const nextData = await loadEngineRoom();
+      setData(nextData);
+    } catch {
+      // silent — UI keeps stale data
+    }
+  }, [loadEngineRoom]);
+
   useEffect(() => {
     let active = true;
 
@@ -1230,7 +1278,7 @@ export default function EngineRoomPage() {
           />
         );
       case "push-jobs":
-        return <PushJobsPanel jobs={data.pushJobs} onRefresh={() => void loadEngineRoom()} />;
+        return <PushJobsPanel jobs={data.pushJobs} onRefresh={() => void refreshData()} />;
       case "push-queue":
         return <PushQueuePanel items={data.pushQueue} />;
       case "change-log":

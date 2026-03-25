@@ -20,6 +20,7 @@ import {
   getEbayAutoSyncIntervalMinutes,
   getNextEbayAutoSyncAt,
 } from "@/lib/services/ebay-sync-policy";
+import { dispatchCatalogSyncContinuation } from "@/lib/services/sync-continuation";
 
 function getInternalBaseUrl(): string {
   if (process.env.NEXT_PUBLIC_APP_URL) {
@@ -334,7 +335,64 @@ export async function planScheduledSyncs(now = new Date()) {
   return items;
 }
 
+/**
+ * Safety net: if a BC/Shopify catalog pull has a saved resume cursor but the
+ * continuation invocation was never received (network hiccup, cold-start race,
+ * etc.), the job stays RUNNING but frozen. Re-dispatch the continuation so the
+ * pull can finish without needing a manual re-trigger.
+ *
+ * Only fires for non-stale RUNNING jobs with a catalogPullResume that haven't
+ * updated their itemsProcessed count in the last 10 minutes.
+ */
+async function recoverStuckCatalogContinuations(now: Date): Promise<void> {
+  const STUCK_THRESHOLD_MS = 10 * 60 * 1000;
+
+  const stuckJobs = await db.syncJob.findMany({
+    where: {
+      status: "RUNNING",
+      integration: {
+        platform: { in: ["BIGCOMMERCE", "SHOPIFY"] },
+      },
+    },
+    select: {
+      id: true,
+      integrationId: true,
+      startedAt: true,
+      createdAt: true,
+      itemsProcessed: true,
+    },
+  });
+
+  for (const job of stuckJobs) {
+    if (isRunningJobStale(job, now)) continue;
+    // Use startedAt as the last-activity proxy; real updates bump itemsProcessed
+    // but the DB record's `updatedAt` is not reliable across all Prisma versions
+    const lastActivity = job.startedAt ?? job.createdAt;
+    if (now.getTime() - lastActivity.getTime() < STUCK_THRESHOLD_MS) continue;
+
+    const integration = await db.integration.findUnique({
+      where: { id: job.integrationId },
+      select: { platform: true, config: true },
+    });
+    if (!integration) continue;
+
+    const config = getIntegrationConfig(integration);
+    if (!config.syncState.catalogPullResume?.cursor) continue;
+
+    console.log(
+      `[sync-scheduler] Re-dispatching stuck catalog continuation for job ${job.id} (${job.integrationId}, ${job.itemsProcessed ?? 0} items)`,
+    );
+    await dispatchCatalogSyncContinuation(job.integrationId).catch((err) =>
+      console.error("[sync-scheduler] Failed to re-dispatch continuation", err),
+    );
+  }
+}
+
 export async function executeScheduledSyncs(now = new Date()) {
+  await recoverStuckCatalogContinuations(now).catch((err) =>
+    console.error("[sync-scheduler] recoverStuckCatalogContinuations failed", err),
+  );
+
   const plan = await planScheduledSyncs(now);
   const dueItems = plan.filter((item) => item.due);
   const dispatched: Array<{

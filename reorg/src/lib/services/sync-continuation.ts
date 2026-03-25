@@ -61,7 +61,8 @@ async function postSyncExecute(
   }
 
   console.error(
-    `[sync-continuation] All ${MAX_ATTEMPTS} attempts failed for ${integrationId}. Continuation may be lost.`,
+    `[sync-continuation] All ${MAX_ATTEMPTS} attempts failed for ${integrationId}. Continuation may be lost. ` +
+    `The scheduler will re-dispatch it on the next cron run (within ~5 minutes).`,
   );
 }
 

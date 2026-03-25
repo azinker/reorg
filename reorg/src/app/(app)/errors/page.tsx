@@ -31,6 +31,7 @@ const CATEGORY_OPTIONS = [
   { value: "sync-failure", label: "Sync Failures" },
   { value: "sync-warning", label: "Sync Warnings" },
   { value: "missing-data", label: "Missing Data" },
+  { value: "system", label: "System" },
 ] as const;
 
 const TIME_OPTIONS = [

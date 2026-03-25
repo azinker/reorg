@@ -649,34 +649,41 @@ async function loadExistingRowsBySku(skus: string[]) {
     return new Map<string, ExistingImportRow>();
   }
 
-  const rows = await db.masterRow.findMany({
-    where: {
-      sku: { in: skus },
-    },
-    select: {
-      id: true,
-      sku: true,
-      title: true,
-      upc: true,
-      weight: true,
-      weightOz: true,
-      supplierCost: true,
-      supplierShipping: true,
-      notes: true,
-      listings: {
-        select: {
-          id: true,
-          integration: {
-            select: {
-              platform: true,
+  // Batch into chunks of 500 to avoid DB engine limits on large IN clauses
+  const BATCH_SIZE = 500;
+  const allRows: ExistingImportRow[] = [];
+  for (let i = 0; i < skus.length; i += BATCH_SIZE) {
+    const batch = skus.slice(i, i + BATCH_SIZE);
+    const rows = await db.masterRow.findMany({
+      where: {
+        sku: { in: batch },
+      },
+      select: {
+        id: true,
+        sku: true,
+        title: true,
+        upc: true,
+        weight: true,
+        weightOz: true,
+        supplierCost: true,
+        supplierShipping: true,
+        notes: true,
+        listings: {
+          select: {
+            id: true,
+            integration: {
+              select: {
+                platform: true,
+              },
             },
           },
         },
       },
-    },
-  });
+    });
+    allRows.push(...rows);
+  }
 
-  return new Map(rows.map((row) => [row.sku, row]));
+  return new Map(allRows.map((row) => [row.sku, row]));
 }
 
 async function loadExistingStagedUpcChanges(masterRowIds: string[]) {
@@ -1116,8 +1123,11 @@ export async function POST(request: NextRequest) {
         unchanged,
         undoAuditLogId: undoOperations.length > 0 ? importAuditLog.id : null,
         applyErrors: applyErrors.slice(0, 100),
-        successes,
-        failures,
+        // Cap preview rows to avoid huge JSON payloads on large imports
+        totalSuccesses: successes.length,
+        totalFailures: failures.length,
+        successes: successes.slice(0, 50),
+        failures: failures.slice(0, 50),
       },
     });
   } catch (error) {

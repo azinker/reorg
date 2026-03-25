@@ -74,6 +74,14 @@ export default function BackupsPage() {
     refreshBackups().finally(() => setLoading(false));
   }, []);
 
+  // Poll while any backup is IN_PROGRESS so the table updates automatically
+  useEffect(() => {
+    const hasPending = backups.some((b) => b.status === "IN_PROGRESS" || b.status === "PENDING");
+    if (!hasPending) return;
+    const timer = setInterval(() => void refreshBackups(), 5_000);
+    return () => clearInterval(timer);
+  }, [backups]);
+
   async function runBackupNow(mode: "standard" | "full_ebay") {
     if (mode === "full_ebay") setFullBackupLoading(true);
     else setBackupLoading(true);
@@ -174,7 +182,7 @@ export default function BackupsPage() {
       </div>
 
       <div className="mb-6 rounded-lg border border-border bg-muted/20 px-4 py-3 text-sm text-muted-foreground">
-        `Run Full eBay Backup` fetches richer eBay listing detail at backup time,
+        <span className="font-medium text-foreground">Run Full eBay Backup</span> fetches richer eBay listing detail at backup time,
         including fields useful for manual listing rebuilds.
       </div>
 

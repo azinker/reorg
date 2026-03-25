@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useMemo, useEffect } from "react";
-import { Unlink, Filter, Search, Info, ExternalLink, Link2Off, Loader2, X } from "lucide-react";
+import { useState, useMemo, useEffect, useCallback } from "react";
+import { Unlink, Filter, Search, Info, ExternalLink, Link2Off, Loader2, X, RefreshCw } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { PageTour } from "@/components/onboarding/page-tour";
 import { PAGE_TOUR_STEPS } from "@/components/onboarding/page-tour-steps";
@@ -108,7 +108,8 @@ export default function UnmatchedPage() {
   const [linkSku, setLinkSku] = useState("");
   const [actionLoading, setActionLoading] = useState<string | null>(null);
 
-  useEffect(() => {
+  const fetchListings = useCallback((silent = false) => {
+    if (!silent) setLoading(true);
     fetch("/api/unmatched")
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error("Failed to load"))))
       .then((json) => {
@@ -119,6 +120,8 @@ export default function UnmatchedPage() {
       .catch((e) => setError(e instanceof Error ? e.message : "Failed to load"))
       .finally(() => setLoading(false));
   }, []);
+
+  useEffect(() => { fetchListings(); }, [fetchListings]);
 
   const filtered = useMemo(() => {
     let results = listings;
@@ -177,19 +180,27 @@ export default function UnmatchedPage() {
   return (
     <div className="p-6">
       {/* Header */}
-      <div className="mb-6" data-tour="unmatched-header">
-        <div className="flex items-center gap-2">
-          <Unlink
-            className="h-7 w-7 shrink-0 text-muted-foreground"
-            aria-hidden
-          />
-          <h1 className="text-2xl font-bold tracking-tight text-foreground">
-            Unmatched External Listings
-          </h1>
+      <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between" data-tour="unmatched-header">
+        <div>
+          <div className="flex items-center gap-2">
+            <Unlink className="h-7 w-7 shrink-0 text-muted-foreground" aria-hidden />
+            <h1 className="text-2xl font-bold tracking-tight text-foreground">
+              Unmatched External Listings
+            </h1>
+          </div>
+          <p className="mt-1 text-sm text-muted-foreground">
+            External listings with no matching master-store SKU
+          </p>
         </div>
-        <p className="mt-1 text-sm text-muted-foreground">
-          External listings with no matching master-store SKU
-        </p>
+        <button
+          type="button"
+          onClick={() => fetchListings(true)}
+          disabled={loading}
+          className="inline-flex shrink-0 cursor-pointer items-center gap-2 rounded-lg border border-border bg-background px-3 py-2 text-sm font-medium text-foreground transition-colors hover:bg-muted disabled:opacity-50"
+        >
+          <RefreshCw className={cn("h-4 w-4", loading && "animate-spin")} aria-hidden />
+          Refresh
+        </button>
       </div>
 
       {/* Info banner */}
