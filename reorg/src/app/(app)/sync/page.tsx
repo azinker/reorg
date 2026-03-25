@@ -1086,7 +1086,7 @@ export default function SyncPage() {
                   <Tip text="Quick sync — pulls only the most recent changes since the last update. Fast and efficient for routine refreshes.">
                     <button
                       type="button"
-                      disabled={!connected || isSyncing || cooldownActive}
+                      disabled={!connected || isSyncing}
                       onClick={() => syncStore(store.apiPlatform)}
                       className={cn(
                         "inline-flex cursor-pointer items-center gap-2 rounded-lg border px-4 py-2 text-sm font-medium transition-colors",
@@ -1102,7 +1102,7 @@ export default function SyncPage() {
                   <Tip text="Full catalog sync — re-downloads every listing from the marketplace from scratch. Use when data looks out of date or after major changes.">
                     <button
                       type="button"
-                      disabled={!connected || isSyncing || cooldownActive}
+                      disabled={!connected || isSyncing}
                       onClick={() => syncStore(store.apiPlatform, "full")}
                       className={cn(
                         "inline-flex cursor-pointer items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-colors",

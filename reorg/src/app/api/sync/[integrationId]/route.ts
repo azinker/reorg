@@ -117,62 +117,6 @@ export async function POST(
       );
     }
 
-    const config = getIntegrationConfig(integration);
-    const rateLimits = isEbayPlatform(integration.platform)
-      ? await getEbayTradingRateLimitSnapshotForIntegration(integration).catch((err) => {
-          console.error(`[sync][POST][${integration.platform}] eBay rate limit fetch failed:`, err);
-          return null;
-        })
-      : null;
-    const sharedStoreCount = isEbayPlatform(integration.platform)
-      ? await getSharedEbayQuotaStoreCount(integration)
-      : 1;
-    const getItemRate = rateLimits ? getEbayMethodRate(rateLimits, "GetItem") : null;
-    const reservedGetItemCalls =
-      getItemRate && getItemRate.limit > 0
-        ? getReservedEbayGetItemCalls(getItemRate.limit, sharedStoreCount)
-        : null;
-    const cooldownUntil =
-      getEbayCooldownUntilFromSnapshot(
-        rateLimits,
-        config.syncState.lastRateLimitMessage,
-        new Date(),
-      ) ??
-      getEbayRateLimitCooldownUntil(
-      integration.platform,
-      config,
-      new Date(),
-      );
-    if (cooldownUntil && isEbayPlatform(integration.platform)) {
-      const retryAtLabel = formatCooldownRetryAt(cooldownUntil) ?? "the next retry window";
-      const error =
-        `eBay asked reorG to slow down after hitting its call-usage limit. ` +
-        `Manual pulls are paused until ${retryAtLabel}.`;
-      const retryAfterSeconds = Math.max(
-        1,
-        Math.ceil((cooldownUntil.getTime() - Date.now()) / 1000),
-      );
-
-      return NextResponse.json(
-        {
-          error,
-          data: {
-            status: "COOLDOWN",
-            cooldownUntil: cooldownUntil.toISOString(),
-            cooldownMessage: config.syncState.lastRateLimitMessage,
-            rateLimits,
-            reservedGetItemCalls,
-          },
-        },
-        {
-          status: 429,
-          headers: {
-            "Retry-After": String(retryAfterSeconds),
-          },
-        },
-      );
-    }
-
     const modes = resolveIntegrationSyncModes(integration, parsed.data?.mode);
     const triggerSource =
       request.headers.get("x-trigger-source") === "scheduler" ? "scheduler" : "manual";
