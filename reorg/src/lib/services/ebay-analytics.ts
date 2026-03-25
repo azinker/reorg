@@ -48,10 +48,12 @@ type TokenCacheEntry = {
 };
 
 const SNAPSHOT_CACHE_TTL_MS = 90_000;
+const FALLBACK_CACHE_TTL_MS = 30 * 60 * 1000;
 const SITE_ID = "0";
 const COMPAT_LEVEL = "1113";
 
 const snapshotCache = new Map<string, CacheEntry>();
+const fallbackSnapshotCache = new Map<string, CacheEntry>();
 const tokenCache = new Map<string, TokenCacheEntry>();
 
 const xmlParser = new XMLParser({
@@ -180,7 +182,7 @@ export function buildGetItemCooldownRateLimitsSnapshot(cooldownUntil: Date): Eba
 
 export async function getEbayTradingRateLimitSnapshotForIntegration(
   integration: Pick<Integration, "config">,
-) {
+): Promise<EbayTradingRateLimitSnapshot | null> {
   if (process.env.NEXT_PHASE === "phase-production-build") {
     return null;
   }
@@ -194,102 +196,150 @@ export async function getEbayTradingRateLimitSnapshotForIntegration(
     return cached.snapshot;
   }
 
-  const token = await getUserAccessToken(credentials);
-  const tradingUrl = getTradingUrl(credentials.environment);
+  try {
+    const token = await getUserAccessToken(credentials);
+    const tradingUrl = getTradingUrl(credentials.environment);
 
-  const body = `<?xml version="1.0" encoding="utf-8"?>
+    const body = `<?xml version="1.0" encoding="utf-8"?>
 <GetApiAccessRulesRequest xmlns="urn:ebay:apis:eBLBaseComponents">
 </GetApiAccessRulesRequest>`;
 
-  const response = await fetch(tradingUrl, {
-    method: "POST",
-    headers: {
-      "X-EBAY-API-IAF-TOKEN": token,
-      "X-EBAY-API-SITEID": SITE_ID,
-      "X-EBAY-API-COMPATIBILITY-LEVEL": COMPAT_LEVEL,
-      "X-EBAY-API-CALL-NAME": "GetApiAccessRules",
-      "Content-Type": "text/xml",
-    },
-    body,
-  });
-
-  if (!response.ok) {
-    throw new Error(`GetApiAccessRules failed: ${response.status}`);
-  }
-
-  const xml = await response.text();
-  const parsed = xmlParser.parse(xml);
-  const apiResponse = parsed?.GetApiAccessRulesResponse;
-  const ack =
-    apiResponse && typeof apiResponse === "object"
-      ? String((apiResponse as Record<string, unknown>).Ack ?? "")
-      : "";
-  if (ack === "Failure") {
-    console.warn("[ebay-analytics] GetApiAccessRules returned Failure Ack");
-    throw new Error("GetApiAccessRules Ack=Failure");
-  }
-  const rules: unknown[] = apiResponse?.ApiAccessRule ?? [];
-
-  const monitoredSet = new Set<string>(MONITORED_EBAY_METHODS);
-  const methodMap = new Map<string, EbayMethodRateLimit>();
-
-  for (const rule of rules) {
-    if (!isRecord(rule)) continue;
-    const callName = String(rule.CallName ?? "");
-    if (!monitoredSet.has(callName)) continue;
-
-    const dailyLimit = Number(rule.DailyHardLimit) || 0;
-    const dailyUsage = Number(rule.DailyUsage) || 0;
-    const remaining = Math.max(0, dailyLimit - dailyUsage);
-
-    const periodicEnd = asNullableString(rule.PeriodicEndDate as string);
-
-    methodMap.set(callName, {
-      name: callName,
-      count: dailyUsage,
-      limit: dailyLimit,
-      remaining,
-      reset: periodicEnd,
-      timeWindowSeconds: 86400,
-      status: toStatus(remaining, dailyLimit),
-    });
-  }
-
-  const methods = MONITORED_EBAY_METHODS.map(
-    (method) =>
-      methodMap.get(method) ?? {
-        name: method,
-        count: 0,
-        limit: 0,
-        remaining: 0,
-        reset: null,
-        timeWindowSeconds: null,
-        status: "healthy" as const,
+    const response = await fetch(tradingUrl, {
+      method: "POST",
+      headers: {
+        "X-EBAY-API-IAF-TOKEN": token,
+        "X-EBAY-API-SITEID": SITE_ID,
+        "X-EBAY-API-COMPATIBILITY-LEVEL": COMPAT_LEVEL,
+        "X-EBAY-API-CALL-NAME": "GetApiAccessRules",
+        "Content-Type": "text/xml",
       },
-  );
+      body,
+    });
 
-  const exhaustedMethods = methods
-    .filter((method) => method.status === "exhausted" && method.reset)
-    .map((method) => method.name);
-  const resetCandidates = methods
-    .filter((method) => method.status === "exhausted" && method.reset)
-    .map((method) => new Date(method.reset as string))
-    .filter((value) => !Number.isNaN(value.getTime()))
-    .sort((a, b) => b.getTime() - a.getTime());
+    if (!response.ok) {
+      throw new Error(`GetApiAccessRules failed: ${response.status}`);
+    }
 
-  const snapshot: EbayTradingRateLimitSnapshot = {
-    fetchedAt: new Date().toISOString(),
-    methods,
-    exhaustedMethods,
-    nextResetAt: resetCandidates[0]?.toISOString() ?? null,
+    const xml = await response.text();
+    const parsed = xmlParser.parse(xml);
+    const apiResponse = parsed?.GetApiAccessRulesResponse;
+    const ack =
+      apiResponse && typeof apiResponse === "object"
+        ? String((apiResponse as Record<string, unknown>).Ack ?? "")
+        : "";
+    if (ack === "Failure") {
+      console.warn("[ebay-analytics] GetApiAccessRules returned Failure Ack");
+      throw new Error("GetApiAccessRules Ack=Failure");
+    }
+    const rules: unknown[] = apiResponse?.ApiAccessRule ?? [];
+
+    const monitoredSet = new Set<string>(MONITORED_EBAY_METHODS);
+    const methodMap = new Map<string, EbayMethodRateLimit>();
+
+    for (const rule of rules) {
+      if (!isRecord(rule)) continue;
+      const callName = String(rule.CallName ?? "");
+      if (!monitoredSet.has(callName)) continue;
+
+      const dailyLimit = Number(rule.DailyHardLimit) || 0;
+      const dailyUsage = Number(rule.DailyUsage) || 0;
+      const remaining = Math.max(0, dailyLimit - dailyUsage);
+
+      const periodicEnd = asNullableString(rule.PeriodicEndDate as string);
+
+      methodMap.set(callName, {
+        name: callName,
+        count: dailyUsage,
+        limit: dailyLimit,
+        remaining,
+        reset: periodicEnd,
+        timeWindowSeconds: 86400,
+        status: toStatus(remaining, dailyLimit),
+      });
+    }
+
+    const methods = MONITORED_EBAY_METHODS.map(
+      (method) =>
+        methodMap.get(method) ?? {
+          name: method,
+          count: 0,
+          limit: 0,
+          remaining: 0,
+          reset: null,
+          timeWindowSeconds: null,
+          status: "healthy" as const,
+        },
+    );
+
+    const exhaustedMethods = methods
+      .filter((method) => method.status === "exhausted" && method.reset)
+      .map((method) => method.name);
+    const resetCandidates = methods
+      .filter((method) => method.status === "exhausted" && method.reset)
+      .map((method) => new Date(method.reset as string))
+      .filter((value) => !Number.isNaN(value.getTime()))
+      .sort((a, b) => b.getTime() - a.getTime());
+
+    const snapshot: EbayTradingRateLimitSnapshot = {
+      fetchedAt: new Date().toISOString(),
+      methods,
+      exhaustedMethods,
+      nextResetAt: resetCandidates[0]?.toISOString() ?? null,
+    };
+
+    snapshotCache.set(cacheKey, {
+      snapshot,
+      expiresAt: Date.now() + SNAPSHOT_CACHE_TTL_MS,
+    });
+    fallbackSnapshotCache.set(cacheKey, {
+      snapshot,
+      expiresAt: Date.now() + FALLBACK_CACHE_TTL_MS,
+    });
+
+    return snapshot;
+  } catch (error) {
+    console.error("[ebay-analytics] GetApiAccessRules failed, checking fallback", error);
+    const fallback = fallbackSnapshotCache.get(cacheKey);
+    if (fallback && fallback.expiresAt > Date.now()) {
+      return {
+        ...fallback.snapshot,
+        isDegradedEstimate: true,
+        degradedNote: `Last refreshed ${fallback.snapshot.fetchedAt ? new Date(fallback.snapshot.fetchedAt).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true, timeZone: "America/New_York" }) : "recently"}. Live refresh failed — counts may be slightly outdated.`,
+      };
+    }
+    throw error;
+  }
+}
+
+/** Persist last successful snapshot to integration config for cold-start recovery. */
+export function serializeSnapshotForConfig(
+  snapshot: EbayTradingRateLimitSnapshot,
+): Record<string, unknown> {
+  return {
+    fetchedAt: snapshot.fetchedAt,
+    methods: snapshot.methods,
+    exhaustedMethods: snapshot.exhaustedMethods,
+    nextResetAt: snapshot.nextResetAt,
   };
+}
 
-  snapshotCache.set(cacheKey, {
-    snapshot,
-    expiresAt: Date.now() + SNAPSHOT_CACHE_TTL_MS,
-  });
-
-  return snapshot;
+/** Recover a snapshot from integration config. */
+export function deserializeSnapshotFromConfig(
+  raw: unknown,
+): EbayTradingRateLimitSnapshot | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const obj = raw as Record<string, unknown>;
+  if (typeof obj.fetchedAt !== "string" || !Array.isArray(obj.methods)) return null;
+  const age = Date.now() - new Date(obj.fetchedAt).getTime();
+  if (age > 60 * 60 * 1000) return null;
+  return {
+    fetchedAt: obj.fetchedAt,
+    methods: obj.methods as EbayMethodRateLimit[],
+    exhaustedMethods: Array.isArray(obj.exhaustedMethods) ? obj.exhaustedMethods as string[] : [],
+    nextResetAt: typeof obj.nextResetAt === "string" ? obj.nextResetAt : null,
+    isDegradedEstimate: true,
+    degradedNote: `Saved at ${new Date(obj.fetchedAt).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true, timeZone: "America/New_York" })} — live refresh is temporarily unavailable.`,
+  };
 }
 
 export function getRelevantMonitoredEbayMethods(message: string | null | undefined) {

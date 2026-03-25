@@ -16,9 +16,11 @@ import {
 } from "@/lib/services/ebay-rate-limit";
 import {
   buildGetItemCooldownRateLimitsSnapshot,
+  deserializeSnapshotFromConfig,
   getEbayCooldownUntilFromSnapshot,
   getEbayMethodRate,
   getEbayTradingRateLimitSnapshotForIntegration,
+  serializeSnapshotForConfig,
 } from "@/lib/services/ebay-analytics";
 import { getSharedEbayQuotaStoreCount } from "@/lib/services/ebay-sync-budget";
 import { getReservedEbayGetItemCalls } from "@/lib/services/ebay-sync-policy";
@@ -270,6 +272,28 @@ export async function GET(
           return null;
         })
       : null;
+
+    if (isEbayPlatform(integration.platform) && rateLimits && !rateLimits.isDegradedEstimate) {
+      const updatedConfig = mergeIntegrationConfig(
+        integration.platform,
+        integration.config,
+        { syncState: { lastRateLimitSnapshot: serializeSnapshotForConfig(rateLimits) } },
+      );
+      db.integration.update({
+        where: { id: integration.id },
+        data: { config: updatedConfig as unknown as Prisma.InputJsonValue },
+      }).catch((err) =>
+        console.error(`[sync][GET] Failed to persist rateLimits snapshot:`, err),
+      );
+    }
+
+    if (isEbayPlatform(integration.platform) && !rateLimits) {
+      const savedSnapshot = deserializeSnapshotFromConfig(config.syncState?.lastRateLimitSnapshot);
+      if (savedSnapshot) {
+        rateLimits = savedSnapshot;
+      }
+    }
+
     const sharedStoreCount = isEbayPlatform(integration.platform)
       ? await getSharedEbayQuotaStoreCount(integration)
       : 1;

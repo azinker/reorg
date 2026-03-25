@@ -42,6 +42,7 @@ export interface SyncState {
   pendingIncrementalItemIds: string[];
   pendingIncrementalWindowEndedAt: string | null;
   catalogPullResume?: CatalogPullResume | null;
+  lastRateLimitSnapshot?: Record<string, unknown> | null;
 }
 
 export interface WebhookState {
@@ -123,6 +124,7 @@ const EMPTY_SYNC_STATE: SyncState = {
   pendingIncrementalItemIds: [],
   pendingIncrementalWindowEndedAt: null,
   catalogPullResume: null,
+  lastRateLimitSnapshot: null,
 };
 
 const EMPTY_WEBHOOK_STATE: WebhookState = {
@@ -267,6 +269,8 @@ export function normalizeSyncState(raw: unknown): SyncState {
     pendingIncrementalItemIds: asStringArray(record.pendingIncrementalItemIds),
     pendingIncrementalWindowEndedAt: asNullableString(record.pendingIncrementalWindowEndedAt),
     catalogPullResume: normalizeCatalogPullResume(record.catalogPullResume),
+    lastRateLimitSnapshot:
+      isRecord(record.lastRateLimitSnapshot) ? record.lastRateLimitSnapshot : null,
   };
 }
 

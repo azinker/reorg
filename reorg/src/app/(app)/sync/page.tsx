@@ -908,8 +908,7 @@ export default function SyncPage() {
                             method.status === "exhausted" ? "text-red-400"
                               : method.status === "tight" ? "text-amber-400"
                               : "text-emerald-400";
-                          const countLabel =
-                            rateLimits.isDegradedEstimate && method.name === "GetItem"
+                          const countLabel = rateLimits.isDegradedEstimate
                               ? `${method.remaining.toLocaleString()} / ~${method.limit.toLocaleString()}`
                               : `${method.remaining.toLocaleString()} / ${method.limit.toLocaleString()}`;
                           return (
