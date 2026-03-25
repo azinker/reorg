@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   AlertTriangle,
   CheckCircle,
@@ -8,6 +8,7 @@ import {
   Database,
   Download,
   Loader2,
+  Trash2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { PageTour } from "@/components/onboarding/page-tour";
@@ -60,19 +61,21 @@ export default function BackupsPage() {
   const [backupMessage, setBackupMessage] = useState<string | null>(null);
   const [backupLoading, setBackupLoading] = useState(false);
   const [fullBackupLoading, setFullBackupLoading] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
+  const [deleteLoading, setDeleteLoading] = useState(false);
 
-  function refreshBackups() {
+  const refreshBackups = useCallback(() => {
     return fetch("/api/backup")
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error("Failed to load"))))
       .then((json) => {
         setBackups(json.data?.backups ?? []);
       })
       .catch(() => setBackups([]));
-  }
+  }, []);
 
   useEffect(() => {
     refreshBackups().finally(() => setLoading(false));
-  }, []);
+  }, [refreshBackups]);
 
   // Poll while any backup is IN_PROGRESS so the table updates automatically
   useEffect(() => {
@@ -80,7 +83,7 @@ export default function BackupsPage() {
     if (!hasPending) return;
     const timer = setInterval(() => void refreshBackups(), 5_000);
     return () => clearInterval(timer);
-  }, [backups]);
+  }, [backups, refreshBackups]);
 
   async function runBackupNow(mode: "standard" | "full_ebay") {
     if (mode === "full_ebay") setFullBackupLoading(true);
@@ -114,6 +117,85 @@ export default function BackupsPage() {
     window.location.href = `/api/backup/${backupId}/download?format=${format}`;
   }
 
+  function toggleSelect(id: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleSelectAll() {
+    if (backups.length === 0) return;
+    setSelectedIds((prev) => {
+      if (prev.size === backups.length) return new Set();
+      return new Set(backups.map((b) => b.id));
+    });
+  }
+
+  async function deleteBackupsRequest(ids: string[]) {
+    const unique = [...new Set(ids)].filter(Boolean);
+    if (unique.length === 0) return;
+
+    const confirmMsg =
+      unique.length === 1
+        ? "Delete this backup? The file will be removed from Cloudflare R2 (if present) and the record from the database. This cannot be undone."
+        : `Delete ${unique.length} backups? Files will be removed from Cloudflare R2 (if present) and records from the database. This cannot be undone.`;
+    if (!window.confirm(confirmMsg)) return;
+
+    setDeleteLoading(true);
+    setBackupMessage(null);
+    try {
+      const res = await fetch("/api/backup/delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ backupIds: unique }),
+      });
+      const json = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        data?: {
+          deletedCount?: number;
+          failed?: Array<{ id: string; message: string }>;
+        };
+      };
+
+      if (!res.ok) {
+        setBackupMessage(json.error ?? "Delete failed.");
+        return;
+      }
+
+      const deleted = json.data?.deletedCount ?? 0;
+      const failed = json.data?.failed ?? [];
+      setSelectedIds((prev) => {
+        const next = new Set(prev);
+        for (const id of unique) {
+          if (!failed.some((f) => f.id === id)) next.delete(id);
+        }
+        return next;
+      });
+
+      if (failed.length === 0) {
+        setBackupMessage(
+          deleted === 1
+            ? "Backup deleted from R2 and database."
+            : `${deleted} backups deleted from R2 and database.`,
+        );
+      } else {
+        const failLines = failed.map((f) => `${f.id.slice(0, 8)}…: ${f.message}`).join(" ");
+        setBackupMessage(
+          `Removed ${deleted}. ${failed.length} could not be deleted: ${failLines}`,
+        );
+      }
+
+      await refreshBackups();
+    } catch {
+      setBackupMessage("Delete request failed.");
+    } finally {
+      setDeleteLoading(false);
+    }
+  }
+
   return (
     <div className="p-6">
       <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
@@ -126,6 +208,29 @@ export default function BackupsPage() {
           </p>
         </div>
         <div className="flex flex-wrap justify-end gap-2" data-tour="backups-actions">
+          <button
+            type="button"
+            disabled={
+              deleteLoading ||
+              selectedIds.size === 0 ||
+              backupLoading ||
+              fullBackupLoading
+            }
+            onClick={() => void deleteBackupsRequest([...selectedIds])}
+            className={cn(
+              "inline-flex cursor-pointer shrink-0 items-center gap-2 rounded-lg border border-red-500/40 bg-red-500/10 px-4 py-2.5 text-sm font-medium text-red-400",
+              "transition-colors hover:bg-red-500/20 disabled:cursor-not-allowed disabled:opacity-50",
+              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+            )}
+            aria-label={`Delete ${selectedIds.size} selected backup${selectedIds.size === 1 ? "" : "s"}`}
+          >
+            {deleteLoading ? (
+              <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+            ) : (
+              <Trash2 className="h-4 w-4" aria-hidden />
+            )}
+            Delete selected{selectedIds.size > 0 ? ` (${selectedIds.size})` : ""}
+          </button>
           <button
             type="button"
             disabled={backupLoading || fullBackupLoading}
@@ -177,7 +282,9 @@ export default function BackupsPage() {
           aria-hidden
         />
         <p className="text-sm text-muted-foreground">
-          Backups are retained for 30 days. v1 backups are download-only.
+          Backups are retained for 30 days. v1 backups are download-only (no automated restore to marketplaces).
+          Admins can delete rows individually or in bulk — that removes the object from Cloudflare R2 when configured and
+          removes the database record to free storage.
         </p>
       </div>
 
@@ -191,6 +298,22 @@ export default function BackupsPage() {
           <table className="w-full min-w-[760px]">
             <thead>
               <tr className="border-b border-border bg-muted/50">
+                <th className="w-10 px-3 py-3 text-left">
+                  <input
+                    ref={(el) => {
+                      if (el) {
+                        el.indeterminate =
+                          selectedIds.size > 0 && selectedIds.size < backups.length;
+                      }
+                    }}
+                    type="checkbox"
+                    checked={backups.length > 0 && selectedIds.size === backups.length}
+                    onChange={toggleSelectAll}
+                    disabled={loading || backups.length === 0 || deleteLoading}
+                    className="h-4 w-4 cursor-pointer rounded border-border accent-violet-600"
+                    aria-label="Select all backups"
+                  />
+                </th>
                 <th className="px-4 py-3 text-left text-sm font-medium text-foreground">
                   Date
                 </th>
@@ -230,7 +353,7 @@ export default function BackupsPage() {
               ) : backups.length === 0 ? (
                 <tr>
                   <td
-                    colSpan={7}
+                    colSpan={8}
                     className="px-4 py-8 text-center text-muted-foreground"
                   >
                     No backups yet. Run a backup to create one.
@@ -259,6 +382,16 @@ export default function BackupsPage() {
                       key={backup.id}
                       className="border-b border-border last:border-b-0 transition-colors hover:bg-muted/30"
                     >
+                      <td className="px-3 py-3 align-middle">
+                        <input
+                          type="checkbox"
+                          checked={selectedIds.has(backup.id)}
+                          onChange={() => toggleSelect(backup.id)}
+                          disabled={deleteLoading}
+                          className="h-4 w-4 cursor-pointer rounded border-border accent-violet-600"
+                          aria-label={`Select backup from ${formatDate(backup.createdAt)}`}
+                        />
+                      </td>
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-2">
                           <Clock
@@ -329,7 +462,22 @@ export default function BackupsPage() {
                         </span>
                       </td>
                       <td className="px-4 py-3 text-right">
-                        <div className="flex justify-end gap-2">
+                        <div className="flex flex-wrap justify-end gap-2">
+                          <button
+                            type="button"
+                            disabled={deleteLoading}
+                            onClick={() => void deleteBackupsRequest([backup.id])}
+                            title="Delete this backup from R2 and database"
+                            aria-label={`Delete backup from ${formatDate(backup.createdAt)}`}
+                            className={cn(
+                              "inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-red-500/35 px-3 py-1.5 text-sm font-medium",
+                              "text-red-400 transition-colors hover:bg-red-500/10",
+                              deleteLoading && "cursor-not-allowed opacity-50",
+                            )}
+                          >
+                            <Trash2 className="h-4 w-4" aria-hidden />
+                            Delete
+                          </button>
                           <button
                             type="button"
                             disabled={backup.status !== "COMPLETED"}

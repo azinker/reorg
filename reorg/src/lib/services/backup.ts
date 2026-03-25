@@ -3,7 +3,12 @@ import { PutObjectCommand } from "@aws-sdk/client-s3";
 import { BackupType, type Platform } from "@prisma/client";
 import * as XLSX from "xlsx";
 import { db } from "@/lib/db";
-import { getR2BucketName, getR2Client, isR2Configured } from "@/lib/r2";
+import {
+  deleteR2Object,
+  getR2BucketName,
+  getR2Client,
+  isR2Configured,
+} from "@/lib/r2";
 import {
   fetchFullEbayBackupDetails,
   type EbayBackupDetailRecord,
@@ -819,4 +824,75 @@ export async function createBackup({
 
     throw error;
   }
+}
+
+const MAX_BACKUP_DELETE_BATCH = 50;
+
+export interface DeleteBackupsResult {
+  deletedIds: string[];
+  failed: Array<{ id: string; message: string }>;
+}
+
+/**
+ * Permanently removes backup rows and their objects from R2 when configured.
+ * Does not touch marketplace data — only backup artifacts.
+ */
+export async function deleteBackupsByIds(
+  backupIds: string[],
+  triggeredById: string | null,
+): Promise<DeleteBackupsResult> {
+  const unique = [...new Set(backupIds.map((id) => id.trim()).filter(Boolean))].slice(
+    0,
+    MAX_BACKUP_DELETE_BATCH,
+  );
+
+  const deletedIds: string[] = [];
+  const failed: Array<{ id: string; message: string }> = [];
+
+  for (const id of unique) {
+    const backup = await db.backup.findUnique({ where: { id } });
+    if (!backup) {
+      failed.push({ id, message: "Backup not found" });
+      continue;
+    }
+
+    if (isR2Configured() && backup.storageKey?.trim()) {
+      try {
+        await deleteR2Object(backup.storageKey.trim());
+      } catch (r2Err) {
+        const msg =
+          r2Err instanceof Error ? r2Err.message : "Cloudflare R2 delete failed";
+        failed.push({ id, message: msg });
+        continue;
+      }
+    }
+
+    try {
+      await db.backup.delete({ where: { id } });
+      deletedIds.push(id);
+    } catch (e) {
+      failed.push({
+        id,
+        message: e instanceof Error ? e.message : "Database delete failed",
+      });
+    }
+  }
+
+  if (deletedIds.length > 0) {
+    await db.auditLog.create({
+      data: {
+        userId: triggeredById ?? undefined,
+        action: "backup_deleted",
+        entityType: "backup",
+        entityId: deletedIds[0] ?? undefined,
+        details: {
+          deletedCount: deletedIds.length,
+          deletedIds,
+          failedCount: failed.length,
+        },
+      },
+    });
+  }
+
+  return { deletedIds, failed };
 }
