@@ -9,7 +9,7 @@ This document is a complete handoff for an AI agent (e.g. Codex API extension or
 - **Product:** Internal marketplace operations app by The Perfect Part.
 - **Purpose:** Aggregate, compare, simulate, stage, and selectively push listing data across connected marketplaces (eBay TPP, eBay TT, BigCommerce, Shopify). One master row per SKU (master store = TPP eBay); other stores attach by exact SKU match. Staged changes are separate from live data; sync is pull-only; push requires explicit user confirmation and goes through a strict write-safety chain.
 - **Tech:** Next.js 15 (App Router), TypeScript strict, PostgreSQL + Prisma, Auth.js v5, shadcn/ui + Tailwind, TanStack Table + Virtual, Zustand, SheetJS (xlsx), Resend, Cloudflare R2 (for backups). Hosted on Vercel.
-- **Domains:** Production `reorg.theperfectpart.net`, Staging `stage.reorg.theperfectpart.net`.
+- **Domains:** Production `reorg.theperfectpart.net`.
 
 ---
 

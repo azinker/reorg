@@ -34,6 +34,7 @@ const EBAY_USAGE_LIMIT_ERROR_CODE = "518";
 const EBAY_INVALID_TOKEN_ERROR_CODE = "21916984";
 const GET_SELLER_EVENTS_RETRY_DELAYS_MS = [3_000, 8_000];
 const GET_ITEM_RETRY_DELAYS_MS = [1_000, 3_000];
+const REQUEST_TIMEOUT_MS = 30_000;
 
 const parser = new XMLParser({
   ignoreAttributes: true,
@@ -101,6 +102,24 @@ function getString(value: unknown): string | undefined {
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function fetchWithTimeout(
+  url: string,
+  options: RequestInit = {},
+): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new Error(`eBay request timed out after ${REQUEST_TIMEOUT_MS}ms: ${url}`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 function clearAccessTokenCache(config: EbayConfig) {
@@ -607,18 +626,10 @@ export async function runEbayTtSync(
           ],
         },
       });
-      const adRatesUpdated = await fetchAndStorePromotedListingRates(
-        integration.id,
-        ebayConfig,
-      );
-      if (adRatesUpdated > 0) {
-        console.log(`[ebay-tt-sync] Refreshed ${adRatesUpdated} promoted listing rates`);
-      }
     }
 
     progress.status = "COMPLETED";
     const completedAt = new Date();
-    await repairVariationFamiliesForIntegration(integration.id);
 
     await db.syncJob.update({
       where: { id: syncJob.id },
@@ -648,6 +659,18 @@ export async function runEbayTtSync(
         ) as unknown as Prisma.InputJsonValue,
       },
     });
+
+    await repairVariationFamiliesForIntegration(integration.id);
+
+    if (effectiveMode === "full") {
+      const adRatesUpdated = await fetchAndStorePromotedListingRates(
+        integration.id,
+        ebayConfig,
+      );
+      if (adRatesUpdated > 0) {
+        console.log(`[ebay-tt-sync] Refreshed ${adRatesUpdated} promoted listing rates`);
+      }
+    }
   } catch (error) {
     progress.status = "FAILED";
     if (isEbayUsageLimitError(error)) {
@@ -711,7 +734,7 @@ async function runFullSync(
 
     while (!resp) {
       const accessToken = await getAccessToken(integrationId, ebayConfig, forceRefresh);
-      const response = await fetch(TRADING_API, {
+      const response = await fetchWithTimeout(TRADING_API, {
         method: "POST",
         headers: {
           "X-EBAY-API-IAF-TOKEN": accessToken,
@@ -1176,7 +1199,7 @@ async function getAccessToken(
   }
 
   const credentials = Buffer.from(`${config.appId}:${config.certId}`).toString("base64");
-  const tokenResponse = await fetch("https://api.ebay.com/identity/v1/oauth2/token", {
+  const tokenResponse = await fetchWithTimeout("https://api.ebay.com/identity/v1/oauth2/token", {
     method: "POST",
     headers: {
       Authorization: `Basic ${credentials}`,
@@ -1253,7 +1276,7 @@ async function fetchIncrementalItemIds(
 
     while (!resp) {
       const accessToken = await getAccessToken(integrationId, config, forceRefresh);
-      const response = await fetch(TRADING_API, {
+      const response = await fetchWithTimeout(TRADING_API, {
         method: "POST",
         headers: {
           "X-EBAY-API-IAF-TOKEN": accessToken,
@@ -1348,7 +1371,7 @@ async function fetchFullItem(
 
   while (true) {
     const accessToken = await getAccessToken(integrationId, config, forceRefresh);
-    const response = await fetch(TRADING_API, {
+    const response = await fetchWithTimeout(TRADING_API, {
       method: "POST",
       headers: {
         "X-EBAY-API-IAF-TOKEN": accessToken,
@@ -1433,7 +1456,7 @@ async function fetchAndStorePromotedListingRates(
   config: EbayConfig,
 ): Promise<number> {
   const accessToken = await getAccessToken(integrationId, config);
-  const campaignResponse = await fetch(
+  const campaignResponse = await fetchWithTimeout(
     `${MARKETING_API_BASE}/ad_campaign?funding_strategy=COST_PER_SALE&limit=100`,
     {
       headers: {
@@ -1467,7 +1490,7 @@ async function fetchAndStorePromotedListingRates(
 
     while (hasMore) {
       const adsUrl = `${MARKETING_API_BASE}/ad_campaign/${campaignId}/ad?limit=${ADS_PAGE_SIZE}&offset=${offset}`;
-      const adsResponse = await fetch(adsUrl, {
+      const adsResponse = await fetchWithTimeout(adsUrl, {
         headers: {
           Authorization: `Bearer ${accessToken}`,
           "Content-Type": "application/json",

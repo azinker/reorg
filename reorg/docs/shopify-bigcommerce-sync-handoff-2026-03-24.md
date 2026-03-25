@@ -3,8 +3,7 @@
 Date: 2026-03-24 (addendum: manual `/execute` dispatch + doc corrections — same file, extend as needed)  
 Repo root: `C:\Users\thepe\OneDrive - theperfectpart.net\Desktop\The Perfect Part reorG`  
 App root: `reorg\`  
-Production: `https://reorg.theperfectpart.net`  
-Staging: `https://stage.reorg.theperfectpart.net`
+Production: `https://reorg.theperfectpart.net`
 
 **For the next agent:** Read **§ Manual sync → `/execute` dispatch**, **§ Stale running-job thresholds (current code)**, and **§ Deploy (PowerShell)** first. Use **repo-relative paths** under `reorg/` (avoid hard-coded `C:\Users\...` links — they break on other machines).
 

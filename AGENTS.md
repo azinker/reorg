@@ -4,7 +4,6 @@
 
 **reorG** by The Perfect Part — an internal marketplace operations application.
 Production domain: `reorg.theperfectpart.net`
-Staging domain: `stage.reorg.theperfectpart.net`
 
 This document is the persistent source of truth for AI agents working on this codebase.
 The master product spec lives in the original prompt and the architecture plan.
@@ -177,10 +176,9 @@ Shipping rate table keys use the same format.
 
 ## Environment Rules
 
-- Three environments: local, staging (`stage.reorg.theperfectpart.net`), production (`reorg.theperfectpart.net`)
-- Staging is write-protected by default
+- Two environments: local, production (`reorg.theperfectpart.net`)
 - Production launches with write locks easily controllable
-- Environment-specific behavior controlled via `NEXT_PUBLIC_APP_ENV` (local | staging | production)
+- Environment-specific behavior controlled via `NEXT_PUBLIC_APP_ENV` (local | production)
 - Secrets are in environment variables; never committed to git
 - `.env.example` documents all required variables without real values
 

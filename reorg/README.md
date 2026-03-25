@@ -98,7 +98,6 @@ reorg/
 | Environment | Domain | Write Access |
 |-------------|--------|-------------|
 | Local | localhost:3000 | Configurable |
-| Staging | stage.reorg.theperfectpart.net | Blocked by default |
 | Production | reorg.theperfectpart.net | Controlled via write locks |
 
 ---

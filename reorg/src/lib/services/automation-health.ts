@@ -259,8 +259,7 @@ function getWebhookHealthStatus(
   if (
     getAppEnv() === "local" &&
     currentDestination &&
-    (currentDestination.includes("reorg.theperfectpart.net") ||
-      currentDestination.includes("stage.reorg.theperfectpart.net"))
+    currentDestination.includes("reorg.theperfectpart.net")
   ) {
     return {
       webhookExpected: true,

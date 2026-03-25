@@ -10,7 +10,6 @@ export function getAppEnv() {
 
   const authUrl = process.env.AUTH_URL?.toLowerCase();
   if (authUrl?.includes("reorg.theperfectpart.net")) return "production";
-  if (authUrl?.includes("stage.reorg.theperfectpart.net")) return "staging";
 
   const appEnv = process.env.NEXT_PUBLIC_APP_ENV;
   if (appEnv === "production" || appEnv === "staging") return appEnv;

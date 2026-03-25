@@ -9,10 +9,6 @@ export function getExpectedWebhookBaseUrl() {
     return "https://reorg.theperfectpart.net";
   }
 
-  if (appEnv === "staging") {
-    return "https://stage.reorg.theperfectpart.net";
-  }
-
   const baseUrl = process.env.AUTH_URL?.trim();
   if (!baseUrl) {
     throw new Error("AUTH_URL must be set before resolving local webhook destinations.");
@@ -28,13 +24,8 @@ function getAcceptedWebhookBaseUrls() {
     return ["https://reorg.theperfectpart.net"];
   }
 
-  if (appEnv === "staging") {
-    return ["https://stage.reorg.theperfectpart.net"];
-  }
-
   const baseUrls = new Set<string>([
     "https://reorg.theperfectpart.net",
-    "https://stage.reorg.theperfectpart.net",
   ]);
   const localBaseUrl = process.env.AUTH_URL?.trim();
   if (localBaseUrl) {

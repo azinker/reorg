@@ -30,8 +30,6 @@ These rules are non-negotiable across every file, feature, and refactor.
 
 ## Environment Guards
 
-- Staging environment (`stage.reorg.theperfectpart.net`) is write-protected by default
-- Check `NEXT_PUBLIC_APP_ENV` and enforce write blocks in staging unless explicitly overridden
 - Production must launch with write locks easily accessible and controllable
 
 ## Backup Safety

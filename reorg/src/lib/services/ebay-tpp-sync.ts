@@ -29,6 +29,7 @@ const GET_SELLER_EVENTS_RETRY_DELAYS_MS = [3_000, 8_000];
 const GET_ITEM_RETRY_DELAYS_MS = [1_000, 3_000];
 const MARKETING_API_BASE = "https://api.ebay.com/sell/marketing/v1";
 const ADS_PAGE_SIZE = 500;
+const REQUEST_TIMEOUT_MS = 30_000;
 
 const parser = new XMLParser({
   ignoreAttributes: true,
@@ -95,6 +96,24 @@ type UpsertResult = "created" | "updated" | "variation_parent" | "deleted";
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function fetchWithTimeout(
+  url: string,
+  options: RequestInit = {},
+): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new Error(`eBay request timed out after ${REQUEST_TIMEOUT_MS}ms: ${url}`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 function clearAccessTokenCache(config: EbayConfig) {
@@ -603,7 +622,6 @@ export async function runEbayTppSync(
 
     progress.status = "COMPLETED";
     const completedAt = new Date();
-    await repairVariationFamiliesForIntegration(integration.id);
 
     await db.syncJob.update({
       where: { id: syncJob.id },
@@ -633,6 +651,8 @@ export async function runEbayTppSync(
         ) as unknown as Prisma.InputJsonValue,
       },
     });
+
+    await repairVariationFamiliesForIntegration(integration.id);
 
     if (effectiveMode === "full") {
       const upcsFetched = await fetchMissingUpcs(integration.id, ebayConfig);
@@ -707,7 +727,7 @@ async function runFullSync(
 
     while (!resp) {
       const accessToken = await getAccessToken(integrationId, ebayConfig, forceRefresh);
-      const res = await fetch(TRADING_API, {
+      const res = await fetchWithTimeout(TRADING_API, {
         method: "POST",
         headers: {
           "X-EBAY-API-IAF-TOKEN": accessToken,
@@ -838,7 +858,7 @@ async function getAccessToken(
     `${config.appId}:${config.certId}`,
   ).toString("base64");
 
-  const tokenRes = await fetch("https://api.ebay.com/identity/v1/oauth2/token", {
+  const tokenRes = await fetchWithTimeout("https://api.ebay.com/identity/v1/oauth2/token", {
     method: "POST",
     headers: {
       Authorization: `Basic ${credentials}`,
@@ -916,7 +936,7 @@ async function fetchIncrementalItemIds(
 
     while (!resp) {
       const accessToken = await getAccessToken(integrationId, config, forceRefresh);
-      const res = await fetch(TRADING_API, {
+      const res = await fetchWithTimeout(TRADING_API, {
         method: "POST",
         headers: {
           "X-EBAY-API-IAF-TOKEN": accessToken,
@@ -1011,7 +1031,7 @@ async function fetchFullItem(
 
   while (true) {
     const accessToken = await getAccessToken(integrationId, config, forceRefresh);
-    const response = await fetch(TRADING_API, {
+    const response = await fetchWithTimeout(TRADING_API, {
       method: "POST",
       headers: {
         "X-EBAY-API-IAF-TOKEN": accessToken,
@@ -1653,7 +1673,7 @@ async function fetchAndStorePromotedListingRates(
   config: EbayConfig,
 ): Promise<number> {
   const accessToken = await getAccessToken(integrationId, config);
-  const campaignRes = await fetch(
+  const campaignRes = await fetchWithTimeout(
     `${MARKETING_API_BASE}/ad_campaign?funding_strategy=COST_PER_SALE&limit=100`,
     {
       headers: {
@@ -1685,7 +1705,7 @@ async function fetchAndStorePromotedListingRates(
 
     while (hasMore) {
       const adsUrl = `${MARKETING_API_BASE}/ad_campaign/${campaignId}/ad?limit=${ADS_PAGE_SIZE}&offset=${offset}`;
-      const adsRes = await fetch(adsUrl, {
+      const adsRes = await fetchWithTimeout(adsUrl, {
         headers: {
           Authorization: `Bearer ${accessToken}`,
           "Content-Type": "application/json",
