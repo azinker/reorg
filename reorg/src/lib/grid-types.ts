@@ -77,6 +77,7 @@ export interface GridRow {
   platformFeeRate: number;
   inventory: number | null;
   variationAttributes?: { name: string; value: string }[];
+  variationDimensions?: string[];
   isVariation: boolean;
   isParent: boolean;
   childRows?: GridRow[];

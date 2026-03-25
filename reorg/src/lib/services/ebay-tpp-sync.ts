@@ -1225,7 +1225,6 @@ function needsFullItemForUpc(item: unknown): boolean {
 function extractVariationImageUrl(
   variation: unknown,
   variationPictures: unknown,
-  parentImageUrl: string | null,
 ): string | null {
   const specifics = obj(variation, "VariationSpecifics");
   if (specifics && variationPictures) {
@@ -1257,7 +1256,7 @@ function extractVariationImageUrl(
     }
   }
 
-  return parentImageUrl;
+  return null;
 }
 
 async function upsertEbayItem(
@@ -1356,7 +1355,6 @@ async function upsertEbayItem(
       const variationImageUrl = extractVariationImageUrl(
         variation,
         variationPictures,
-        imageUrl,
       );
       const variationUpc = extractVariationUpc(variation);
 
@@ -1367,14 +1365,17 @@ async function upsertEbayItem(
             sku,
             title: title ?? null,
             imageUrl: variationImageUrl,
-            imageSource: "TPP_EBAY",
+            imageSource: variationImageUrl ? "TPP_EBAY" : null,
             upc: variationUpc,
           },
         });
-      } else if (variationImageUrl && childMaster.imageUrl !== variationImageUrl) {
+      } else if (childMaster.imageUrl !== variationImageUrl) {
         childMaster = await db.masterRow.update({
           where: { id: childMaster.id },
-          data: { imageUrl: variationImageUrl, imageSource: "TPP_EBAY" },
+          data: {
+            imageUrl: variationImageUrl,
+            imageSource: variationImageUrl ? "TPP_EBAY" : null,
+          },
         });
       }
 

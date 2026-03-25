@@ -662,6 +662,25 @@ export async function createBackup({
     ] = await Promise.all([
       db.masterRow.findMany({ orderBy: { sku: "asc" } }),
       db.marketplaceListing.findMany({
+        select: {
+          id: true,
+          masterRowId: true,
+          integrationId: true,
+          platformItemId: true,
+          platformVariantId: true,
+          parentListingId: true,
+          sku: true,
+          title: true,
+          imageUrl: true,
+          salePrice: true,
+          adRate: true,
+          inventory: true,
+          status: true,
+          isVariation: true,
+          lastSyncedAt: true,
+          createdAt: true,
+          updatedAt: true,
+        },
         orderBy: [{ sku: "asc" }, { platformItemId: "asc" }],
       }),
       db.stagedChange.findMany({

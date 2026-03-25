@@ -491,6 +491,7 @@ function buildFullChildRows(
   feeRate: number,
   parentAdRatesByPlatform: Partial<Record<Platform, number>>,
   variationAttrsMap?: Map<string, { name: string; value: string }[]>,
+  parentImageUrl?: string | null,
 ): GridRow[] {
   
   const rows: GridRow[] = [];
@@ -556,7 +557,7 @@ function buildFullChildRows(
       stagedUpc: upcStage.stagedUpc,
       hasStagedUpc: upcStage.hasStagedUpc,
       upcPushTargets: upcStage.upcPushTargets,
-      imageUrl: cm.imageUrl,
+      imageUrl: cm.imageUrl ?? parentImageUrl ?? null,
       weight: cm.weight,
       supplierCost: cm.supplierCost,
       supplierShipping: cm.supplierShipping,
@@ -691,8 +692,23 @@ function buildGridRow(
   }
 
   const childRows: GridRow[] | undefined = isVariationParent
-    ? buildBatchChildRows(parentListings, childMasterRowsBySku, shippingRateMap, feeRate, parentAdRatesByPlatform, variationAttrsMap)
+    ? buildBatchChildRows(parentListings, childMasterRowsBySku, shippingRateMap, feeRate, parentAdRatesByPlatform, variationAttrsMap, master.imageUrl)
     : undefined;
+
+  let variationDimensions: string[] | undefined;
+  if (childRows && childRows.length > 0) {
+    const seen = new Set<string>();
+    const ordered: string[] = [];
+    for (const child of childRows) {
+      for (const attr of child.variationAttributes ?? []) {
+        if (!seen.has(attr.name)) {
+          seen.add(attr.name);
+          ordered.push(attr.name);
+        }
+      }
+    }
+    if (ordered.length > 0) variationDimensions = ordered;
+  }
 
   const itemNumberMap = new Map<string, StoreValue>();
   for (const listing of parentListings) {
@@ -724,6 +740,7 @@ function buildGridRow(
     shippingCost: shippingCost,
     platformFeeRate: feeRate,
     inventory,
+    variationDimensions,
     isVariation: isVariationParent || hasVariationListings,
     isParent: isVariationParent,
     childRowsHydrated: !isVariationParent,
@@ -1045,7 +1062,7 @@ export async function getGridChildRows(parentRowId: string): Promise<GridRow[]> 
 
   const feeRate = feeRateSetting?.value != null ? Number(feeRateSetting.value) : 0.136;
   const parentListings = master.listings.filter((listing: DBListing) => !listing.parentListingId);
-  return buildChildRows(parentListings, shippingRateMap, feeRate);
+  return buildChildRows(parentListings, shippingRateMap, feeRate, master.imageUrl);
 }
 
 export async function getGridRowById(rowId: string): Promise<GridRow | null> {
@@ -1069,8 +1086,17 @@ export async function getGridRowById(rowId: string): Promise<GridRow | null> {
       return null;
     }
 
+    let parentImageUrl: string | null = null;
+    const childListing = await db.marketplaceListing.findFirst({
+      where: { masterRowId: normalizedRowId, parentListingId: { not: null } },
+      select: { parentListing: { select: { masterRow: { select: { imageUrl: true } } } } },
+    });
+    if (childListing?.parentListing?.masterRow?.imageUrl) {
+      parentImageUrl = childListing.parentListing.masterRow.imageUrl;
+    }
+
     const variationAttrsMap = await fetchVariationAttributesBatch([normalizedRowId]);
-    return buildFullChildRows([childMaster], shippingRateMap, feeRate, {}, variationAttrsMap)[0] ?? null;
+    return buildFullChildRows([childMaster], shippingRateMap, feeRate, {}, variationAttrsMap, parentImageUrl)[0] ?? null;
   }
 
   const master = await db.masterRow.findUnique({
@@ -1100,9 +1126,10 @@ async function buildChildRows(
   parentListings: DBMasterRow["listings"],
   shippingRateMap: Map<string, number>,
   feeRate: number,
+  parentImageUrl?: string | null,
 ): Promise<GridRow[]> {
   const childMasters = await fetchChildMasterRows(parentListings);
-  return buildFullChildRows(childMasters, shippingRateMap, feeRate, {});
+  return buildFullChildRows(childMasters, shippingRateMap, feeRate, {}, undefined, parentImageUrl);
 }
 
 function buildBatchChildRows(
@@ -1112,10 +1139,11 @@ function buildBatchChildRows(
   feeRate: number,
   parentAdRatesByPlatform: Partial<Record<Platform, number>>,
   variationAttrsMap?: Map<string, { name: string; value: string }[]>,
+  parentImageUrl?: string | null,
 ): GridRow[] {
   const childMasters = collectChildSkus(parentListings)
     .map((sku) => childMasterRowsBySku.get(sku))
     .filter((childMaster): childMaster is DBChildMasterRowFull => childMaster != null);
 
-  return buildFullChildRows(childMasters, shippingRateMap, feeRate, parentAdRatesByPlatform, variationAttrsMap);
+  return buildFullChildRows(childMasters, shippingRateMap, feeRate, parentAdRatesByPlatform, variationAttrsMap, parentImageUrl);
 }

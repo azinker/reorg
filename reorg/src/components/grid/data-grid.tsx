@@ -3581,6 +3581,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
                   {isColVisible("sku") && (
                     <div className={cn(COL_WIDTHS.sku, "flex flex-col justify-center pl-3 pr-4 overflow-hidden", cellPy)}>
                       {isParent ? (
+                        <>
                         <button
                           onClick={() => void toggleExpand(row.id)}
                           className="inline-flex items-center gap-1.5 rounded-md bg-emerald-500/15 px-2 py-0.5 text-[11px] font-semibold text-emerald-400 transition-colors hover:bg-emerald-500/20 cursor-pointer"
@@ -3596,6 +3597,12 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
                             <RefreshCw className="h-3 w-3 animate-spin" strokeWidth={2.5} />
                           )}
                         </button>
+                        {row.variationDimensions && row.variationDimensions.length > 0 && (
+                          <span className="mt-0.5 text-[10px] leading-tight text-emerald-500/60 font-medium">
+                            {row.variationDimensions.join(" / ")}
+                          </span>
+                        )}
+                        </>
                       ) : (
                         <>
                           <CopyValue value={row.sku} className="max-w-full gap-1.5">

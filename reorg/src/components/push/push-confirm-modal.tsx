@@ -362,7 +362,12 @@ export function PushConfirmModal({
         }),
       });
 
-      const payload = (await response.json()) as { data?: PushApiData; error?: string };
+      const payload = await response.json().catch(() => null) as { data?: PushApiData; error?: string } | null;
+      if (!payload) {
+        throw new Error(
+          `Server returned ${response.status} — the push function may have timed out or crashed. Check Engine Room for the push job status before retrying.`,
+        );
+      }
       if (!response.ok && !payload.data) {
         throw new Error(payload.error ?? "Push request failed.");
       }

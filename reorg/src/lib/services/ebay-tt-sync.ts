@@ -1092,7 +1092,7 @@ function extractListingsFromItem(item: unknown): RawListing[] {
       sku,
       title,
       imageUrl:
-        extractVariationImageUrl(variation, variationPictures, imageUrl ?? null) ??
+        extractVariationImageUrl(variation, variationPictures) ??
         undefined,
       salePrice:
         num(variation, "StartPrice") ??
@@ -1636,7 +1636,6 @@ function extractVariationUpc(variation: unknown): string | null {
 function extractVariationImageUrl(
   variation: unknown,
   variationPictures: unknown,
-  parentImageUrl: string | null,
 ): string | null {
   const specifics = obj(variation, "VariationSpecifics");
   if (specifics && variationPictures) {
@@ -1670,7 +1669,7 @@ function extractVariationImageUrl(
     }
   }
 
-  return parentImageUrl;
+  return null;
 }
 
 function needsFullItemForUpc(item: unknown): boolean {
