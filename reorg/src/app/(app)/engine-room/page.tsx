@@ -505,6 +505,9 @@ function SyncJobsPanel({ jobs }: { jobs: SyncJobRow[] }) {
   );
 }
 
+const PUSH_RECOMMENDED_LISTINGS = 500;
+const PUSH_HARD_LISTINGS = 2000;
+
 function PushQueuePanel({ items }: { items: PushQueueRow[] }) {
   const [search, setSearch] = useState("");
   const [platformFilter, setPlatformFilter] = useState("all");
@@ -519,8 +522,43 @@ function PushQueuePanel({ items }: { items: PushQueueRow[] }) {
     return true;
   });
 
+  // Distinct listings = unique sku+platform combinations (approximates the batch size limit)
+  const distinctListings = new Set(items.map((i) => `${i.platform}:${i.sku}`)).size;
+  const batchStatus =
+    distinctListings > PUSH_HARD_LISTINGS
+      ? "blocked"
+      : distinctListings > PUSH_RECOMMENDED_LISTINGS
+        ? "warning"
+        : "ok";
+
   return (
     <div>
+      {/* Batch size advisory */}
+      {batchStatus !== "ok" && (
+        <div
+          className={`mb-4 rounded-md border px-4 py-3 text-sm ${
+            batchStatus === "blocked"
+              ? "border-red-500/40 bg-red-500/10 text-red-400"
+              : "border-amber-500/40 bg-amber-500/10 text-amber-400"
+          }`}
+        >
+          {batchStatus === "blocked" ? (
+            <>
+              <span className="font-semibold">Push blocked — queue too large.</span>{" "}
+              {distinctListings.toLocaleString()} distinct listings are staged (hard cap is{" "}
+              {PUSH_HARD_LISTINGS.toLocaleString()}). Push platform-by-platform using the filter
+              below, or push from the dashboard in smaller batches.
+            </>
+          ) : (
+            <>
+              <span className="font-semibold">Large push — split recommended.</span>{" "}
+              {distinctListings.toLocaleString()} distinct listings are staged (recommended max is{" "}
+              {PUSH_RECOMMENDED_LISTINGS.toLocaleString()}). Consider pushing one platform at a
+              time. Use the platform filter below to review each group first.
+            </>
+          )}
+        </div>
+      )}
       {/* Filters */}
       <div className="mb-4 flex flex-wrap items-center gap-3">
         <input
@@ -541,6 +579,11 @@ function PushQueuePanel({ items }: { items: PushQueueRow[] }) {
         </select>
         <span className="text-xs text-muted-foreground">
           {filtered.length} of {items.length} staged change{items.length !== 1 ? "s" : ""}
+          {platformFilter !== "all" && (
+            <span className="ml-1">
+              ({new Set(filtered.map((i) => `${i.platform}:${i.sku}`)).size} distinct listings)
+            </span>
+          )}
         </span>
       </div>
       <div className="overflow-x-auto">

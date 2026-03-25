@@ -58,7 +58,7 @@ Default password: `changeme-on-first-login` (change immediately).
 
 | Layer | Technology |
 |-------|-----------|
-| Framework | Next.js 16 (App Router, TypeScript) |
+| Framework | Next.js 15 (App Router, TypeScript) |
 | Database | PostgreSQL + Prisma 6 |
 | Auth | Auth.js v5 (credentials) |
 | UI | shadcn/ui + Tailwind CSS v4 |
@@ -123,5 +123,9 @@ Full documentation lives in `docs/`:
 - API token setup guides
 - DNS/Vercel/SSL configuration
 - Import guide
+- Dry-run plan
 - Go-live checklist
-- And more (generated during build phases)
+- Write safety checklist
+- Backup/recovery docs
+- Smoke test plan
+- Cursor setup instructions
