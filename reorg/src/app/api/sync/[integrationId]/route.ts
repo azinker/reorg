@@ -34,6 +34,10 @@ export const runtime = "nodejs";
 export const maxDuration = 800;
 export const dynamic = "force-dynamic";
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
   const postSchema = z
   .object({
     mode: z.enum(["full", "incremental"]).optional(),
@@ -297,7 +301,7 @@ export async function GET(
     const sharedStoreCount = isEbayPlatform(integration.platform)
       ? await getSharedEbayQuotaStoreCount(integration)
       : 1;
-    const cooldownUntil =
+    let cooldownUntil =
       getEbayCooldownUntilFromSnapshot(
         rateLimits,
         config.syncState.lastRateLimitMessage,
@@ -309,7 +313,41 @@ export async function GET(
       new Date(),
       );
 
+    // If this eBay integration has no recorded cooldown but another eBay
+    // integration with the same appId does, inherit it — they share the same
+    // developer app and quota pool.
+    if (!cooldownUntil && isEbayPlatform(integration.platform)) {
+      const appId =
+        isRecord(integration.config) && typeof integration.config.appId === "string"
+          ? integration.config.appId
+          : null;
+      if (appId) {
+        const siblings = await db.integration.findMany({
+          where: { platform: { in: ["TPP_EBAY", "TT_EBAY"] as Platform[] }, id: { not: integration.id } },
+          select: { id: true, platform: true, config: true },
+        });
+        for (const sibling of siblings) {
+          const sibCfg = getIntegrationConfig(sibling);
+          const sibAppId =
+            isRecord(sibling.config) && typeof sibling.config.appId === "string"
+              ? sibling.config.appId
+              : null;
+          if (sibAppId !== appId) continue;
+          const sibCooldown = getEbayRateLimitCooldownUntil(sibling.platform, sibCfg, new Date());
+          if (sibCooldown && (!cooldownUntil || sibCooldown > cooldownUntil)) {
+            cooldownUntil = sibCooldown;
+          }
+        }
+      }
+    }
+
     if (isEbayPlatform(integration.platform) && !rateLimits && cooldownUntil) {
+      rateLimits = buildGetItemCooldownRateLimitsSnapshot(cooldownUntil);
+    }
+
+    // If we now have a cooldown but rateLimits is still just the generic healthy
+    // placeholder, upgrade it to the exhausted cooldown snapshot.
+    if (isEbayPlatform(integration.platform) && cooldownUntil && rateLimits?.isDegradedEstimate && rateLimits.exhaustedMethods.length === 0) {
       rateLimits = buildGetItemCooldownRateLimitsSnapshot(cooldownUntil);
     }
 

@@ -161,22 +161,20 @@ export function buildGetItemCooldownRateLimitsSnapshot(cooldownUntil: Date): Eba
   const resetIso = cooldownUntil.toISOString();
   return {
     fetchedAt: new Date().toISOString(),
-    methods: [
-      {
-        name: "GetItem",
-        count: 0,
-        limit: 5000,
-        remaining: 0,
-        reset: resetIso,
-        timeWindowSeconds: 86400,
-        status: "exhausted",
-      },
-    ],
+    methods: MONITORED_EBAY_METHODS.map((name) => ({
+      name,
+      count: name === "GetItem" ? 5000 : 0,
+      limit: 5000,
+      remaining: name === "GetItem" ? 0 : 5000,
+      reset: resetIso,
+      timeWindowSeconds: 86400,
+      status: (name === "GetItem" ? "exhausted" : "healthy") as EbayMethodRateLimit["status"],
+    })),
     exhaustedMethods: ["GetItem"],
     nextResetAt: resetIso,
     isDegradedEstimate: true,
     degradedNote:
-      "Live per-method counts from eBay could not be loaded. GetItem is over quota — shown as 0 remaining (daily cap is typically 5,000; exact usage appears after the cooldown). Refresh this page after the reset time.",
+      "Live per-method counts from eBay could not be loaded. GetItem is over quota — shown as fully consumed. Other method counts are estimates only; exact usage appears after the cooldown resets.",
   };
 }
 
@@ -316,13 +314,13 @@ export async function getEbayTradingRateLimitSnapshotForIntegration(
       methods: MONITORED_EBAY_METHODS.map((name) => ({
         name,
         count: 0,
-        limit: name === "GetItem" ? 5000 : 0,
-        remaining: 0,
+        limit: 5000,
+        remaining: 5000,
         reset: null,
-        timeWindowSeconds: name === "GetItem" ? 86400 : null,
-        status: (name === "GetItem" ? "exhausted" : "healthy") as "exhausted" | "healthy",
+        timeWindowSeconds: 86400,
+        status: "healthy" as EbayMethodRateLimit["status"],
       })),
-      exhaustedMethods: ["GetItem"],
+      exhaustedMethods: [],
       nextResetAt: null,
       isDegradedEstimate: true,
       degradedNote: "Live call counts could not be fetched from eBay. Both eBay stores share the same API quota — if one is over its daily limit, both will show this. Exact usage will be visible after the daily reset.",
