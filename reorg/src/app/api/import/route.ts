@@ -129,7 +129,7 @@ type ExistingImportRow = {
   notes: string | null;
   listings: Array<{
     id: string;
-    rawData: unknown;
+    rawData?: unknown;
     integration: {
       platform: Platform;
     };
@@ -343,8 +343,13 @@ function buildLiveUpcMap(row: ExistingImportRow | null): Map<SupportedUpcPlatfor
     return new Map();
   }
 
+  const listingsWithRawData = row.listings.filter((l) => l.rawData != null);
+  if (listingsWithRawData.length === 0) {
+    return new Map();
+  }
+
   const summary = buildLiveUpcSummary(
-    row.listings.map((listing) => ({
+    listingsWithRawData.map((listing) => ({
       rawData: listing.rawData,
       integration: listing.integration,
     })),
@@ -648,7 +653,6 @@ async function loadExistingRowsBySku(skus: string[]) {
       listings: {
         select: {
           id: true,
-          rawData: true,
           integration: {
             select: {
               platform: true,
