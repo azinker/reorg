@@ -750,29 +750,65 @@ export function PushConfirmModal({
 
           {failedResults.length > 0 ? (
             <section className="mb-5">
-              <div className="mb-2">
-                <h3 className="text-sm font-semibold text-foreground">Failed Changes</h3>
-                <p className="text-xs text-muted-foreground">
-                  These stayed staged so you can review and retry them safely.
-                </p>
+              <div className="mb-2 flex items-center justify-between">
+                <div>
+                  <h3 className="text-sm font-semibold text-foreground">Failed Changes ({failedResults.length})</h3>
+                  <p className="text-xs text-muted-foreground">
+                    These stayed staged — close this modal, then use Push Alerts to filter, retry, or save locally.
+                  </p>
+                </div>
               </div>
-              <div className="space-y-2">
-                {failedResults.slice(0, 12).map((entry) => (
-                  <article key={`${entry.platform}:${entry.listingId}:${entry.field}`} className="rounded-lg border border-red-500/20 bg-red-500/5 p-3">
-                    <div className="flex flex-wrap items-center gap-2 text-xs">
-                      <span className={cn("rounded border px-2 py-0.5 text-[10px] font-semibold uppercase", PLATFORM_COLORS[entry.platform])}>
-                        {PLATFORM_SHORT[entry.platform]}
-                      </span>
-                      <span className="font-mono text-muted-foreground">{entry.listingId}</span>
-                      <span className="text-muted-foreground">{entry.field}</span>
+              {(() => {
+                const byCategory = new Map<string, typeof failedResults>();
+                for (const entry of failedResults) {
+                  const lower = (entry.error ?? "").toLowerCase();
+                  let cat = "other";
+                  if (lower.includes("invalid") || lower.includes("must be") || lower.includes("validation") || lower.includes("unprocessable") || lower.includes("required")) cat = "validation";
+                  else if (lower.includes("rate limit") || lower.includes("usage limit") || lower.includes("429") || lower.includes("too many")) cat = "rate-limit";
+                  else if (lower.includes("timeout") || lower.includes("timed out")) cat = "timeout";
+                  else if (lower.includes("auth") || lower.includes("token") || lower.includes("credential")) cat = "auth";
+                  const list = byCategory.get(cat) ?? [];
+                  list.push(entry);
+                  byCategory.set(cat, list);
+                }
+                const catLabels: Record<string, string> = { "validation": "Rejected by Marketplace", "rate-limit": "Rate Limited", "timeout": "Timed Out", "auth": "Auth Error", "other": "Other Errors" };
+                const catColors: Record<string, string> = { "validation": "border-amber-500/20 bg-amber-500/5", "rate-limit": "border-blue-500/20 bg-blue-500/5", "timeout": "border-yellow-500/20 bg-yellow-500/5", "auth": "border-red-500/20 bg-red-500/5", "other": "border-red-500/20 bg-red-500/5" };
+
+                return [...byCategory.entries()]
+                  .sort(([, a], [, b]) => b.length - a.length)
+                  .map(([cat, entries]) => (
+                    <div key={cat} className="mb-3">
+                      <div className="mb-1.5 flex items-center gap-2">
+                        <span className="rounded bg-amber-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-300">
+                          {catLabels[cat] ?? cat}
+                        </span>
+                        <span className="text-xs text-muted-foreground">{entries.length} failure{entries.length === 1 ? "" : "s"}</span>
+                      </div>
+                      <div className="space-y-1.5">
+                        {entries.slice(0, 8).map((entry) => (
+                          <article key={`${entry.platform}:${entry.listingId}:${entry.field}`} className={cn("rounded-lg border p-2.5", catColors[cat] ?? catColors.other)}>
+                            <div className="flex flex-wrap items-center gap-2 text-xs">
+                              <span className={cn("rounded border px-2 py-0.5 text-[10px] font-semibold uppercase", PLATFORM_COLORS[entry.platform])}>
+                                {PLATFORM_SHORT[entry.platform]}
+                              </span>
+                              <span className="font-mono text-muted-foreground">{entry.listingId}</span>
+                              <span className="text-muted-foreground">{entry.field}</span>
+                              <span className="text-foreground">
+                                {formatDisplayValue(entry.field, entry.oldValue)} &rarr; {formatDisplayValue(entry.field, entry.newValue)}
+                              </span>
+                            </div>
+                            <div className="mt-1 text-[11px] text-red-300/80 break-all">{entry.error ?? "Unknown push error."}</div>
+                          </article>
+                        ))}
+                        {entries.length > 8 && (
+                          <p className="px-2 text-[11px] text-muted-foreground">
+                            + {entries.length - 8} more — use Push Alerts after closing for the full list
+                          </p>
+                        )}
+                      </div>
                     </div>
-                    <div className="mt-2 text-sm text-foreground">
-                      {formatDisplayValue(entry.field, entry.oldValue)} → {formatDisplayValue(entry.field, entry.newValue)}
-                    </div>
-                    <div className="mt-1 text-xs text-red-300">{entry.error ?? "Unknown push error."}</div>
-                  </article>
-                ))}
-              </div>
+                  ));
+              })()}
             </section>
           ) : null}
 

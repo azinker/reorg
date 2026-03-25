@@ -27,6 +27,7 @@ import {
   type PushApiData,
   type PushItem,
 } from "@/components/push/push-confirm-modal";
+import { FailedPushesModal } from "@/components/push/failed-pushes-modal";
 import { useShippingRates } from "@/lib/use-shipping-rates";
 import { useSettings } from "@/lib/use-settings";
 import { getDensityPadding, getRowHeightEstimate } from "@/lib/settings-store";
@@ -4030,129 +4031,64 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
         </div>
       )}
 
-      {failedPushesOpen && (
-        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/50">
-          <div className="w-full max-w-4xl rounded-xl border border-border bg-card shadow-2xl">
-            <div className="flex items-center justify-between border-b border-border px-5 py-4">
-              <div>
-                <h3 className="text-base font-bold text-foreground">Failed Pushes</h3>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  These marketplace writes failed and are still safe to retry through the guarded push flow.
-                </p>
-              </div>
-              <div className="flex items-center gap-2">
-                {failedPushCount > 1 && (
-                  <button
-                    onClick={() => {
-                      setFailedPushesOpen(false);
-                      queuePushReview(
-                        failedPushes.map(
-                          ({
-                            retryKey: _retryKey,
-                            pushJobId: _pushJobId,
-                            failedAt: _failedAt,
-                            platformLabel: _platformLabel,
-                            fieldLabel: _fieldLabel,
-                            oldDisplay: _oldDisplay,
-                            newDisplay: _newDisplay,
-                            error: _error,
-                            failureCategory: _failureCategory,
-                            failureSummary: _failureSummary,
-                            recommendedAction: _recommendedAction,
-                            ...item
-                          }) =>
-                            item,
-                        ),
-                      );
-                    }}
-                    className="rounded-md border border-primary/30 bg-primary/10 px-3 py-2 text-xs font-medium text-primary transition-colors hover:bg-primary/20 cursor-pointer"
-                  >
-                    Retry All
-                  </button>
-                )}
-                <button
-                  onClick={() => setFailedPushesOpen(false)}
-                  className="rounded-md px-3 py-2 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground cursor-pointer"
-                >
-                  Close
-                </button>
-              </div>
-            </div>
-            <div className="max-h-[70vh] overflow-y-auto px-5 py-4">
-              {failedPushesLoading ? (
-                <div className="py-12 text-center text-sm text-muted-foreground">Loading failed pushes...</div>
-              ) : failedPushCount === 0 ? (
-                <div className="py-12 text-center text-sm text-muted-foreground">No failed pushes are waiting for retry.</div>
-              ) : (
-                <div className="space-y-3">
-                  {failedPushes.map((failure) => {
-                    const {
-                      retryKey,
-                      pushJobId,
-                      failedAt,
-                      platformLabel,
-                      fieldLabel,
-                      oldDisplay,
-                      newDisplay,
-                      error,
-                      failureCategory,
-                      failureSummary,
-                      recommendedAction,
-                      ...pushItem
-                    } = failure;
+      {failedPushesOpen && (() => {
+        const CATEGORY_LABELS: Record<string, string> = {
+          "validation": "Validation / Rejected",
+          "rate-limit": "Rate Limit",
+          "marketplace": "Marketplace Error",
+          "timeout": "Timeout",
+          "auth": "Auth / Credentials",
+          "write-safety": "Write Safety",
+          "unknown": "Other",
+        };
+        const FIELD_LABELS: Record<string, string> = { upc: "UPC", salePrice: "Sale Price", adRate: "Ad Rate" };
 
-                    return (
-                      <article key={retryKey} className="rounded-xl border border-red-500/20 bg-red-500/5 px-4 py-3">
-                        <div className="flex flex-wrap items-start justify-between gap-3">
-                          <div className="min-w-0 flex-1">
-                            <div className="flex flex-wrap items-center gap-2">
-                              <span className="rounded bg-red-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-red-300">
-                                {PLATFORM_SHORT[failure.platform]}
-                              </span>
-                              <span className="text-sm font-semibold text-foreground">{failure.sku}</span>
-                              <span className="text-xs text-muted-foreground">{fieldLabel}</span>
-                            </div>
-                            <p className="mt-1 text-sm text-foreground">
-                              {oldDisplay} changed to {newDisplay}
-                            </p>
-                            <div className="mt-2 flex flex-wrap items-center gap-2">
-                              <span className="rounded bg-amber-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-300">
-                                {failureCategory.replace("-", " ")}
-                              </span>
-                              <span className="text-xs text-foreground/90">{failureSummary}</span>
-                            </div>
-                            <p className="mt-1 text-xs text-muted-foreground">
-                              {platformLabel} • Job {pushJobId.slice(0, 8)} • {new Date(failedAt).toLocaleString("en-US", {
-                                timeZone: "America/New_York",
-                                month: "numeric",
-                                day: "numeric",
-                                year: "numeric",
-                                hour: "numeric",
-                                minute: "2-digit",
-                              })}
-                            </p>
-                            <p className="mt-2 text-xs text-amber-100">Next step: {recommendedAction}</p>
-                            <p className="mt-2 text-xs text-red-200">{error}</p>
-                          </div>
-                          <button
-                            onClick={() => {
-                              setFailedPushesOpen(false);
-                              queuePushReview([pushItem]);
-                            }}
-                            className="shrink-0 rounded-md bg-primary px-3 py-2 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90 cursor-pointer"
-                          >
-                            Retry Push
-                          </button>
-                        </div>
-                      </article>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
+        const categorySet = new Map<string, number>();
+        const platformSet = new Map<string, number>();
+        const fieldSet = new Map<string, number>();
+        for (const f of failedPushes) {
+          categorySet.set(f.failureCategory, (categorySet.get(f.failureCategory) ?? 0) + 1);
+          platformSet.set(f.platform, (platformSet.get(f.platform) ?? 0) + 1);
+          fieldSet.set(f.field, (fieldSet.get(f.field) ?? 0) + 1);
+        }
+
+        return (
+          <FailedPushesModal
+            failedPushes={failedPushes}
+            failedPushesLoading={failedPushesLoading}
+            failedPushCount={failedPushCount}
+            categorySet={categorySet}
+            platformSet={platformSet}
+            fieldSet={fieldSet}
+            categoryLabels={CATEGORY_LABELS}
+            fieldLabels={FIELD_LABELS}
+            onClose={() => setFailedPushesOpen(false)}
+            onRetryAll={(items) => {
+              setFailedPushesOpen(false);
+              queuePushReview(items);
+            }}
+            onRetryOne={(pushItem) => {
+              setFailedPushesOpen(false);
+              queuePushReview([pushItem]);
+            }}
+            onSaveLocalBatch={(items) => {
+              let completed = 0;
+              for (const item of items) {
+                const row = gridRows.find((r: GridRow) => r.sku === item.sku);
+                if (!row) continue;
+                handleSaveUpcLocalOnly(row.id, {
+                  platform: item.platform,
+                  listingId: item.listingId,
+                  rejectionReason: item.error,
+                });
+                completed++;
+              }
+              showToast(`Saved ${completed} UPC${completed === 1 ? "" : "s"} locally (dashboard only).`);
+              void loadFailedPushes();
+            }}
+          />
+        );
+      })()}
 
       {bulkUpcOpen && (
         <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/50">
