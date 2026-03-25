@@ -71,8 +71,9 @@ function resolveSyncModes(
     return {
       requestedMode: desiredMode,
       effectiveMode: "full",
-      fallbackReason:
-        "Incremental sync groundwork is configured for this store, but the live delta adapter is not enabled yet. Falling back to a full pull.",
+      fallbackReason: requestedMode === "incremental"
+        ? "Incremental sync was requested but is not available for this store yet. Running a full pull instead."
+        : null,
     };
   }
 
