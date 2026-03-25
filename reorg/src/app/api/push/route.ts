@@ -55,74 +55,120 @@ const FIRST_LIVE_PUSH_CHECKLIST = [
 async function resolvePushChanges(
   changes: z.infer<typeof pushSchema>["changes"],
 ) {
-  return Promise.all(
-    changes.map(async (change) => {
-      const listing =
-        change.marketplaceListingId
-          ? await db.marketplaceListing.findUnique({
-              where: { id: change.marketplaceListingId },
-              include: {
-                masterRow: { select: { id: true, sku: true, upc: true } },
-                stagedChanges: {
-                  where: { status: "STAGED", field: change.field },
-                  orderBy: { createdAt: "desc" },
-                  take: 1,
-                },
-                integration: { select: { platform: true } },
-              },
-            })
-          : await db.marketplaceListing.findFirst({
-              where: {
-                platformItemId: change.listingId,
-                integration: { platform: change.platform },
-                ...(change.masterRowId
-                  ? { masterRowId: change.masterRowId }
-                  : change.sku
-                    ? { masterRow: { sku: change.sku } }
-                    : {}),
-              },
-              include: {
-                masterRow: { select: { id: true, sku: true, upc: true } },
-                stagedChanges: {
-                  where: { status: "STAGED", field: change.field },
-                  orderBy: { createdAt: "desc" },
-                  take: 1,
-                },
-                integration: { select: { platform: true } },
-              },
-            });
+  const withId = changes.filter((c) => c.marketplaceListingId);
+  const withoutId = changes.filter((c) => !c.marketplaceListingId);
 
-      if (!listing) {
-        throw new Error(
-          `Could not resolve ${change.platform} listing ${change.listingId} for ${change.field}.`,
-        );
-      }
+  const listingIds = [...new Set(withId.map((c) => c.marketplaceListingId!))];
+  const listingMap = new Map<string, {
+    id: string;
+    masterRowId: string;
+    platformVariantId: string | null;
+    salePrice: number | null;
+    adRate: number | null;
+    masterRow: { id: string; sku: string; upc: string | null };
+    stagedChanges: { id: string; field: string }[];
+    integration: { platform: Platform };
+  }>();
 
-      const stagedChangeId =
-        change.stagedChangeId ??
-        listing.stagedChanges[0]?.id ??
-        null;
+  const BULK_CHUNK = 500;
+  for (let i = 0; i < listingIds.length; i += BULK_CHUNK) {
+    const batch = listingIds.slice(i, i + BULK_CHUNK);
+    const listings = await db.marketplaceListing.findMany({
+      where: { id: { in: batch } },
+      include: {
+        masterRow: { select: { id: true, sku: true, upc: true } },
+        stagedChanges: {
+          where: { status: "STAGED" },
+          orderBy: { createdAt: "desc" },
+        },
+        integration: { select: { platform: true } },
+      },
+    });
+    for (const l of listings) listingMap.set(l.id, l);
+  }
 
-      return {
-        stagedChangeId,
-        masterRowId: change.masterRowId ?? listing.masterRowId,
-        marketplaceListingId: change.marketplaceListingId ?? listing.id,
-        platformVariantId: change.platformVariantId ?? listing.platformVariantId ?? null,
-        platform: change.platform,
-        listingId: change.listingId,
-        field: change.field,
-        oldValue:
-          change.oldValue ??
-          (change.field === "adRate"
-            ? listing.adRate
-            : change.field === "salePrice"
-              ? listing.salePrice
-              : listing.masterRow.upc) ??
-          null,
-        newValue: change.newValue,
-      };
-    }),
-  );
+  const resolved = withId.map((change) => {
+    const listing = listingMap.get(change.marketplaceListingId!);
+    if (!listing) {
+      throw new Error(
+        `Could not resolve ${change.platform} listing ${change.listingId} for ${change.field}.`,
+      );
+    }
+    const matchingStagedChange = listing.stagedChanges.find((sc) => sc.field === change.field);
+    return {
+      stagedChangeId: change.stagedChangeId ?? matchingStagedChange?.id ?? null,
+      masterRowId: change.masterRowId ?? listing.masterRowId,
+      marketplaceListingId: listing.id,
+      platformVariantId: change.platformVariantId ?? listing.platformVariantId ?? null,
+      platform: change.platform,
+      listingId: change.listingId,
+      field: change.field,
+      oldValue:
+        change.oldValue ??
+        (change.field === "adRate"
+          ? listing.adRate
+          : change.field === "salePrice"
+            ? listing.salePrice
+            : listing.masterRow.upc) ??
+        null,
+      newValue: change.newValue,
+    };
+  });
+
+  const RESOLVE_CHUNK = 50;
+  for (let i = 0; i < withoutId.length; i += RESOLVE_CHUNK) {
+    const chunk = withoutId.slice(i, i + RESOLVE_CHUNK);
+    const batch = await Promise.all(
+      chunk.map(async (change) => {
+        const listing = await db.marketplaceListing.findFirst({
+          where: {
+            platformItemId: change.listingId,
+            integration: { platform: change.platform },
+            ...(change.masterRowId
+              ? { masterRowId: change.masterRowId }
+              : change.sku
+                ? { masterRow: { sku: change.sku } }
+                : {}),
+          },
+          include: {
+            masterRow: { select: { id: true, sku: true, upc: true } },
+            stagedChanges: {
+              where: { status: "STAGED", field: change.field },
+              orderBy: { createdAt: "desc" },
+              take: 1,
+            },
+            integration: { select: { platform: true } },
+          },
+        });
+        if (!listing) {
+          throw new Error(
+            `Could not resolve ${change.platform} listing ${change.listingId} for ${change.field}.`,
+          );
+        }
+        return {
+          stagedChangeId: change.stagedChangeId ?? listing.stagedChanges[0]?.id ?? null,
+          masterRowId: change.masterRowId ?? listing.masterRowId,
+          marketplaceListingId: listing.id,
+          platformVariantId: change.platformVariantId ?? listing.platformVariantId ?? null,
+          platform: change.platform,
+          listingId: change.listingId,
+          field: change.field,
+          oldValue:
+            change.oldValue ??
+            (change.field === "adRate"
+              ? listing.adRate
+              : change.field === "salePrice"
+                ? listing.salePrice
+                : listing.masterRow.upc) ??
+            null,
+          newValue: change.newValue,
+        };
+      }),
+    );
+    resolved.push(...batch);
+  }
+
+  return resolved;
 }
 
 export async function POST(request: NextRequest) {
