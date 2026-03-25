@@ -124,6 +124,8 @@ type SyncRouteData = {
     }>;
     exhaustedMethods: string[];
     nextResetAt: string | null;
+    isDegradedEstimate?: boolean;
+    degradedNote?: string;
   } | null;
   quotaPolicy: {
     reservedGetItemCalls: number | null;
@@ -878,14 +880,22 @@ export default function SyncPage() {
                 {/* ---- eBay API credits ---- */}
                 {isEbay && (
                   <div className="mt-4 rounded-lg border border-border/60 bg-muted/10 px-3 py-2.5">
-                    <div className="flex items-center justify-between">
-                      <span className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">eBay API Credits</span>
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
+                        eBay API Credits
+                        {rateLimits?.isDegradedEstimate ? (
+                          <span className="ml-1.5 font-normal normal-case text-amber-400/90">(estimate)</span>
+                        ) : null}
+                      </span>
                       {rateLimits?.nextResetAt && (
                         <span className="text-[10px] text-muted-foreground">
                           Resets {formatRelativeTime(rateLimits.nextResetAt, nowMs).replace(" ago", "")}
                         </span>
                       )}
                     </div>
+                    {rateLimits?.degradedNote && (
+                      <p className="mt-1.5 text-[10px] leading-snug text-amber-400/90">{rateLimits.degradedNote}</p>
+                    )}
                     {rateLimits && rateLimits.methods.length > 0 ? (
                       <div className="mt-2 space-y-2">
                         {rateLimits.methods.map((method) => {
@@ -898,12 +908,16 @@ export default function SyncPage() {
                             method.status === "exhausted" ? "text-red-400"
                               : method.status === "tight" ? "text-amber-400"
                               : "text-emerald-400";
+                          const countLabel =
+                            rateLimits.isDegradedEstimate && method.name === "GetItem"
+                              ? `${method.remaining.toLocaleString()} / ~${method.limit.toLocaleString()}`
+                              : `${method.remaining.toLocaleString()} / ${method.limit.toLocaleString()}`;
                           return (
                             <div key={method.name}>
                               <div className="flex items-center justify-between text-[11px]">
                                 <span className="text-muted-foreground">{method.name}</span>
                                 <span className={cn("font-semibold tabular-nums", textColor)}>
-                                  {method.remaining.toLocaleString()} / {method.limit.toLocaleString()}
+                                  {countLabel}
                                 </span>
                               </div>
                               <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-muted/40">
@@ -915,7 +929,9 @@ export default function SyncPage() {
                       </div>
                     ) : (
                       <p className="mt-2 text-[11px] text-muted-foreground">
-                        {isSyncing ? "Loading credits..." : "Credits unavailable — will refresh on next sync."}
+                        {isSyncing ? "Loading credits..." : cooldown?.active && cooldown.retryLabel
+                          ? `Live call counts will load after the cooldown (retry around ${cooldown.retryLabel}).`
+                          : "Credits unavailable — will refresh on next sync."}
                       </p>
                     )}
                   </div>

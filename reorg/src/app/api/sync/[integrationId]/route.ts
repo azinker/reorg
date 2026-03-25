@@ -15,6 +15,7 @@ import {
   isEbayPlatform,
 } from "@/lib/services/ebay-rate-limit";
 import {
+  buildGetItemCooldownRateLimitsSnapshot,
   getEbayCooldownUntilFromSnapshot,
   getEbayMethodRate,
   getEbayTradingRateLimitSnapshotForIntegration,
@@ -319,7 +320,7 @@ export async function GET(
       ? ((latestWebhook.details as Record<string, unknown>) ?? {})
       : null;
     const lastWebhookReceivedAt = latestWebhook?.createdAt ?? null;
-    const rateLimits = isEbayPlatform(integration.platform)
+    let rateLimits = isEbayPlatform(integration.platform)
       ? await getEbayTradingRateLimitSnapshotForIntegration(integration).catch((err) => {
           console.error(`[sync][GET][${integration.platform}] eBay rate limit fetch failed:`, err);
           return null;
@@ -328,11 +329,6 @@ export async function GET(
     const sharedStoreCount = isEbayPlatform(integration.platform)
       ? await getSharedEbayQuotaStoreCount(integration)
       : 1;
-    const getItemRate = rateLimits ? getEbayMethodRate(rateLimits, "GetItem") : null;
-    const reservedGetItemCalls =
-      getItemRate && getItemRate.limit > 0
-        ? getReservedEbayGetItemCalls(getItemRate.limit, sharedStoreCount)
-        : null;
     const cooldownUntil =
       getEbayCooldownUntilFromSnapshot(
         rateLimits,
@@ -344,6 +340,16 @@ export async function GET(
       config,
       new Date(),
       );
+
+    if (isEbayPlatform(integration.platform) && !rateLimits && cooldownUntil) {
+      rateLimits = buildGetItemCooldownRateLimitsSnapshot(cooldownUntil);
+    }
+
+    const getItemRate = rateLimits ? getEbayMethodRate(rateLimits, "GetItem") : null;
+    const reservedGetItemCalls =
+      getItemRate && getItemRate.limit > 0 && !rateLimits?.isDegradedEstimate
+        ? getReservedEbayGetItemCalls(getItemRate.limit, sharedStoreCount)
+        : null;
 
     return NextResponse.json({
       data: {

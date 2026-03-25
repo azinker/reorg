@@ -25,6 +25,9 @@ export interface EbayTradingRateLimitSnapshot {
   methods: EbayMethodRateLimit[];
   exhaustedMethods: string[];
   nextResetAt: string | null;
+  /** True when live GetApiAccessRules failed but UI shows a GetItem-only cooldown estimate */
+  isDegradedEstimate?: boolean;
+  degradedNote?: string;
 }
 
 type FullEbayCredentials = {
@@ -151,6 +154,30 @@ export function getEbayCredentialFingerprint(
   return credentials ? getCacheKey(credentials) : null;
 }
 
+/** Shown when GetApiAccessRules is unavailable but we know GetItem is in a cooldown window. */
+export function buildGetItemCooldownRateLimitsSnapshot(cooldownUntil: Date): EbayTradingRateLimitSnapshot {
+  const resetIso = cooldownUntil.toISOString();
+  return {
+    fetchedAt: new Date().toISOString(),
+    methods: [
+      {
+        name: "GetItem",
+        count: 0,
+        limit: 5000,
+        remaining: 0,
+        reset: resetIso,
+        timeWindowSeconds: 86400,
+        status: "exhausted",
+      },
+    ],
+    exhaustedMethods: ["GetItem"],
+    nextResetAt: resetIso,
+    isDegradedEstimate: true,
+    degradedNote:
+      "Live per-method counts from eBay could not be loaded. GetItem is over quota — shown as 0 remaining (daily cap is typically 5,000; exact usage appears after the cooldown). Refresh this page after the reset time.",
+  };
+}
+
 export async function getEbayTradingRateLimitSnapshotForIntegration(
   integration: Pick<Integration, "config">,
 ) {
@@ -193,6 +220,14 @@ export async function getEbayTradingRateLimitSnapshotForIntegration(
   const xml = await response.text();
   const parsed = xmlParser.parse(xml);
   const apiResponse = parsed?.GetApiAccessRulesResponse;
+  const ack =
+    apiResponse && typeof apiResponse === "object"
+      ? String((apiResponse as Record<string, unknown>).Ack ?? "")
+      : "";
+  if (ack === "Failure") {
+    console.warn("[ebay-analytics] GetApiAccessRules returned Failure Ack");
+    throw new Error("GetApiAccessRules Ack=Failure");
+  }
   const rules: unknown[] = apiResponse?.ApiAccessRule ?? [];
 
   const monitoredSet = new Set<string>(MONITORED_EBAY_METHODS);

@@ -1,5 +1,5 @@
 import { db } from "@/lib/db";
-import { Platform, Prisma, type SyncStatus } from "@prisma/client";
+import { Platform, Prisma, type Integration, type SyncStatus } from "@prisma/client";
 import { XMLParser } from "fast-xml-parser";
 import type { RawListing } from "@/lib/integrations/types";
 import { getIntegrationConfig } from "@/lib/integrations/runtime-config";
@@ -11,11 +11,17 @@ import {
   buildEbayQuotaExhaustedMessage,
   getEbayMethodRate,
   getEbayTradingRateLimitSnapshotForIntegration,
+  type EbayTradingRateLimitSnapshot,
 } from "@/lib/services/ebay-analytics";
 import {
   buildEbayIncrementalBudgetPlan,
   getPendingIncrementalWindow,
+  getSharedEbayQuotaStoreCount,
 } from "@/lib/services/ebay-sync-budget";
+import {
+  getFallbackPerRunEbayGetItemBudget,
+  getPerRunEbayGetItemBudget,
+} from "@/lib/services/ebay-sync-policy";
 import {
   matchListings,
   upsertMarketplaceListings,
@@ -609,7 +615,7 @@ export async function runEbayTtSync(
         );
       }
 
-      await runFullSync(integration.id, ebayConfig, syncJob.id, progress);
+      await runFullSync(integration, ebayConfig, syncJob.id, progress, analyticsSnapshot);
       const stalePrune = await removeMarketplaceListingsOlderThan(
         integration.id,
         syncJob.startedAt ?? new Date(0),
@@ -662,16 +668,20 @@ export async function runEbayTtSync(
       },
     });
 
-    await repairVariationFamiliesForIntegration(integration.id);
+    try {
+      await repairVariationFamiliesForIntegration(integration.id);
 
-    if (effectiveMode === "full") {
-      const adRatesUpdated = await fetchAndStorePromotedListingRates(
-        integration.id,
-        ebayConfig,
-      );
-      if (adRatesUpdated > 0) {
-        console.log(`[ebay-tt-sync] Refreshed ${adRatesUpdated} promoted listing rates`);
+      if (effectiveMode === "full") {
+        const adRatesUpdated = await fetchAndStorePromotedListingRates(
+          integration.id,
+          ebayConfig,
+        );
+        if (adRatesUpdated > 0) {
+          console.log(`[ebay-tt-sync] Refreshed ${adRatesUpdated} promoted listing rates`);
+        }
       }
+    } catch (postSyncErr) {
+      console.error("[ebay-tt-sync] Post-sync reconcile step failed", postSyncErr);
     }
   } catch (error) {
     progress.status = "FAILED";
@@ -705,11 +715,33 @@ export async function runEbayTtSync(
 }
 
 async function runFullSync(
-  integrationId: string,
+  integration: Pick<Integration, "id" | "config" | "platform">,
   ebayConfig: EbayConfig,
   syncJobId: string,
   progress: SyncProgress,
+  analyticsSnapshot: EbayTradingRateLimitSnapshot | null,
 ) {
+  const integrationId = integration.id;
+  const integrationConfig = getIntegrationConfig(integration);
+  const sharedStoreCount = await getSharedEbayQuotaStoreCount(integration);
+  const getItemRate = getEbayMethodRate(analyticsSnapshot, "GetItem");
+  let hydrateBudget =
+    getItemRate && getItemRate.limit > 0
+      ? getPerRunEbayGetItemBudget({
+          remaining: getItemRate.remaining,
+          limit: getItemRate.limit,
+          now: new Date(),
+          timeZone: integrationConfig.syncProfile.timezone,
+          sharedStoreCount,
+        })
+      : getFallbackPerRunEbayGetItemBudget(
+          new Date(),
+          integrationConfig.syncProfile.timezone,
+        );
+  let hydrateCallsUsed = 0;
+  let skipHydrateDueToLimit = false;
+  let hydrateNoticePushed = false;
+
   let page = 1;
   const perPage = 100;
   let hasMore = true;
@@ -809,17 +841,48 @@ async function runFullSync(
         const itemId = str(item, "ItemID");
         let itemForApply = item;
 
-        if (itemId && needsFullItemForUpc(item)) {
-          try {
-            itemForApply = (await fetchFullItem(integrationId, ebayConfig, itemId)) ?? item;
-          } catch (error) {
-            progress.errors.push({
-              sku: itemId,
-              message:
-                error instanceof Error
-                  ? `GetItem UPC hydrate failed: ${error.message}`
-                  : "GetItem UPC hydrate failed.",
-            });
+        if (itemId && needsFullItemForUpc(item) && !skipHydrateDueToLimit) {
+          if (hydrateCallsUsed >= hydrateBudget) {
+            if (!hydrateNoticePushed) {
+              hydrateNoticePushed = true;
+              progress.errors.push({
+                sku: "_global",
+                message:
+                  `UPC hydration paused for the rest of this run after ${hydrateBudget} GetItem calls (daily quota pacing). ` +
+                  `Listings still save from GetSellerList; run another sync later to backfill UPCs.`,
+              });
+            }
+          } else {
+            try {
+              itemForApply =
+                (await fetchFullItem(integrationId, ebayConfig, itemId)) ?? item;
+              hydrateCallsUsed += 1;
+            } catch (error) {
+              if (isEbayUsageLimitError(error)) {
+                skipHydrateDueToLimit = true;
+                await recordRateLimitState(
+                  integrationId,
+                  error instanceof Error ? error.message : "eBay GetItem usage limit reached.",
+                );
+                if (!hydrateNoticePushed) {
+                  hydrateNoticePushed = true;
+                  progress.errors.push({
+                    sku: "_global",
+                    message:
+                      "eBay blocked further GetItem calls (daily usage limit). Listings were saved from GetSellerList. " +
+                      "Wait for the cooldown on Sync, then run another pull to continue UPC hydration.",
+                  });
+                }
+              } else {
+                progress.errors.push({
+                  sku: itemId,
+                  message:
+                    error instanceof Error
+                      ? `GetItem UPC hydrate failed: ${error.message}`
+                      : "GetItem UPC hydrate failed.",
+                });
+              }
+            }
           }
         }
 
