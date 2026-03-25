@@ -634,6 +634,14 @@ function buildGridRow(
     return null;
   }
   const totalChildListings = parentListings.reduce((sum: number, l: DBListing) => sum + (l.childListings?.length ?? 0), 0);
+
+  // Synthetic parent MasterRows (created by variation-repair for single-variant
+  // BC/Shopify products) have ONLY variation-flagged listings and zero real
+  // children. Skip them — the real data lives on the original MasterRow.
+  if (totalChildListings === 0 && parentListings.every((l: DBListing) => l.isVariation)) {
+    return null;
+  }
+
   const isVariationParent = totalChildListings > 0 || parentListings.some((l: DBListing) => l.isVariation && l.childListings.length > 0);
   const hasVariationListings = parentListings.some((l: DBListing) => l.isVariation);
 

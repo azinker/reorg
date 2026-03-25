@@ -275,16 +275,33 @@ export async function cleanupFalseVariationFamilies(integrationId?: string) {
 
     const parentListing = await db.marketplaceListing.findUnique({
       where: { id: parentId },
-      select: { id: true, masterRowId: true, isVariation: true },
+      select: { id: true, masterRowId: true },
     });
 
     if (!parentListing) continue;
 
-    await db.marketplaceListing.delete({ where: { id: parentId } });
+    // Try to fully remove the orphaned parent listing. StagedChanges must
+    // be removed first to avoid FK constraint violations.
+    try {
+      await db.stagedChange.deleteMany({
+        where: { marketplaceListingId: parentId },
+      });
+      await db.marketplaceListing.delete({ where: { id: parentId } });
+    } catch {
+      // FK constraint or other error — fall through to deactivate the
+      // MasterRow so the junk row at least disappears from the grid.
+    }
 
     if (parentListing.masterRowId) {
+      // Count only real listings (exclude the orphaned parent if delete failed)
       const remainingListings = await db.marketplaceListing.count({
-        where: { masterRowId: parentListing.masterRowId },
+        where: {
+          masterRowId: parentListing.masterRowId,
+          OR: [
+            { isVariation: false },
+            { childListings: { some: {} } },
+          ],
+        },
       });
 
       if (remainingListings === 0) {
