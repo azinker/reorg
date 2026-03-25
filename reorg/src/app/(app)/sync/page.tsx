@@ -400,13 +400,39 @@ function formatSchedule(profile: SyncProfile, platform: string) {
 /*  Tooltip helper                                                     */
 /* ------------------------------------------------------------------ */
 
-function Tip({ children, text }: { children: React.ReactNode; text: string }) {
+function Tip({
+  children,
+  text,
+  side = "top",
+}: {
+  children: React.ReactNode;
+  text: string;
+  /** `bottom` avoids clipping when the trigger sits just under the app header (main has overflow-auto). */
+  side?: "top" | "bottom";
+}) {
+  if (side === "bottom") {
+    return (
+      <div className="group/tip relative inline-flex">
+        {children}
+        <div className="pointer-events-none absolute left-1/2 top-full z-[100] mt-2 w-60 -translate-x-1/2 rounded-lg border border-border bg-popover px-3 py-2 text-xs leading-relaxed text-popover-foreground opacity-0 shadow-lg transition-opacity duration-200 group-hover/tip:opacity-100">
+          <div
+            className="absolute bottom-full left-1/2 -translate-x-1/2 border-[6px] border-transparent border-b-border"
+            aria-hidden
+          />
+          {text}
+        </div>
+      </div>
+    );
+  }
   return (
     <div className="group/tip relative inline-flex">
       {children}
-      <div className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-2.5 w-60 -translate-x-1/2 rounded-lg border border-border bg-popover px-3 py-2 text-xs leading-relaxed text-popover-foreground opacity-0 shadow-lg transition-opacity duration-200 group-hover/tip:opacity-100">
+      <div className="pointer-events-none absolute bottom-full left-1/2 z-[100] mb-2.5 w-60 -translate-x-1/2 rounded-lg border border-border bg-popover px-3 py-2 text-xs leading-relaxed text-popover-foreground opacity-0 shadow-lg transition-opacity duration-200 group-hover/tip:opacity-100">
         {text}
-        <div className="absolute left-1/2 top-full -translate-x-1/2 border-[5px] border-transparent border-t-border" />
+        <div
+          className="absolute left-1/2 top-full -translate-x-1/2 border-[5px] border-transparent border-t-border"
+          aria-hidden
+        />
       </div>
     </div>
   );
@@ -723,7 +749,10 @@ export default function SyncPage() {
             <span className={cn("h-1.5 w-1.5 rounded-full", schedulerEnabled ? "bg-emerald-400 animate-pulse" : "bg-muted-foreground")} />
             Auto-sync {schedulerEnabled ? "on" : "off"}
           </div>
-          <Tip text="Triggers a quick sync on every connected store at once. Uses each store's preferred mode (incremental or full).">
+          <Tip
+            side="bottom"
+            text="Triggers a quick sync on every connected store at once. Uses each store's preferred mode (incremental or full)."
+          >
             <button
               type="button"
               disabled={syncAllRunning}
