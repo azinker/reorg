@@ -364,9 +364,9 @@ export function PushConfirmModal({
     });
   }
 
-  const LIVE_PUSH_BATCH_SIZE = 80;
+  const LIVE_PUSH_BATCH_SIZE = 200;
 
-  async function sendPushBatch(changes: PushItem[], dryRun: boolean) {
+  async function sendPushBatch(changes: PushItem[], dryRun: boolean, skipPrePushBackup = false) {
     const response = await fetch("/api/push", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -374,6 +374,7 @@ export function PushConfirmModal({
         changes,
         dryRun,
         confirmedLivePush: !dryRun,
+        skipPrePushBackup,
       }),
     });
 
@@ -459,8 +460,19 @@ export function PushConfirmModal({
       });
 
       try {
-        const data = await sendPushBatch(batches[b], false);
+        const data = await sendPushBatch(batches[b], false, b > 0);
         lastData = data;
+
+        if (data.status === "blocked") {
+          allFailedItems.push(...batches[b]);
+          totalFailed += batches[b].length;
+          setErrorMessage(`Batch ${b + 1} was blocked: ${(data as { blockedReason?: string }).blockedReason ?? "safety rule"}`);
+          for (let remaining = b + 1; remaining < batches.length; remaining++) {
+            allFailedItems.push(...batches[remaining]);
+            totalFailed += batches[remaining].length;
+          }
+          break;
+        }
 
         const batchSucceeded = data.results?.filter((r: { success: boolean }) => r.success).length ?? 0;
         const batchFailed = data.results?.filter((r: { success: boolean }) => !r.success).length ?? 0;
@@ -480,27 +492,11 @@ export function PushConfirmModal({
             }
           }
         }
-
-        if (data.status === "blocked") {
-          setErrorMessage(`Batch ${b + 1} was blocked: ${(data as { blockedReason?: string }).blockedReason ?? "safety rule"}`);
-          for (let remaining = b + 1; remaining < batches.length; remaining++) {
-            allFailedItems.push(...batches[remaining]);
-            totalFailed += batches[remaining].length;
-          }
-          break;
-        }
       } catch (error) {
         totalFailed += batches[b].length;
         allFailedItems.push(...batches[b]);
-        setErrorMessage(
-          `Batch ${b + 1}/${batches.length} failed: ${error instanceof Error ? error.message : "Unknown error"}. ` +
-          `${totalSucceeded} changes succeeded before the failure.`,
-        );
-        for (let remaining = b + 1; remaining < batches.length; remaining++) {
-          allFailedItems.push(...batches[remaining]);
-          totalFailed += batches[remaining].length;
-        }
-        break;
+        const msg = error instanceof Error ? error.message : "Unknown error";
+        setErrorMessage(`Batch ${b + 1}/${batches.length} hit an error: ${msg}. Continuing remaining batches.`);
       }
     }
 

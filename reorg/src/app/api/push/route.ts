@@ -31,6 +31,7 @@ const pushSchema = z.object({
   ),
   dryRun: z.boolean().default(true),
   confirmedLivePush: z.boolean().default(false),
+  skipPrePushBackup: z.boolean().default(false),
 });
 
 const FIRST_LIVE_PUSH_CHECKLIST = [
@@ -183,7 +184,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { changes, dryRun, confirmedLivePush } = parsed.data;
+    const { changes, dryRun, confirmedLivePush, skipPrePushBackup } = parsed.data;
     const session = await auth();
     const actorUserId = session?.user?.id ?? ((isAuthBypassEnabled() ? (await getSystemUser()).id : null));
 
@@ -245,7 +246,7 @@ export async function POST(request: NextRequest) {
         dryRun,
       },
       adapters,
-      { deferPostPushRefresh: !dryRun },
+      { deferPostPushRefresh: !dryRun, skipPrePushBackup },
     );
     const { deferredPostPushRefreshTask, ...publicResult } = result;
     if (deferredPostPushRefreshTask) {

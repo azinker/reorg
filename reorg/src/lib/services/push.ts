@@ -132,6 +132,7 @@ export interface DeferredPostPushRefreshTask {
 
 interface ExecutePushOptions {
   deferPostPushRefresh?: boolean;
+  skipPrePushBackup?: boolean;
 }
 
 const EBAY_PUSH_PLATFORMS = new Set<Platform>(["TPP_EBAY", "TT_EBAY"]);
@@ -958,7 +959,9 @@ export async function executePush(
   }
 
   const batchSafety = evaluateBatchSafety(summary, request.dryRun);
-  const prePushBackupPlan = evaluatePrePushBackupNeed(summary, request.dryRun);
+  const prePushBackupPlan = options.skipPrePushBackup
+    ? { status: "completed" as const, detail: "Pre-push backup was handled by an earlier batch in this push.", required: false, backupId: null }
+    : evaluatePrePushBackupNeed(summary, request.dryRun);
   if (!request.dryRun && prePushBackupPlan.status === "blocked") {
     const goLiveChecklist = buildGoLiveChecklist({
       dryRun: false,
@@ -1122,7 +1125,7 @@ export async function executePush(
     existing.push(change);
     byPlatform.set(change.platform, existing);
   }
-  if (prePushBackupPlan.required) {
+  if (prePushBackupPlan.required && !options.skipPrePushBackup) {
     try {
       const backup = await createBackup({
         type: "PRE_PUSH",
