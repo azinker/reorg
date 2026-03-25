@@ -8,6 +8,10 @@ import {
 } from "@/lib/services/sync-scheduler";
 import { captureDailyInventorySnapshots } from "@/lib/inventory-forecast/snapshots";
 
+export const runtime = "nodejs";
+export const maxDuration = 60;
+export const dynamic = "force-dynamic";
+
 const bodySchema = z
   .object({
     dryRun: z.boolean().default(false),

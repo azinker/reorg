@@ -596,8 +596,11 @@ export async function buildAutomationHealthSnapshot(
         now,
       });
       const recentFailure = latestFailedJobByIntegration.get(integration.id);
+      const isActualRateLimitCooldown =
+        item.reason.startsWith("Waiting for the eBay Trading API reset window") ||
+        item.reason.startsWith("Cooling down after an eBay API usage-limit response");
       const rateLimitCooldownUntil =
-        item.reason.toLowerCase().includes("ebay") && item.nextDueAt
+        isActualRateLimitCooldown && item.nextDueAt
           ? new Date(item.nextDueAt)
           : getEbayRateLimitCooldownUntil(
               integration.platform,
@@ -608,6 +611,10 @@ export async function buildAutomationHealthSnapshot(
         recentFailure &&
         !item.running &&
         (!lastSyncAt || recentFailure.failedAt.getTime() > lastSyncAt.getTime());
+      const isStaleAutoFail =
+        failedAfterLastSuccess &&
+        recentFailure.message != null &&
+        recentFailure.message.includes("stale running threshold");
       const isEbayRateLimitCooldown =
         failedAfterLastSuccess &&
         recentFailure.message != null &&
@@ -615,17 +622,19 @@ export async function buildAutomationHealthSnapshot(
       const syncMonitorBase = failedAfterLastSuccess
         ? {
             ...sync,
-            status: isEbayRateLimitCooldown
-              ? ("healthy" as const)
+            status: isEbayRateLimitCooldown || isStaleAutoFail
+              ? isStaleAutoFail ? ("delayed" as const) : ("healthy" as const)
               : ("attention" as const),
-            syncStatus: "stale" as const,
+            syncStatus: isStaleAutoFail ? ("delayed" as const) : ("stale" as const),
             syncMessage: isEbayRateLimitCooldown
               ? rateLimitCooldownUntil
                 ? `eBay API cooldown — resumes automatically around ${formatCooldownRetryAt(rateLimitCooldownUntil) ?? "the next automatic check"}.`
                 : "eBay API cooldown — will resume automatically after the cooldown window."
-              : recentFailure.message
-                ? `Latest pull failed: ${recentFailure.message}`
-                : "Latest pull failed before this store recorded a newer successful update.",
+              : isStaleAutoFail
+                ? "A recent pull timed out. The next scheduled pull will retry automatically."
+                : recentFailure.message
+                  ? `Latest pull failed: ${recentFailure.message}`
+                  : "Latest pull failed before this store recorded a newer successful update.",
           }
         : sync;
       const syncMonitorBaseAdjusted =

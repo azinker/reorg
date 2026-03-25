@@ -173,6 +173,8 @@ export async function POST(
     }
 
     const modes = resolveIntegrationSyncModes(integration, parsed.data?.mode);
+    const triggerSource =
+      request.headers.get("x-trigger-source") === "scheduler" ? "scheduler" : "manual";
     const runningJob = await db.syncJob.findFirst({
       where: { integrationId: integration.id, status: "RUNNING" },
       orderBy: { createdAt: "desc" },
@@ -204,7 +206,7 @@ export async function POST(
       data: {
         integrationId: integration.id,
         status: "RUNNING",
-        triggeredBy: `manual:${modes.effectiveMode}`,
+        triggeredBy: `${triggerSource}:${modes.effectiveMode}`,
         startedAt: new Date(),
       },
     });
@@ -217,13 +219,13 @@ export async function POST(
             requestedMode: modes.requestedMode,
             effectiveMode: modes.effectiveMode,
             fallbackReason: modes.fallbackReason,
-            triggerSource: "manual",
+            triggerSource,
             existingJobId: placeholderJob.id,
           },
           "inline",
         );
       } catch (error) {
-        console.error(`[sync] manual ${integration.platform} sync failed`, error);
+        console.error(`[sync] ${triggerSource} ${integration.platform} sync failed`, error);
         await db.syncJob.update({
           where: { id: placeholderJob.id },
           data: {

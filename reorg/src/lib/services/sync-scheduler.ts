@@ -4,7 +4,7 @@ import {
   getIntegrationConfig,
   type SyncMode,
 } from "@/lib/integrations/runtime-config";
-import { startIntegrationSync, resolveIntegrationSyncModes } from "@/lib/services/sync-control";
+import { resolveIntegrationSyncModes } from "@/lib/services/sync-control";
 import { failStaleRunningJob, isRunningJobStale } from "@/lib/services/sync-jobs";
 import {
   getCurrentSyncIntervalMinutes,
@@ -20,6 +20,19 @@ import {
   getEbayAutoSyncIntervalMinutes,
   getNextEbayAutoSyncAt,
 } from "@/lib/services/ebay-sync-policy";
+
+function getInternalBaseUrl(): string {
+  if (process.env.NEXT_PUBLIC_APP_URL) {
+    return process.env.NEXT_PUBLIC_APP_URL.replace(/\/$/, "");
+  }
+  if (process.env.VERCEL_PROJECT_PRODUCTION_URL) {
+    return `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`;
+  }
+  if (process.env.VERCEL_URL) {
+    return `https://${process.env.VERCEL_URL}`;
+  }
+  return "http://localhost:3000";
+}
 
 export interface SchedulerPlanItem {
   integrationId: string;
@@ -324,7 +337,15 @@ export async function planScheduledSyncs(now = new Date()) {
 export async function executeScheduledSyncs(now = new Date()) {
   const plan = await planScheduledSyncs(now);
   const dueItems = plan.filter((item) => item.due);
-  const dispatched = [];
+  const dispatched: Array<{
+    integrationId: string;
+    platform: string;
+    status: string;
+    jobId: string | null;
+    message: string;
+  }> = [];
+
+  const baseUrl = getInternalBaseUrl();
 
   for (const item of dueItems) {
     const integration = await db.integration.findUnique({
@@ -333,10 +354,39 @@ export async function executeScheduledSyncs(now = new Date()) {
 
     if (!integration) continue;
 
-    const result = await startIntegrationSync(integration, {
-      requestedMode: item.requestedMode,
-      triggerSource: "scheduler",
-    }, "inline");
+    let dispatchStatus = "dispatched";
+    let jobId: string | null = null;
+    let message = "";
+
+    try {
+      const mode = item.effectiveMode === "incremental" ? "incremental" : "full";
+      const response = await fetch(`${baseUrl}/api/sync/${integration.id}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-trigger-source": "scheduler",
+        },
+        body: JSON.stringify({ mode }),
+        signal: AbortSignal.timeout(15_000),
+      });
+
+      const data = await response.json().catch(() => ({})) as Record<string, unknown>;
+      const innerData = (data.data ?? {}) as Record<string, unknown>;
+      jobId = typeof innerData.jobId === "string" ? innerData.jobId : null;
+      message = typeof innerData.message === "string"
+        ? innerData.message
+        : typeof data.error === "string"
+          ? data.error
+          : `HTTP ${response.status}`;
+
+      if (!response.ok) {
+        dispatchStatus = response.status === 429 ? "cooldown" : "dispatch_failed";
+      }
+    } catch (error) {
+      dispatchStatus = "dispatch_failed";
+      message = error instanceof Error ? error.message : "Dispatch failed";
+      console.error(`[sync-scheduler] HTTP dispatch for ${integration.platform} failed`, error);
+    }
 
     const config = getIntegrationConfig(integration);
     const nextConfig = {
@@ -352,7 +402,13 @@ export async function executeScheduledSyncs(now = new Date()) {
       data: { config: nextConfig as unknown as Prisma.InputJsonValue },
     });
 
-    dispatched.push(result);
+    dispatched.push({
+      integrationId: integration.id,
+      platform: integration.platform,
+      status: dispatchStatus,
+      jobId,
+      message,
+    });
   }
 
   return { plan, dispatched };

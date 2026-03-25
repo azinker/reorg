@@ -876,42 +876,48 @@ export default function SyncPage() {
                 </div>
 
                 {/* ---- eBay API credits ---- */}
-                {isEbay && rateLimits && rateLimits.methods.length > 0 && (
+                {isEbay && (
                   <div className="mt-4 rounded-lg border border-border/60 bg-muted/10 px-3 py-2.5">
                     <div className="flex items-center justify-between">
                       <span className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">eBay API Credits</span>
-                      {rateLimits.nextResetAt && (
+                      {rateLimits?.nextResetAt && (
                         <span className="text-[10px] text-muted-foreground">
                           Resets {formatRelativeTime(rateLimits.nextResetAt, nowMs).replace(" ago", "")}
                         </span>
                       )}
                     </div>
-                    <div className="mt-2 space-y-2">
-                      {rateLimits.methods.map((method) => {
-                        const pct = method.limit > 0 ? Math.round((method.remaining / method.limit) * 100) : 0;
-                        const barColor =
-                          method.status === "exhausted" ? "bg-red-500"
-                            : method.status === "tight" ? "bg-amber-500"
-                            : "bg-emerald-500";
-                        const textColor =
-                          method.status === "exhausted" ? "text-red-400"
-                            : method.status === "tight" ? "text-amber-400"
-                            : "text-emerald-400";
-                        return (
-                          <div key={method.name}>
-                            <div className="flex items-center justify-between text-[11px]">
-                              <span className="text-muted-foreground">{method.name}</span>
-                              <span className={cn("font-semibold tabular-nums", textColor)}>
-                                {method.remaining.toLocaleString()} / {method.limit.toLocaleString()}
-                              </span>
+                    {rateLimits && rateLimits.methods.length > 0 ? (
+                      <div className="mt-2 space-y-2">
+                        {rateLimits.methods.map((method) => {
+                          const pct = method.limit > 0 ? Math.round((method.remaining / method.limit) * 100) : 0;
+                          const barColor =
+                            method.status === "exhausted" ? "bg-red-500"
+                              : method.status === "tight" ? "bg-amber-500"
+                              : "bg-emerald-500";
+                          const textColor =
+                            method.status === "exhausted" ? "text-red-400"
+                              : method.status === "tight" ? "text-amber-400"
+                              : "text-emerald-400";
+                          return (
+                            <div key={method.name}>
+                              <div className="flex items-center justify-between text-[11px]">
+                                <span className="text-muted-foreground">{method.name}</span>
+                                <span className={cn("font-semibold tabular-nums", textColor)}>
+                                  {method.remaining.toLocaleString()} / {method.limit.toLocaleString()}
+                                </span>
+                              </div>
+                              <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-muted/40">
+                                <div className={cn("h-full rounded-full transition-all", barColor)} style={{ width: `${pct}%` }} />
+                              </div>
                             </div>
-                            <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-muted/40">
-                              <div className={cn("h-full rounded-full transition-all", barColor)} style={{ width: `${pct}%` }} />
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <p className="mt-2 text-[11px] text-muted-foreground">
+                        {isSyncing ? "Loading credits..." : "Credits unavailable — will refresh on next sync."}
+                      </p>
+                    )}
                   </div>
                 )}
 
@@ -1003,45 +1009,61 @@ export default function SyncPage() {
                 )}
 
                 {/* errors (collapsible) */}
-                {!isSyncing && jobErrors.length > 0 && (
-                  <div className="mt-4">
-                    <button
-                      type="button"
-                      onClick={() => setErrorsExpanded((prev) => ({ ...prev, [store.apiPlatform]: !prev[store.apiPlatform] }))}
-                      className="flex w-full cursor-pointer items-center justify-between rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs font-medium text-red-400 transition-colors hover:bg-red-500/15"
-                    >
-                      <div className="flex items-center gap-1.5">
-                        <AlertTriangle className="h-3.5 w-3.5" />
-                        {jobErrors.length} issue{jobErrors.length > 1 ? "s" : ""}
+                {(() => {
+                  if (isSyncing || jobErrors.length === 0) return null;
+                  const isOnlyStaleError =
+                    jobErrors.length === 1 &&
+                    jobErrors[0].message.includes("stale running threshold");
+                  const realErrors = jobErrors.filter(
+                    (e) => !e.message.includes("stale running threshold"),
+                  );
+                  if (isOnlyStaleError) {
+                    return (
+                      <div className="mt-4 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
+                        Last pull timed out — the next scheduled sync will retry automatically.
                       </div>
-                      {showErrors ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
-                    </button>
-                    {showErrors && (
-                      <div className="mt-2 rounded-lg border border-border bg-background p-3">
-                        <div className="mb-2 flex items-center justify-between">
-                          <span className="text-[10px] font-bold uppercase text-muted-foreground">Error Log</span>
-                          <button
-                            type="button"
-                            onClick={() => copyErrors(store.apiPlatform)}
-                            className="flex cursor-pointer items-center gap-1 rounded border border-border bg-muted px-2 py-1 text-[10px] font-medium text-muted-foreground transition-colors hover:text-foreground"
-                          >
-                            <Copy className="h-3 w-3" />
-                            {copied === store.apiPlatform ? "Copied!" : "Copy All"}
-                          </button>
+                    );
+                  }
+                  return (
+                    <div className="mt-4">
+                      <button
+                        type="button"
+                        onClick={() => setErrorsExpanded((prev) => ({ ...prev, [store.apiPlatform]: !prev[store.apiPlatform] }))}
+                        className="flex w-full cursor-pointer items-center justify-between rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs font-medium text-red-400 transition-colors hover:bg-red-500/15"
+                      >
+                        <div className="flex items-center gap-1.5">
+                          <AlertTriangle className="h-3.5 w-3.5" />
+                          {realErrors.length} issue{realErrors.length > 1 ? "s" : ""}
                         </div>
-                        <div className="max-h-48 space-y-1 overflow-auto font-mono text-[11px]">
-                          {jobErrors.map((error, i) => (
-                            <div key={i} className="rounded border border-border/50 bg-card/50 px-2 py-1.5">
-                              <span className="font-bold text-red-400">{error.sku}</span>
-                              <span className="text-muted-foreground"> — </span>
-                              <span className="break-all text-foreground/80">{error.message}</span>
-                            </div>
-                          ))}
+                        {showErrors ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+                      </button>
+                      {showErrors && (
+                        <div className="mt-2 rounded-lg border border-border bg-background p-3">
+                          <div className="mb-2 flex items-center justify-between">
+                            <span className="text-[10px] font-bold uppercase text-muted-foreground">Error Log</span>
+                            <button
+                              type="button"
+                              onClick={() => copyErrors(store.apiPlatform)}
+                              className="flex cursor-pointer items-center gap-1 rounded border border-border bg-muted px-2 py-1 text-[10px] font-medium text-muted-foreground transition-colors hover:text-foreground"
+                            >
+                              <Copy className="h-3 w-3" />
+                              {copied === store.apiPlatform ? "Copied!" : "Copy All"}
+                            </button>
+                          </div>
+                          <div className="max-h-48 space-y-1 overflow-auto font-mono text-[11px]">
+                            {realErrors.map((error, i) => (
+                              <div key={i} className="rounded border border-border/50 bg-card/50 px-2 py-1.5">
+                                <span className="font-bold text-red-400">{error.sku}</span>
+                                <span className="text-muted-foreground"> — </span>
+                                <span className="break-all text-foreground/80">{error.message}</span>
+                              </div>
+                            ))}
+                          </div>
                         </div>
-                      </div>
-                    )}
-                  </div>
-                )}
+                      )}
+                    </div>
+                  );
+                })()}
 
                 {/* ---- action buttons with tooltips ---- */}
                 <div className="mt-5 flex flex-wrap items-center gap-2">
