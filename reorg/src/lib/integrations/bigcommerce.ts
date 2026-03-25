@@ -301,11 +301,12 @@ export class BigCommerceAdapter implements MarketplaceAdapter {
     const inventory = variant
       ? (variant.inventory_level as number) ?? 0
       : (product.inventory_level as number) ?? 0;
+    const hasMultipleVariants = ((product.variants as unknown[]) ?? []).length > 1;
 
     return {
       platformItemId: String(product.id),
       platformVariantId: variant ? String(variant.id) : undefined,
-      parentPlatformItemId: variant ? String(product.id) : undefined,
+      parentPlatformItemId: hasMultipleVariants && variant ? String(product.id) : undefined,
       sku: (variant?.sku as string) ?? (product.sku as string) ?? "",
       title: (product.name as string) ?? "",
       imageUrl: images[0]?.url_standard as string | undefined,
@@ -313,7 +314,7 @@ export class BigCommerceAdapter implements MarketplaceAdapter {
       adRate: undefined,
       inventory,
       status: inventory > 0 ? "active" : "out_of_stock",
-      isVariation: (product.variants as unknown[])?.length > 1,
+      isVariation: hasMultipleVariants,
       upc: (variant?.upc as string) ?? (product.upc as string),
       rawData: { product, variant },
     };

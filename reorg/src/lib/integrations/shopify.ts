@@ -339,6 +339,7 @@ export class ShopifyAdapter implements MarketplaceAdapter {
   ): RawListing {
     const images = (product.images as Array<Record<string, unknown>>) ?? [];
     const inventory = (variant.inventory_quantity as number) ?? 0;
+    const hasMultipleVariants = ((product.variants as unknown[]) ?? []).length > 1;
 
     return {
       platformItemId: String(product.id),
@@ -350,8 +351,8 @@ export class ShopifyAdapter implements MarketplaceAdapter {
       adRate: undefined,
       inventory,
       status: inventory > 0 ? "active" : "out_of_stock",
-      isVariation: ((product.variants as unknown[]) ?? []).length > 1,
-      parentPlatformItemId: String(product.id),
+      isVariation: hasMultipleVariants,
+      parentPlatformItemId: hasMultipleVariants ? String(product.id) : undefined,
       upc: (variant.barcode as string) ?? undefined,
       rawData: { product, variant },
     };

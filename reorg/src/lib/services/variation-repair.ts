@@ -230,6 +230,69 @@ async function ensureParentListing(args: {
   };
 }
 
+/**
+ * Undo damage from prior runs that incorrectly treated single-variant
+ * BC/Shopify listings as variation children. Steps:
+ *  1. Unlink listings with isVariation=false that got a parentListingId.
+ *  2. Remove now-orphaned synthetic parent listings.
+ *  3. Deactivate synthetic MasterRows that lost all their listings.
+ */
+async function cleanupFalseVariationFamilies(integrationId: string) {
+  const falseChildren = await db.marketplaceListing.findMany({
+    where: {
+      integrationId,
+      isVariation: false,
+      parentListingId: { not: null },
+    },
+    select: { id: true, parentListingId: true },
+  });
+
+  if (falseChildren.length === 0) return;
+
+  const parentListingIds = [
+    ...new Set(
+      falseChildren
+        .map((l) => l.parentListingId)
+        .filter((v): v is string => v != null),
+    ),
+  ];
+
+  await db.marketplaceListing.updateMany({
+    where: { id: { in: falseChildren.map((l) => l.id) } },
+    data: { parentListingId: null },
+  });
+
+  for (const parentId of parentListingIds) {
+    const remainingChildren = await db.marketplaceListing.count({
+      where: { parentListingId: parentId },
+    });
+
+    if (remainingChildren > 0) continue;
+
+    const parentListing = await db.marketplaceListing.findUnique({
+      where: { id: parentId },
+      select: { id: true, masterRowId: true, isVariation: true },
+    });
+
+    if (!parentListing) continue;
+
+    await db.marketplaceListing.delete({ where: { id: parentId } });
+
+    if (parentListing.masterRowId) {
+      const remainingListings = await db.marketplaceListing.count({
+        where: { masterRowId: parentListing.masterRowId },
+      });
+
+      if (remainingListings === 0) {
+        await db.masterRow.update({
+          where: { id: parentListing.masterRowId },
+          data: { isActive: false },
+        });
+      }
+    }
+  }
+}
+
 export async function repairVariationFamiliesForIntegration(
   integrationId: string,
 ): Promise<VariationRepairResult> {
@@ -242,15 +305,17 @@ export async function repairVariationFamiliesForIntegration(
     throw new Error(`Integration ${integrationId} not found for variation repair`);
   }
 
-  // Full syncs were previously loading nearly every listing for an integration
-  // because most non-variation rows also have a null platformVariantId. That
-  // made post-sync repair much heavier than it needed to be and pushed large
-  // Shopify/BigCommerce jobs into the stale-running guard. First find actual
-  // child variation rows, then only load families for those platform item IDs.
+  await cleanupFalseVariationFamilies(integrationId);
+
+  // Only consider listings explicitly marked as variation children.
+  // BC and Shopify always assign a platformVariantId even to single-variant
+  // products, so filtering on platformVariantId alone would incorrectly
+  // group those single-SKU listings into variation families.
   const possibleChildListings = await db.marketplaceListing.findMany({
     where: {
       integrationId,
       platformVariantId: { not: null },
+      isVariation: true,
     },
     select: {
       id: true,
