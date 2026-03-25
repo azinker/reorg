@@ -1214,179 +1214,167 @@ export async function executePush(
     }
   }
 
-  // Execute live push per platform
-  for (const [platform, changes] of byPlatform) {
-    const adapter = adapters.get(platform);
-    if (!adapter) {
-      for (const change of changes) {
-        results.push({
-          stagedChangeId: change.stagedChangeId ?? null,
-          masterRowId: change.masterRowId,
-          marketplaceListingId: change.marketplaceListingId,
-          platform,
-          listingId: change.listingId,
-          field: change.field,
-          oldValue: change.oldValue,
-          newValue: change.newValue,
-          success: false,
-          error: `No adapter configured for ${platform}`,
-        });
+  // Execute live push - all platforms in parallel for speed
+  const platformTasks = [...byPlatform.entries()].map(
+    async ([platform, changes]): Promise<PushExecutionResult["results"]> => {
+      const out: PushExecutionResult["results"] = [];
+      const adapter = adapters.get(platform);
+      if (!adapter) {
+        for (const change of changes) {
+          out.push({
+            stagedChangeId: change.stagedChangeId ?? null,
+            masterRowId: change.masterRowId,
+            marketplaceListingId: change.marketplaceListingId,
+            platform,
+            listingId: change.listingId,
+            field: change.field,
+            oldValue: change.oldValue,
+            newValue: change.newValue,
+            success: false,
+            error: `No adapter configured for ${platform}`,
+          });
+        }
+        return out;
       }
-      continue;
-    }
 
-    // Separate price and ad rate updates
-    const priceUpdates: PriceUpdate[] = changes
-      .filter((c) => c.field === "salePrice")
-      .map((c) => ({
-        platformItemId: c.listingId,
-        platformVariantId: c.platformVariantId ?? undefined,
-        newPrice: Number(c.newValue),
-      }));
+      const priceUpdates: PriceUpdate[] = changes
+        .filter((c) => c.field === "salePrice")
+        .map((c) => ({
+          platformItemId: c.listingId,
+          platformVariantId: c.platformVariantId ?? undefined,
+          newPrice: Number(c.newValue),
+        }));
 
-    const adRateUpdates: AdRateUpdate[] = changes
-      .filter((c) => c.field === "adRate")
-      .map((c) => ({
-        platformItemId: c.listingId,
-        newAdRate: Number(c.newValue),
-      }));
+      const adRateUpdates: AdRateUpdate[] = changes
+        .filter((c) => c.field === "adRate")
+        .map((c) => ({
+          platformItemId: c.listingId,
+          newAdRate: Number(c.newValue),
+        }));
 
-    const upcUpdates: UpcUpdate[] = changes
-      .filter((c) => c.field === "upc")
-      .map((c) => ({
-        platformItemId: c.listingId,
-        platformVariantId: c.platformVariantId ?? undefined,
-        newUpc: String(c.newValue),
-      }));
+      const upcUpdates: UpcUpdate[] = changes
+        .filter((c) => c.field === "upc")
+        .map((c) => ({
+          platformItemId: c.listingId,
+          platformVariantId: c.platformVariantId ?? undefined,
+          newUpc: String(c.newValue),
+        }));
 
-    if (priceUpdates.length > 0) {
-      let priceResult: Awaited<ReturnType<typeof adapter.pushPriceUpdates>>;
-      try {
-        priceResult = await adapter.pushPriceUpdates(priceUpdates);
-      } catch (adapterError) {
-        priceResult = {
-          success: false,
-          itemsUpdated: 0,
-          errors: priceUpdates.map((u) => ({
-            platformItemId: u.platformItemId,
-            platformVariantId: u.platformVariantId,
-            message: adapterError instanceof Error ? adapterError.message : "Push request timed out or failed.",
-            rawError: adapterError,
-          })),
-        };
+      if (priceUpdates.length > 0) {
+        let priceResult: Awaited<ReturnType<typeof adapter.pushPriceUpdates>>;
+        try {
+          priceResult = await adapter.pushPriceUpdates(priceUpdates);
+        } catch (adapterError) {
+          priceResult = {
+            success: false,
+            itemsUpdated: 0,
+            errors: priceUpdates.map((u) => ({
+              platformItemId: u.platformItemId,
+              platformVariantId: u.platformVariantId,
+              message: adapterError instanceof Error ? adapterError.message : "Push request timed out or failed.",
+              rawError: adapterError,
+            })),
+          };
+        }
+        for (const update of priceUpdates) {
+          const change = changes.find((entry) =>
+            matchesPushChange(entry, "salePrice", update.platformItemId, update.platformVariantId ?? null),
+          );
+          const error = findPushError(priceResult.errors, update.platformItemId, update.platformVariantId ?? null);
+          out.push({
+            platform,
+            listingId: update.platformItemId,
+            platformVariantId: change?.platformVariantId ?? update.platformVariantId ?? null,
+            field: "salePrice",
+            stagedChangeId: change?.stagedChangeId ?? null,
+            masterRowId: change?.masterRowId ?? "",
+            marketplaceListingId: change?.marketplaceListingId ?? "",
+            oldValue: change?.oldValue ?? null,
+            newValue: change?.newValue ?? update.newPrice,
+            success: !error,
+            error: error?.message,
+          });
+        }
       }
-      for (const update of priceUpdates) {
-        const change = changes.find(
-          (entry) =>
-            matchesPushChange(
-              entry,
-              "salePrice",
-              update.platformItemId,
-              update.platformVariantId ?? null,
-            ),
-        );
-        const error = findPushError(
-          priceResult.errors,
-          update.platformItemId,
-          update.platformVariantId ?? null,
-        );
-        results.push({
-          platform,
-          listingId: update.platformItemId,
-          platformVariantId: change?.platformVariantId ?? update.platformVariantId ?? null,
-          field: "salePrice",
-          stagedChangeId: change?.stagedChangeId ?? null,
-          masterRowId: change?.masterRowId ?? "",
-          marketplaceListingId: change?.marketplaceListingId ?? "",
-          oldValue: change?.oldValue ?? null,
-          newValue: change?.newValue ?? update.newPrice,
-          success: !error,
-          error: error?.message,
-        });
-      }
-    }
 
-    if (adRateUpdates.length > 0) {
-      let adResult: Awaited<ReturnType<typeof adapter.pushAdRateUpdates>>;
-      try {
-        adResult = await adapter.pushAdRateUpdates(adRateUpdates);
-      } catch (adapterError) {
-        adResult = {
-          success: false,
-          itemsUpdated: 0,
-          errors: adRateUpdates.map((u) => ({
-            platformItemId: u.platformItemId,
-            message: adapterError instanceof Error ? adapterError.message : "Push request timed out or failed.",
-            rawError: adapterError,
-          })),
-        };
+      if (adRateUpdates.length > 0) {
+        let adResult: Awaited<ReturnType<typeof adapter.pushAdRateUpdates>>;
+        try {
+          adResult = await adapter.pushAdRateUpdates(adRateUpdates);
+        } catch (adapterError) {
+          adResult = {
+            success: false,
+            itemsUpdated: 0,
+            errors: adRateUpdates.map((u) => ({
+              platformItemId: u.platformItemId,
+              message: adapterError instanceof Error ? adapterError.message : "Push request timed out or failed.",
+              rawError: adapterError,
+            })),
+          };
+        }
+        for (const update of adRateUpdates) {
+          const change = changes.find((entry) => matchesPushChange(entry, "adRate", update.platformItemId));
+          const error = findPushError(adResult.errors, update.platformItemId, null);
+          out.push({
+            platform,
+            listingId: update.platformItemId,
+            platformVariantId: change?.platformVariantId ?? null,
+            field: "adRate",
+            stagedChangeId: change?.stagedChangeId ?? null,
+            masterRowId: change?.masterRowId ?? "",
+            marketplaceListingId: change?.marketplaceListingId ?? "",
+            oldValue: change?.oldValue ?? null,
+            newValue: change?.newValue ?? update.newAdRate,
+            success: !error,
+            error: error?.message,
+          });
+        }
       }
-      for (const update of adRateUpdates) {
-        const change = changes.find(
-          (entry) => matchesPushChange(entry, "adRate", update.platformItemId),
-        );
-        const error = findPushError(adResult.errors, update.platformItemId, null);
-        results.push({
-          platform,
-          listingId: update.platformItemId,
-          platformVariantId: change?.platformVariantId ?? null,
-          field: "adRate",
-          stagedChangeId: change?.stagedChangeId ?? null,
-          masterRowId: change?.masterRowId ?? "",
-          marketplaceListingId: change?.marketplaceListingId ?? "",
-          oldValue: change?.oldValue ?? null,
-          newValue: change?.newValue ?? update.newAdRate,
-          success: !error,
-          error: error?.message,
-        });
-      }
-    }
 
-    if (upcUpdates.length > 0) {
-      let upcResult: Awaited<ReturnType<typeof adapter.pushUpcUpdates>>;
-      try {
-        upcResult = await adapter.pushUpcUpdates(upcUpdates);
-      } catch (adapterError) {
-        upcResult = {
-          success: false,
-          itemsUpdated: 0,
-          errors: upcUpdates.map((u) => ({
-            platformItemId: u.platformItemId,
-            platformVariantId: u.platformVariantId,
-            message: adapterError instanceof Error ? adapterError.message : "Push request timed out or failed.",
-            rawError: adapterError,
-          })),
-        };
+      if (upcUpdates.length > 0) {
+        let upcResult: Awaited<ReturnType<typeof adapter.pushUpcUpdates>>;
+        try {
+          upcResult = await adapter.pushUpcUpdates(upcUpdates);
+        } catch (adapterError) {
+          upcResult = {
+            success: false,
+            itemsUpdated: 0,
+            errors: upcUpdates.map((u) => ({
+              platformItemId: u.platformItemId,
+              platformVariantId: u.platformVariantId,
+              message: adapterError instanceof Error ? adapterError.message : "Push request timed out or failed.",
+              rawError: adapterError,
+            })),
+          };
+        }
+        for (const update of upcUpdates) {
+          const change = changes.find((entry) =>
+            matchesPushChange(entry, "upc", update.platformItemId, update.platformVariantId ?? null),
+          );
+          const error = findPushError(upcResult.errors, update.platformItemId, update.platformVariantId ?? null);
+          out.push({
+            platform,
+            listingId: update.platformItemId,
+            platformVariantId: change?.platformVariantId ?? update.platformVariantId ?? null,
+            field: "upc",
+            stagedChangeId: change?.stagedChangeId ?? null,
+            masterRowId: change?.masterRowId ?? "",
+            marketplaceListingId: change?.marketplaceListingId ?? "",
+            oldValue: change?.oldValue ?? null,
+            newValue: change?.newValue ?? update.newUpc,
+            success: !error,
+            error: error?.message,
+          });
+        }
       }
-      for (const update of upcUpdates) {
-        const change = changes.find((entry) =>
-          matchesPushChange(
-            entry,
-            "upc",
-            update.platformItemId,
-            update.platformVariantId ?? null,
-          ),
-        );
-        const error = findPushError(
-          upcResult.errors,
-          update.platformItemId,
-          update.platformVariantId ?? null,
-        );
-        results.push({
-          platform,
-          listingId: update.platformItemId,
-          platformVariantId: change?.platformVariantId ?? update.platformVariantId ?? null,
-          field: "upc",
-          stagedChangeId: change?.stagedChangeId ?? null,
-          masterRowId: change?.masterRowId ?? "",
-          marketplaceListingId: change?.marketplaceListingId ?? "",
-          oldValue: change?.oldValue ?? null,
-          newValue: change?.newValue ?? update.newUpc,
-          success: !error,
-          error: error?.message,
-        });
-      }
-    }
+
+      return out;
+    },
+  );
+
+  const allPlatformResults = await Promise.all(platformTasks);
+  for (const platformResults of allPlatformResults) {
+    results.push(...platformResults);
   }
 
   // Update staged changes for successful pushes

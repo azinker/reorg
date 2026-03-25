@@ -1,9 +1,11 @@
+import { XMLParser } from "fast-xml-parser";
 import type { Integration } from "@prisma/client";
 
 export const MONITORED_EBAY_METHODS = [
   "GetSellerEvents",
   "GetItem",
   "GetSellerList",
+  "ReviseFixedPriceItem",
 ] as const;
 
 export type MonitoredEbayMethod = (typeof MONITORED_EBAY_METHODS)[number];
@@ -25,9 +27,10 @@ export interface EbayTradingRateLimitSnapshot {
   nextResetAt: string | null;
 }
 
-type EbayCredentialSet = {
+type FullEbayCredentials = {
   appId: string;
   certId: string;
+  refreshToken: string;
   environment: "PRODUCTION" | "SANDBOX";
 };
 
@@ -41,27 +44,37 @@ type TokenCacheEntry = {
   accessToken: string;
 };
 
-const SNAPSHOT_CACHE_TTL_MS = 60_000;
+const SNAPSHOT_CACHE_TTL_MS = 90_000;
+const SITE_ID = "0";
+const COMPAT_LEVEL = "1113";
 
 const snapshotCache = new Map<string, CacheEntry>();
 const tokenCache = new Map<string, TokenCacheEntry>();
 
-function getBaseUrl(environment: EbayCredentialSet["environment"]) {
+const xmlParser = new XMLParser({
+  ignoreAttributes: true,
+  removeNSPrefix: true,
+  isArray: (tagName) => tagName === "ApiAccessRule",
+});
+
+function getBaseUrl(environment: FullEbayCredentials["environment"]) {
   return environment === "SANDBOX"
     ? "https://api.sandbox.ebay.com"
     : "https://api.ebay.com";
 }
 
-function getCacheKey(credentials: EbayCredentialSet) {
-  return `${credentials.environment}:${credentials.appId}:${credentials.certId}`;
+function getTradingUrl(environment: FullEbayCredentials["environment"]) {
+  return environment === "SANDBOX"
+    ? "https://api.sandbox.ebay.com/ws/api.dll"
+    : "https://api.ebay.com/ws/api.dll";
+}
+
+function getCacheKey(credentials: FullEbayCredentials) {
+  return `${credentials.environment}:${credentials.appId}`;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
-}
-
-function asNumber(value: unknown) {
-  return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
 function asNullableString(value: unknown) {
@@ -74,8 +87,8 @@ function toStatus(remaining: number, limit: number): EbayMethodRateLimit["status
   return "healthy";
 }
 
-async function getClientCredentialsToken(credentials: EbayCredentialSet) {
-  const cacheKey = getCacheKey(credentials);
+async function getUserAccessToken(credentials: FullEbayCredentials) {
+  const cacheKey = `user:${getCacheKey(credentials)}`;
   const cached = tokenCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now() + 60_000) {
     return cached.accessToken;
@@ -92,13 +105,13 @@ async function getClientCredentialsToken(credentials: EbayCredentialSet) {
       "Content-Type": "application/x-www-form-urlencoded",
     },
     body: new URLSearchParams({
-      grant_type: "client_credentials",
-      scope: "https://api.ebay.com/oauth/api_scope",
+      grant_type: "refresh_token",
+      refresh_token: credentials.refreshToken,
     }),
   });
 
   if (!response.ok) {
-    throw new Error(`eBay Analytics token request failed: ${response.status}`);
+    throw new Error(`eBay token refresh failed: ${response.status}`);
   }
 
   const payload = (await response.json()) as {
@@ -107,7 +120,7 @@ async function getClientCredentialsToken(credentials: EbayCredentialSet) {
   };
 
   if (!payload.access_token || typeof payload.expires_in !== "number") {
-    throw new Error("eBay Analytics token response was missing access token data.");
+    throw new Error("eBay token response missing access_token.");
   }
 
   tokenCache.set(cacheKey, {
@@ -118,39 +131,24 @@ async function getClientCredentialsToken(credentials: EbayCredentialSet) {
   return payload.access_token;
 }
 
-function extractCredentials(integration: Pick<Integration, "config">): EbayCredentialSet | null {
+function extractFullCredentials(integration: Pick<Integration, "config">): FullEbayCredentials | null {
   if (!isRecord(integration.config)) return null;
   const appId = asNullableString(integration.config.appId);
   const certId = asNullableString(integration.config.certId);
+  const refreshToken = asNullableString(integration.config.refreshToken);
   const environment =
     integration.config.environment === "SANDBOX" ? "SANDBOX" : "PRODUCTION";
 
-  if (!appId || !certId) return null;
+  if (!appId || !certId || !refreshToken) return null;
 
-  return {
-    appId,
-    certId,
-    environment,
-  };
+  return { appId, certId, refreshToken, environment };
 }
 
 export function getEbayCredentialFingerprint(
   integration: Pick<Integration, "config">,
 ) {
-  const credentials = extractCredentials(integration);
+  const credentials = extractFullCredentials(integration);
   return credentials ? getCacheKey(credentials) : null;
-}
-
-function pickMonitoredMethod(resourceName: string | null) {
-  if (!resourceName) return null;
-  return (
-    MONITORED_EBAY_METHODS.find(
-      (method) =>
-        resourceName === method ||
-        resourceName.endsWith(`.${method}`) ||
-        resourceName.includes(method),
-    ) ?? null
-  );
 }
 
 export async function getEbayTradingRateLimitSnapshotForIntegration(
@@ -160,7 +158,7 @@ export async function getEbayTradingRateLimitSnapshotForIntegration(
     return null;
   }
 
-  const credentials = extractCredentials(integration);
+  const credentials = extractFullCredentials(integration);
   if (!credentials) return null;
 
   const cacheKey = getCacheKey(credentials);
@@ -169,64 +167,57 @@ export async function getEbayTradingRateLimitSnapshotForIntegration(
     return cached.snapshot;
   }
 
-  const token = await getClientCredentialsToken(credentials);
-  const baseUrl = getBaseUrl(credentials.environment);
-  const response = await fetch(
-    `${baseUrl}/developer/analytics/v1_beta/rate_limit?api_name=tradingapi&api_context=tradingapi`,
-    {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        Accept: "application/json",
-      },
-      cache: "no-store",
+  const token = await getUserAccessToken(credentials);
+  const tradingUrl = getTradingUrl(credentials.environment);
+
+  const body = `<?xml version="1.0" encoding="utf-8"?>
+<GetApiAccessRulesRequest xmlns="urn:ebay:apis:eBLBaseComponents">
+</GetApiAccessRulesRequest>`;
+
+  const response = await fetch(tradingUrl, {
+    method: "POST",
+    headers: {
+      "X-EBAY-API-IAF-TOKEN": token,
+      "X-EBAY-API-SITEID": SITE_ID,
+      "X-EBAY-API-COMPATIBILITY-LEVEL": COMPAT_LEVEL,
+      "X-EBAY-API-CALL-NAME": "GetApiAccessRules",
+      "Content-Type": "text/xml",
     },
-  );
+    body,
+  });
 
   if (!response.ok) {
-    throw new Error(`eBay Analytics getRateLimits failed: ${response.status}`);
+    throw new Error(`GetApiAccessRules failed: ${response.status}`);
   }
 
-  const payload = (await response.json()) as {
-    rateLimits?: Array<{
-      resources?: Array<{
-        name?: string;
-        rates?: Array<{
-          count?: number;
-          limit?: number;
-          remaining?: number;
-          reset?: string;
-          timeWindow?: number;
-        }>;
-      }>;
-    }>;
-  };
+  const xml = await response.text();
+  const parsed = xmlParser.parse(xml);
+  const apiResponse = parsed?.GetApiAccessRulesResponse;
+  const rules: unknown[] = apiResponse?.ApiAccessRule ?? [];
 
+  const monitoredSet = new Set<string>(MONITORED_EBAY_METHODS);
   const methodMap = new Map<string, EbayMethodRateLimit>();
 
-  for (const rateLimit of payload.rateLimits ?? []) {
-    for (const resource of rateLimit.resources ?? []) {
-      const method = pickMonitoredMethod(asNullableString(resource.name));
-      if (!method) continue;
+  for (const rule of rules) {
+    if (!isRecord(rule)) continue;
+    const callName = String(rule.CallName ?? "");
+    if (!monitoredSet.has(callName)) continue;
 
-      const rate = resource.rates?.[0];
-      if (!rate) continue;
+    const dailyLimit = Number(rule.DailyHardLimit) || 0;
+    const dailyUsage = Number(rule.DailyUsage) || 0;
+    const remaining = Math.max(0, dailyLimit - dailyUsage);
 
-      const count = asNumber(rate.count);
-      const limit = asNumber(rate.limit);
-      const remaining = asNumber(rate.remaining);
-      const reset = asNullableString(rate.reset);
+    const periodicEnd = asNullableString(rule.PeriodicEndDate as string);
 
-      methodMap.set(method, {
-        name: method,
-        count,
-        limit,
-        remaining,
-        reset,
-        timeWindowSeconds:
-          typeof rate.timeWindow === "number" ? rate.timeWindow : null,
-        status: toStatus(remaining, limit),
-      });
-    }
+    methodMap.set(callName, {
+      name: callName,
+      count: dailyUsage,
+      limit: dailyLimit,
+      remaining,
+      reset: periodicEnd,
+      timeWindowSeconds: 86400,
+      status: toStatus(remaining, dailyLimit),
+    });
   }
 
   const methods = MONITORED_EBAY_METHODS.map(

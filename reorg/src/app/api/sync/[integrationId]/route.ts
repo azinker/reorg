@@ -118,7 +118,10 @@ export async function POST(
 
     const config = getIntegrationConfig(integration);
     const rateLimits = isEbayPlatform(integration.platform)
-      ? await getEbayTradingRateLimitSnapshotForIntegration(integration).catch(() => null)
+      ? await getEbayTradingRateLimitSnapshotForIntegration(integration).catch((err) => {
+          console.error(`[sync][POST][${integration.platform}] eBay rate limit fetch failed:`, err);
+          return null;
+        })
       : null;
     const sharedStoreCount = isEbayPlatform(integration.platform)
       ? await getSharedEbayQuotaStoreCount(integration)
@@ -315,7 +318,10 @@ export async function GET(
       : null;
     const lastWebhookReceivedAt = latestWebhook?.createdAt ?? null;
     const rateLimits = isEbayPlatform(integration.platform)
-      ? await getEbayTradingRateLimitSnapshotForIntegration(integration).catch(() => null)
+      ? await getEbayTradingRateLimitSnapshotForIntegration(integration).catch((err) => {
+          console.error(`[sync][GET][${integration.platform}] eBay rate limit fetch failed:`, err);
+          return null;
+        })
       : null;
     const sharedStoreCount = isEbayPlatform(integration.platform)
       ? await getSharedEbayQuotaStoreCount(integration)
