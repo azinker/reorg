@@ -423,6 +423,7 @@ async function replaceTargetedImportedUpcStages(args: {
   mode: Exclude<ImportMode, "preview">;
 }) {
   const stagedLabels = new Set<string>();
+  const txOps: ReturnType<typeof db.stagedChange.updateMany | typeof db.stagedChange.createMany | typeof db.stagedChange.create>[] = [];
 
   for (const target of args.targets) {
     const shouldStage =
@@ -432,28 +433,32 @@ async function replaceTargetedImportedUpcStages(args: {
 
     if (target.listingIds.length > 0) {
       if (args.mode === "overwrite" || shouldStage) {
-        await db.stagedChange.updateMany({
-          where: {
-            masterRowId: args.masterRowId,
-            field: "upc",
-            status: "STAGED",
-            marketplaceListingId: { in: target.listingIds },
-          },
-          data: { status: "CANCELLED" },
-        });
+        txOps.push(
+          db.stagedChange.updateMany({
+            where: {
+              masterRowId: args.masterRowId,
+              field: "upc",
+              status: "STAGED",
+              marketplaceListingId: { in: target.listingIds },
+            },
+            data: { status: "CANCELLED" },
+          }),
+        );
       }
 
       if (shouldStage) {
-        await db.stagedChange.createMany({
-          data: target.listingIds.map((listingId) => ({
-            masterRowId: args.masterRowId,
-            marketplaceListingId: listingId,
-            field: "upc",
-            stagedValue: target.desiredValue,
-            liveValue: target.liveValue,
-            changedById: args.changedById,
-          })),
-        });
+        txOps.push(
+          db.stagedChange.createMany({
+            data: target.listingIds.map((listingId) => ({
+              masterRowId: args.masterRowId,
+              marketplaceListingId: listingId,
+              field: "upc",
+              stagedValue: target.desiredValue,
+              liveValue: target.liveValue,
+              changedById: args.changedById,
+            })),
+          }),
+        );
         stagedLabels.add(target.label);
       }
 
@@ -461,29 +466,37 @@ async function replaceTargetedImportedUpcStages(args: {
     }
 
     if (args.mode === "overwrite" || shouldStage) {
-      await db.stagedChange.updateMany({
-        where: {
-          masterRowId: args.masterRowId,
-          field: "upc",
-          status: "STAGED",
-          marketplaceListingId: null,
-        },
-        data: { status: "CANCELLED" },
-      });
+      txOps.push(
+        db.stagedChange.updateMany({
+          where: {
+            masterRowId: args.masterRowId,
+            field: "upc",
+            status: "STAGED",
+            marketplaceListingId: null,
+          },
+          data: { status: "CANCELLED" },
+        }),
+      );
     }
 
     if (shouldStage) {
-      await db.stagedChange.create({
-        data: {
-          masterRowId: args.masterRowId,
-          field: "upc",
-          stagedValue: target.desiredValue,
-          liveValue: target.liveValue,
-          changedById: args.changedById,
-        },
-      });
+      txOps.push(
+        db.stagedChange.create({
+          data: {
+            masterRowId: args.masterRowId,
+            field: "upc",
+            stagedValue: target.desiredValue,
+            liveValue: target.liveValue,
+            changedById: args.changedById,
+          },
+        }),
+      );
       stagedLabels.add(target.label);
     }
+  }
+
+  if (txOps.length > 0) {
+    await db.$transaction(txOps);
   }
 
   return [...stagedLabels];
@@ -827,161 +840,89 @@ export async function POST(request: NextRequest) {
     }));
     const systemUser = await getSystemUser();
 
-    for (const { index, fields } of validRows) {
-      const sku = String(fields.sku ?? "").trim();
-      if (!sku) continue;
-      try {
-        let existing = existingRowsBySku.get(sku) ?? null;
-        const previousValues = existing ? snapshotRowValues(existing) : null;
-        const previousStagedUpcChanges = existing
-          ? (existingStagedUpcChangesByMasterRowId.get(existing.id) ?? []).map((entry) => ({ ...entry }))
-          : [];
-        const data = collectImportedData(fields);
-        const importedUpcs = collectImportedUpcValues(fields);
-        const impact = computeImportImpact({
-          existing,
-          data,
-          importedUpcs,
-          mode: resolvedMode,
-        });
-        let rowCreated = impact.rowCreated;
-        let stagedUpcLabels: string[] = [];
-        const changedFields: string[] = [];
-
-        if (resolvedMode === "overwrite") {
-          let masterRow;
-          if (existing) {
-            const patch: Record<string, string | number> = {};
-            for (const [key, value] of Object.entries(data)) {
-              if (value === undefined || value === null || value === "") continue;
-              const current = existing[key as keyof typeof existing];
-              if (current !== value) {
-                patch[key] = value as string | number;
-                changedFields.push(fieldLabel(key));
-              }
-            }
-
-            masterRow = Object.keys(patch).length > 0
-              ? await db.masterRow.update({
-                  where: { sku },
-                  data: patch,
-                  include: {
-                    listings: {
-                      select: {
-                        id: true,
-                        rawData: true,
-                        integration: { select: { platform: true } },
-                      },
-                    },
-                  },
-                })
-              : existing;
-            existingRowsBySku.set(sku, masterRow);
-          } else {
-            rowCreated = true;
-            changedFields.push(...Object.keys(data).map(fieldLabel));
-            masterRow = await db.masterRow.create({
-              data: { sku, ...data },
-              include: {
-                listings: {
-                  select: {
-                    id: true,
-                    rawData: true,
-                    integration: { select: { platform: true } },
-                  },
-                },
-              },
-            });
-            existingRowsBySku.set(sku, masterRow);
-          }
-
-          stagedUpcLabels = await replaceTargetedImportedUpcStages({
-            masterRowId: masterRow.id,
-            changedById: systemUser.id,
-            targets: buildImportedUpcTargets({
-              existing: masterRow,
-              importedUpcs,
-            }),
+    const APPLY_CHUNK = 10;
+    for (let ci = 0; ci < validRows.length; ci += APPLY_CHUNK) {
+      const chunk = validRows.slice(ci, ci + APPLY_CHUNK);
+      await Promise.all(chunk.map(async ({ index, fields }) => {
+        const sku = String(fields.sku ?? "").trim();
+        if (!sku) return;
+        try {
+          let existing = existingRowsBySku.get(sku) ?? null;
+          const previousValues = existing ? snapshotRowValues(existing) : null;
+          const previousStagedUpcChanges = existing
+            ? (existingStagedUpcChangesByMasterRowId.get(existing.id) ?? []).map((entry) => ({ ...entry }))
+            : [];
+          const data = collectImportedData(fields);
+          const importedUpcs = collectImportedUpcValues(fields);
+          const impact = computeImportImpact({
+            existing,
+            data,
+            importedUpcs,
             mode: resolvedMode,
           });
+          let rowCreated = impact.rowCreated;
+          let stagedUpcLabels: string[] = [];
+          const changedFields: string[] = [];
 
-          if (
-            existing &&
-            (rowCreated || changedFields.length > 0 || stagedUpcLabels.length > 0 || previousStagedUpcChanges.length > 0)
-          ) {
-            undoOperations.push({
-              kind: "restore_existing",
-              masterRowId: existing.id,
-              sku,
-              previousValues: previousValues!,
-              previousStagedUpcChanges,
-            });
-          }
-
-          if (rowCreated) {
-            created++;
-            undoOperations.push({
-              kind: "delete_created",
-              masterRowId: masterRow.id,
-              sku,
-            });
-          } else if (changedFields.length > 0 || stagedUpcLabels.length > 0) {
-            updated++;
-          } else {
-            unchanged++;
-          }
-        } else {
-          if (existing) {
-            const patch: Record<string, string | number | null> = {};
-            for (const [key, value] of Object.entries(data)) {
-              if (value === undefined || value === null || value === "") continue;
-              const current = existing[key as keyof typeof existing];
-              const isEmpty =
-                current === null ||
-                current === undefined ||
-                (typeof current === "string" && current.trim() === "");
-              if (isEmpty) {
-                patch[key] = value as string | number | null;
-                changedFields.push(fieldLabel(key));
+          if (resolvedMode === "overwrite") {
+            let masterRow;
+            if (existing) {
+              const patch: Record<string, string | number> = {};
+              for (const [key, value] of Object.entries(data)) {
+                if (value === undefined || value === null || value === "") continue;
+                const current = existing[key as keyof typeof existing];
+                if (current !== value) {
+                  patch[key] = value as string | number;
+                  changedFields.push(fieldLabel(key));
+                }
               }
-            }
-            if (Object.keys(patch).length > 0) {
-              existing = await db.masterRow.update({
-                where: { sku },
-                data: patch,
-                select: {
-                  id: true,
-                  sku: true,
-                  title: true,
-                  upc: true,
-                  weight: true,
-                  weightOz: true,
-                  supplierCost: true,
-                  supplierShipping: true,
-                  notes: true,
+
+              masterRow = Object.keys(patch).length > 0
+                ? await db.masterRow.update({
+                    where: { sku },
+                    data: patch,
+                    include: {
+                      listings: {
+                        select: {
+                          id: true,
+                          integration: { select: { platform: true } },
+                        },
+                      },
+                    },
+                  })
+                : existing;
+              existingRowsBySku.set(sku, masterRow);
+            } else {
+              rowCreated = true;
+              changedFields.push(...Object.keys(data).map(fieldLabel));
+              masterRow = await db.masterRow.create({
+                data: { sku, ...data },
+                include: {
                   listings: {
                     select: {
                       id: true,
-                      rawData: true,
                       integration: { select: { platform: true } },
                     },
                   },
                 },
               });
-              existingRowsBySku.set(sku, existing);
+              existingRowsBySku.set(sku, masterRow);
             }
 
             stagedUpcLabels = await replaceTargetedImportedUpcStages({
-              masterRowId: existing.id,
+              masterRowId: masterRow.id,
               changedById: systemUser.id,
               targets: buildImportedUpcTargets({
-                existing,
+                existing: masterRow,
                 importedUpcs,
               }),
               mode: resolvedMode,
             });
 
-            if (changedFields.length > 0 || stagedUpcLabels.length > 0 || previousStagedUpcChanges.length > 0) {
+            if (
+              existing &&
+              (rowCreated || changedFields.length > 0 || stagedUpcLabels.length > 0 || previousStagedUpcChanges.length > 0)
+            ) {
               undoOperations.push({
                 kind: "restore_existing",
                 masterRowId: existing.id,
@@ -991,72 +932,145 @@ export async function POST(request: NextRequest) {
               });
             }
 
-            if (changedFields.length > 0 || stagedUpcLabels.length > 0) {
+            if (rowCreated) {
+              created++;
+              undoOperations.push({
+                kind: "delete_created",
+                masterRowId: masterRow.id,
+                sku,
+              });
+            } else if (changedFields.length > 0 || stagedUpcLabels.length > 0) {
               updated++;
             } else {
               unchanged++;
             }
           } else {
-            const masterRow = await db.masterRow.create({ data: { sku, ...data } });
-            rowCreated = true;
-            changedFields.push(...Object.keys(data).map(fieldLabel));
-            stagedUpcLabels = await replaceTargetedImportedUpcStages({
-              masterRowId: masterRow.id,
-              changedById: systemUser.id,
-              targets: buildImportedUpcTargets({
-                existing: null,
-                importedUpcs,
-              }),
-              mode: resolvedMode,
-            });
-            existingRowsBySku.set(sku, {
-              id: masterRow.id,
-              sku: masterRow.sku,
-              title: masterRow.title,
-              upc: masterRow.upc,
-              weight: masterRow.weight,
-              weightOz: masterRow.weightOz,
-              supplierCost: masterRow.supplierCost,
-              supplierShipping: masterRow.supplierShipping,
-              notes: masterRow.notes,
-              listings: [],
-            });
-            created++;
-            undoOperations.push({
-              kind: "delete_created",
-              masterRowId: masterRow.id,
-              sku,
-            });
-          }
-        }
+            if (existing) {
+              const patch: Record<string, string | number | null> = {};
+              for (const [key, value] of Object.entries(data)) {
+                if (value === undefined || value === null || value === "") continue;
+                const current = existing[key as keyof typeof existing];
+                const isEmpty =
+                  current === null ||
+                  current === undefined ||
+                  (typeof current === "string" && current.trim() === "");
+                if (isEmpty) {
+                  patch[key] = value as string | number | null;
+                  changedFields.push(fieldLabel(key));
+                }
+              }
+              if (Object.keys(patch).length > 0) {
+                existing = await db.masterRow.update({
+                  where: { sku },
+                  data: patch,
+                  select: {
+                    id: true,
+                    sku: true,
+                    title: true,
+                    upc: true,
+                    weight: true,
+                    weightOz: true,
+                    supplierCost: true,
+                    supplierShipping: true,
+                    notes: true,
+                    listings: {
+                      select: {
+                        id: true,
+                        integration: { select: { platform: true } },
+                      },
+                    },
+                  },
+                });
+                existingRowsBySku.set(sku, existing);
+              }
 
-        successes.push({
-          row: index,
-          sku,
-          outcome: rowCreated ? "created" : changedFields.length > 0 || stagedUpcLabels.length > 0 ? "updated" : "no_changes",
-          summary: summarizeSuccess({
-            created: rowCreated,
-            changedFields,
-            stagedUpcLabels,
-          }),
-          changedFields: [
-            ...changedFields,
-            ...stagedUpcLabels,
-          ],
-        });
-      } catch (err) {
-        const message = err instanceof Error ? err.message : "Unknown error";
-        applyErrors.push({
-          row: index,
-          error: message,
-        });
-        failures.push({
-          row: index,
-          sku,
-          error: message,
-          fields: buildDownloadRow(fields, message),
-        });
-      }
+              stagedUpcLabels = await replaceTargetedImportedUpcStages({
+                masterRowId: existing.id,
+                changedById: systemUser.id,
+                targets: buildImportedUpcTargets({
+                  existing,
+                  importedUpcs,
+                }),
+                mode: resolvedMode,
+              });
+
+              if (changedFields.length > 0 || stagedUpcLabels.length > 0 || previousStagedUpcChanges.length > 0) {
+                undoOperations.push({
+                  kind: "restore_existing",
+                  masterRowId: existing.id,
+                  sku,
+                  previousValues: previousValues!,
+                  previousStagedUpcChanges,
+                });
+              }
+
+              if (changedFields.length > 0 || stagedUpcLabels.length > 0) {
+                updated++;
+              } else {
+                unchanged++;
+              }
+            } else {
+              const masterRow = await db.masterRow.create({ data: { sku, ...data } });
+              rowCreated = true;
+              changedFields.push(...Object.keys(data).map(fieldLabel));
+              stagedUpcLabels = await replaceTargetedImportedUpcStages({
+                masterRowId: masterRow.id,
+                changedById: systemUser.id,
+                targets: buildImportedUpcTargets({
+                  existing: null,
+                  importedUpcs,
+                }),
+                mode: resolvedMode,
+              });
+              existingRowsBySku.set(sku, {
+                id: masterRow.id,
+                sku: masterRow.sku,
+                title: masterRow.title,
+                upc: masterRow.upc,
+                weight: masterRow.weight,
+                weightOz: masterRow.weightOz,
+                supplierCost: masterRow.supplierCost,
+                supplierShipping: masterRow.supplierShipping,
+                notes: masterRow.notes,
+                listings: [],
+              });
+              created++;
+              undoOperations.push({
+                kind: "delete_created",
+                masterRowId: masterRow.id,
+                sku,
+              });
+            }
+          }
+
+          successes.push({
+            row: index,
+            sku,
+            outcome: rowCreated ? "created" : changedFields.length > 0 || stagedUpcLabels.length > 0 ? "updated" : "no_changes",
+            summary: summarizeSuccess({
+              created: rowCreated,
+              changedFields,
+              stagedUpcLabels,
+            }),
+            changedFields: [
+              ...changedFields,
+              ...stagedUpcLabels,
+            ],
+          });
+        } catch (err) {
+          const message = err instanceof Error ? err.message : "Unknown error";
+          applyErrors.push({
+            row: index,
+            error: message,
+          });
+          failures.push({
+            row: index,
+            sku,
+            error: message,
+            fields: buildDownloadRow(fields, message),
+          });
+        }
+      }));
     }
 
     const importAuditLog = await db.auditLog.create({
