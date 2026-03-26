@@ -305,11 +305,11 @@ export async function POST(
       },
     });
   } catch (error) {
-    console.error("[grid-row-refresh] failed", error);
+    const errorType = error instanceof Error ? error.constructor.name : typeof error;
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    console.error(`[grid-row-refresh] failed [${errorType}]`, errorMessage, error);
     return NextResponse.json(
-      {
-        error: error instanceof Error ? error.message : "Failed to refresh row",
-      },
+      { error: `[${errorType}] ${errorMessage}` },
       { status: 500 },
     );
   }

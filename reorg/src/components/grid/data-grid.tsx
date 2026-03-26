@@ -1025,31 +1025,37 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
           throw new Error("Variation parent has no child rows to refresh.");
         }
 
-        const childResponses = await Promise.all(
-          childRows.map(async (child) => {
-            const response = await fetch(`/api/grid/${child.id}/refresh`, {
-              method: "POST",
-            });
-            const payload = await response.json().catch(() => ({}));
-            if (!response.ok) {
-              throw new Error(
-                payload?.error ?? `Failed to refresh child row ${child.sku} (${response.status})`,
-              );
-            }
+        // Sequential (not parallel) to avoid concurrent DB connections
+        // for the same eBay parent item, which exhausts Vercel's connection pool.
+        const childResponses: Array<{
+          childId: string;
+          childSku: string;
+          row: GridRow;
+          message: string | undefined;
+        }> = [];
+        for (const child of childRows) {
+          const response = await fetch(`/api/grid/${child.id}/refresh`, {
+            method: "POST",
+          });
+          const payload = await response.json().catch(() => ({}));
+          if (!response.ok) {
+            throw new Error(
+              payload?.error ?? `Failed to refresh child row ${child.sku} (${response.status})`,
+            );
+          }
 
-            const refreshedChild = (payload?.data?.row ?? null) as GridRow | null;
-            if (!refreshedChild) {
-              throw new Error(`Refresh completed, but child row ${child.sku} was missing its updated payload.`);
-            }
+          const refreshedChild = (payload?.data?.row ?? null) as GridRow | null;
+          if (!refreshedChild) {
+            throw new Error(`Refresh completed, but child row ${child.sku} was missing its updated payload.`);
+          }
 
-            return {
-              childId: child.id,
-              childSku: child.sku,
-              row: refreshedChild,
-              message: payload?.data?.message as string | undefined,
-            };
-          }),
-        );
+          childResponses.push({
+            childId: child.id,
+            childSku: child.sku,
+            row: refreshedChild,
+            message: payload?.data?.message as string | undefined,
+          });
+        }
 
         const refreshedChildrenById = new Map(
           childResponses.map((result) => [result.childId, result.row]),
