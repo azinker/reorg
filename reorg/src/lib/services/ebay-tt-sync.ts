@@ -2,7 +2,7 @@ import { db } from "@/lib/db";
 import { Platform, Prisma, type Integration, type SyncStatus } from "@prisma/client";
 import { XMLParser } from "fast-xml-parser";
 import type { RawListing } from "@/lib/integrations/types";
-import { getIntegrationConfig } from "@/lib/integrations/runtime-config";
+import { getIntegrationConfig, mergeIntegrationConfig } from "@/lib/integrations/runtime-config";
 import {
   buildCompletedSyncConfigFromLatest,
   type SyncExecutionOptions,
@@ -12,6 +12,7 @@ import {
   getEbayMethodRate,
   getEbayTradingRateLimitSnapshotForIntegration,
   invalidateEbayRateLimitSnapshotCache,
+  serializeSnapshotForConfig,
   type EbayTradingRateLimitSnapshot,
 } from "@/lib/services/ebay-analytics";
 import {
@@ -759,9 +760,26 @@ export async function runEbayTtSync(
       },
     });
   } finally {
-    // Evict the analytics snapshot cache so the next page load fetches fresh
-    // per-method counts from eBay (reflecting what was consumed this run).
-    invalidateEbayRateLimitSnapshotCache(integration);
+    try {
+      invalidateEbayRateLimitSnapshotCache(integration);
+      const freshSnapshot = await getEbayTradingRateLimitSnapshotForIntegration(integration);
+      if (freshSnapshot && !freshSnapshot.isDegradedEstimate) {
+        const latest = await db.integration.findUnique({ where: { id: integration.id } });
+        if (latest) {
+          const updatedConfig = mergeIntegrationConfig(
+            latest.platform,
+            latest.config,
+            { syncState: { lastRateLimitSnapshot: serializeSnapshotForConfig(freshSnapshot) } },
+          );
+          await db.integration.update({
+            where: { id: integration.id },
+            data: { config: updatedConfig as unknown as Prisma.InputJsonValue },
+          });
+        }
+      }
+    } catch (analyticsErr) {
+      console.error("[ebay-tt-sync] Post-sync analytics refresh failed:", analyticsErr);
+    }
   }
 
   return progress;

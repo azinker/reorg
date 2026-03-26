@@ -291,7 +291,10 @@ export async function GET(
       );
     }
 
-    if (isEbayPlatform(integration.platform) && !rateLimits) {
+    // Prefer the DB-persisted snapshot over the "Unknown" degraded placeholder.
+    // The live call may fail (cold start, eBay outage, etc.) but a recent sync
+    // may have saved accurate per-method counts to the integration config.
+    if (isEbayPlatform(integration.platform) && (!rateLimits || rateLimits.isDegradedEstimate)) {
       const savedSnapshot = deserializeSnapshotFromConfig(config.syncState?.lastRateLimitSnapshot);
       if (savedSnapshot) {
         rateLimits = savedSnapshot;

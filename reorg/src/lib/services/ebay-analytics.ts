@@ -103,20 +103,29 @@ async function getUserAccessToken(credentials: FullEbayCredentials) {
     `${credentials.appId}:${credentials.certId}`,
   ).toString("base64");
   const baseUrl = getBaseUrl(credentials.environment);
-  const response = await fetch(`${baseUrl}/identity/v1/oauth2/token`, {
-    method: "POST",
-    headers: {
-      Authorization: `Basic ${basicAuth}`,
-      "Content-Type": "application/x-www-form-urlencoded",
-    },
-    body: new URLSearchParams({
-      grant_type: "refresh_token",
-      refresh_token: credentials.refreshToken,
-    }),
-  });
+  const ac = new AbortController();
+  const abortTimer = setTimeout(() => ac.abort(), 8_000);
+  let response: Response;
+  try {
+    response = await fetch(`${baseUrl}/identity/v1/oauth2/token`, {
+      method: "POST",
+      headers: {
+        Authorization: `Basic ${basicAuth}`,
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: new URLSearchParams({
+        grant_type: "refresh_token",
+        refresh_token: credentials.refreshToken,
+      }),
+      signal: ac.signal,
+    });
+  } finally {
+    clearTimeout(abortTimer);
+  }
 
   if (!response.ok) {
-    throw new Error(`eBay token refresh failed: ${response.status}`);
+    const body = await response.text().catch(() => "");
+    throw new Error(`eBay token refresh failed: ${response.status} — ${body.slice(0, 200)}`);
   }
 
   const payload = (await response.json()) as {
@@ -321,7 +330,8 @@ export async function getEbayTradingRateLimitSnapshotForIntegration(
 
     return snapshot;
   } catch (error) {
-    console.error("[ebay-analytics] GetApiAccessRules failed, checking fallback", error);
+    const errMsg = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+    console.error(`[ebay-analytics] GetApiAccessRules failed for cacheKey=${cacheKey.slice(0, 8)}…: ${errMsg}`);
     const fallback = fallbackSnapshotCache.get(cacheKey);
     if (fallback && fallback.expiresAt > Date.now()) {
       return {

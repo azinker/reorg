@@ -5,12 +5,13 @@ import {
   buildCompletedSyncConfigFromLatest,
   type SyncExecutionOptions,
 } from "@/lib/services/sync-control";
-import { getIntegrationConfig } from "@/lib/integrations/runtime-config";
+import { getIntegrationConfig, mergeIntegrationConfig } from "@/lib/integrations/runtime-config";
 import {
   buildEbayQuotaExhaustedMessage,
   getEbayMethodRate,
   getEbayTradingRateLimitSnapshotForIntegration,
   invalidateEbayRateLimitSnapshotCache,
+  serializeSnapshotForConfig,
   type EbayTradingRateLimitSnapshot,
 } from "@/lib/services/ebay-analytics";
 import {
@@ -753,9 +754,29 @@ export async function runEbayTppSync(
       },
     });
   } finally {
-    // Evict the analytics snapshot cache so the next page load fetches fresh
-    // per-method counts from eBay (reflecting what was consumed this run).
-    invalidateEbayRateLimitSnapshotCache(integration);
+    // Fetch fresh per-method counts from eBay and persist them to the
+    // integration config so the sync page GET handler can display accurate
+    // data even when GetApiAccessRules fails from a different serverless process.
+    try {
+      invalidateEbayRateLimitSnapshotCache(integration);
+      const freshSnapshot = await getEbayTradingRateLimitSnapshotForIntegration(integration);
+      if (freshSnapshot && !freshSnapshot.isDegradedEstimate) {
+        const latest = await db.integration.findUnique({ where: { id: integration.id } });
+        if (latest) {
+          const updatedConfig = mergeIntegrationConfig(
+            latest.platform,
+            latest.config,
+            { syncState: { lastRateLimitSnapshot: serializeSnapshotForConfig(freshSnapshot) } },
+          );
+          await db.integration.update({
+            where: { id: integration.id },
+            data: { config: updatedConfig as unknown as Prisma.InputJsonValue },
+          });
+        }
+      }
+    } catch (analyticsErr) {
+      console.error("[ebay-tpp-sync] Post-sync analytics refresh failed:", analyticsErr);
+    }
   }
 
   return progress;
