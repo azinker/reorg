@@ -265,28 +265,51 @@ export async function POST(
     });
     const integrationById = new Map(integrations.map((integration) => [integration.id, integration]));
 
-    const results = await Promise.all(
-      [...buckets.values()].map(async (bucket) => {
-        const integration = integrationById.get(bucket.integrationId);
-        if (!integration?.enabled) {
-          return {
-            platform: bucket.platform,
-            status: "FAILED",
-            message: `${bucket.platform} is not connected.`,
-            jobId: null,
-          } satisfies RefreshResult;
-        }
+    // Sequential to avoid overwhelming the Vercel function with parallel
+    // eBay API calls that can cause timeouts and raw 500s.
+    const results: RefreshResult[] = [];
+    for (const bucket of buckets.values()) {
+      const integration = integrationById.get(bucket.integrationId);
+      if (!integration?.enabled) {
+        results.push({
+          platform: bucket.platform,
+          status: "FAILED",
+          message: `${bucket.platform} is not connected.`,
+          jobId: null,
+        });
+        continue;
+      }
 
-        return refreshBucket(integration, bucket);
-      }),
-    );
+      results.push(await refreshBucket(integration, bucket));
+    }
 
     const completedCount = results.filter((result) => result.status === "COMPLETED").length;
     const runningCount = results.filter((result) => result.status === "ALREADY_RUNNING").length;
     const failedCount = results.filter((result) => result.status === "FAILED").length;
 
-    const rowStartedAt = Date.now();
-    const refreshedRow = await getGridRowById(rowId);
+    let refreshedRow;
+    try {
+      const rowStartedAt = Date.now();
+      refreshedRow = await getGridRowById(rowId);
+      // attach timing to the result below
+      (refreshedRow as Record<string, unknown>).__rowBuildMs = Date.now() - rowStartedAt;
+    } catch (rowError) {
+      const msg = rowError instanceof Error ? rowError.message : String(rowError);
+      console.error("[grid-row-refresh] getGridRowById failed", msg, rowError);
+      refreshedRow = null;
+    }
+
+    const failedDetails = results
+      .filter((r) => r.status === "FAILED")
+      .map((r) => `${r.platform}: ${r.message}`)
+      .join("; ");
+
+    const message =
+      failedCount === 0
+        ? `Refreshed ${completedCount} store${completedCount === 1 ? "" : "s"}${runningCount > 0 ? `, ${runningCount} already syncing` : ""}.`
+        : failedCount === results.length
+          ? `All ${failedCount} store sync${failedCount === 1 ? "" : "s"} failed. ${failedDetails}`
+          : `Refreshed ${completedCount} store${completedCount === 1 ? "" : "s"} with ${failedCount} issue${failedCount === 1 ? "" : "s"}. ${failedDetails}`;
 
     return NextResponse.json({
       data: {
@@ -294,13 +317,9 @@ export async function POST(
         sku: masterRow.sku,
         row: refreshedRow,
         results,
-        message:
-          failedCount === 0
-            ? `Refreshed ${completedCount} store${completedCount === 1 ? "" : "s"}${runningCount > 0 ? `, ${runningCount} already syncing` : ""}.`
-            : `Refreshed ${completedCount} store${completedCount === 1 ? "" : "s"} with ${failedCount} issue${failedCount === 1 ? "" : "s"}.`,
+        message,
         timings: {
           totalMs: Date.now() - startedAt,
-          rowBuildMs: Date.now() - rowStartedAt,
         },
       },
     });

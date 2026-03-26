@@ -1102,57 +1102,70 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
       }
 
       const refreshedRow = (payload?.data?.row ?? null) as GridRow | null;
-      if (!refreshedRow) {
-        throw new Error("Refresh completed, but the updated row payload was missing.");
-      }
-
-      let refreshedChildRows: GridRow[] | null = null;
-      if (shouldReloadChildren) {
-        const childResponse = await fetch(`/api/grid/${rowId}/children`, {
-          cache: "no-store",
-        });
-        const childPayload = await childResponse.json().catch(() => ({}));
-        if (!childResponse.ok) {
-          throw new Error(
-            childPayload?.error ??
-              `Failed to refresh variation rows (${childResponse.status})`,
-          );
-        }
-
-        refreshedChildRows = (childPayload?.data?.rows ?? []) as GridRow[];
-      }
-
-      applyRefreshedRowSnapshot(rowId, refreshedRow, parentRowId, refreshedChildRows);
-
-      // After a refresh, if the live price changed for a store, the previous
-      // error/retry push state is stale — clear it so the Retry button goes away
-      // and the user can plainly see the new LIVE value the refresh pulled in.
-      if (currentRow) {
-        for (const newSp of refreshedRow.salePrices) {
-          const prevSp = currentRow.salePrices.find(
-            (sp) => sp.platform === newSp.platform && sp.listingId === newSp.listingId,
-          );
-          if (!prevSp) continue;
-          const liveChanged =
-            prevSp.value !== newSp.value &&
-            !(prevSp.value == null && newSp.value == null);
-          if (liveChanged) {
-            clearQuickPushState(getQuickPushKey(rowId, newSp.platform, newSp.listingId, "salePrice"));
-          }
-        }
-      }
-
+      const storeResults = payload?.data?.results as
+        | Array<{ platform: string; status: string; message: string }>
+        | undefined;
       const baseMessage =
         typeof payload?.data?.message === "string" && payload.data.message.trim()
           ? payload.data.message
           : "Row refresh completed.";
-      const storeResults = payload?.data?.results as
-        | Array<{ platform: string; status: string; message: string }>
-        | undefined;
+
+      // Even if refreshedRow is null (row build failed), the syncs ran — show
+      // partial success. The user can reload the page for updated data.
+      if (refreshedRow) {
+        let refreshedChildRows: GridRow[] | null = null;
+        if (shouldReloadChildren) {
+          const childResponse = await fetch(`/api/grid/${rowId}/children`, {
+            cache: "no-store",
+          });
+          const childPayload = await childResponse.json().catch(() => ({}));
+          if (childResponse.ok) {
+            refreshedChildRows = (childPayload?.data?.rows ?? []) as GridRow[];
+          }
+        }
+
+        applyRefreshedRowSnapshot(rowId, refreshedRow, parentRowId, refreshedChildRows);
+
+        if (currentRow) {
+          for (const newSp of refreshedRow.salePrices) {
+            const prevSp = currentRow.salePrices.find(
+              (sp) => sp.platform === newSp.platform && sp.listingId === newSp.listingId,
+            );
+            if (!prevSp) continue;
+            const liveChanged =
+              prevSp.value !== newSp.value &&
+              !(prevSp.value == null && newSp.value == null);
+            if (liveChanged) {
+              clearQuickPushState(getQuickPushKey(rowId, newSp.platform, newSp.listingId, "salePrice"));
+            }
+          }
+        }
+      }
+
+      const allFailed = storeResults?.length
+        ? storeResults.every((r) => r.status === "FAILED")
+        : false;
+
+      if (allFailed) {
+        const errMsg = baseMessage;
+        setRowRefreshPhase(refreshFamilyIds, "error");
+        setRowRefreshErrors((prev) => {
+          const next = { ...prev };
+          for (const id of refreshFamilyIds) next[id] = errMsg;
+          return next;
+        });
+        scheduleRowRefreshReset(refreshFamilyIds);
+        showToast(errMsg, 12000, true);
+        return;
+      }
+
       setRowRefreshPhase(refreshFamilyIds, "success");
       clearRowRefreshErrors(refreshFamilyIds);
       scheduleRowRefreshReset(refreshFamilyIds);
-      showToast(buildRowRefreshToast(baseMessage, refreshedRow, storeResults), 7500);
+      showToast(
+        buildRowRefreshToast(baseMessage, refreshedRow ?? (currentRow as GridRow), storeResults),
+        7500,
+      );
     } catch (error) {
       console.error("[data-grid] failed to refresh row", error);
       const errMsg =
