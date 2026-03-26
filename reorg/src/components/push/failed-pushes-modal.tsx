@@ -34,6 +34,7 @@ interface FailedPushesModalProps {
   categorySet: Map<string, number>;
   platformSet: Map<string, number>;
   fieldSet: Map<string, number>;
+  reasonSet: Map<string, number>;
   categoryLabels: Record<string, string>;
   fieldLabels: Record<string, string>;
   onClose: () => void;
@@ -68,6 +69,7 @@ export function FailedPushesModal({
   categorySet,
   platformSet,
   fieldSet,
+  reasonSet,
   categoryLabels,
   fieldLabels,
   onClose,
@@ -79,6 +81,7 @@ export function FailedPushesModal({
   const [filterCategory, setFilterCategory] = useState<string | null>(null);
   const [filterPlatform, setFilterPlatform] = useState<string | null>(null);
   const [filterField, setFilterField] = useState<string | null>(null);
+  const [filterReason, setFilterReason] = useState<string | null>(null);
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
 
   const filtered = useMemo(() => {
@@ -86,10 +89,11 @@ export function FailedPushesModal({
     if (filterCategory) items = items.filter((f) => f.failureCategory === filterCategory);
     if (filterPlatform) items = items.filter((f) => f.platform === filterPlatform);
     if (filterField) items = items.filter((f) => f.field === filterField);
+    if (filterReason) items = items.filter((f) => f.failureSummary === filterReason);
     return items;
-  }, [failedPushes, filterCategory, filterPlatform, filterField]);
+  }, [failedPushes, filterCategory, filterPlatform, filterField, filterReason]);
 
-  const hasActiveFilter = filterCategory || filterPlatform || filterField;
+  const hasActiveFilter = filterCategory || filterPlatform || filterField || filterReason;
 
   const validationUpcItems = useMemo(
     () => filtered.filter((f) => f.field === "upc"),
@@ -220,9 +224,35 @@ export function FailedPushesModal({
               </button>
             ))}
 
+            {reasonSet.size > 1 && (
+              <>
+                <span className="mx-1 h-4 w-px bg-border/50" />
+                {[...reasonSet.entries()]
+                  .sort(([, a], [, b]) => b - a)
+                  .map(([reason, count]) => {
+                    const label = reason.length > 40 ? reason.slice(0, 37) + "…" : reason;
+                    return (
+                      <button
+                        key={reason}
+                        onClick={() => setFilterReason(filterReason === reason ? null : reason)}
+                        title={reason}
+                        className={cn(
+                          "rounded-md border px-2.5 py-1 text-[11px] cursor-pointer transition-colors max-w-[220px] truncate",
+                          filterReason === reason
+                            ? "border-primary/50 bg-primary/15 text-primary font-medium"
+                            : "border-border/60 text-muted-foreground hover:text-foreground",
+                        )}
+                      >
+                        {label} ({count})
+                      </button>
+                    );
+                  })}
+              </>
+            )}
+
             {hasActiveFilter && (
               <button
-                onClick={() => { setFilterCategory(null); setFilterPlatform(null); setFilterField(null); }}
+                onClick={() => { setFilterCategory(null); setFilterPlatform(null); setFilterField(null); setFilterReason(null); }}
                 className="ml-auto rounded-md border border-border/60 px-2.5 py-1 text-[11px] text-muted-foreground transition-colors hover:text-foreground cursor-pointer"
               >
                 Clear filters

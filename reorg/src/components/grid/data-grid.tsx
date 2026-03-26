@@ -4358,10 +4358,12 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
         const categorySet = new Map<string, number>();
         const platformSet = new Map<string, number>();
         const fieldSet = new Map<string, number>();
+        const reasonSet = new Map<string, number>();
         for (const f of failedPushes) {
           categorySet.set(f.failureCategory, (categorySet.get(f.failureCategory) ?? 0) + 1);
           platformSet.set(f.platform, (platformSet.get(f.platform) ?? 0) + 1);
           fieldSet.set(f.field, (fieldSet.get(f.field) ?? 0) + 1);
+          reasonSet.set(f.failureSummary, (reasonSet.get(f.failureSummary) ?? 0) + 1);
         }
 
         return (
@@ -4372,6 +4374,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
             categorySet={categorySet}
             platformSet={platformSet}
             fieldSet={fieldSet}
+            reasonSet={reasonSet}
             categoryLabels={CATEGORY_LABELS}
             fieldLabels={FIELD_LABELS}
             onClose={() => setFailedPushesOpen(false)}

@@ -78,6 +78,17 @@ export function classifyPushFailure(
   }
 
   if (
+    lower.includes("not the seller") ||
+    lower.includes("only sellers allowed")
+  ) {
+    return {
+      category: "auth",
+      summary: `${platform} says you are not the seller of this item.`,
+      recommendedAction: `This item ID may belong to a different eBay account. Verify the item is listed under the correct store and that you are pushing via the right integration token.`,
+    };
+  }
+
+  if (
     lower.includes("auth") ||
     lower.includes("token") ||
     lower.includes("credential") ||
