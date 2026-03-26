@@ -330,10 +330,12 @@ export async function runEbayTppSync(
     accessTokenExpiresAt: config.accessTokenExpiresAt as number | undefined,
   };
 
-  try {
-    await purgeForeignSellerListingsForIntegration(integration.id, ebayConfig);
-  } catch (purgeErr) {
-    console.error("[ebay-tpp-sync] Foreign seller purge failed (non-fatal):", purgeErr);
+  if (!options.skipHeavyOperations) {
+    try {
+      await purgeForeignSellerListingsForIntegration(integration.id, ebayConfig);
+    } catch (purgeErr) {
+      console.error("[ebay-tpp-sync] Foreign seller purge failed (non-fatal):", purgeErr);
+    }
   }
 
   const syncJob = options.existingJobId

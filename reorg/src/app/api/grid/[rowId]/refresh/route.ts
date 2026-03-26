@@ -5,6 +5,10 @@ import { getGridRowById } from "@/lib/grid-query";
 import { startIntegrationSync } from "@/lib/services/sync-control";
 import { runBigCommerceWebhookReconcile } from "@/lib/services/bigcommerce-sync";
 import { runShopifyWebhookReconcile } from "@/lib/services/shopify-sync";
+import {
+  getEbayTradingRateLimitSnapshotForIntegration,
+  getEbayCooldownUntilFromSnapshot,
+} from "@/lib/services/ebay-analytics";
 
 export const maxDuration = 60;
 
@@ -30,7 +34,7 @@ type RefreshResult =
       jobId: string | null;
     };
 
-const PLATFORM_REFRESH_TIMEOUT_MS = 8_000;
+const PLATFORM_REFRESH_TIMEOUT_MS = 6_000;
 
 const PLATFORM_SHORT: Record<string, string> = {
   TPP_EBAY: "eBay TPP",
@@ -172,6 +176,7 @@ async function refreshBucket(
             targetedPlatformItemIds,
             triggerSource: "manual",
             triggeredBy: "manual:row_refresh",
+            skipHeavyOperations: true,
           },
           "inline",
         );
@@ -191,6 +196,7 @@ async function refreshBucket(
             effectiveMode: "incremental",
             triggerSource: "manual",
             triggeredBy: "manual:row_refresh",
+            skipHeavyOperations: true,
           },
         );
 
@@ -212,6 +218,7 @@ async function refreshBucket(
             effectiveMode: "incremental",
             triggerSource: "manual",
             triggeredBy: "manual:row_refresh",
+            skipHeavyOperations: true,
           },
         );
 
@@ -312,8 +319,33 @@ export async function POST(
     });
     const integrationById = new Map(integrations.map((integration) => [integration.id, integration]));
 
-    // All platforms run in parallel with a per-platform timeout so no single
-    // slow API (e.g. eBay quota error) blocks the entire refresh.
+    // Pre-check eBay rate limits — skip eBay platforms instantly if quota is exhausted.
+    const ebayRateLimitedPlatforms = new Set<RefreshablePlatform>();
+    const ebayRateLimitMessages = new Map<RefreshablePlatform, string>();
+    for (const bucket of buckets.values()) {
+      if (bucket.platform !== Platform.TPP_EBAY && bucket.platform !== Platform.TT_EBAY) continue;
+      const integration = integrationById.get(bucket.integrationId);
+      if (!integration?.enabled) continue;
+      try {
+        const snapshot = await getEbayTradingRateLimitSnapshotForIntegration(integration);
+        const cooldownUntil = getEbayCooldownUntilFromSnapshot(snapshot, "GetItem");
+        if (cooldownUntil && cooldownUntil.getTime() > Date.now()) {
+          ebayRateLimitedPlatforms.add(bucket.platform);
+          const resetLabel = cooldownUntil.toLocaleTimeString("en-US", {
+            hour: "numeric",
+            minute: "2-digit",
+            timeZone: "America/New_York",
+          });
+          ebayRateLimitMessages.set(
+            bucket.platform,
+            `Daily API limit reached — resets around ${resetLabel} ET.`,
+          );
+        }
+      } catch {
+        // Rate limit check failed — proceed with the sync anyway
+      }
+    }
+
     const results = await Promise.all(
       [...buckets.values()].map(async (bucket) => {
         const integration = integrationById.get(bucket.integrationId);
@@ -322,6 +354,15 @@ export async function POST(
             platform: bucket.platform,
             status: "FAILED",
             message: `${shortPlatform(bucket.platform)} is not connected.`,
+            jobId: null,
+          } satisfies RefreshResult;
+        }
+
+        if (ebayRateLimitedPlatforms.has(bucket.platform)) {
+          return {
+            platform: bucket.platform,
+            status: "FAILED",
+            message: ebayRateLimitMessages.get(bucket.platform) ?? "Daily API limit reached.",
             jobId: null,
           } satisfies RefreshResult;
         }

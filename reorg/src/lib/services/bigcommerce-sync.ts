@@ -187,23 +187,25 @@ export async function runBigCommerceWebhookReconcile(
       },
     });
 
-    try {
-      await repairVariationFamiliesForIntegration(integration.id);
-    } catch (repairError) {
-      await db.auditLog.create({
-        data: {
-          action: "variation_repair_failed",
-          entityType: "integration",
-          entityId: integration.id,
-          details: {
-            syncJobId: syncJob.id,
-            error:
-              repairError instanceof Error
-                ? repairError.message
-                : "Unknown variation repair error",
+    if (!options.skipHeavyOperations) {
+      try {
+        await repairVariationFamiliesForIntegration(integration.id);
+      } catch (repairError) {
+        await db.auditLog.create({
+          data: {
+            action: "variation_repair_failed",
+            entityType: "integration",
+            entityId: integration.id,
+            details: {
+              syncJobId: syncJob.id,
+              error:
+                repairError instanceof Error
+                  ? repairError.message
+                  : "Unknown variation repair error",
+            },
           },
-        },
-      });
+        });
+      }
     }
 
     const durationMs = Date.now() - startTime;

@@ -25,6 +25,8 @@ export interface SyncExecutionOptions {
   resumeContinuation?: boolean;
   /** Pre-created sync job ID from the route handler (avoids race condition) */
   existingJobId?: string;
+  /** Skip purge and variation repair for lightweight row refreshes */
+  skipHeavyOperations?: boolean;
 }
 
 export interface SyncDispatchResult {

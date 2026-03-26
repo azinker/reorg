@@ -345,10 +345,12 @@ export async function runEbayTtSync(
         : undefined,
   };
 
-  try {
-    await purgeForeignSellerListingsForIntegration(integration.id, ebayConfig);
-  } catch (purgeErr) {
-    console.error("[ebay-tt-sync] Foreign seller purge failed (non-fatal):", purgeErr);
+  if (!options.skipHeavyOperations) {
+    try {
+      await purgeForeignSellerListingsForIntegration(integration.id, ebayConfig);
+    } catch (purgeErr) {
+      console.error("[ebay-tt-sync] Foreign seller purge failed (non-fatal):", purgeErr);
+    }
   }
 
   const syncJob = options.existingJobId

@@ -1062,139 +1062,78 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
         !parentRowId && currentRow?.isParent && currentRow.childRowsHydrated,
       );
 
-      if (currentRow?.isParent && rowId.startsWith("variation-parent:")) {
-        const vpController = new AbortController();
-        const vpTimeout = setTimeout(() => vpController.abort(), 30_000);
-        let response: Response;
-        try {
-          response = await fetch(`/api/grid/${encodeURIComponent(rowId)}/refresh`, {
-            method: "POST",
-            signal: vpController.signal,
-          });
-        } catch (fetchErr) {
-          clearTimeout(vpTimeout);
-          if (fetchErr instanceof DOMException && fetchErr.name === "AbortError") {
-            throw new Error("Refresh timed out after 30s. The server may still be processing — try again shortly.");
-          }
-          throw fetchErr;
-        }
-        clearTimeout(vpTimeout);
-        const payload = await response.json().catch(() => ({}));
-        if (!response.ok) {
-          throw new Error(
-            payload?.error ?? `Failed to refresh variation parent (${response.status})`,
-          );
-        }
+      const isVariationParent = currentRow?.isParent && rowId.startsWith("variation-parent:");
+      const refreshUrl = isVariationParent
+        ? `/api/grid/${encodeURIComponent(rowId)}/refresh`
+        : `/api/grid/${rowId}/refresh`;
 
-        const storeResults = payload?.data?.results as
-          | Array<{ platform: string; status: string; message: string }>
-          | undefined;
-        const baseMessage =
-          typeof payload?.data?.message === "string" && payload.data.message.trim()
-            ? payload.data.message
-            : "Variation parent refresh completed.";
-
-        let refreshedChildRows: GridRow[] | null = null;
-        if (currentRow.childRowsHydrated) {
-          const childResponse = await fetch(`/api/grid/${encodeURIComponent(rowId)}/children`, {
-            cache: "no-store",
-          });
-          const childPayload = await childResponse.json().catch(() => ({}));
-          if (childResponse.ok) {
-            refreshedChildRows = (childPayload?.data?.rows ?? []) as GridRow[];
-          }
-        }
-
-        const refreshedParent = (payload?.data?.row ?? null) as GridRow | null;
-        if (refreshedParent) {
-          applyRefreshedRowSnapshot(rowId, refreshedParent, undefined, refreshedChildRows);
-        }
-
-        const anyFailed = storeResults?.some((r) => r.status === "FAILED") ?? false;
-        if (anyFailed) {
-          setRowRefreshPhase(refreshFamilyIds, "error");
-          setRowRefreshErrors((prev) => {
-            const next = { ...prev };
-            for (const id of refreshFamilyIds) next[id] = baseMessage;
-            return next;
-          });
-          scheduleRowRefreshReset(refreshFamilyIds, 10000);
-          return;
-        }
-
-        setRowRefreshPhase(refreshFamilyIds, "success");
-        clearRowRefreshErrors(refreshFamilyIds);
-        scheduleRowRefreshReset(refreshFamilyIds);
-        showToast(
-          buildRowRefreshToast(baseMessage, refreshedParent ?? (currentRow as GridRow), storeResults),
-          7500,
-        );
-        return;
-      }
-
-      const controller = new AbortController();
-      const clientTimeout = setTimeout(() => controller.abort(), 30_000);
-      let response: Response;
-      try {
-        response = await fetch(`/api/grid/${rowId}/refresh`, {
-          method: "POST",
-          signal: controller.signal,
-        });
-      } catch (fetchErr) {
-        clearTimeout(clientTimeout);
-        if (fetchErr instanceof DOMException && fetchErr.name === "AbortError") {
-          throw new Error("Refresh timed out after 30s. The server may still be processing — try again shortly.");
-        }
-        throw fetchErr;
-      }
-      clearTimeout(clientTimeout);
+      const response = await fetch(refreshUrl, { method: "POST" });
       const payload = await response.json().catch(() => ({}));
-      if (!response.ok) {
+
+      const storeResults = (payload?.data?.results ?? []) as
+        Array<{ platform: string; status: string; message: string }>;
+      const baseMessage =
+        typeof payload?.data?.message === "string" && payload.data.message.trim()
+          ? payload.data.message
+          : storeResults.length > 0
+            ? storeResults
+                .map((r) => `${r.platform}: ${r.status === "COMPLETED" ? "✓" : r.message}`)
+                .join(" · ")
+            : response.ok
+              ? "Row refresh completed."
+              : `Refresh failed (${response.status}).`;
+
+      if (!response.ok && storeResults.length === 0) {
         throw new Error(payload?.error ?? `Failed to refresh row (${response.status})`);
       }
 
       const refreshedRow = (payload?.data?.row ?? null) as GridRow | null;
-      const storeResults = payload?.data?.results as
-        | Array<{ platform: string; status: string; message: string }>
-        | undefined;
-      const baseMessage =
-        typeof payload?.data?.message === "string" && payload.data.message.trim()
-          ? payload.data.message
-          : "Row refresh completed.";
 
-      // Even if refreshedRow is null (row build failed), the syncs ran — show
-      // partial success. The user can reload the page for updated data.
       if (refreshedRow) {
-        let refreshedChildRows: GridRow[] | null = null;
-        if (shouldReloadChildren) {
-          const childResponse = await fetch(`/api/grid/${rowId}/children`, {
-            cache: "no-store",
-          });
-          const childPayload = await childResponse.json().catch(() => ({}));
-          if (childResponse.ok) {
-            refreshedChildRows = (childPayload?.data?.rows ?? []) as GridRow[];
-          }
-        }
-
-        applyRefreshedRowSnapshot(rowId, refreshedRow, parentRowId, refreshedChildRows);
-
-        if (currentRow) {
-          for (const newSp of refreshedRow.salePrices) {
-            const prevSp = currentRow.salePrices.find(
-              (sp) => sp.platform === newSp.platform && sp.listingId === newSp.listingId,
+        if (isVariationParent) {
+          let refreshedChildRows: GridRow[] | null = null;
+          if (currentRow?.childRowsHydrated) {
+            const childResponse = await fetch(
+              `/api/grid/${encodeURIComponent(rowId)}/children`,
+              { cache: "no-store" },
             );
-            if (!prevSp) continue;
-            const liveChanged =
-              prevSp.value !== newSp.value &&
-              !(prevSp.value == null && newSp.value == null);
-            if (liveChanged) {
-              clearQuickPushState(getQuickPushKey(rowId, newSp.platform, newSp.listingId, "salePrice"));
+            const childPayload = await childResponse.json().catch(() => ({}));
+            if (childResponse.ok) {
+              refreshedChildRows = (childPayload?.data?.rows ?? []) as GridRow[];
+            }
+          }
+          applyRefreshedRowSnapshot(rowId, refreshedRow, undefined, refreshedChildRows);
+        } else {
+          let refreshedChildRows: GridRow[] | null = null;
+          if (shouldReloadChildren) {
+            const childResponse = await fetch(`/api/grid/${rowId}/children`, {
+              cache: "no-store",
+            });
+            const childPayload = await childResponse.json().catch(() => ({}));
+            if (childResponse.ok) {
+              refreshedChildRows = (childPayload?.data?.rows ?? []) as GridRow[];
+            }
+          }
+          applyRefreshedRowSnapshot(rowId, refreshedRow, parentRowId, refreshedChildRows);
+
+          if (currentRow) {
+            for (const newSp of refreshedRow.salePrices) {
+              const prevSp = currentRow.salePrices.find(
+                (sp) => sp.platform === newSp.platform && sp.listingId === newSp.listingId,
+              );
+              if (!prevSp) continue;
+              const liveChanged =
+                prevSp.value !== newSp.value &&
+                !(prevSp.value == null && newSp.value == null);
+              if (liveChanged) {
+                clearQuickPushState(getQuickPushKey(rowId, newSp.platform, newSp.listingId, "salePrice"));
+              }
             }
           }
         }
       }
 
-      const anyFailed = storeResults?.some((r) => r.status === "FAILED") ?? false;
+      const anyFailed = storeResults.some((r) => r.status === "FAILED");
 
       if (anyFailed) {
         setRowRefreshPhase(refreshFamilyIds, "error");
@@ -1218,8 +1157,10 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
       console.error("[data-grid] failed to refresh row", error);
       const raw = error instanceof Error ? error.message : "Failed to refresh row. Please try again.";
       let errMsg = raw;
-      if (raw.includes("(502)") || raw.includes("(504)")) {
-        errMsg = "The server timed out before completing the refresh. eBay rate limits may have slowed it down — try again shortly.";
+      if (raw.includes("Failed to fetch") || raw.includes("NetworkError") || raw.includes("AbortError")) {
+        errMsg = "Network error — unable to reach the server. Check your connection and try again.";
+      } else if (raw.includes("(502)") || raw.includes("(504)")) {
+        errMsg = "The server timed out. This usually means eBay's API is responding slowly. Try again shortly.";
       } else if (raw.includes("(500)")) {
         errMsg = "Server error — check Engine Room logs for details. Try again in a moment.";
       }
