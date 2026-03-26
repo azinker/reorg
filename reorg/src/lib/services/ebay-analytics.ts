@@ -10,6 +10,12 @@ export const MONITORED_EBAY_METHODS = [
 
 export type MonitoredEbayMethod = (typeof MONITORED_EBAY_METHODS)[number];
 
+/** Shown when credit bars use reorG's per-call counters (GetApiAccessRules unavailable). */
+export const EBAY_LOCAL_QUOTA_BAR_EXPLANATION =
+  "eBay's live quota API is unavailable. Each bar is reorG's own counter for that call name today (America/New_York). " +
+  "0 here means we did not record that call through sync/push in this app today — not that eBay guarantees a full 5,000 left. " +
+  "GetItem can show maxed when a cooldown is active even if today's counted GetItem calls are small.";
+
 export interface EbayMethodRateLimit {
   name: string;
   count: number;
@@ -568,7 +574,7 @@ export function deserializeSnapshotFromConfig(
     isDegradedEstimate: true,
     isLocallyTracked: isLocal,
     degradedNote: isLocal
-      ? "eBay's reporting service is temporarily down. These counts are tracked locally by reorG and may be slightly lower than actual usage."
+      ? EBAY_LOCAL_QUOTA_BAR_EXPLANATION
       : `Saved at ${new Date(obj.fetchedAt).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true, timeZone: "America/New_York" })} — live refresh is temporarily unavailable.`,
   };
 }
@@ -690,7 +696,6 @@ export function buildLocallyTrackedSnapshot(
     nextResetAt: null,
     isDegradedEstimate: true,
     isLocallyTracked: true,
-    degradedNote:
-      "eBay's reporting service is temporarily down. These counts are tracked locally by reorG and may be slightly lower than actual usage.",
+    degradedNote: EBAY_LOCAL_QUOTA_BAR_EXPLANATION,
   };
 }
