@@ -402,6 +402,13 @@ export async function runEbayTtSync(
         integrationConfig.syncState.lastFullSyncAt ??
         integration.lastSyncAt?.toISOString() ??
         null;
+      if (targetedPlatformItemIds.length === 0 && !pendingWindow && lastCursorValue) {
+        await db.syncJob.update({
+          where: { id: syncJob.id },
+          data: { errors: [{ sku: "_phase", message: "Collecting changed items via GetSellerEvents…" }] },
+        }).catch(() => {});
+      }
+
       const incrementalWindow =
         targetedPlatformItemIds.length > 0
           ? {
@@ -414,6 +421,12 @@ export async function runEbayTtSync(
           ebayConfig,
           lastCursorValue,
         ));
+
+      // Clear the phase indicator now that event collection is done
+      await db.syncJob.update({
+        where: { id: syncJob.id },
+        data: { errors: [] },
+      }).catch(() => {});
 
       if (!incrementalWindow) {
         progress.status = "COMPLETED";
@@ -503,6 +516,13 @@ export async function runEbayTtSync(
           fallbackReasonForCompletion =
             `GetSellerEvents found ${incrementalWindow.itemIds.length} changed listing${incrementalWindow.itemIds.length !== 1 ? "s" : ""}. ` +
             `GetItem quota is exhausted — all changes are queued for the next pull window after the daily limit resets.`;
+        }
+
+        if (processingItemIds.length > 0) {
+          await db.syncJob.update({
+            where: { id: syncJob.id },
+            data: { errors: [{ sku: "_phase", message: `Processing ${processingItemIds.length} changed listings via GetItem…` }] },
+          }).catch(() => {});
         }
 
         let haltedIncrementalReason: string | null = null;

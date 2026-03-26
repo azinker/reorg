@@ -223,6 +223,8 @@ export async function getEbayTradingRateLimitSnapshotForIntegration(
 <GetApiAccessRulesRequest xmlns="urn:ebay:apis:eBLBaseComponents">
 </GetApiAccessRulesRequest>`;
 
+    const ac = new AbortController();
+    const abortTimer = setTimeout(() => ac.abort(), 8_000);
     const response = await fetch(tradingUrl, {
       method: "POST",
       headers: {
@@ -233,7 +235,9 @@ export async function getEbayTradingRateLimitSnapshotForIntegration(
         "Content-Type": "text/xml",
       },
       body,
+      signal: ac.signal,
     });
+    clearTimeout(abortTimer);
 
     if (!response.ok) {
       throw new Error(`GetApiAccessRules failed: ${response.status}`);
@@ -326,17 +330,17 @@ export async function getEbayTradingRateLimitSnapshotForIntegration(
         degradedNote: `Last refreshed ${fallback.snapshot.fetchedAt ? new Date(fallback.snapshot.fetchedAt).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true, timeZone: "America/New_York" }) : "recently"}. Live refresh failed — counts may be slightly outdated.`,
       };
     }
-    // No fallback available — return a degraded placeholder so the UI always
-    // shows bars rather than "Credits unavailable". Both eBay stores share the
-    // same app quota, so if one hits the limit the other's API calls also fail.
-    console.warn("[ebay-analytics] No fallback snapshot available, returning degraded placeholder");
+    // No fallback available — show "Unknown" for all methods instead of
+    // fabricating ~0/~5,000 which misleads the user into thinking quota
+    // is available.  limit=0 triggers "Unknown" in the UI.
+    console.warn("[ebay-analytics] No fallback snapshot available, returning Unknown placeholder");
     return {
       fetchedAt: new Date().toISOString(),
       methods: MONITORED_EBAY_METHODS.map((name) => ({
         name,
         count: 0,
-        limit: 5000,
-        remaining: 5000,
+        limit: 0,
+        remaining: 0,
         reset: null,
         timeWindowSeconds: 86400,
         status: "healthy" as EbayMethodRateLimit["status"],
@@ -344,7 +348,7 @@ export async function getEbayTradingRateLimitSnapshotForIntegration(
       exhaustedMethods: [],
       nextResetAt: null,
       isDegradedEstimate: true,
-      degradedNote: "Live call counts could not be fetched from eBay. Both eBay stores share the same API quota — if one is over its daily limit, both will show this. Exact usage will be visible after the daily reset.",
+      degradedNote: "Live API credit counts could not be fetched from eBay. Credits will refresh automatically when eBay responds.",
     };
   }
 }

@@ -1038,11 +1038,14 @@ export default function SyncPage() {
                           )}
                         </div>
                       </div>
-                      {liveJob.itemsProcessed === 0 && (
-                        <p className="mt-1 text-[11px] text-violet-400/70">
-                          Connected — waiting for first batch to report progress.
-                        </p>
-                      )}
+                      {liveJob.itemsProcessed === 0 && (() => {
+                        const phaseEntry = liveJob.errors?.find((e) => e.sku === "_phase");
+                        return (
+                          <p className="mt-1 text-[11px] text-violet-400/70">
+                            {phaseEntry ? phaseEntry.message : "Connected — waiting for first batch to report progress."}
+                          </p>
+                        );
+                      })()}
                       <div className="mt-3 h-1 overflow-hidden rounded-full bg-violet-500/20">
                         <div className="h-full w-full animate-[pulse_1.5s_ease-in-out_infinite] rounded-full bg-gradient-to-r from-violet-600 via-purple-500 to-violet-600" />
                       </div>
@@ -1116,10 +1119,12 @@ export default function SyncPage() {
                 {/* errors (collapsible) */}
                 {(() => {
                   if (isSyncing || jobErrors.length === 0) return null;
+                  const nonPhaseErrors = jobErrors.filter((e) => e.sku !== "_phase");
+                  if (nonPhaseErrors.length === 0) return null;
                   const isOnlyStaleError =
-                    jobErrors.length === 1 &&
-                    jobErrors[0].message.includes("stale running threshold");
-                  const realErrors = jobErrors.filter(
+                    nonPhaseErrors.length === 1 &&
+                    nonPhaseErrors[0].message.includes("stale running threshold");
+                  const realErrors = nonPhaseErrors.filter(
                     (e) => !e.message.includes("stale running threshold"),
                   );
                   if (isOnlyStaleError) {
