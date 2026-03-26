@@ -49,12 +49,14 @@ type TokenCacheEntry = {
 
 const SNAPSHOT_CACHE_TTL_MS = 90_000;
 const FALLBACK_CACHE_TTL_MS = 30 * 60 * 1000;
+const NEGATIVE_CACHE_TTL_MS = 5 * 60 * 1000;
 const SITE_ID = "0";
 const COMPAT_LEVEL = "1113";
 
 const snapshotCache = new Map<string, CacheEntry>();
 const fallbackSnapshotCache = new Map<string, CacheEntry>();
 const tokenCache = new Map<string, TokenCacheEntry>();
+let lastGetApiAccessRulesFailure: { at: number; status: number } | null = null;
 
 const xmlParser = new XMLParser({
   ignoreAttributes: true,
@@ -208,11 +210,39 @@ export function buildGetItemCooldownRateLimitsSnapshot(cooldownUntil: Date): Eba
   };
 }
 
+function buildServiceUnavailableSnapshot(httpStatus: number): EbayTradingRateLimitSnapshot {
+  return {
+    fetchedAt: new Date().toISOString(),
+    methods: MONITORED_EBAY_METHODS.map((name) => ({
+      name,
+      count: 0,
+      limit: 0,
+      remaining: 0,
+      reset: null,
+      timeWindowSeconds: 86400,
+      status: "healthy" as EbayMethodRateLimit["status"],
+    })),
+    exhaustedMethods: [],
+    nextResetAt: null,
+    isDegradedEstimate: true,
+    degradedNote: `eBay's reporting service is temporarily down (HTTP ${httpStatus}). Syncs still work normally — credit counts will appear once eBay's service recovers.`,
+  };
+}
+
 export async function getEbayTradingRateLimitSnapshotForIntegration(
   integration: Pick<Integration, "config">,
 ): Promise<EbayTradingRateLimitSnapshot | null> {
   if (process.env.NEXT_PHASE === "phase-production-build") {
     return null;
+  }
+
+  // Short-circuit if eBay's GetApiAccessRules recently returned 503/5xx.
+  // Avoids hammering a down endpoint every 2s during polling.
+  if (
+    lastGetApiAccessRulesFailure &&
+    Date.now() - lastGetApiAccessRulesFailure.at < NEGATIVE_CACHE_TTL_MS
+  ) {
+    return buildServiceUnavailableSnapshot(lastGetApiAccessRulesFailure.status);
   }
 
   const credentials = extractFullCredentials(integration);
@@ -249,6 +279,9 @@ export async function getEbayTradingRateLimitSnapshotForIntegration(
     clearTimeout(abortTimer);
 
     if (!response.ok) {
+      if (response.status >= 500) {
+        lastGetApiAccessRulesFailure = { at: Date.now(), status: response.status };
+      }
       throw new Error(`GetApiAccessRules failed: ${response.status}`);
     }
 
@@ -372,6 +405,14 @@ export async function getEbayTradingRateLimitSnapshotForIntegration(
 export async function fetchRateLimitSnapshotWithToken(
   accessToken: string,
 ): Promise<EbayTradingRateLimitSnapshot | null> {
+  // Skip if eBay's endpoint recently returned 5xx
+  if (
+    lastGetApiAccessRulesFailure &&
+    Date.now() - lastGetApiAccessRulesFailure.at < NEGATIVE_CACHE_TTL_MS
+  ) {
+    return null;
+  }
+
   const SYNC_COMPAT = "1199";
   try {
     const tradingUrl = "https://api.ebay.com/ws/api.dll";
@@ -403,6 +444,9 @@ export async function fetchRateLimitSnapshotWithToken(
     console.log(`[ebay-analytics] GetApiAccessRules HTTP ${response.status}, body length=${xml.length}, first 300: ${xml.slice(0, 300)}`);
 
     if (!response.ok) {
+      if (response.status >= 500) {
+        lastGetApiAccessRulesFailure = { at: Date.now(), status: response.status };
+      }
       console.error(`[ebay-analytics] GetApiAccessRules non-OK: ${response.status}`);
       return null;
     }
