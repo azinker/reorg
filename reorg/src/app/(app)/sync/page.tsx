@@ -958,15 +958,15 @@ export default function SyncPage() {
                     {rateLimits && rateLimits.methods.length > 0 ? (
                       <div className="mt-2 space-y-2">
                         {rateLimits.methods.map((method) => {
-                          // limit=0 means we don't know usage for this method (degraded snapshot)
                           const isUnknown = method.limit === 0;
-                          // Bar represents usage consumed; 0 remaining = full red bar
-                          const pct = isUnknown
+                          const usedCount = method.limit > 0 ? method.count : 0;
+                          // Bar shows remaining capacity (green = good, shrinks as usage grows)
+                          const remainingPct = isUnknown
                             ? 0
                             : method.status === "exhausted"
-                              ? 100
+                              ? 0
                               : method.limit > 0
-                                ? Math.round(((method.limit - method.remaining) / method.limit) * 100)
+                                ? Math.round((method.remaining / method.limit) * 100)
                                 : 0;
                           const barColor =
                             method.status === "exhausted" ? "bg-red-500"
@@ -978,7 +978,6 @@ export default function SyncPage() {
                               : method.status === "tight" ? "text-amber-400"
                               : isUnknown ? "text-muted-foreground/60"
                               : "text-emerald-400";
-                          const usedCount = method.limit > 0 ? method.limit - method.remaining : 0;
                           const countLabel = isUnknown
                             ? "Unknown"
                             : rateLimits.isLocallyTracked
@@ -995,7 +994,10 @@ export default function SyncPage() {
                                 </span>
                               </div>
                               <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-muted/40">
-                                <div className={cn("h-full rounded-full transition-all", barColor)} style={{ width: `${pct}%` }} />
+                                <div
+                                  className={cn("h-full rounded-full transition-all", barColor)}
+                                  style={{ width: isUnknown ? "0%" : `${remainingPct}%` }}
+                                />
                               </div>
                             </div>
                           );

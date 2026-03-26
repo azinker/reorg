@@ -292,10 +292,16 @@ export async function GET(
     }
 
     // Prefer the DB-persisted snapshot over the "Unknown" degraded placeholder.
-    // The live call may fail (cold start, eBay outage, etc.) but a recent sync
-    // may have saved accurate per-method counts to the integration config.
+    // Re-read from DB to catch snapshots saved by a sync that just finished.
     if (isEbayPlatform(integration.platform) && (!rateLimits || rateLimits.isDegradedEstimate)) {
-      const savedSnapshot = deserializeSnapshotFromConfig(config.syncState?.lastRateLimitSnapshot);
+      const freshIntegration = await db.integration.findUnique({
+        where: { id: integration.id },
+        select: { config: true },
+      });
+      const freshConfig = freshIntegration
+        ? getIntegrationConfig({ ...integration, config: freshIntegration.config })
+        : config;
+      const savedSnapshot = deserializeSnapshotFromConfig(freshConfig.syncState?.lastRateLimitSnapshot);
       if (savedSnapshot) {
         rateLimits = savedSnapshot;
       }
