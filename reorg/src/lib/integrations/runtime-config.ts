@@ -18,6 +18,10 @@ export interface SyncProfile {
   preferredMode: SyncMode;
   fullReconcileIntervalHours: number;
   incrementalStrategy: IncrementalStrategy;
+  /** Skip per-listing GetItem calls for UPC hydration during Full Sync.
+   *  When true, Full Sync only uses GetSellerList (no GetItem quota burn).
+   *  UPCs can still be imported and pushed via ReviseFixedPriceItem. */
+  skipUpcHydration: boolean;
 }
 
 /** Resume a long catalog pull across multiple serverless invocations (Shopify/BigCommerce). */
@@ -83,6 +87,7 @@ const DEFAULT_SYNC_PROFILES: Record<Platform, SyncProfile> = {
     preferredMode: "incremental",
     fullReconcileIntervalHours: 24,
     incrementalStrategy: "ebay_get_seller_events",
+    skipUpcHydration: true,
   },
   TT_EBAY: {
     autoSyncEnabled: true,
@@ -94,6 +99,7 @@ const DEFAULT_SYNC_PROFILES: Record<Platform, SyncProfile> = {
     preferredMode: "incremental",
     fullReconcileIntervalHours: 24,
     incrementalStrategy: "ebay_get_seller_events",
+    skipUpcHydration: true,
   },
   SHOPIFY: {
     autoSyncEnabled: true,
@@ -105,6 +111,7 @@ const DEFAULT_SYNC_PROFILES: Record<Platform, SyncProfile> = {
     preferredMode: "full",
     fullReconcileIntervalHours: 24,
     incrementalStrategy: "shopify_webhook_reconcile",
+    skipUpcHydration: false,
   },
   BIGCOMMERCE: {
     autoSyncEnabled: true,
@@ -116,6 +123,7 @@ const DEFAULT_SYNC_PROFILES: Record<Platform, SyncProfile> = {
     preferredMode: "full",
     fullReconcileIntervalHours: 24,
     incrementalStrategy: "bigcommerce_webhook_reconcile",
+    skipUpcHydration: false,
   },
 };
 
@@ -230,6 +238,7 @@ export function normalizeSyncProfile(
       record.incrementalStrategy,
       defaults.incrementalStrategy,
     ),
+    skipUpcHydration: asBoolean(record.skipUpcHydration, defaults.skipUpcHydration),
   };
 }
 

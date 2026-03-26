@@ -54,6 +54,7 @@ type SyncProfile = {
   preferredMode: "full" | "incremental";
   fullReconcileIntervalHours: number;
   incrementalStrategy: string;
+  skipUpcHydration: boolean;
 };
 
 type IntegrationSyncState = {
@@ -1014,6 +1015,55 @@ export default function SyncPage() {
                           : "Credits unavailable — will refresh on next sync."}
                       </p>
                     )}
+                  </div>
+                )}
+
+                {/* ---- eBay quota optimization toggle ---- */}
+                {isEbay && syncProfile && (
+                  <div className="mt-3 flex items-center justify-between rounded-lg border border-border/40 bg-muted/5 px-3 py-2">
+                    <div className="min-w-0 pr-3">
+                      <span className="text-[11px] font-medium text-foreground">
+                        Skip UPC pull during sync
+                      </span>
+                      <p className="mt-0.5 text-[10px] leading-snug text-muted-foreground">
+                        {syncProfile.skipUpcHydration
+                          ? "Full Sync uses only GetSellerList (no GetItem burn). Import UPCs and push with ReviseFixedPriceItem instead."
+                          : "Full Sync will call GetItem per listing to pull UPCs — uses significant API quota."}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      className={cn(
+                        "relative inline-flex h-5 w-9 shrink-0 items-center rounded-full border transition-colors cursor-pointer",
+                        syncProfile.skipUpcHydration
+                          ? "border-emerald-500/40 bg-emerald-500"
+                          : "border-border bg-muted/60",
+                      )}
+                      onClick={async () => {
+                        const next = !syncProfile.skipUpcHydration;
+                        setSyncMeta((prev) => ({
+                          ...prev,
+                          [store.apiPlatform]: prev[store.apiPlatform]
+                            ? {
+                                ...prev[store.apiPlatform]!,
+                                syncProfile: { ...syncProfile, skipUpcHydration: next },
+                              }
+                            : prev[store.apiPlatform],
+                        }));
+                        await fetch(`/api/integrations/${store.apiPlatform}`, {
+                          method: "PATCH",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({ config: { syncProfile: { skipUpcHydration: next } } }),
+                        });
+                      }}
+                    >
+                      <span
+                        className={cn(
+                          "inline-block h-3.5 w-3.5 rounded-full bg-white shadow-sm transition-transform",
+                          syncProfile.skipUpcHydration ? "translate-x-[18px]" : "translate-x-[2px]",
+                        )}
+                      />
+                    </button>
                   </div>
                 )}
 

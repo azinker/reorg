@@ -24,6 +24,7 @@ const syncProfileSchema = z
         "bigcommerce_webhook_reconcile",
       ])
       .optional(),
+    skipUpcHydration: z.boolean().optional(),
   })
   .partial();
 const syncStateSchema = z

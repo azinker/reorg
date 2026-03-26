@@ -839,10 +839,12 @@ async function runFullSync(
 ) {
   const integrationId = integration.id;
   const integrationConfig = getIntegrationConfig(integration);
+  const upcHydrationDisabled = integrationConfig.syncProfile.skipUpcHydration;
   const sharedStoreCount = await getSharedEbayQuotaStoreCount(integration);
   const getItemRate = getEbayMethodRate(analyticsSnapshot, "GetItem");
-  let hydrateBudget =
-    getItemRate && getItemRate.limit > 0
+  let hydrateBudget = upcHydrationDisabled
+    ? 0
+    : getItemRate && getItemRate.limit > 0
       ? getPerRunEbayGetItemBudget({
           remaining: getItemRate.remaining,
           limit: getItemRate.limit,
@@ -855,7 +857,7 @@ async function runFullSync(
           integrationConfig.syncProfile.timezone,
         );
   let hydrateCallsUsed = 0;
-  let skipHydrateDueToLimit = false;
+  let skipHydrateDueToLimit = upcHydrationDisabled;
   let hydrateNoticePushed = false;
 
   let page = 1;
