@@ -126,6 +126,7 @@ type SyncRouteData = {
     nextResetAt: string | null;
     isDegradedEstimate?: boolean;
     degradedNote?: string;
+    isLocallyTracked?: boolean;
   } | null;
   quotaPolicy: {
     reservedGetItemCalls: number | null;
@@ -939,7 +940,9 @@ export default function SyncPage() {
                     <div className="flex items-center justify-between gap-2">
                       <span className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
                         eBay API Credits
-                        {rateLimits?.isDegradedEstimate ? (
+                        {rateLimits?.isLocallyTracked ? (
+                          <span className="ml-1.5 font-normal normal-case text-blue-400/90">(locally tracked)</span>
+                        ) : rateLimits?.isDegradedEstimate ? (
                           <span className="ml-1.5 font-normal normal-case text-amber-400/90">(estimate)</span>
                         ) : null}
                       </span>
@@ -978,9 +981,11 @@ export default function SyncPage() {
                           const usedCount = method.limit > 0 ? method.limit - method.remaining : 0;
                           const countLabel = isUnknown
                             ? "Unknown"
-                            : rateLimits.isDegradedEstimate
-                              ? `~${usedCount.toLocaleString()} used / ~${method.limit.toLocaleString()}`
-                              : `${usedCount.toLocaleString()} used / ${method.limit.toLocaleString()}`;
+                            : rateLimits.isLocallyTracked
+                              ? `≥${usedCount.toLocaleString()} used / ${method.limit.toLocaleString()}`
+                              : rateLimits.isDegradedEstimate
+                                ? `~${usedCount.toLocaleString()} used / ~${method.limit.toLocaleString()}`
+                                : `${usedCount.toLocaleString()} used / ${method.limit.toLocaleString()}`;
                           return (
                             <div key={method.name}>
                               <div className="flex items-center justify-between text-[11px]">

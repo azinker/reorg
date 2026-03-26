@@ -8,11 +8,15 @@ import {
 import { getIntegrationConfig, mergeIntegrationConfig } from "@/lib/integrations/runtime-config";
 import {
   buildEbayQuotaExhaustedMessage,
+  buildLocallyTrackedSnapshot,
   fetchRateLimitSnapshotWithToken,
   getEbayMethodRate,
   getEbayTradingRateLimitSnapshotForIntegration,
+  mergeSyncCallsIntoLocalUsage,
   serializeSnapshotForConfig,
   type EbayTradingRateLimitSnapshot,
+  type LocalEbayApiUsage,
+  type MonitoredEbayMethod,
 } from "@/lib/services/ebay-analytics";
 import {
   buildEbayIncrementalBudgetPlan,
@@ -355,6 +359,9 @@ export async function runEbayTppSync(
   let pendingIncrementalItemIdsForCompletion: string[] = [];
   let pendingIncrementalWindowEndedAtForCompletion: string | null = null;
   let analyticsSnapshot: EbayTradingRateLimitSnapshot | null = null;
+  const apiCalls: Record<MonitoredEbayMethod, number> = {
+    GetItem: 0, GetSellerList: 0, GetSellerEvents: 0, ReviseFixedPriceItem: 0,
+  };
 
   try {
     let effectiveMode = options.effectiveMode ?? options.requestedMode ?? "full";
@@ -417,6 +424,7 @@ export async function runEbayTppSync(
           integration.id,
           ebayConfig,
           lastCursorValue,
+          apiCalls,
         ));
 
       // Clear the phase indicator now that event collection is done
@@ -552,6 +560,7 @@ export async function runEbayTppSync(
               fetchFullItem(integration.id, ebayConfig, itemId),
             ),
           );
+          apiCalls.GetItem += itemIdsNeedingFetch.length;
           let fetchResultIndex = 0;
 
           for (let batchIndex = 0; batchIndex < batch.length; batchIndex += 1) {
@@ -666,7 +675,7 @@ export async function runEbayTppSync(
         );
       }
 
-      await runFullSync(integration, ebayConfig, syncJob.id, progress, analyticsSnapshot);
+      await runFullSync(integration, ebayConfig, syncJob.id, progress, analyticsSnapshot, apiCalls);
       const stalePrune = await removeMarketplaceListingsOlderThan(
         integration.id,
         syncJob.startedAt ?? new Date(0),
@@ -763,28 +772,41 @@ export async function runEbayTppSync(
       },
     });
   } finally {
-    // Use the sync function's own working token to call GetApiAccessRules
-    // and persist the result to the DB. This bypasses the analytics module's
-    // own token refresh which fails on Vercel serverless cold starts.
     try {
-      console.log("[ebay-tpp-sync] Fetching post-sync analytics...");
       const token = await getAccessToken(integration.id, ebayConfig);
-      console.log(`[ebay-tpp-sync] Got token (length=${token.length}), calling GetApiAccessRules...`);
       const freshSnapshot = await fetchRateLimitSnapshotWithToken(token);
-      console.log(`[ebay-tpp-sync] fetchRateLimitSnapshotWithToken returned: ${freshSnapshot ? "snapshot with " + freshSnapshot.methods.length + " methods" : "null"}`);
-      if (freshSnapshot) {
-        const latest = await db.integration.findUnique({ where: { id: integration.id } });
-        if (latest) {
-          const updatedConfig = mergeIntegrationConfig(
-            latest.platform,
-            latest.config,
-            { syncState: { lastRateLimitSnapshot: serializeSnapshotForConfig(freshSnapshot) } },
-          );
+      const latest = await db.integration.findUnique({ where: { id: integration.id } });
+      if (latest) {
+        const cfg = getIntegrationConfig(latest);
+        if (freshSnapshot) {
+          const updatedConfig = mergeIntegrationConfig(latest.platform, latest.config, {
+            syncState: { lastRateLimitSnapshot: serializeSnapshotForConfig(freshSnapshot) },
+          });
           await db.integration.update({
             where: { id: integration.id },
             data: { config: updatedConfig as unknown as Prisma.InputJsonValue },
           });
-          console.log("[ebay-tpp-sync] Analytics snapshot persisted to DB");
+        } else {
+          const updatedUsage = mergeSyncCallsIntoLocalUsage(
+            cfg.syncState?.localApiUsage as LocalEbayApiUsage | undefined,
+            apiCalls,
+          );
+          const localSnapshot = buildLocallyTrackedSnapshot(updatedUsage);
+          const updatedConfig = mergeIntegrationConfig(latest.platform, latest.config, {
+            syncState: {
+              localApiUsage: updatedUsage,
+              lastRateLimitSnapshot: serializeSnapshotForConfig(localSnapshot),
+            },
+          });
+          await db.integration.update({
+            where: { id: integration.id },
+            data: { config: updatedConfig as unknown as Prisma.InputJsonValue },
+          });
+          console.log(
+            `[ebay-tpp-sync] GetApiAccessRules unavailable — saved local tracking: ` +
+            `GetItem=${updatedUsage.GetItem}, GetSellerList=${updatedUsage.GetSellerList}, ` +
+            `GetSellerEvents=${updatedUsage.GetSellerEvents}`,
+          );
         }
       }
     } catch (analyticsErr) {
@@ -801,6 +823,7 @@ async function runFullSync(
   syncJobId: string,
   progress: SyncProgress,
   analyticsSnapshot: EbayTradingRateLimitSnapshot | null,
+  apiCalls: Record<MonitoredEbayMethod, number>,
 ) {
   const integrationId = integration.id;
   const integrationConfig = getIntegrationConfig(integration);
@@ -907,6 +930,7 @@ async function runFullSync(
       }
 
       resp = nextResponse as Record<string, unknown>;
+      apiCalls.GetSellerList++;
     }
 
     const items = arr(obj(resp, "ItemArray"), "Item");
@@ -937,6 +961,7 @@ async function runFullSync(
             itemForUpsert =
               (await fetchFullItem(integrationId, ebayConfig, itemId)) ?? item;
             hydrateCallsUsed += 1;
+            apiCalls.GetItem++;
           } catch (error) {
             if (isEbayUsageLimitError(error)) {
               skipHydrateDueToLimit = true;
@@ -1059,6 +1084,7 @@ async function fetchIncrementalItemIds(
   integrationId: string,
   config: EbayConfig,
   lastCursor: string | null,
+  apiCalls?: Record<string, number>,
 ): Promise<IncrementalWindow | null> {
   if (!lastCursor) return null;
 
@@ -1152,6 +1178,7 @@ async function fetchIncrementalItemIds(
       }
 
       resp = nextResponse as Record<string, unknown>;
+      if (apiCalls) apiCalls.GetSellerEvents = (apiCalls.GetSellerEvents ?? 0) + 1;
     }
 
     const items = arr(obj(resp, "ItemArray"), "Item");

@@ -28,6 +28,16 @@ export interface EbayTradingRateLimitSnapshot {
   /** True when live GetApiAccessRules failed but UI shows a GetItem-only cooldown estimate */
   isDegradedEstimate?: boolean;
   degradedNote?: string;
+  /** True when counts come from local call tracking, not eBay's GetApiAccessRules */
+  isLocallyTracked?: boolean;
+}
+
+export interface LocalEbayApiUsage {
+  date: string;
+  GetItem: number;
+  GetSellerList: number;
+  GetSellerEvents: number;
+  ReviseFixedPriceItem: number;
 }
 
 type FullEbayCredentials = {
@@ -535,6 +545,7 @@ export function serializeSnapshotForConfig(
     methods: snapshot.methods,
     exhaustedMethods: snapshot.exhaustedMethods,
     nextResetAt: snapshot.nextResetAt,
+    isLocallyTracked: snapshot.isLocallyTracked ?? false,
   };
 }
 
@@ -547,13 +558,17 @@ export function deserializeSnapshotFromConfig(
   if (typeof obj.fetchedAt !== "string" || !Array.isArray(obj.methods)) return null;
   const age = Date.now() - new Date(obj.fetchedAt).getTime();
   if (age > 60 * 60 * 1000) return null;
+  const isLocal = obj.isLocallyTracked === true;
   return {
     fetchedAt: obj.fetchedAt,
     methods: obj.methods as EbayMethodRateLimit[],
     exhaustedMethods: Array.isArray(obj.exhaustedMethods) ? obj.exhaustedMethods as string[] : [],
     nextResetAt: typeof obj.nextResetAt === "string" ? obj.nextResetAt : null,
     isDegradedEstimate: true,
-    degradedNote: `Saved at ${new Date(obj.fetchedAt).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true, timeZone: "America/New_York" })} — live refresh is temporarily unavailable.`,
+    isLocallyTracked: isLocal,
+    degradedNote: isLocal
+      ? "eBay's reporting service is temporarily down. These counts are tracked locally by reorG and may be slightly lower than actual usage."
+      : `Saved at ${new Date(obj.fetchedAt).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true, timeZone: "America/New_York" })} — live refresh is temporarily unavailable.`,
   };
 }
 
@@ -621,4 +636,59 @@ export function getEbayCooldownUntilFromSnapshot(
     .sort((a, b) => b.getTime() - a.getTime());
 
   return fallbackResets[0] ?? null;
+}
+
+const EBAY_DAILY_LIMIT = 5_000;
+
+/**
+ * Merge the current sync's API call counts into the cumulative daily tracker.
+ * Resets to zero when the date (America/New_York) changes.
+ */
+export function mergeSyncCallsIntoLocalUsage(
+  existing: LocalEbayApiUsage | null | undefined,
+  delta: Partial<Record<MonitoredEbayMethod, number>>,
+): LocalEbayApiUsage {
+  const todayET = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/New_York",
+  }).format(new Date());
+
+  const base: LocalEbayApiUsage =
+    existing && existing.date === todayET
+      ? { ...existing }
+      : { date: todayET, GetItem: 0, GetSellerList: 0, GetSellerEvents: 0, ReviseFixedPriceItem: 0 };
+
+  for (const [key, value] of Object.entries(delta)) {
+    if (key in base && typeof value === "number") {
+      (base as unknown as Record<string, number>)[key] += value;
+    }
+  }
+  return base;
+}
+
+/**
+ * Build a rate-limit snapshot from locally tracked API call counts.
+ * Used as fallback when eBay's GetApiAccessRules is unreachable (e.g. 503).
+ */
+export function buildLocallyTrackedSnapshot(
+  usage: LocalEbayApiUsage,
+): EbayTradingRateLimitSnapshot {
+  const methods: EbayMethodRateLimit[] = MONITORED_EBAY_METHODS.map((name) => {
+    const count = usage[name] ?? 0;
+    const remaining = Math.max(0, EBAY_DAILY_LIMIT - count);
+    let status: EbayMethodRateLimit["status"] = "healthy";
+    if (remaining === 0) status = "exhausted";
+    else if (remaining < EBAY_DAILY_LIMIT * 0.1) status = "tight";
+    return { name, count, limit: EBAY_DAILY_LIMIT, remaining, reset: null, timeWindowSeconds: 86400, status };
+  });
+
+  return {
+    fetchedAt: new Date().toISOString(),
+    methods,
+    exhaustedMethods: methods.filter((m) => m.status === "exhausted").map((m) => m.name),
+    nextResetAt: null,
+    isDegradedEstimate: true,
+    isLocallyTracked: true,
+    degradedNote:
+      "eBay's reporting service is temporarily down. These counts are tracked locally by reorG and may be slightly lower than actual usage.",
+  };
 }

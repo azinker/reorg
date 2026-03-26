@@ -51,6 +51,7 @@ export interface SyncState {
   pendingIncrementalWindowEndedAt: string | null;
   catalogPullResume?: CatalogPullResume | null;
   lastRateLimitSnapshot?: Record<string, unknown> | null;
+  localApiUsage?: Record<string, unknown> | null;
 }
 
 export interface WebhookState {
