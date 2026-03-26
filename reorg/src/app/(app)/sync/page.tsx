@@ -960,18 +960,22 @@ export default function SyncPage() {
                         {rateLimits.methods.map((method) => {
                           const isUnknown = method.limit === 0;
                           const usedCount = method.limit > 0 ? method.count : 0;
-                          // Bar shows remaining capacity (green = good, shrinks as usage grows)
-                          const remainingPct = isUnknown
+                          // Bar shows how much of the quota has been CONSUMED
+                          const usedPct = isUnknown
                             ? 0
                             : method.status === "exhausted"
-                              ? 0
+                              ? 100
                               : method.limit > 0
-                                ? Math.round((method.remaining / method.limit) * 100)
+                                ? Math.max(
+                                    usedCount > 0 ? 2 : 0,
+                                    Math.round((usedCount / method.limit) * 100),
+                                  )
                                 : 0;
                           const barColor =
                             method.status === "exhausted" ? "bg-red-500"
                               : method.status === "tight" ? "bg-amber-500"
-                              : isUnknown ? "bg-muted/20"
+                              : isUnknown ? "bg-muted/30"
+                              : usedPct === 0 ? "bg-emerald-500/30"
                               : "bg-emerald-500";
                           const textColor =
                             method.status === "exhausted" ? "text-red-400"
@@ -996,7 +1000,7 @@ export default function SyncPage() {
                               <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-muted/40">
                                 <div
                                   className={cn("h-full rounded-full transition-all", barColor)}
-                                  style={{ width: isUnknown ? "0%" : `${remainingPct}%` }}
+                                  style={{ width: `${usedPct}%` }}
                                 />
                               </div>
                             </div>
@@ -1105,7 +1109,9 @@ export default function SyncPage() {
                   <div className="mt-4 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
                     <span className="font-semibold">eBay daily quota reached</span>
                     {cooldown?.retryLabel ? ` — resets around ${cooldown.retryLabel}` : " — waiting for quota reset"}
-                    <span className="ml-1 opacity-80">· Other method counts are unknown until quota resets</span>
+                    {!rateLimits?.isLocallyTracked && (
+                      <span className="ml-1 opacity-80">· Other method counts are unknown until quota resets</span>
+                    )}
                   </div>
                 )}
 
