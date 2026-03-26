@@ -289,10 +289,7 @@ export async function POST(
 
     let refreshedRow;
     try {
-      const rowStartedAt = Date.now();
       refreshedRow = await getGridRowById(rowId);
-      // attach timing to the result below
-      (refreshedRow as Record<string, unknown>).__rowBuildMs = Date.now() - rowStartedAt;
     } catch (rowError) {
       const msg = rowError instanceof Error ? rowError.message : String(rowError);
       console.error("[grid-row-refresh] getGridRowById failed", msg, rowError);
