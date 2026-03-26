@@ -57,7 +57,7 @@ interface DataGridProps {
 
 type PushField = "salePrice" | "adRate" | "upc";
 type PushLaunchMode = "review" | "fast";
-type RowRefreshPhase = "loading" | "success";
+type RowRefreshPhase = "loading" | "success" | "error";
 
 type FailedPushItem = PushItem & {
   retryKey: string;
@@ -795,6 +795,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
   const [quickPushStates, setQuickPushStates] = useState<Record<string, QuickPushState>>({});
   const [childRowsLoading, setChildRowsLoading] = useState<Record<string, boolean>>({});
   const [rowRefreshStates, setRowRefreshStates] = useState<Record<string, RowRefreshPhase>>({});
+  const [rowRefreshErrors, setRowRefreshErrors] = useState<Record<string, string>>({});
   const [pendingScrollRowId, setPendingScrollRowId] = useState<string | null>(null);
   const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const quickPushTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
@@ -878,6 +879,20 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
     });
   }
 
+  function clearRowRefreshErrors(rowIds: string[]) {
+    setRowRefreshErrors((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      for (const rowId of rowIds) {
+        if (next[rowId] !== undefined) {
+          delete next[rowId];
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }
+
   function resetRowRefreshTimers(rowIds: string[]) {
     for (const rowId of rowIds) {
       if (rowRefreshTimersRef.current[rowId]) {
@@ -887,12 +902,13 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
     }
   }
 
-  function scheduleRowRefreshReset(rowIds: string[]) {
+  function scheduleRowRefreshReset(rowIds: string[], durationMs = 5500) {
     for (const rowId of rowIds) {
       rowRefreshTimersRef.current[rowId] = setTimeout(() => {
         clearRowRefreshPhase([rowId]);
+        clearRowRefreshErrors([rowId]);
         delete rowRefreshTimersRef.current[rowId];
-      }, 2400);
+      }, durationMs);
     }
   }
 
@@ -969,6 +985,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
 
     resetRowRefreshTimers(refreshFamilyIds);
     setRowRefreshPhase(refreshFamilyIds, "loading");
+    clearRowRefreshErrors(refreshFamilyIds);
 
     try {
       const shouldReloadChildren = Boolean(
@@ -1026,6 +1043,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
 
         const successIds = [rowId, ...refreshedChildren.map((child) => child.id)];
         setRowRefreshPhase(successIds, "success");
+        clearRowRefreshErrors(successIds);
         scheduleRowRefreshReset(successIds);
         const rebuilt = rebuildParentFromChildren({
           ...currentRow,
@@ -1099,16 +1117,21 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
         | Array<{ platform: string; status: string; message: string }>
         | undefined;
       setRowRefreshPhase(refreshFamilyIds, "success");
+      clearRowRefreshErrors(refreshFamilyIds);
       scheduleRowRefreshReset(refreshFamilyIds);
       showToast(buildRowRefreshToast(baseMessage, refreshedRow, storeResults), 7500);
     } catch (error) {
       console.error("[data-grid] failed to refresh row", error);
-      clearRowRefreshPhase(refreshFamilyIds);
-      showToast(
-        error instanceof Error
-          ? error.message
-          : "Failed to refresh row. Please try again.",
-      );
+      const errMsg =
+        error instanceof Error ? error.message : "Failed to refresh row. Please try again.";
+      setRowRefreshPhase(refreshFamilyIds, "error");
+      setRowRefreshErrors((prev) => {
+        const next = { ...prev };
+        for (const id of refreshFamilyIds) next[id] = errMsg;
+        return next;
+      });
+      scheduleRowRefreshReset(refreshFamilyIds);
+      showToast(errMsg, 7500);
     }
   }
 
@@ -3741,36 +3764,56 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
                       <span className="text-base font-semibold text-emerald-400">↳</span>
                     )}
                     </div>
-                    <div className="flex items-center justify-center">
-                      <button
-                        onClick={() => void handleRefreshRow(row.id, row.parentId)}
-                        disabled={rowRefreshStates[row.id] === "loading"}
-                        className={cn(
-                          "flex h-7 w-7 items-center justify-center rounded-md border transition-colors cursor-pointer",
-                          rowRefreshStates[row.id] === "success"
-                            ? "border-emerald-500/40 bg-emerald-500/15 text-emerald-300"
-                            : "border-violet-500/35 bg-violet-500/15 text-violet-300",
-                          rowRefreshStates[row.id] === "loading"
-                            ? "cursor-wait opacity-80"
-                            : rowRefreshStates[row.id] === "success"
-                              ? "hover:border-emerald-500/40 hover:bg-emerald-500/15 hover:text-emerald-300"
-                              : "hover:border-violet-400/60 hover:bg-violet-500/25 hover:text-violet-200"
-                        )}
-                        title={
-                          rowRefreshStates[row.id] === "success"
-                            ? "Row refreshed"
-                            : "Refresh this row from linked marketplaces"
-                        }
-                      >
-                        {rowRefreshStates[row.id] === "success" ? (
-                          <Check className="h-3.5 w-3.5" strokeWidth={3} />
-                        ) : (
-                          <RefreshCw
-                            className={cn("h-3.5 w-3.5", rowRefreshStates[row.id] === "loading" && "animate-spin")}
-                            strokeWidth={2.4}
-                          />
-                        )}
-                      </button>
+                    <div className="flex flex-col items-center gap-0.5">
+                      {(() => {
+                        const phase = rowRefreshStates[row.id];
+                        return (
+                          <>
+                            <button
+                              onClick={() => void handleRefreshRow(row.id, row.parentId)}
+                              disabled={phase === "loading"}
+                              className={cn(
+                                "flex h-7 w-7 items-center justify-center rounded-md border transition-colors cursor-pointer",
+                                phase === "success"
+                                  ? "border-emerald-500/40 bg-emerald-500/15 text-emerald-300"
+                                  : phase === "error"
+                                    ? "border-amber-500/50 bg-amber-500/15 text-amber-300"
+                                    : "border-violet-500/35 bg-violet-500/15 text-violet-300",
+                                phase === "loading"
+                                  ? "cursor-wait opacity-80"
+                                  : phase === "success"
+                                    ? "hover:border-emerald-500/50 hover:bg-emerald-500/20 hover:text-emerald-200"
+                                    : phase === "error"
+                                      ? "hover:border-amber-500/70 hover:bg-amber-500/25 hover:text-amber-200"
+                                      : "hover:border-violet-400/60 hover:bg-violet-500/25 hover:text-violet-200"
+                              )}
+                              title={
+                                phase === "success"
+                                  ? "Row refreshed"
+                                  : phase === "error"
+                                    ? (rowRefreshErrors[row.id] ?? "Refresh failed — click to retry")
+                                    : "Refresh this row from linked marketplaces"
+                              }
+                            >
+                              {phase === "success" ? (
+                                <Check className="h-3.5 w-3.5" strokeWidth={3} />
+                              ) : phase === "error" ? (
+                                <AlertTriangle className="h-3.5 w-3.5" strokeWidth={2.4} />
+                              ) : (
+                                <RefreshCw
+                                  className={cn("h-3.5 w-3.5", phase === "loading" && "animate-spin")}
+                                  strokeWidth={2.4}
+                                />
+                              )}
+                            </button>
+                            {phase === "error" && (
+                              <span className="text-[7px] font-semibold leading-none text-amber-400/90">
+                                Failed
+                              </span>
+                            )}
+                          </>
+                        );
+                      })()}
                     </div>
                   </div>
 
