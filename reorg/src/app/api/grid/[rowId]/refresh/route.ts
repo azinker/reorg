@@ -6,6 +6,8 @@ import { startIntegrationSync } from "@/lib/services/sync-control";
 import { runBigCommerceWebhookReconcile } from "@/lib/services/bigcommerce-sync";
 import { runShopifyWebhookReconcile } from "@/lib/services/shopify-sync";
 
+export const maxDuration = 60;
+
 type RefreshablePlatform = "TPP_EBAY" | "TT_EBAY" | "BIGCOMMERCE" | "SHOPIFY";
 
 type RefreshBucket = {
@@ -28,7 +30,7 @@ type RefreshResult =
       jobId: string | null;
     };
 
-const PLATFORM_REFRESH_TIMEOUT_MS = 12_000;
+const PLATFORM_REFRESH_TIMEOUT_MS = 8_000;
 
 const PLATFORM_SHORT: Record<string, string> = {
   TPP_EBAY: "eBay TPP",
@@ -77,6 +79,13 @@ function normalizeRowId(rowId: string) {
     return {
       dbRowId: rowId.slice("child-".length),
       includeChildListings: false,
+    };
+  }
+
+  if (rowId.startsWith("variation-parent:")) {
+    return {
+      dbRowId: rowId.slice("variation-parent:".length),
+      includeChildListings: true,
     };
   }
 
@@ -341,12 +350,13 @@ export async function POST(
       return `${label}: ${summarizeMessage(r.message)}`;
     });
 
+    const breakdown = perPlatformLines.join(" · ");
     const message =
       failedCount === 0
-        ? `Refreshed ${completedCount} store${completedCount === 1 ? "" : "s"}.`
+        ? `All stores refreshed. ${breakdown}`
         : failedCount === results.length
-          ? `All ${failedCount} store${failedCount === 1 ? "" : "s"} failed to refresh. ${perPlatformLines.join(" · ")}`
-          : `${completedCount} refreshed, ${failedCount} failed. ${perPlatformLines.join(" · ")}`;
+          ? `All ${failedCount} store${failedCount === 1 ? "" : "s"} failed. ${breakdown}`
+          : `${completedCount} refreshed, ${failedCount} failed. ${breakdown}`;
 
     return NextResponse.json({
       data: {
