@@ -1775,7 +1775,11 @@ function arr(parent: unknown, key: string): unknown[] {
   if (parent == null || typeof parent !== "object") return [];
   const raw = (parent as Record<string, unknown>)[key];
   if (Array.isArray(raw)) return raw;
-  if (raw != null && typeof raw === "object") return [raw];
+  // Treat any non-null scalar (string, number) or object as a single-element
+  // array. This is necessary because fast-xml-parser returns a bare string
+  // when there is only one child element (e.g. a single PictureURL), and we
+  // must not lose that value.
+  if (raw != null) return [raw];
   return [];
 }
 
