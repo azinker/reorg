@@ -471,7 +471,7 @@ function EditableStoreBlock({
   return (
     <div
       className={cn(
-        "group/edit flex w-full items-center gap-1.5 rounded border px-2.5 py-1.5 text-xs",
+        "group/edit flex w-full min-w-0 items-start gap-1.5 rounded border px-2.5 py-1.5 text-xs",
         colorClass,
         hasStaged && "ring-1 ring-[var(--staged)]"
       )}
@@ -481,7 +481,7 @@ function EditableStoreBlock({
         <span className="w-10 text-[10px] font-extrabold uppercase text-foreground leading-none">{label}</span>
         {shortItemId && <span className="text-[8px] font-mono text-muted-foreground/60 leading-none mt-0.5" title={`Item ID: ${item.listingId}`}>#{shortItemId}</span>}
       </div>
-      <div className="min-w-0 flex-1">
+      <div className="min-w-0 flex-1 self-stretch">
         {hasStaged ? (
           <>
             <span className={cn("flex items-center gap-1 font-semibold leading-tight whitespace-nowrap", isNegative(item.stagedValue) ? "text-red-400" : "text-emerald-400")}>
@@ -505,32 +505,42 @@ function EditableStoreBlock({
               </span>
             </span>
             {hasFailedStage ? (
-              <span
-                className="mt-1 block truncate text-[9px] font-medium leading-none text-red-300"
-                title={failedPushState?.error}
-              >
-                {failedPushState?.summary ?? "Fast push failed"}
-              </span>
+              <div className="mt-1 w-full min-w-0 space-y-0.5">
+                <p className="break-words text-[9px] font-medium leading-snug text-red-300">
+                  {failedPushState?.summary ?? "Fast push failed"}
+                </p>
+                {failedPushState?.error ? (
+                  <p className="break-words text-[8px] leading-snug text-red-300/85">{failedPushState.error}</p>
+                ) : null}
+              </div>
             ) : null}
             {quickPhase !== "idle" ? (
-              <div className="mt-1">
-                <div
-                  className={cn(
-                    "inline-flex min-w-[88px] items-center justify-center gap-1 rounded px-2 py-1 text-[10px] font-bold leading-none text-white",
-                    fastPushSucceeded
-                      ? "bg-emerald-500"
-                      : fastPushRetry
-                        ? "bg-amber-500"
-                        : "bg-blue-500",
-                  )}
-                  title={quickPushState?.detail ?? undefined}
-                >
-                  {renderFastPushLabel()}
-                </div>
+              <div className="mt-1 w-full min-w-0 space-y-1">
+                {fastPushRetry ? (
+                  <button
+                    type="button"
+                    onClick={() => onPush(rowId, item.platform, item.listingId, "fast")}
+                    className={cn(
+                      "inline-flex min-w-[88px] items-center justify-center gap-1 rounded px-2 py-1.5 text-[10px] font-bold leading-none text-white",
+                      "bg-amber-500 hover:bg-amber-600 cursor-pointer",
+                    )}
+                    title={quickPushState?.detail ?? "Retry fast push"}
+                  >
+                    {renderFastPushLabel()}
+                  </button>
+                ) : (
+                  <div
+                    className={cn(
+                      "inline-flex min-w-[88px] items-center justify-center gap-1 rounded px-2 py-1.5 text-[10px] font-bold leading-none text-white",
+                      fastPushSucceeded ? "bg-emerald-500" : "bg-blue-500",
+                    )}
+                    title={quickPushState?.detail ?? undefined}
+                  >
+                    {renderFastPushLabel()}
+                  </div>
+                )}
                 {fastPushRetry && quickPushState?.detail ? (
-                  <p className="mt-0.5 max-w-[160px] truncate text-[8px] leading-tight text-red-300/80" title={quickPushState.detail}>
-                    {quickPushState.detail}
-                  </p>
+                  <p className="break-words text-[9px] leading-snug text-red-300/90">{quickPushState.detail}</p>
                 ) : null}
               </div>
             ) : (
@@ -560,25 +570,33 @@ function EditableStoreBlock({
             )}
           </>
         ) : quickPhase !== "idle" ? (
-          <div className="flex flex-col items-start gap-1">
+          <div className="flex w-full min-w-0 flex-col items-stretch gap-1">
             <span className={cn("font-medium leading-tight", isNegative(item.value) ? "text-red-400" : "text-emerald-400")}>{fmt(item.value)}</span>
-            <span
-              className={cn(
-                "inline-flex min-w-[72px] items-center justify-center gap-1 rounded px-2 py-1 text-[10px] font-bold leading-none text-white",
-                fastPushSucceeded
-                  ? "bg-emerald-500"
-                  : fastPushRetry
-                    ? "bg-amber-500"
-                    : "bg-blue-500",
-              )}
-              title={quickPushState?.detail ?? undefined}
-            >
-              {renderFastPushLabel()}
-            </span>
+            {fastPushRetry ? (
+              <button
+                type="button"
+                onClick={() => onPush(rowId, item.platform, item.listingId, "fast")}
+                className={cn(
+                  "inline-flex min-w-[72px] max-w-full items-center justify-center gap-1 rounded px-2 py-1.5 text-[10px] font-bold leading-none text-white",
+                  "bg-amber-500 hover:bg-amber-600 cursor-pointer",
+                )}
+                title={quickPushState?.detail ?? "Retry fast push"}
+              >
+                {renderFastPushLabel()}
+              </button>
+            ) : (
+              <div
+                className={cn(
+                  "inline-flex min-w-[72px] items-center justify-center gap-1 rounded px-2 py-1.5 text-[10px] font-bold leading-none text-white",
+                  fastPushSucceeded ? "bg-emerald-500" : "bg-blue-500",
+                )}
+                title={quickPushState?.detail ?? undefined}
+              >
+                {renderFastPushLabel()}
+              </div>
+            )}
             {fastPushRetry && quickPushState?.detail ? (
-              <p className="max-w-[140px] truncate text-[8px] leading-tight text-red-300/80" title={quickPushState.detail}>
-                {quickPushState.detail}
-              </p>
+              <p className="break-words text-[8px] leading-snug text-red-300/90">{quickPushState.detail}</p>
             ) : null}
           </div>
         ) : (
@@ -692,7 +710,7 @@ export function EditableStoreBlockGroup({
   }
 
   return (
-    <div ref={containerRef} className="flex w-full flex-col gap-1">
+    <div ref={containerRef} className="flex w-full min-w-0 flex-col gap-1">
       {items.length > 1 && !bulkOpen && (
         <button
           onClick={() => { setBulkCents(0); setBulkShowActions(false); setBulkSourceLabel(null); setBulkOpen(true); }}
@@ -1103,7 +1121,7 @@ function EditableAdRateBlock({
   return (
     <div
       className={cn(
-        "group/edit flex w-full items-center gap-1.5 rounded border px-2.5 py-1.5 text-xs",
+        "group/edit flex w-full min-w-0 items-start gap-1.5 rounded border px-2.5 py-1.5 text-xs",
         colorClass,
         hasStaged && "ring-1 ring-[var(--staged)]"
       )}
@@ -1113,7 +1131,7 @@ function EditableAdRateBlock({
         <span className="w-10 text-[10px] font-extrabold uppercase text-foreground leading-none">{label}</span>
         {shortItemId && <span className="text-[8px] font-mono text-muted-foreground/60 leading-none mt-0.5" title={`Item ID: ${item.listingId}`}>#{shortItemId}</span>}
       </div>
-      <div className="min-w-0 flex-1">
+      <div className="min-w-0 flex-1 self-stretch">
         {hasStaged ? (
           <>
             <span className="flex items-center gap-1 font-semibold leading-tight whitespace-nowrap text-emerald-400">
@@ -1135,32 +1153,42 @@ function EditableAdRateBlock({
               <span className="inline-flex shrink-0 items-center rounded-sm bg-emerald-500 px-1 py-px text-[9px] font-bold text-white">LIVE</span>
             </span>
             {hasFailedStage ? (
-              <span
-                className="mt-1 block truncate text-[9px] font-medium leading-none text-red-300"
-                title={failedPushState?.error}
-              >
-                {failedPushState?.summary ?? "Fast push failed"}
-              </span>
+              <div className="mt-1 w-full min-w-0 space-y-0.5">
+                <p className="break-words text-[9px] font-medium leading-snug text-red-300">
+                  {failedPushState?.summary ?? "Fast push failed"}
+                </p>
+                {failedPushState?.error ? (
+                  <p className="break-words text-[8px] leading-snug text-red-300/85">{failedPushState.error}</p>
+                ) : null}
+              </div>
             ) : null}
             {quickPhase !== "idle" ? (
-              <div className="mt-1">
-                <div
-                  className={cn(
-                    "inline-flex min-w-[88px] items-center justify-center gap-1 rounded px-2 py-1 text-[10px] font-bold leading-none text-white",
-                    fastPushSucceeded
-                      ? "bg-emerald-500"
-                      : fastPushRetry
-                        ? "bg-amber-500"
-                        : "bg-blue-500",
-                  )}
-                  title={quickPushState?.detail ?? undefined}
-                >
-                  {renderFastPushLabel()}
-                </div>
+              <div className="mt-1 w-full min-w-0 space-y-1">
+                {fastPushRetry ? (
+                  <button
+                    type="button"
+                    onClick={() => onPush(rowId, item.platform, item.listingId, "fast")}
+                    className={cn(
+                      "inline-flex min-w-[88px] items-center justify-center gap-1 rounded px-2 py-1.5 text-[10px] font-bold leading-none text-white",
+                      "bg-amber-500 hover:bg-amber-600 cursor-pointer",
+                    )}
+                    title={quickPushState?.detail ?? "Retry fast push"}
+                  >
+                    {renderFastPushLabel()}
+                  </button>
+                ) : (
+                  <div
+                    className={cn(
+                      "inline-flex min-w-[88px] items-center justify-center gap-1 rounded px-2 py-1.5 text-[10px] font-bold leading-none text-white",
+                      fastPushSucceeded ? "bg-emerald-500" : "bg-blue-500",
+                    )}
+                    title={quickPushState?.detail ?? undefined}
+                  >
+                    {renderFastPushLabel()}
+                  </div>
+                )}
                 {fastPushRetry && quickPushState?.detail ? (
-                  <p className="mt-0.5 max-w-[160px] truncate text-[8px] leading-tight text-red-300/80" title={quickPushState.detail}>
-                    {quickPushState.detail}
-                  </p>
+                  <p className="break-words text-[9px] leading-snug text-red-300/90">{quickPushState.detail}</p>
                 ) : null}
               </div>
             ) : (
@@ -1190,21 +1218,34 @@ function EditableAdRateBlock({
             )}
           </>
         ) : quickPhase !== "idle" ? (
-          <div className="flex flex-col items-start gap-1">
+          <div className="flex w-full min-w-0 flex-col items-stretch gap-1">
             <span className="font-medium leading-tight text-emerald-400">{fmtPercent(item.value)}</span>
-            <span
-              className={cn(
-                "inline-flex min-w-[72px] items-center justify-center gap-1 rounded px-2 py-1 text-[10px] font-bold leading-none text-white",
-                fastPushSucceeded
-                  ? "bg-emerald-500"
-                  : fastPushRetry
-                    ? "bg-amber-500"
-                    : "bg-blue-500",
-              )}
-              title={quickPushState?.detail ?? undefined}
-            >
-              {renderFastPushLabel()}
-            </span>
+            {fastPushRetry ? (
+              <button
+                type="button"
+                onClick={() => onPush(rowId, item.platform, item.listingId, "fast")}
+                className={cn(
+                  "inline-flex min-w-[72px] max-w-full items-center justify-center gap-1 rounded px-2 py-1.5 text-[10px] font-bold leading-none text-white",
+                  "bg-amber-500 hover:bg-amber-600 cursor-pointer",
+                )}
+                title={quickPushState?.detail ?? "Retry fast push"}
+              >
+                {renderFastPushLabel()}
+              </button>
+            ) : (
+              <div
+                className={cn(
+                  "inline-flex min-w-[72px] items-center justify-center gap-1 rounded px-2 py-1.5 text-[10px] font-bold leading-none text-white",
+                  fastPushSucceeded ? "bg-emerald-500" : "bg-blue-500",
+                )}
+                title={quickPushState?.detail ?? undefined}
+              >
+                {renderFastPushLabel()}
+              </div>
+            )}
+            {fastPushRetry && quickPushState?.detail ? (
+              <p className="break-words text-[8px] leading-snug text-red-300/90">{quickPushState.detail}</p>
+            ) : null}
           </div>
         ) : (
           <span className="font-medium leading-tight text-emerald-400">{fmtPercent(item.value)}</span>

@@ -3854,7 +3854,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
 
                   {/* Sale Price (editable per item) */}
                   {isColVisible("salePrice") && (
-                    <div className={cn(COL_WIDTHS.salePrice, "flex items-center px-3", cellPy)}>
+                    <div className={cn(COL_WIDTHS.salePrice, "flex min-w-0 items-start px-3", cellPy)}>
                       <EditableStoreBlockGroup
                         items={row.isParent ? [] : row.salePrices}
                         rowId={row.id}
