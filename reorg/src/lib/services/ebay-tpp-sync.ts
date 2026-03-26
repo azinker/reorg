@@ -758,8 +758,11 @@ export async function runEbayTppSync(
     // and persist the result to the DB. This bypasses the analytics module's
     // own token refresh which fails on Vercel serverless cold starts.
     try {
+      console.log("[ebay-tpp-sync] Fetching post-sync analytics...");
       const token = await getAccessToken(integration.id, ebayConfig);
+      console.log(`[ebay-tpp-sync] Got token (length=${token.length}), calling GetApiAccessRules...`);
       const freshSnapshot = await fetchRateLimitSnapshotWithToken(token);
+      console.log(`[ebay-tpp-sync] fetchRateLimitSnapshotWithToken returned: ${freshSnapshot ? "snapshot with " + freshSnapshot.methods.length + " methods" : "null"}`);
       if (freshSnapshot) {
         const latest = await db.integration.findUnique({ where: { id: integration.id } });
         if (latest) {
@@ -772,6 +775,7 @@ export async function runEbayTppSync(
             where: { id: integration.id },
             data: { config: updatedConfig as unknown as Prisma.InputJsonValue },
           });
+          console.log("[ebay-tpp-sync] Analytics snapshot persisted to DB");
         }
       }
     } catch (analyticsErr) {

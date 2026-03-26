@@ -372,40 +372,56 @@ export async function getEbayTradingRateLimitSnapshotForIntegration(
 export async function fetchRateLimitSnapshotWithToken(
   accessToken: string,
 ): Promise<EbayTradingRateLimitSnapshot | null> {
+  const SYNC_COMPAT = "1199";
   try {
-    const tradingUrl = getTradingUrl("PRODUCTION");
+    const tradingUrl = "https://api.ebay.com/ws/api.dll";
     const body = `<?xml version="1.0" encoding="utf-8"?>
 <GetApiAccessRulesRequest xmlns="urn:ebay:apis:eBLBaseComponents">
 </GetApiAccessRulesRequest>`;
 
     const ac = new AbortController();
-    const abortTimer = setTimeout(() => ac.abort(), 10_000);
-    const response = await fetch(tradingUrl, {
-      method: "POST",
-      headers: {
-        "X-EBAY-API-IAF-TOKEN": accessToken,
-        "X-EBAY-API-SITEID": SITE_ID,
-        "X-EBAY-API-COMPATIBILITY-LEVEL": COMPAT_LEVEL,
-        "X-EBAY-API-CALL-NAME": "GetApiAccessRules",
-        "Content-Type": "text/xml",
-      },
-      body,
-      signal: ac.signal,
-    });
-    clearTimeout(abortTimer);
-
-    if (!response.ok) return null;
+    const abortTimer = setTimeout(() => ac.abort(), 15_000);
+    let response: Response;
+    try {
+      response = await fetch(tradingUrl, {
+        method: "POST",
+        headers: {
+          "X-EBAY-API-IAF-TOKEN": accessToken,
+          "X-EBAY-API-SITEID": "0",
+          "X-EBAY-API-COMPATIBILITY-LEVEL": SYNC_COMPAT,
+          "X-EBAY-API-CALL-NAME": "GetApiAccessRules",
+          "Content-Type": "text/xml",
+        },
+        body,
+        signal: ac.signal,
+      });
+    } finally {
+      clearTimeout(abortTimer);
+    }
 
     const xml = await response.text();
+    console.log(`[ebay-analytics] GetApiAccessRules HTTP ${response.status}, body length=${xml.length}, first 300: ${xml.slice(0, 300)}`);
+
+    if (!response.ok) {
+      console.error(`[ebay-analytics] GetApiAccessRules non-OK: ${response.status}`);
+      return null;
+    }
+
     const parsed = xmlParser.parse(xml);
     const apiResponse = parsed?.GetApiAccessRulesResponse;
     const ack =
       apiResponse && typeof apiResponse === "object"
         ? String((apiResponse as Record<string, unknown>).Ack ?? "")
         : "";
-    if (ack === "Failure") return null;
+    if (ack === "Failure") {
+      const errors = apiResponse?.Errors;
+      console.error(`[ebay-analytics] GetApiAccessRules Ack=Failure, Errors:`, JSON.stringify(errors).slice(0, 500));
+      return null;
+    }
 
     const rules: unknown[] = apiResponse?.ApiAccessRule ?? [];
+    console.log(`[ebay-analytics] GetApiAccessRules returned ${rules.length} rules, Ack=${ack}`);
+
     const monitoredSet = new Set<string>(MONITORED_EBAY_METHODS);
     const methodMap = new Map<string, EbayMethodRateLimit>();
 
@@ -450,14 +466,18 @@ export async function fetchRateLimitSnapshotWithToken(
       .filter((v) => !Number.isNaN(v.getTime()))
       .sort((a, b) => b.getTime() - a.getTime());
 
-    return {
+    const snapshot: EbayTradingRateLimitSnapshot = {
       fetchedAt: new Date().toISOString(),
       methods,
       exhaustedMethods,
       nextResetAt: resetCandidates[0]?.toISOString() ?? null,
     };
+
+    console.log(`[ebay-analytics] fetchRateLimitSnapshotWithToken SUCCESS: ${methods.map((m) => `${m.name}=${m.count}/${m.limit}`).join(", ")}`);
+    return snapshot;
   } catch (err) {
-    console.error("[ebay-analytics] fetchRateLimitSnapshotWithToken failed:", err);
+    const msg = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+    console.error(`[ebay-analytics] fetchRateLimitSnapshotWithToken FAILED: ${msg}`);
     return null;
   }
 }

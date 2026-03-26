@@ -761,8 +761,11 @@ export async function runEbayTtSync(
     });
   } finally {
     try {
+      console.log("[ebay-tt-sync] Fetching post-sync analytics...");
       const token = await getAccessToken(integration.id, ebayConfig);
+      console.log(`[ebay-tt-sync] Got token, calling GetApiAccessRules...`);
       const freshSnapshot = await fetchRateLimitSnapshotWithToken(token);
+      console.log(`[ebay-tt-sync] fetchRateLimitSnapshotWithToken returned: ${freshSnapshot ? "snapshot with " + freshSnapshot.methods.length + " methods" : "null"}`);
       if (freshSnapshot) {
         const latest = await db.integration.findUnique({ where: { id: integration.id } });
         if (latest) {
@@ -775,6 +778,7 @@ export async function runEbayTtSync(
             where: { id: integration.id },
             data: { config: updatedConfig as unknown as Prisma.InputJsonValue },
           });
+          console.log("[ebay-tt-sync] Analytics snapshot persisted to DB");
         }
       }
     } catch (analyticsErr) {
