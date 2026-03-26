@@ -4087,7 +4087,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
 
                   {/* Ad Rate: editable only on parent/standalone rows; child SKUs use the parent eBay rate */}
                   {isColVisible("adRate") && (
-                    <div className={cn(COL_WIDTHS.adRate, "min-w-0 flex items-center px-3", cellPy)}>
+                    <div className={cn(COL_WIDTHS.adRate, "min-w-0 flex items-start px-3", cellPy)}>
                       {row.isVariation && !row.isParent ? (
                         <StoreBlockGroup
                           items={[]}
@@ -4110,7 +4110,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
                           quickPushStates={quickPushStates}
                           failedPushStates={failedPushStates.storeStates}
                           includeMissingPlatforms
-                          missingLabel="No Listing"
+                          missingLabel={row.isParent ? "See child rows" : "No Listing"}
                           missingPlaceholder={row.isParent ? "defer-to-children" : "absent"}
                           missingLabelsByPlatform={{
                             SHOPIFY: "N/A",
