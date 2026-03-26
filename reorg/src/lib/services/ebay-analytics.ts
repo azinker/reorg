@@ -557,7 +557,8 @@ export function deserializeSnapshotFromConfig(
   const obj = raw as Record<string, unknown>;
   if (typeof obj.fetchedAt !== "string" || !Array.isArray(obj.methods)) return null;
   const age = Date.now() - new Date(obj.fetchedAt).getTime();
-  if (age > 60 * 60 * 1000) return null;
+  const maxAge = obj.isLocallyTracked === true ? 24 * 60 * 60 * 1000 : 60 * 60 * 1000;
+  if (age > maxAge) return null;
   const isLocal = obj.isLocallyTracked === true;
   return {
     fetchedAt: obj.fetchedAt,
