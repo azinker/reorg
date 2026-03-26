@@ -819,12 +819,29 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
 
   function getRefreshErrorLabel(errMsg: string): string {
     const m = errMsg.toLowerCase();
-    if (m.includes("quota") || m.includes("limit") || m.includes("429") || m.includes("rate")) return "Rate limit";
+    // eBay rate-limit/quota errors use phrases like "call limit exceeded",
+    // "maximum requests exceeded", "too many requests", "throttled"
+    if (
+      m.includes("quota") ||
+      m.includes("limit") ||
+      m.includes("429") ||
+      m.includes("rate") ||
+      m.includes("exceeded") ||
+      m.includes("too many") ||
+      m.includes("throttl") ||
+      m.includes("daily")
+    )
+      return "Rate limit";
     if (m.includes("timeout") || m.includes("504") || m.includes("timed out")) return "Timed out";
     if (m.includes("not found") || m.includes("404")) return "Not found";
     if (m.includes("running") || m.includes("already")) return "Sync active";
     if (m.includes("connect") || m.includes("network") || m.includes("fetch")) return "Network err";
-    return "Failed";
+    if (m.includes("500") || m.includes("server error") || m.includes("internal")) return "Server error";
+    if (m.includes("missing") || m.includes("payload")) return "Bad response";
+    // Fall back to the first ~12 chars of the raw message so the button
+    // always shows something meaningful rather than a static "Failed"
+    const trimmed = errMsg.trim();
+    return trimmed.length > 14 ? trimmed.slice(0, 12) + "…" : trimmed || "Failed";
   }
 
   function buildRowRefreshToast(

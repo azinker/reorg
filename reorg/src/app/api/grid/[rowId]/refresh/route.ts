@@ -244,12 +244,14 @@ export async function POST(
 
     const buckets = collectRefreshBuckets(masterRow, includeChildListings);
     if (buckets.size === 0) {
+      const currentRow = await getGridRowById(rowId);
       return NextResponse.json({
         data: {
           rowId,
           sku: masterRow.sku,
+          row: currentRow,
           results: [] as RefreshResult[],
-          message: "No linked marketplace listings were available to refresh.",
+          message: "No marketplace listings linked to this row — nothing to refresh.",
         },
       });
     }
