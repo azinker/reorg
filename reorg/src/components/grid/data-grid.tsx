@@ -997,7 +997,50 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
     ]);
   }
 
+  const isAnyRefreshLoading = useMemo(
+    () => Object.values(rowRefreshStates).some((phase) => phase === "loading"),
+    [rowRefreshStates],
+  );
+
+  const refreshQueueRef = useRef<Array<{ rowId: string; parentRowId?: string }>>([]);
+  const refreshActiveRef = useRef(false);
+
+  async function processRefreshQueue() {
+    if (refreshActiveRef.current) return;
+    const next = refreshQueueRef.current.shift();
+    if (!next) return;
+    refreshActiveRef.current = true;
+    try {
+      await executeRefreshRow(next.rowId, next.parentRowId);
+    } finally {
+      refreshActiveRef.current = false;
+      if (refreshQueueRef.current.length > 0) {
+        void processRefreshQueue();
+      }
+    }
+  }
+
   async function handleRefreshRow(rowId: string, parentRowId?: string) {
+    if (refreshActiveRef.current) {
+      const alreadyQueued = refreshQueueRef.current.some((q) => q.rowId === rowId);
+      if (!alreadyQueued) {
+        refreshQueueRef.current.push({ rowId, parentRowId });
+        setRowRefreshPhase([rowId], "loading");
+      }
+      return;
+    }
+    refreshActiveRef.current = true;
+    try {
+      await executeRefreshRow(rowId, parentRowId);
+    } finally {
+      refreshActiveRef.current = false;
+      if (refreshQueueRef.current.length > 0) {
+        void processRefreshQueue();
+      }
+    }
+  }
+
+  async function executeRefreshRow(rowId: string, parentRowId?: string) {
     const currentParentRow = parentRowId
       ? gridRows.find((entry) => entry.id === parentRowId)
       : null;
@@ -3837,7 +3880,9 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
                                     ? "Row refreshed"
                                     : phase === "error"
                                       ? "Click to retry refresh"
-                                      : "Refresh this row from linked marketplaces"
+                                      : phase === "loading" && isAnyRefreshLoading
+                                        ? "Queued — waiting for another refresh to finish"
+                                        : "Refresh this row from linked marketplaces"
                                 }
                               >
                                 {phase === "success" ? (
