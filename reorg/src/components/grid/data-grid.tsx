@@ -788,7 +788,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
     loadUserPref("columns", DEFAULT_COLUMNS)
   );
   const [highlightedRowId, setHighlightedRowId] = useState<string | null>(null);
-  const [toast, setToast] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ message: string; isError: boolean } | null>(null);
   const [failedPushes, setFailedPushes] = useState<FailedPushItem[]>([]);
   const [failedPushesOpen, setFailedPushesOpen] = useState(false);
   const [failedPushesLoading, setFailedPushesLoading] = useState(false);
@@ -805,16 +805,26 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
 
   const toastClearTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  function showToast(msg: string, durationMs = 4000) {
+  function showToast(msg: string, durationMs = 4000, isError = false) {
     if (toastClearTimerRef.current) {
       clearTimeout(toastClearTimerRef.current);
       toastClearTimerRef.current = null;
     }
-    setToast(msg);
+    setToast({ message: msg, isError });
     toastClearTimerRef.current = setTimeout(() => {
       setToast(null);
       toastClearTimerRef.current = null;
     }, durationMs);
+  }
+
+  function getRefreshErrorLabel(errMsg: string): string {
+    const m = errMsg.toLowerCase();
+    if (m.includes("quota") || m.includes("limit") || m.includes("429") || m.includes("rate")) return "Rate limit";
+    if (m.includes("timeout") || m.includes("504") || m.includes("timed out")) return "Timed out";
+    if (m.includes("not found") || m.includes("404")) return "Not found";
+    if (m.includes("running") || m.includes("already")) return "Sync active";
+    if (m.includes("connect") || m.includes("network") || m.includes("fetch")) return "Network err";
+    return "Failed";
   }
 
   function buildRowRefreshToast(
@@ -1131,7 +1141,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
         return next;
       });
       scheduleRowRefreshReset(refreshFamilyIds);
-      showToast(errMsg, 7500);
+      showToast(errMsg, 12000, true);
     }
   }
 
@@ -3807,8 +3817,10 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
                               )}
                             </button>
                             {phase === "error" && (
-                              <span className="text-[7px] font-semibold leading-none text-amber-400/90">
-                                Failed
+                              <span className="max-w-[34px] break-words text-center text-[8px] font-semibold leading-tight text-amber-400/90">
+                                {rowRefreshErrors[row.id]
+                                  ? getRefreshErrorLabel(rowRefreshErrors[row.id])
+                                  : "Failed"}
                               </span>
                             )}
                           </>
@@ -4636,9 +4648,17 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
         <div
           role="status"
           aria-live="polite"
-          className="fixed bottom-5 right-5 z-[300] max-w-[min(28rem,calc(100vw-2.5rem))] animate-in fade-in slide-in-from-bottom-2 rounded-lg border border-border bg-card px-5 py-3 text-sm font-medium text-foreground shadow-xl"
+          className={cn(
+            "fixed bottom-5 right-5 z-[300] flex max-w-[min(28rem,calc(100vw-2.5rem))] animate-in fade-in slide-in-from-bottom-2 items-start gap-2.5 rounded-lg border bg-card px-5 py-3 text-sm font-medium shadow-xl",
+            toast.isError
+              ? "border-amber-500/50 border-l-[3px] border-l-amber-400 text-amber-100"
+              : "border-border text-foreground",
+          )}
         >
-          {toast}
+          {toast.isError && (
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" />
+          )}
+          <span>{toast.message}</span>
         </div>
       )}
     </div>
