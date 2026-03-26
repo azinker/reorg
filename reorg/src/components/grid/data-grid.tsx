@@ -1142,19 +1142,16 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
         }
       }
 
-      const allFailed = storeResults?.length
-        ? storeResults.every((r) => r.status === "FAILED")
-        : false;
+      const anyFailed = storeResults?.some((r) => r.status === "FAILED") ?? false;
 
-      if (allFailed) {
-        const errMsg = baseMessage;
+      if (anyFailed) {
         setRowRefreshPhase(refreshFamilyIds, "error");
         setRowRefreshErrors((prev) => {
           const next = { ...prev };
-          for (const id of refreshFamilyIds) next[id] = errMsg;
+          for (const id of refreshFamilyIds) next[id] = baseMessage;
           return next;
         });
-        scheduleRowRefreshReset(refreshFamilyIds, 8000);
+        scheduleRowRefreshReset(refreshFamilyIds, 10000);
         return;
       }
 
@@ -1167,15 +1164,17 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
       );
     } catch (error) {
       console.error("[data-grid] failed to refresh row", error);
-      const errMsg =
-        error instanceof Error ? error.message : "Failed to refresh row. Please try again.";
+      const raw = error instanceof Error ? error.message : "Failed to refresh row. Please try again.";
+      const errMsg = raw.includes("(500)")
+        ? "Server error — the refresh request failed before any stores could be queried. Try again in a moment."
+        : raw;
       setRowRefreshPhase(refreshFamilyIds, "error");
       setRowRefreshErrors((prev) => {
         const next = { ...prev };
         for (const id of refreshFamilyIds) next[id] = errMsg;
         return next;
       });
-      scheduleRowRefreshReset(refreshFamilyIds, 8000);
+      scheduleRowRefreshReset(refreshFamilyIds, 10000);
     }
   }
 
@@ -3858,10 +3857,10 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
                                 </span>
                               )}
                               {phase === "error" && errorMsg && (
-                                <div className="absolute left-[calc(100%+6px)] top-1/2 z-20 w-max max-w-[300px] -translate-y-1/2 animate-in fade-in slide-in-from-left-1">
+                                <div className="absolute left-[calc(100%+6px)] top-1/2 z-20 w-max max-w-[380px] -translate-y-1/2 animate-in fade-in slide-in-from-left-1">
                                   <div className="relative rounded-md border border-amber-500/40 bg-amber-950/95 px-3 py-2 shadow-lg backdrop-blur-sm">
                                     <div className="absolute -left-[5px] top-1/2 h-2.5 w-2.5 -translate-y-1/2 rotate-45 border-b border-l border-amber-500/40 bg-amber-950/95" />
-                                    <p className="relative line-clamp-4 text-[11px] leading-relaxed text-amber-200">
+                                    <p className="relative text-[11px] leading-relaxed text-amber-200">
                                       {errorMsg}
                                     </p>
                                   </div>
