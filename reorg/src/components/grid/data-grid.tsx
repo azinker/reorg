@@ -1073,6 +1073,24 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
 
       applyRefreshedRowSnapshot(rowId, refreshedRow, parentRowId, refreshedChildRows);
 
+      // After a refresh, if the live price changed for a store, the previous
+      // error/retry push state is stale — clear it so the Retry button goes away
+      // and the user can plainly see the new LIVE value the refresh pulled in.
+      if (currentRow) {
+        for (const newSp of refreshedRow.salePrices) {
+          const prevSp = currentRow.salePrices.find(
+            (sp) => sp.platform === newSp.platform && sp.listingId === newSp.listingId,
+          );
+          if (!prevSp) continue;
+          const liveChanged =
+            prevSp.value !== newSp.value &&
+            !(prevSp.value == null && newSp.value == null);
+          if (liveChanged) {
+            clearQuickPushState(getQuickPushKey(rowId, newSp.platform, newSp.listingId, "salePrice"));
+          }
+        }
+      }
+
       const baseMessage =
         typeof payload?.data?.message === "string" && payload.data.message.trim()
           ? payload.data.message
@@ -4575,7 +4593,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
         <div
           role="status"
           aria-live="polite"
-          className="fixed top-3 left-1/2 z-[100] max-w-[min(36rem,calc(100vw-2rem))] -translate-x-1/2 animate-in fade-in slide-in-from-top-2 rounded-lg border border-border bg-card px-5 py-2 text-sm font-medium text-foreground shadow-lg"
+          className="fixed bottom-5 right-5 z-[300] max-w-[min(28rem,calc(100vw-2.5rem))] animate-in fade-in slide-in-from-bottom-2 rounded-lg border border-border bg-card px-5 py-3 text-sm font-medium text-foreground shadow-xl"
         >
           {toast}
         </div>
