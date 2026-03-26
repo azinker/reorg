@@ -37,10 +37,14 @@ function buildListingUrl(platform: Platform, listingId: string, explicitUrl?: st
   return builder ? builder(listingId) : "#";
 }
 
+type ItemMissingPlaceholder = "absent" | "defer-to-children";
+
 interface ItemNumberCellProps {
   items: StoreValue[];
   includeMissingPlatforms?: boolean;
   missingLabel?: string;
+  /** defer-to-children = variation parent (variant item IDs on expanded rows) */
+  missingPlaceholder?: ItemMissingPlaceholder;
 }
 
 function ItemRow({ item }: { item: StoreValue }) {
@@ -125,16 +129,24 @@ function ItemRow({ item }: { item: StoreValue }) {
 function MissingItemRow({
   platform,
   missingLabel,
+  placeholder = "absent",
 }: {
   platform: Platform;
   missingLabel: string;
+  placeholder?: ItemMissingPlaceholder;
 }) {
   const colorClass = PLATFORM_COLORS[platform];
   const prefix = PLATFORM_SHORT[platform];
+  const deferToChildren = placeholder === "defer-to-children";
 
   return (
-    <div className="flex w-full items-center gap-1 rounded-md border border-border/60 bg-background/30 px-1.5 py-1">
-      <div className="grid min-h-[30px] min-w-0 flex-1 grid-cols-[56px_minmax(0,1fr)_34px] items-center gap-1 rounded-sm border border-border/40 bg-background/45 px-1.5">
+    <div className="flex w-full min-w-0 items-center gap-1 rounded-md border border-border/60 bg-background/30 px-1.5 py-1">
+      <div
+        className={cn(
+          "grid min-h-[30px] min-w-0 flex-1 items-center gap-1 rounded-sm border border-border/40 bg-background/45 px-1.5",
+          deferToChildren ? "grid-cols-[56px_minmax(0,1fr)]" : "grid-cols-[56px_minmax(0,1fr)_34px]",
+        )}
+      >
         <span
           className={cn(
             "inline-flex min-h-[22px] items-center justify-center gap-1 rounded-sm px-1 py-px text-[8px] font-bold uppercase leading-none",
@@ -144,12 +156,20 @@ function MissingItemRow({
           <PlatformIcon platform={platform} className="h-3 w-3 shrink-0" />
           <span>{prefix}</span>
         </span>
-        <span className="truncate text-[11px] font-medium text-muted-foreground" title={missingLabel}>
+        <span
+          className={cn(
+            "text-[11px] font-medium text-muted-foreground",
+            deferToChildren ? "break-words leading-snug" : "truncate",
+          )}
+          title={missingLabel}
+        >
           {missingLabel}
         </span>
-        <span className="inline-flex items-center justify-center rounded-sm bg-muted px-1 py-px text-[8px] font-bold text-muted-foreground">
-          MISS
-        </span>
+        {!deferToChildren ? (
+          <span className="inline-flex items-center justify-center rounded-sm bg-muted px-1 py-px text-[8px] font-bold text-muted-foreground">
+            MISS
+          </span>
+        ) : null}
       </div>
     </div>
   );
@@ -159,6 +179,7 @@ export function ItemNumberCell({
   items,
   includeMissingPlatforms = false,
   missingLabel = "Listing not found",
+  missingPlaceholder = "absent",
 }: ItemNumberCellProps) {
   if (items.length === 0 && !includeMissingPlatforms) {
     return <span className="text-xs text-muted-foreground">-</span>;
@@ -191,13 +212,18 @@ export function ItemNumberCell({
   }
 
   return (
-    <div className="flex max-w-[220px] flex-col gap-1">
+    <div className="flex w-full min-w-0 max-w-[240px] flex-col gap-1">
       {rows.map((row, i) =>
         row.kind === "item" ? (
           <ItemRow key={`${row.item.platform}-${row.item.listingId}-${row.item.variantId ?? ""}-${i}`} item={row.item} />
         ) : (
-          <MissingItemRow key={`missing-${row.platform}-${i}`} platform={row.platform} missingLabel={missingLabel} />
-        )
+          <MissingItemRow
+            key={`missing-${row.platform}-${i}`}
+            platform={row.platform}
+            missingLabel={missingLabel}
+            placeholder={missingPlaceholder}
+          />
+        ),
       )}
     </div>
   );

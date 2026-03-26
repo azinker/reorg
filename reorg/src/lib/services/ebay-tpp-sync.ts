@@ -1648,6 +1648,8 @@ async function upsertEbayItem(
   const currentPrice = sellingStatus
     ? num(sellingStatus, "CurrentPrice")
     : undefined;
+  const startPriceRoot = num(item, "StartPrice");
+  const resolvedSingleSalePrice = startPriceRoot ?? currentPrice;
   const quantity =
     num(item, "Quantity") ??
     (sellingStatus ? num(sellingStatus, "Quantity") : undefined) ??
@@ -1676,7 +1678,7 @@ async function upsertEbayItem(
     sku,
     title: title ?? null,
     imageUrl,
-    salePrice: currentPrice ?? null,
+    salePrice: resolvedSingleSalePrice ?? null,
     inventory: available,
     status: available > 0 ? ("ACTIVE" as const) : ("OUT_OF_STOCK" as const),
     isVariation: false,

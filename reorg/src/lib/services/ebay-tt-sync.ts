@@ -1243,6 +1243,8 @@ function extractListingsFromItem(item: unknown): RawListing[] {
   const imageUrl = extractImageUrl(item) ?? undefined;
   const sellingStatus = obj(item, "SellingStatus");
   const currentPrice = sellingStatus ? num(sellingStatus, "CurrentPrice") : undefined;
+  const startPriceRoot = num(item, "StartPrice");
+  const resolvedSingleSalePrice = startPriceRoot ?? currentPrice;
   const quantity =
     num(item, "Quantity") ??
     (sellingStatus ? num(sellingStatus, "Quantity") : undefined) ??
@@ -1261,7 +1263,7 @@ function extractListingsFromItem(item: unknown): RawListing[] {
         sku: itemSku,
         title,
         imageUrl,
-        salePrice: currentPrice,
+        salePrice: resolvedSingleSalePrice,
         inventory: available,
         status: available > 0 ? "active" : "out_of_stock",
         isVariation: false,

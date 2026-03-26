@@ -126,25 +126,34 @@ interface StoreBlockGroupProps {
   includeMissingPlatforms?: boolean;
   missingLabel?: string;
   missingLabelsByPlatform?: Partial<Record<Platform, string>>;
+  /** How to render slots with no listing row (variation parent vs truly missing) */
+  missingPlaceholder?: MissingStorePlaceholder;
   compact?: boolean;
 }
+
+/** absent = no marketplace listing; defer-to-children = variation parent (data on expanded rows) */
+export type MissingStorePlaceholder = "absent" | "defer-to-children";
 
 function MissingStoreBlock({
   platform,
   missingLabel = "Listing not found",
   compact = false,
+  placeholder = "absent",
 }: {
   platform: Platform;
   missingLabel?: string;
   compact?: boolean;
+  placeholder?: MissingStorePlaceholder;
 }) {
   const label = PLATFORM_SHORT[platform];
   const colorClass = PLATFORM_COLORS[platform];
+  const deferToChildren = placeholder === "defer-to-children";
 
   return (
     <div
       className={cn(
-        "flex w-full items-center rounded border opacity-70",
+        "flex w-full min-w-0 items-center rounded border",
+        deferToChildren ? "border-border/50 bg-muted/5 opacity-90" : "opacity-70",
         compact ? "gap-1 px-2 py-1 text-[11px]" : "gap-1.5 px-2.5 py-1.5 text-xs",
         colorClass,
       )}
@@ -156,13 +165,21 @@ function MissingStoreBlock({
         </span>
       </div>
       <div className="min-w-0 flex-1">
-        <span className="block truncate font-medium leading-tight text-muted-foreground" title={missingLabel}>
+        <span
+          className={cn(
+            "block font-medium leading-snug text-muted-foreground",
+            deferToChildren ? "break-words whitespace-normal" : "truncate",
+          )}
+          title={missingLabel}
+        >
           {missingLabel}
         </span>
       </div>
-      <span className="inline-flex shrink-0 items-center rounded-sm bg-muted px-1 py-px text-[9px] font-bold text-muted-foreground">
-        MISS
-      </span>
+      {!deferToChildren ? (
+        <span className="inline-flex shrink-0 items-center rounded-sm bg-muted px-1 py-px text-[9px] font-bold text-muted-foreground">
+          MISS
+        </span>
+      ) : null}
     </div>
   );
 }
@@ -199,6 +216,7 @@ export function StoreBlockGroup({
   includeMissingPlatforms = false,
   missingLabel = "Listing not found",
   missingLabelsByPlatform,
+  missingPlaceholder = "absent",
   compact = false,
 }: StoreBlockGroupProps) {
   if (items.length === 0 && !includeMissingPlatforms) {
@@ -213,7 +231,7 @@ export function StoreBlockGroup({
   const displayEntries = buildDisplayEntries(items, includeMissingPlatforms);
 
   return (
-    <div className="flex w-full flex-col gap-1">
+    <div className="flex w-full min-w-0 flex-col gap-1">
       {displayEntries.map((entry, i) =>
         entry.kind === "item" ? (
           <StoreBlock
@@ -230,6 +248,7 @@ export function StoreBlockGroup({
             platform={entry.platform}
             missingLabel={missingLabelsByPlatform?.[entry.platform] ?? missingLabel}
             compact={compact}
+            placeholder={missingPlaceholder}
           />
         ),
       )}
@@ -350,7 +369,11 @@ function EditableStoreBlock({
 
   const displayVal = hasStaged ? fmt(item.stagedValue!) : fmt(item.value);
   const shortItemId = showItemId ? item.listingId.slice(-6) : null;
-  const quickPhase = quickPushState?.phase ?? "idle";
+  const quickPhaseRaw = quickPushState?.phase ?? "idle";
+  const quickPhase =
+    !hasStaged && (quickPhaseRaw === "error" || quickPhaseRaw === "blocked")
+      ? "idle"
+      : quickPhaseRaw;
   const fastPushBusy = quickPhase === "dry-run" || quickPhase === "pushing";
   const fastPushSucceeded = quickPhase === "success";
   const fastPushRetry = quickPhase === "error" || quickPhase === "blocked";
@@ -626,6 +649,7 @@ interface EditableStoreBlockGroupProps {
   failedPushStates?: Record<string, FailedPushState | undefined>;
   includeMissingPlatforms?: boolean;
   missingLabel?: string;
+  missingPlaceholder?: MissingStorePlaceholder;
 }
 
 export function EditableStoreBlockGroup({
@@ -639,6 +663,7 @@ export function EditableStoreBlockGroup({
   failedPushStates,
   includeMissingPlatforms = false,
   missingLabel = "Listing not found",
+  missingPlaceholder = "absent",
 }: EditableStoreBlockGroupProps) {
   const [bulkOpen, setBulkOpen] = useState(false);
   const [bulkCents, setBulkCents] = useState(0);
@@ -837,6 +862,7 @@ export function EditableStoreBlockGroup({
             key={`missing-${entry.platform}-${i}`}
             platform={entry.platform}
             missingLabel={missingLabel}
+            placeholder={missingPlaceholder}
           />
         ),
       )}
@@ -881,7 +907,11 @@ function EditableAdRateBlock({
   const inputRef = useRef<HTMLInputElement>(null);
   const livePercentValue = Math.round((item.value != null ? Number(item.value) : 0) * 1000) / 10;
   const effectivePercentValue = Math.round((hasStaged ? Number(item.stagedValue) : (item.value != null ? Number(item.value) : 0)) * 1000) / 10;
-  const quickPhase = quickPushState?.phase ?? "idle";
+  const quickPhaseRaw = quickPushState?.phase ?? "idle";
+  const quickPhase =
+    !hasStaged && (quickPhaseRaw === "error" || quickPhaseRaw === "blocked")
+      ? "idle"
+      : quickPhaseRaw;
   const fastPushSucceeded = quickPhase === "success";
   const fastPushRetry = quickPhase === "error" || quickPhase === "blocked";
   const hasFailedStage = hasStaged && Boolean(failedPushState);
@@ -1273,6 +1303,7 @@ interface EditableAdRateBlockGroupProps {
   includeMissingPlatforms?: boolean;
   missingLabel?: string;
   missingLabelsByPlatform?: Partial<Record<Platform, string>>;
+  missingPlaceholder?: MissingStorePlaceholder;
 }
 
 export function EditableAdRateBlockGroup({
@@ -1286,6 +1317,7 @@ export function EditableAdRateBlockGroup({
   includeMissingPlatforms = false,
   missingLabel = "Listing not found",
   missingLabelsByPlatform,
+  missingPlaceholder = "absent",
 }: EditableAdRateBlockGroupProps) {
   if (items.length === 0 && !includeMissingPlatforms) {
     return <span className="text-xs text-muted-foreground">—</span>;
@@ -1318,6 +1350,7 @@ export function EditableAdRateBlockGroup({
             key={`missing-${entry.platform}-${i}`}
             platform={entry.platform}
             missingLabel={missingLabelsByPlatform?.[entry.platform] ?? missingLabel}
+            placeholder={missingPlaceholder}
           />
         ),
       )}

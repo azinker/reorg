@@ -34,7 +34,6 @@ const masterRowWithRelations = Prisma.validator<Prisma.MasterRowDefaultArgs>()({
           },
         },
         childListings: {
-          where: { isVariation: true },
           select: {
             id: true,
             platformItemId: true,
@@ -44,6 +43,7 @@ const masterRowWithRelations = Prisma.validator<Prisma.MasterRowDefaultArgs>()({
             salePrice: true,
             adRate: true,
             inventory: true,
+            isVariation: true,
             parentListingId: true,
             integration: {
               select: {
@@ -254,6 +254,21 @@ function listingToStoreValue(listing: ListingLike, field: "salePrice" | "adRate"
   };
 }
 
+/** Best promoted-listing ad rate from variation children (parent row often has null). */
+function aggregateChildAdRates(
+  children: Array<{ adRate: number | null }> | undefined,
+): number | null {
+  if (!children?.length) return null;
+  let best: number | null = null;
+  for (const c of children) {
+    if (c.adRate == null) continue;
+    const n = Number(c.adRate);
+    if (!Number.isFinite(n)) continue;
+    if (best == null || n > best) best = n;
+  }
+  return best;
+}
+
 function buildAdRateLookupByPlatform(
   listings: Array<{
     id: string;
@@ -270,14 +285,13 @@ function buildAdRateLookupByPlatform(
     if (platform !== "TPP_EBAY" && platform !== "TT_EBAY") continue;
 
     const staged = stagedMap.get(`${listing.id}-adRate`);
+    const fromChildren = aggregateChildAdRates(listing.childListings);
     const effective =
       staged != null
         ? parseFloat(staged.stagedValue)
         : listing.adRate != null
           ? Number(listing.adRate)
-          : listing.childListings?.find((child) => child.adRate != null)?.adRate != null
-            ? Number(listing.childListings.find((child) => child.adRate != null)!.adRate)
-            : null;
+          : fromChildren;
 
     if (effective != null) {
       lookup[platform] = effective;
@@ -285,6 +299,32 @@ function buildAdRateLookupByPlatform(
   }
 
   return lookup;
+}
+
+const EBAY_AD_PLATFORMS = ["TPP_EBAY", "TT_EBAY"] as const;
+
+/** When parent eBay row has no ad rate, use any child master row's listing for that platform. */
+function backfillAdRatesFromChildMasters(
+  lookup: Partial<Record<Platform, number>>,
+  parentListings: DBMasterRow["listings"],
+  childMasterRowsBySku: Map<string, DBChildMasterRowFull>,
+) {
+  const childSkus = collectChildSkus(parentListings);
+  for (const plat of EBAY_AD_PLATFORMS) {
+    if (lookup[plat] != null) continue;
+    for (const sku of childSkus) {
+      const cm = childMasterRowsBySku.get(sku);
+      if (!cm) continue;
+      for (const l of cm.listings) {
+        if (l.integration.platform !== plat) continue;
+        if (l.adRate != null) {
+          lookup[plat] = Number(l.adRate);
+          break;
+        }
+      }
+      if (lookup[plat] != null) break;
+    }
+  }
 }
 
 function collectChildSkus(parentListings: DBMasterRow["listings"]): string[] {
@@ -670,6 +710,9 @@ function buildGridRow(
   }).filter((entry) => entry.platform === "TPP_EBAY" || entry.platform === "TT_EBAY");
 
   const parentAdRatesByPlatform = buildAdRateLookupByPlatform(parentListings, stagedMap);
+  if (isVariationParent) {
+    backfillAdRatesFromChildMasters(parentAdRatesByPlatform, parentListings, childMasterRowsBySku);
+  }
   const adRates: StoreValue[] = isVariationParent
     ? parentListings
         .filter((listing) => {
@@ -835,6 +878,36 @@ function buildParentVariationFamilyKey(row: GridRow): string | null {
   return childIds.join("|");
 }
 
+/** Best eBay promoted rate across child rows (synthetic parent used to take first child only). */
+function mergeEbayAdRatesFromChildGridRows(children: GridRow[]): Partial<Record<Platform, number>> {
+  const best: Partial<Record<Platform, number>> = {};
+
+  function consider(platform: Platform, raw: number | null | undefined) {
+    if (raw == null) return;
+    const n = Number(raw);
+    if (!Number.isFinite(n)) return;
+    const prev = best[platform];
+    if (prev == null || n > prev) best[platform] = n;
+  }
+
+  for (const child of children) {
+    const map = child.profitAdRatesByPlatform;
+    if (map) {
+      for (const plat of EBAY_AD_PLATFORMS) {
+        consider(plat, map[plat]);
+      }
+    }
+    for (const ar of child.adRates) {
+      if (ar.platform !== "TPP_EBAY" && ar.platform !== "TT_EBAY") continue;
+      const v =
+        ar.stagedValue != null ? Number(ar.stagedValue) : ar.value != null ? Number(ar.value) : null;
+      consider(ar.platform as Platform, v);
+    }
+  }
+
+  return best;
+}
+
 function buildSyntheticVariationParent(children: GridRow[], familyKey: string): GridRow {
   const first = children[0];
   const itemNumberMap = new Map<string, StoreValue>();
@@ -852,7 +925,18 @@ function buildSyntheticVariationParent(children: GridRow[], familyKey: string): 
   const inventoryValues = children
     .map((child) => child.inventory)
     .filter((value): value is number => value != null);
-  const profitAdRatesByPlatform = first.profitAdRatesByPlatform ?? {};
+  const fromChildren = mergeEbayAdRatesFromChildGridRows(children);
+  const profitAdRatesByPlatform: Partial<Record<Platform, number>> = {
+    ...(first.profitAdRatesByPlatform ?? {}),
+  };
+  for (const plat of EBAY_AD_PLATFORMS) {
+    const merged = fromChildren[plat];
+    if (merged == null) continue;
+    const cur = profitAdRatesByPlatform[plat];
+    if (cur == null || !Number.isFinite(Number(cur)) || merged > Number(cur)) {
+      profitAdRatesByPlatform[plat] = merged;
+    }
+  }
   const adRates = sortItemNumbers(
     [...itemNumberMap.values()]
       .filter((item) => item.platform === "TPP_EBAY" || item.platform === "TT_EBAY")
@@ -925,15 +1009,29 @@ function mergeVariationParents(rows: GridRow[], familyKey: string): GridRow {
     }
     for (const adRate of row.adRates) {
       const key = `${adRate.platform}:${adRate.listingId}:${adRate.variantId ?? ""}`;
-      if (!adRateMap.has(key)) {
+      const existing = adRateMap.get(key);
+      if (!existing) {
+        adRateMap.set(key, adRate);
+        continue;
+      }
+      const ev = existing.value;
+      const nv = adRate.value;
+      const existingEmpty = ev == null || (typeof ev === "number" && !Number.isFinite(ev));
+      const nextHas = nv != null && (typeof nv !== "number" || Number.isFinite(nv));
+      if (existingEmpty && nextHas) {
         adRateMap.set(key, adRate);
       }
     }
     if (row.profitAdRatesByPlatform) {
-      representative.profitAdRatesByPlatform = {
-        ...(representative.profitAdRatesByPlatform ?? {}),
-        ...row.profitAdRatesByPlatform,
-      };
+      const acc = { ...(representative.profitAdRatesByPlatform ?? {}) };
+      for (const plat of EBAY_AD_PLATFORMS) {
+        const next = row.profitAdRatesByPlatform![plat];
+        if (next == null || !Number.isFinite(Number(next))) continue;
+        const n = Number(next);
+        const cur = acc[plat];
+        if (cur == null || !Number.isFinite(Number(cur)) || n > Number(cur)) acc[plat] = n;
+      }
+      representative.profitAdRatesByPlatform = acc;
     }
     if (row.alternateTitles?.length) {
       alternateTitles.push(...row.alternateTitles);

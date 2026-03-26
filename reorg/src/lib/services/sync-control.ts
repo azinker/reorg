@@ -59,6 +59,17 @@ function formatTriggeredBy(options: SyncExecutionOptions): string {
   return `${source}:${mode}`;
 }
 
+/** Row refresh uses targeted item IDs; allow pull even if another job is RUNNING on the integration. */
+function isTargetedRowRefresh(options: SyncExecutionOptions): boolean {
+  const ids =
+    options.targetedPlatformItemIds?.filter(
+      (id): id is string => typeof id === "string" && id.trim().length > 0,
+    ) ?? [];
+  if (ids.length === 0) return false;
+  const by = options.triggeredBy ?? "";
+  return by.includes("row_refresh");
+}
+
 function resolveSyncModes(
   integration: Pick<Integration, "platform" | "config">,
   requestedMode?: SyncMode,
@@ -233,7 +244,7 @@ export async function startIntegrationSync(
         runningJob,
         "Marked failed automatically because the sync job exceeded the stale running threshold.",
       );
-    } else {
+    } else if (!isTargetedRowRefresh(options)) {
       const modes = resolveSyncModes(integration, options.requestedMode);
       return {
         integrationId: integration.id,

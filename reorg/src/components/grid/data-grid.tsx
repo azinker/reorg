@@ -268,6 +268,9 @@ const COL_WIDTHS: Record<string, string> = {
   profit: "w-[240px]",
 };
 
+/** Shown on variation parent rows where weight/costs live on expanded child SKUs */
+const VARIATION_PARENT_SHARED_HINT = "On variant rows";
+
 const ITEM_NUMBER_PLATFORM_ORDER: Record<Platform, number> = {
   TPP_EBAY: 0,
   TT_EBAY: 1,
@@ -799,9 +802,56 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
   const childRowsLoadRef = useRef<Partial<Record<string, Promise<boolean>>>>({});
   const parentRef = useRef<HTMLDivElement>(null);
 
-  function showToast(msg: string) {
+  const toastClearTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  function showToast(msg: string, durationMs = 4000) {
+    if (toastClearTimerRef.current) {
+      clearTimeout(toastClearTimerRef.current);
+      toastClearTimerRef.current = null;
+    }
     setToast(msg);
-    setTimeout(() => setToast(null), 4000);
+    toastClearTimerRef.current = setTimeout(() => {
+      setToast(null);
+      toastClearTimerRef.current = null;
+    }, durationMs);
+  }
+
+  function buildRowRefreshToast(
+    baseMessage: string,
+    refreshedRow: GridRow,
+    results: Array<{ platform: string; status: string; message: string }> | undefined,
+  ): string {
+    const parts: string[] = [baseMessage.trim()];
+    const issues =
+      results?.filter((r) =>
+        ["FAILED", "ALREADY_RUNNING", "UNSUPPORTED", "STARTED"].includes(r.status),
+      ) ?? [];
+    if (issues.length > 0) {
+      parts.push(
+        issues
+          .map((r) => {
+            if (r.status === "ALREADY_RUNNING") {
+              return `${r.platform}: not updated (another sync was running). Retry refresh in a moment.`;
+            }
+            if (r.status === "STARTED") {
+              return `${r.platform}: ${r.message}`;
+            }
+            return `${r.platform}: ${r.message}`;
+          })
+          .join(" "),
+      );
+    }
+    const priceDrift =
+      refreshedRow.salePrices?.filter((sp) => {
+        if (sp.stagedValue == null || sp.value == null) return false;
+        return Math.abs(Number(sp.stagedValue) - Number(sp.value)) > 0.005;
+      }) ?? [];
+    if (priceDrift.length > 0) {
+      parts.push(
+        `Staged price differs from live on ${priceDrift.length} store(s)—expand the cell to see LIVE, or Discard to match the marketplace.`,
+      );
+    }
+    return parts.join(" ");
   }
 
   function setRowRefreshPhase(rowIds: string[], phase: RowRefreshPhase) {
@@ -977,7 +1027,18 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
         const successIds = [rowId, ...refreshedChildren.map((child) => child.id)];
         setRowRefreshPhase(successIds, "success");
         scheduleRowRefreshReset(successIds);
-        showToast(`Refreshed ${refreshedChildren.length} variation SKU${refreshedChildren.length === 1 ? "" : "s"}.`);
+        const rebuilt = rebuildParentFromChildren({
+          ...currentRow,
+          childRows: refreshedChildren,
+        });
+        showToast(
+          buildRowRefreshToast(
+            `Refreshed ${refreshedChildren.length} variation SKU${refreshedChildren.length === 1 ? "" : "s"}.`,
+            rebuilt,
+            undefined,
+          ),
+          7500,
+        );
         return;
       }
 
@@ -1012,13 +1073,16 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
 
       applyRefreshedRowSnapshot(rowId, refreshedRow, parentRowId, refreshedChildRows);
 
-      const message =
+      const baseMessage =
         typeof payload?.data?.message === "string" && payload.data.message.trim()
           ? payload.data.message
           : "Row refresh completed.";
+      const storeResults = payload?.data?.results as
+        | Array<{ platform: string; status: string; message: string }>
+        | undefined;
       setRowRefreshPhase(refreshFamilyIds, "success");
       scheduleRowRefreshReset(refreshFamilyIds);
-      showToast(message);
+      showToast(buildRowRefreshToast(baseMessage, refreshedRow, storeResults), 7500);
     } catch (error) {
       console.error("[data-grid] failed to refresh row", error);
       clearRowRefreshPhase(refreshFamilyIds);
@@ -1098,6 +1162,9 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
     return () => {
       Object.values(quickPushTimersRef.current).forEach((timer) => clearTimeout(timer));
       Object.values(rowRefreshTimersRef.current).forEach((timer) => clearTimeout(timer));
+      if (toastClearTimerRef.current) {
+        clearTimeout(toastClearTimerRef.current);
+      }
     };
   }, []);
 
@@ -3131,6 +3198,32 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
   }
 
   function handleClearAllStaged() {
+    const quickKeysToClear = new Set<string>();
+    function collectQuickKeysForClear(row: GridRow) {
+      for (const sp of row.salePrices) {
+        if (sp.stagedValue != null) {
+          quickKeysToClear.add(getQuickPushKey(row.id, sp.platform, sp.listingId, "salePrice"));
+        }
+      }
+      for (const ar of row.adRates) {
+        if (ar.stagedValue != null) {
+          quickKeysToClear.add(getQuickPushKey(row.id, ar.platform, ar.listingId, "adRate"));
+        }
+      }
+      if (row.hasStagedUpc) {
+        quickKeysToClear.add(getUpcQuickPushKey(row.id));
+      }
+      for (const child of row.childRows ?? []) {
+        collectQuickKeysForClear(child);
+      }
+    }
+    for (const row of gridRows) {
+      collectQuickKeysForClear(row);
+    }
+    for (const key of quickKeysToClear) {
+      clearQuickPushState(key);
+    }
+
     setGridRows((prev) =>
       prev.map((row) => {
         const newSalePrices = row.salePrices.map((sp) => ({ ...sp, stagedValue: undefined }));
@@ -3719,7 +3812,12 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
                   {isColVisible("itemIds") && (
                     <div className={cn(COL_WIDTHS.itemIds, "flex items-center px-2", cellPy)}>
                       <div className={cn("w-full min-w-0", isChild && "pl-4")}>
-                        <ItemNumberCell items={row.itemNumbers} includeMissingPlatforms missingLabel="Listing not found" />
+                        <ItemNumberCell
+                          items={row.itemNumbers}
+                          includeMissingPlatforms
+                          missingLabel={row.isParent ? "See child rows" : "Listing not found"}
+                          missingPlaceholder={row.isParent ? "defer-to-children" : "absent"}
+                        />
                       </div>
                     </div>
                   )}
@@ -3866,6 +3964,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
                         failedPushStates={failedPushStates.storeStates}
                         includeMissingPlatforms
                         missingLabel={row.isParent ? "See child rows" : "No Listing"}
+                        missingPlaceholder={row.isParent ? "defer-to-children" : "absent"}
                       />
                     </div>
                   )}
@@ -3873,42 +3972,76 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
                   {/* Weight */}
                   {isColVisible("weight") && (
                     <div className={cn(COL_WIDTHS.weight, "flex items-center px-3", cellPy)}>
-                      <EditableWeightCell
-                        value={row.weight}
-                        rowId={row.id}
-                        onSave={handleWeightSave}
-                      />
+                      {row.isParent ? (
+                        <span
+                          className="text-[11px] leading-snug text-muted-foreground"
+                          title="Each variant SKU has its own weight. Expand the row to view or edit."
+                        >
+                          {VARIATION_PARENT_SHARED_HINT}
+                        </span>
+                      ) : (
+                        <EditableWeightCell
+                          value={row.weight}
+                          rowId={row.id}
+                          onSave={handleWeightSave}
+                        />
+                      )}
                     </div>
                   )}
 
                   {/* Supplier Cost (editable) */}
                   {isColVisible("supplierCost") && (
                     <div className={cn(COL_WIDTHS.supplierCost, "flex items-center justify-end px-3", cellPy)}>
-                      <EditableCurrencyCell
-                        value={row.supplierCost}
-                        rowId={row.id}
-                        field="supplierCost"
-                        onSave={handleCellSave}
-                      />
+                      {row.isParent ? (
+                        <span
+                          className="text-[11px] leading-snug text-muted-foreground text-right"
+                          title="Supplier cost is stored per variant child row."
+                        >
+                          {VARIATION_PARENT_SHARED_HINT}
+                        </span>
+                      ) : (
+                        <EditableCurrencyCell
+                          value={row.supplierCost}
+                          rowId={row.id}
+                          field="supplierCost"
+                          onSave={handleCellSave}
+                        />
+                      )}
                     </div>
                   )}
 
                   {/* Supplier Shipping (editable) */}
                   {isColVisible("suppShip") && (
                     <div className={cn(COL_WIDTHS.suppShip, "flex items-center justify-end px-3", cellPy)}>
-                      <EditableCurrencyCell
-                        value={row.supplierShipping}
-                        rowId={row.id}
-                        field="supplierShipping"
-                        onSave={handleCellSave}
-                      />
+                      {row.isParent ? (
+                        <span
+                          className="text-[11px] leading-snug text-muted-foreground text-right"
+                          title="Supplier shipping is stored per variant child row."
+                        >
+                          {VARIATION_PARENT_SHARED_HINT}
+                        </span>
+                      ) : (
+                        <EditableCurrencyCell
+                          value={row.supplierShipping}
+                          rowId={row.id}
+                          field="supplierShipping"
+                          onSave={handleCellSave}
+                        />
+                      )}
                     </div>
                   )}
 
                   {/* Shipping Cost */}
                   {isColVisible("shipCost") && (
                     <div className={cn(COL_WIDTHS.shipCost, "flex items-center justify-end px-3", cellPy)}>
-                      {row.shippingCost != null ? (
+                      {row.isParent ? (
+                        <span
+                          className="text-[11px] leading-snug text-muted-foreground text-right"
+                          title="Shipping cost is calculated from each variant’s weight. Expand the row to view."
+                        >
+                          {VARIATION_PARENT_SHARED_HINT}
+                        </span>
+                      ) : row.shippingCost != null ? (
                         <CopyValue value={String(row.shippingCost)}>
                           <span className="scalable-text tabular-nums">{fmtCurrency(row.shippingCost)}</span>
                         </CopyValue>
@@ -3922,13 +4055,14 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
 
                   {/* Platform Fees */}
                   {isColVisible("platformFees") && (
-                    <div className={cn(COL_WIDTHS.platformFees, "flex items-center px-3", cellPy)}>
+                    <div className={cn(COL_WIDTHS.platformFees, "flex min-w-0 items-start px-3", cellPy)}>
                       <StoreBlockGroup
                         items={row.isParent ? [] : row.platformFees}
                         format="currency"
                         showStaged={false}
                         includeMissingPlatforms
                         missingLabel={row.isParent ? "See child rows" : "No Listing"}
+                        missingPlaceholder={row.isParent ? "defer-to-children" : "absent"}
                       />
                     </div>
                   )}
@@ -3959,6 +4093,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
                           failedPushStates={failedPushStates.storeStates}
                           includeMissingPlatforms
                           missingLabel="No Listing"
+                          missingPlaceholder={row.isParent ? "defer-to-children" : "absent"}
                           missingLabelsByPlatform={{
                             SHOPIFY: "N/A",
                             BIGCOMMERCE: "N/A",
@@ -3970,12 +4105,13 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
 
                   {/* Profit */}
                   {isColVisible("profit") && (
-                    <div className={cn(COL_WIDTHS.profit, "flex items-center px-3", cellPy)}>
+                    <div className={cn(COL_WIDTHS.profit, "flex min-w-0 items-start px-3", cellPy)}>
                       <StoreBlockGroup
                         items={row.isParent ? [] : row.profits}
                         format="currency"
                         includeMissingPlatforms
                         missingLabel={row.isParent ? "See child rows" : "No Listing"}
+                        missingPlaceholder={row.isParent ? "defer-to-children" : "absent"}
                       />
                     </div>
                   )}
@@ -4436,7 +4572,11 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
 
       {/* Toast notification */}
       {toast && (
-        <div className="fixed top-3 left-1/2 -translate-x-1/2 z-[100] animate-in fade-in slide-in-from-top-2 rounded-lg border border-border bg-card px-5 py-2 text-sm font-medium text-foreground shadow-lg">
+        <div
+          role="status"
+          aria-live="polite"
+          className="fixed top-3 left-1/2 z-[100] max-w-[min(36rem,calc(100vw-2rem))] -translate-x-1/2 animate-in fade-in slide-in-from-top-2 rounded-lg border border-border bg-card px-5 py-2 text-sm font-medium text-foreground shadow-lg"
+        >
           {toast}
         </div>
       )}
