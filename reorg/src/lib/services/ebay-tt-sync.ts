@@ -201,47 +201,52 @@ async function purgeForeignSellerListingsForIntegration(
   integrationId: string,
   config: EbayConfig,
 ) {
-  const listings = await db.marketplaceListing.findMany({
-    where: { integrationId },
-    select: {
-      id: true,
-      platformItemId: true,
-      rawData: true,
-    },
-  });
-
-  const foreignItemIds = [
-    ...new Set(
-      listings
-        .filter((listing) => {
-          const rawData =
-            listing.rawData && typeof listing.rawData === "object"
-              ? (listing.rawData as Record<string, unknown>)
-              : null;
-          const item = rawData?.item ?? rawData;
-          return item && !matchesConfiguredSeller(item, config);
-        })
-        .map((listing) => listing.platformItemId)
-        .filter((itemId): itemId is string => Boolean(itemId)),
-    ),
-  ];
-
-  if (foreignItemIds.length === 0) {
+  if (!normalizeSellerIdentity(config.accountUserId)) {
     return;
   }
 
+  const BATCH_SIZE = 200;
+  const foreignItemIds = new Set<string>();
+  let cursor: string | undefined;
+
+  // Paginate to avoid loading all rawData blobs into memory at once (OOM risk).
+  for (;;) {
+    const batch = await db.marketplaceListing.findMany({
+      where: { integrationId },
+      select: { id: true, platformItemId: true, rawData: true },
+      take: BATCH_SIZE,
+      ...(cursor ? { skip: 1, cursor: { id: cursor } } : {}),
+      orderBy: { id: "asc" },
+    });
+
+    if (batch.length === 0) break;
+    cursor = batch[batch.length - 1].id;
+
+    for (const listing of batch) {
+      const rawData =
+        listing.rawData && typeof listing.rawData === "object"
+          ? (listing.rawData as Record<string, unknown>)
+          : null;
+      const item = rawData?.item ?? rawData;
+      if (item && !matchesConfiguredSeller(item, config) && listing.platformItemId) {
+        foreignItemIds.add(listing.platformItemId);
+      }
+    }
+
+    if (batch.length < BATCH_SIZE) break;
+  }
+
+  if (foreignItemIds.size === 0) {
+    return;
+  }
+
+  const ids = [...foreignItemIds];
   await Promise.all([
     db.marketplaceListing.deleteMany({
-      where: {
-        integrationId,
-        platformItemId: { in: foreignItemIds },
-      },
+      where: { integrationId, platformItemId: { in: ids } },
     }),
     db.unmatchedListing.deleteMany({
-      where: {
-        integrationId,
-        platformItemId: { in: foreignItemIds },
-      },
+      where: { integrationId, platformItemId: { in: ids } },
     }),
   ]);
 }
@@ -336,7 +341,11 @@ export async function runEbayTtSync(
         : undefined,
   };
 
-  await purgeForeignSellerListingsForIntegration(integration.id, ebayConfig);
+  try {
+    await purgeForeignSellerListingsForIntegration(integration.id, ebayConfig);
+  } catch (purgeErr) {
+    console.error("[ebay-tt-sync] Foreign seller purge failed (non-fatal):", purgeErr);
+  }
 
   const syncJob = options.existingJobId
     ? await db.syncJob.findUniqueOrThrow({ where: { id: options.existingJobId } })
