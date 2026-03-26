@@ -28,6 +28,19 @@ type RefreshResult =
       jobId: string | null;
     };
 
+const PLATFORM_REFRESH_TIMEOUT_MS = 12_000;
+
+const PLATFORM_SHORT: Record<string, string> = {
+  TPP_EBAY: "eBay TPP",
+  TT_EBAY: "eBay TT",
+  BIGCOMMERCE: "BC",
+  SHOPIFY: "SHPFY",
+};
+
+function shortPlatform(platform: string): string {
+  return PLATFORM_SHORT[platform] ?? platform;
+}
+
 const masterRowSelect = Prisma.validator<Prisma.MasterRowDefaultArgs>()({
   select: {
     id: true,
@@ -221,6 +234,31 @@ async function refreshBucket(
   }
 }
 
+function refreshBucketWithTimeout(
+  integration: Integration,
+  bucket: RefreshBucket,
+): Promise<RefreshResult> {
+  const timeoutResult: RefreshResult = {
+    platform: bucket.platform,
+    status: "FAILED",
+    message: `Timed out after ${PLATFORM_REFRESH_TIMEOUT_MS / 1000}s — try again later.`,
+    jobId: null,
+  };
+
+  return Promise.race([
+    refreshBucket(integration, bucket),
+    new Promise<RefreshResult>((resolve) =>
+      setTimeout(() => resolve(timeoutResult), PLATFORM_REFRESH_TIMEOUT_MS),
+    ),
+  ]);
+}
+
+function summarizeMessage(msg: string, maxLen = 80): string {
+  const trimmed = msg.trim();
+  if (trimmed.length <= maxLen) return trimmed;
+  return trimmed.slice(0, maxLen - 1) + "…";
+}
+
 export async function POST(
   _request: Request,
   { params }: { params: Promise<{ rowId: string }> },
@@ -265,27 +303,26 @@ export async function POST(
     });
     const integrationById = new Map(integrations.map((integration) => [integration.id, integration]));
 
-    // Sequential to avoid overwhelming the Vercel function with parallel
-    // eBay API calls that can cause timeouts and raw 500s.
-    const results: RefreshResult[] = [];
-    for (const bucket of buckets.values()) {
-      const integration = integrationById.get(bucket.integrationId);
-      if (!integration?.enabled) {
-        results.push({
-          platform: bucket.platform,
-          status: "FAILED",
-          message: `${bucket.platform} is not connected.`,
-          jobId: null,
-        });
-        continue;
-      }
+    // All platforms run in parallel with a per-platform timeout so no single
+    // slow API (e.g. eBay quota error) blocks the entire refresh.
+    const results = await Promise.all(
+      [...buckets.values()].map(async (bucket) => {
+        const integration = integrationById.get(bucket.integrationId);
+        if (!integration?.enabled) {
+          return {
+            platform: bucket.platform,
+            status: "FAILED",
+            message: `${shortPlatform(bucket.platform)} is not connected.`,
+            jobId: null,
+          } satisfies RefreshResult;
+        }
 
-      results.push(await refreshBucket(integration, bucket));
-    }
+        return refreshBucketWithTimeout(integration, bucket);
+      }),
+    );
 
-    const completedCount = results.filter((result) => result.status === "COMPLETED").length;
-    const runningCount = results.filter((result) => result.status === "ALREADY_RUNNING").length;
-    const failedCount = results.filter((result) => result.status === "FAILED").length;
+    const completedCount = results.filter((r) => r.status === "COMPLETED").length;
+    const failedCount = results.filter((r) => r.status === "FAILED").length;
 
     let refreshedRow;
     try {
@@ -296,17 +333,20 @@ export async function POST(
       refreshedRow = null;
     }
 
-    const failedDetails = results
-      .filter((r) => r.status === "FAILED")
-      .map((r) => `${r.platform}: ${r.message}`)
-      .join("; ");
+    // Build a user-friendly per-platform breakdown
+    const perPlatformLines = results.map((r) => {
+      const label = shortPlatform(r.platform);
+      if (r.status === "COMPLETED") return `${label}: ✓`;
+      if (r.status === "ALREADY_RUNNING") return `${label}: sync already running`;
+      return `${label}: ${summarizeMessage(r.message)}`;
+    });
 
     const message =
       failedCount === 0
-        ? `Refreshed ${completedCount} store${completedCount === 1 ? "" : "s"}${runningCount > 0 ? `, ${runningCount} already syncing` : ""}.`
+        ? `Refreshed ${completedCount} store${completedCount === 1 ? "" : "s"}.`
         : failedCount === results.length
-          ? `All ${failedCount} store sync${failedCount === 1 ? "" : "s"} failed. ${failedDetails}`
-          : `Refreshed ${completedCount} store${completedCount === 1 ? "" : "s"} with ${failedCount} issue${failedCount === 1 ? "" : "s"}. ${failedDetails}`;
+          ? `All ${failedCount} store${failedCount === 1 ? "" : "s"} failed to refresh. ${perPlatformLines.join(" · ")}`
+          : `${completedCount} refreshed, ${failedCount} failed. ${perPlatformLines.join(" · ")}`;
 
     return NextResponse.json({
       data: {
