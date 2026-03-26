@@ -92,7 +92,7 @@ export async function GET() {
     ),
   ];
 
-  const [stagedChanges, listings, masterRows] = await Promise.all([
+  const [stagedChanges, listings, masterRows, dismissedSetting] = await Promise.all([
     stagedIds.length > 0
       ? db.stagedChange.findMany({
           where: { id: { in: stagedIds } },
@@ -118,8 +118,12 @@ export async function GET() {
           select: { id: true, sku: true, title: true },
         })
       : Promise.resolve([]),
+    db.appSetting.findUnique({ where: { key: "dismissedPushAlertKeys" } }),
   ]);
 
+  const dismissedKeys = new Set<string>(
+    Array.isArray(dismissedSetting?.value) ? (dismissedSetting.value as string[]) : [],
+  );
   const stagedStatusById = new Map(stagedChanges.map((change) => [change.id, change.status]));
   const listingById = new Map(listings.map((listing) => [listing.id, listing]));
   const masterRowById = new Map(masterRows.map((mr) => [mr.id, mr]));
@@ -133,6 +137,8 @@ export async function GET() {
 
     if (seen.has(retryKey)) return [];
     seen.add(retryKey);
+
+    if (dismissedKeys.has(retryKey)) return [];
 
     if (result.stagedChangeId) {
       const stagedStatus = stagedStatusById.get(result.stagedChangeId);
@@ -209,19 +215,35 @@ export async function DELETE(request: Request) {
     return NextResponse.json({ error: "No items specified for dismissal." }, { status: 400 });
   }
 
-  // Delete the staged changes so the failures API no longer returns them
+  let cancelledCount = 0;
+
   if (stagedChangeIds.length > 0) {
-    await db.stagedChange.deleteMany({
+    const result = await db.stagedChange.updateMany({
       where: {
         id: { in: stagedChangeIds },
         status: "STAGED",
       },
+      data: { status: "CANCELLED" },
+    });
+    cancelledCount = result.count;
+  }
+
+  if (retryKeys.length > 0) {
+    const existing = await db.appSetting.findUnique({
+      where: { key: "dismissedPushAlertKeys" },
+    });
+    const current: string[] = Array.isArray(existing?.value) ? (existing.value as string[]) : [];
+    const merged = [...new Set([...current, ...retryKeys])];
+    await db.appSetting.upsert({
+      where: { key: "dismissedPushAlertKeys" },
+      create: { key: "dismissedPushAlertKeys", value: merged },
+      update: { value: merged },
     });
   }
 
   return NextResponse.json({
     data: {
-      dismissed: stagedChangeIds.length,
+      dismissed: Math.max(cancelledCount, retryKeys.length),
     },
   });
 }

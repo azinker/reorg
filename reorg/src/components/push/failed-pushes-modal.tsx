@@ -78,11 +78,17 @@ export function FailedPushesModal({
   onSaveLocalBatch,
   onDismiss,
 }: FailedPushesModalProps) {
-  const [filterCategory, setFilterCategory] = useState<string | null>(null);
-  const [filterPlatform, setFilterPlatform] = useState<string | null>(null);
-  const [filterField, setFilterField] = useState<string | null>(null);
-  const [filterReason, setFilterReason] = useState<string | null>(null);
+  const [filterCategory, setFilterCategory_] = useState<string | null>(null);
+  const [filterPlatform, setFilterPlatform_] = useState<string | null>(null);
+  const [filterField, setFilterField_] = useState<string | null>(null);
+  const [filterReason, setFilterReason_] = useState<string | null>(null);
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
+
+  const clearSelectionOnFilterChange = () => setSelectedKeys(new Set());
+  const setFilterCategory = (v: string | null) => { setFilterCategory_(v); clearSelectionOnFilterChange(); };
+  const setFilterPlatform = (v: string | null) => { setFilterPlatform_(v); clearSelectionOnFilterChange(); };
+  const setFilterField = (v: string | null) => { setFilterField_(v); clearSelectionOnFilterChange(); };
+  const setFilterReason = (v: string | null) => { setFilterReason_(v); clearSelectionOnFilterChange(); };
 
   const filtered = useMemo(() => {
     let items = failedPushes;

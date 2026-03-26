@@ -4386,20 +4386,25 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
               setFailedPushesOpen(false);
               queuePushReview([pushItem]);
             }}
-            onSaveLocalBatch={(items) => {
-              let completed = 0;
-              for (const item of items) {
-                const row = gridRows.find((r: GridRow) => r.sku === item.sku);
-                if (!row) continue;
-                handleSaveUpcLocalOnly(row.id, {
-                  platform: item.platform,
-                  listingId: item.listingId,
-                  rejectionReason: item.error,
-                });
-                completed++;
+            onSaveLocalBatch={async (items) => {
+              const results = await Promise.allSettled(
+                items.map((item) =>
+                  persistUpcAction(
+                    item.sku,
+                    "stage_local_only",
+                    String(item.newValue),
+                    { platform: item.platform, listingId: item.listingId },
+                    item.error,
+                  ),
+                ),
+              );
+              const completed = results.filter((r) => r.status === "fulfilled").length;
+              if (completed > 0) {
+                showToast(`Saved ${completed} UPC${completed === 1 ? "" : "s"} locally (dashboard only).`);
+              } else {
+                showToast("Failed to save UPCs locally. Please try again.", 5000, true);
               }
-              showToast(`Saved ${completed} UPC${completed === 1 ? "" : "s"} locally (dashboard only).`);
-              void loadFailedPushes();
+              await loadFailedPushes();
             }}
             onDismiss={async (items) => {
               const stagedChangeIds = items
