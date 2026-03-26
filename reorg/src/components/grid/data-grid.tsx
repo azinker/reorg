@@ -4399,21 +4399,44 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
               queuePushReview([pushItem]);
             }}
             onSaveLocalBatch={async (items) => {
-              const results = await Promise.allSettled(
-                items.map((item) =>
-                  persistUpcAction(
-                    item.sku,
-                    "stage_local_only",
-                    String(item.newValue),
-                    { platform: item.platform, listingId: item.listingId },
-                    item.error,
-                  ),
-                ),
-              );
-              const completed = results.filter((r) => r.status === "fulfilled").length;
-              if (completed > 0) {
-                showToast(`Saved ${completed} UPC${completed === 1 ? "" : "s"} locally (dashboard only).`);
-              } else {
+              try {
+                const response = await fetch("/api/grid/stage-batch", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    action: "stage_local_only",
+                    items: items.map((item) => ({
+                      sku: item.sku,
+                      platform: item.platform,
+                      listingId: item.listingId,
+                      newValue: String(item.newValue),
+                      rejectionReason: item.error,
+                    })),
+                  }),
+                });
+                const payload = await response.json().catch(() => null);
+                if (!response.ok) {
+                  throw new Error(
+                    payload && typeof payload === "object" && "error" in payload
+                      ? String(payload.error)
+                      : `Batch save failed (${response.status})`,
+                  );
+                }
+                const saved = (payload as { data?: { saved?: number } })?.data?.saved ?? 0;
+                const errors = (payload as { data?: { errors?: Array<{ sku: string; reason: string }> } })?.data?.errors ?? [];
+                if (saved > 0) {
+                  showToast(
+                    `Saved ${saved} UPC${saved === 1 ? "" : "s"} locally.${errors.length > 0 ? ` ${errors.length} skipped.` : ""}`,
+                  );
+                } else {
+                  showToast(
+                    `Could not save UPCs locally. ${errors.length > 0 ? errors[0].reason : "Unknown error."}`,
+                    5000,
+                    true,
+                  );
+                }
+              } catch (err) {
+                console.error("[data-grid] batch save local failed", err);
                 showToast("Failed to save UPCs locally. Please try again.", 5000, true);
               }
               await loadFailedPushes();
