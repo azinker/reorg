@@ -604,6 +604,7 @@ export async function runEbayTppSync(
               if (result === "variation_parent") progress.variationsFound++;
             } catch (err) {
               if (isEbayUsageLimitError(err)) {
+                apiCalls.GetItem = 5000;
                 const remainingCurrentBatch = batch.slice(batchIndex);
                 const remainingProcessingItemIds = processingItemIds.slice(
                   index + GETITEM_CONCURRENCY,
@@ -747,6 +748,7 @@ export async function runEbayTppSync(
   } catch (err) {
     progress.status = "FAILED";
     if (isEbayUsageLimitError(err)) {
+      apiCalls.GetItem = 5000;
       await recordRateLimitState(
         integration.id,
         err instanceof Error ? err.message : "eBay API usage limit reached.",
@@ -965,6 +967,7 @@ async function runFullSync(
           } catch (error) {
             if (isEbayUsageLimitError(error)) {
               skipHydrateDueToLimit = true;
+              apiCalls.GetItem = 5000;
               await recordRateLimitState(
                 integrationId,
                 error instanceof Error ? error.message : "eBay GetItem usage limit reached.",

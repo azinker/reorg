@@ -356,7 +356,14 @@ export async function GET(
 
     // If we now have a cooldown but rateLimits is still just the generic healthy
     // placeholder, upgrade it to the exhausted cooldown snapshot.
-    if (isEbayPlatform(integration.platform) && cooldownUntil && rateLimits?.isDegradedEstimate && rateLimits.exhaustedMethods.length === 0) {
+    // SKIP if we already have locally tracked data — it's more accurate.
+    if (
+      isEbayPlatform(integration.platform) &&
+      cooldownUntil &&
+      rateLimits?.isDegradedEstimate &&
+      !rateLimits?.isLocallyTracked &&
+      rateLimits.exhaustedMethods.length === 0
+    ) {
       rateLimits = buildGetItemCooldownRateLimitsSnapshot(cooldownUntil);
     }
 
