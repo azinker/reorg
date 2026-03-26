@@ -363,6 +363,105 @@ export async function getEbayTradingRateLimitSnapshotForIntegration(
   }
 }
 
+/**
+ * Fetch rate-limit snapshot using an ALREADY-VALID access token.
+ * Use this from sync functions that have their own working token — it
+ * bypasses the analytics module's `getUserAccessToken` (which may fail
+ * on serverless cold-starts or when the eBay token endpoint is slow).
+ */
+export async function fetchRateLimitSnapshotWithToken(
+  accessToken: string,
+): Promise<EbayTradingRateLimitSnapshot | null> {
+  try {
+    const tradingUrl = getTradingUrl("PRODUCTION");
+    const body = `<?xml version="1.0" encoding="utf-8"?>
+<GetApiAccessRulesRequest xmlns="urn:ebay:apis:eBLBaseComponents">
+</GetApiAccessRulesRequest>`;
+
+    const ac = new AbortController();
+    const abortTimer = setTimeout(() => ac.abort(), 10_000);
+    const response = await fetch(tradingUrl, {
+      method: "POST",
+      headers: {
+        "X-EBAY-API-IAF-TOKEN": accessToken,
+        "X-EBAY-API-SITEID": SITE_ID,
+        "X-EBAY-API-COMPATIBILITY-LEVEL": COMPAT_LEVEL,
+        "X-EBAY-API-CALL-NAME": "GetApiAccessRules",
+        "Content-Type": "text/xml",
+      },
+      body,
+      signal: ac.signal,
+    });
+    clearTimeout(abortTimer);
+
+    if (!response.ok) return null;
+
+    const xml = await response.text();
+    const parsed = xmlParser.parse(xml);
+    const apiResponse = parsed?.GetApiAccessRulesResponse;
+    const ack =
+      apiResponse && typeof apiResponse === "object"
+        ? String((apiResponse as Record<string, unknown>).Ack ?? "")
+        : "";
+    if (ack === "Failure") return null;
+
+    const rules: unknown[] = apiResponse?.ApiAccessRule ?? [];
+    const monitoredSet = new Set<string>(MONITORED_EBAY_METHODS);
+    const methodMap = new Map<string, EbayMethodRateLimit>();
+
+    for (const rule of rules) {
+      if (!isRecord(rule)) continue;
+      const callName = String(rule.CallName ?? "");
+      if (!monitoredSet.has(callName)) continue;
+      const dailyLimit = Number(rule.DailyHardLimit) || 0;
+      const dailyUsage = Number(rule.DailyUsage) || 0;
+      const remaining = Math.max(0, dailyLimit - dailyUsage);
+      const periodicEnd = asNullableString(rule.PeriodicEndDate as string);
+      methodMap.set(callName, {
+        name: callName,
+        count: dailyUsage,
+        limit: dailyLimit,
+        remaining,
+        reset: periodicEnd,
+        timeWindowSeconds: 86400,
+        status: toStatus(remaining, dailyLimit),
+      });
+    }
+
+    const methods = MONITORED_EBAY_METHODS.map(
+      (method) =>
+        methodMap.get(method) ?? {
+          name: method,
+          count: 0,
+          limit: 0,
+          remaining: 0,
+          reset: null,
+          timeWindowSeconds: null,
+          status: "healthy" as const,
+        },
+    );
+
+    const exhaustedMethods = methods
+      .filter((m) => m.status === "exhausted" && m.reset)
+      .map((m) => m.name);
+    const resetCandidates = methods
+      .filter((m) => m.status === "exhausted" && m.reset)
+      .map((m) => new Date(m.reset as string))
+      .filter((v) => !Number.isNaN(v.getTime()))
+      .sort((a, b) => b.getTime() - a.getTime());
+
+    return {
+      fetchedAt: new Date().toISOString(),
+      methods,
+      exhaustedMethods,
+      nextResetAt: resetCandidates[0]?.toISOString() ?? null,
+    };
+  } catch (err) {
+    console.error("[ebay-analytics] fetchRateLimitSnapshotWithToken failed:", err);
+    return null;
+  }
+}
+
 /** Persist last successful snapshot to integration config for cold-start recovery. */
 export function serializeSnapshotForConfig(
   snapshot: EbayTradingRateLimitSnapshot,

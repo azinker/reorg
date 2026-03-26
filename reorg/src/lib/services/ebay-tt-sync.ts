@@ -9,9 +9,9 @@ import {
 } from "@/lib/services/sync-control";
 import {
   buildEbayQuotaExhaustedMessage,
+  fetchRateLimitSnapshotWithToken,
   getEbayMethodRate,
   getEbayTradingRateLimitSnapshotForIntegration,
-  invalidateEbayRateLimitSnapshotCache,
   serializeSnapshotForConfig,
   type EbayTradingRateLimitSnapshot,
 } from "@/lib/services/ebay-analytics";
@@ -434,8 +434,8 @@ export async function runEbayTtSync(
         progress.errors.push({
           sku: "_global",
           message:
-            "Incremental sync could not run — no recent cursor was found (the store may not have synced recently enough). " +
-            "Please run a Full Sync to re-baseline this store, then future incremental syncs will work.",
+            "Incremental sync skipped — the last sync was more than 48 hours ago (eBay's GetSellerEvents limit). " +
+            "Please run a Full Sync to re-baseline, then future incremental syncs will work automatically.",
         });
         await db.syncJob.update({
           where: { id: syncJob.id },
@@ -761,9 +761,9 @@ export async function runEbayTtSync(
     });
   } finally {
     try {
-      invalidateEbayRateLimitSnapshotCache(integration);
-      const freshSnapshot = await getEbayTradingRateLimitSnapshotForIntegration(integration);
-      if (freshSnapshot && !freshSnapshot.isDegradedEstimate) {
+      const token = await getAccessToken(integration.id, ebayConfig);
+      const freshSnapshot = await fetchRateLimitSnapshotWithToken(token);
+      if (freshSnapshot) {
         const latest = await db.integration.findUnique({ where: { id: integration.id } });
         if (latest) {
           const updatedConfig = mergeIntegrationConfig(
@@ -778,7 +778,7 @@ export async function runEbayTtSync(
         }
       }
     } catch (analyticsErr) {
-      console.error("[ebay-tt-sync] Post-sync analytics refresh failed:", analyticsErr);
+      console.error("[ebay-tt-sync] Post-sync analytics persist failed:", analyticsErr);
     }
   }
 
@@ -1388,10 +1388,9 @@ async function fetchIncrementalItemIds(
 
   const cursorDate = new Date(lastCursor);
   if (Number.isNaN(cursorDate.getTime())) return null;
-  // eBay GetSellerEvents supports up to ~30 days of lookback. Use 7 days as
-  // the practical max — enough for weekends, holidays, or multi-day outages
-  // without silently falling back to a heavy full sync.
-  if (Date.now() - cursorDate.getTime() > 7 * 24 * 60 * 60 * 1000) {
+  // eBay GetSellerEvents enforces a max ~48-hour window between ModTimeFrom
+  // and ModTimeTo.  Exceeding this causes hangs or incomplete pagination.
+  if (Date.now() - cursorDate.getTime() > 48 * 60 * 60 * 1000) {
     return null;
   }
 
