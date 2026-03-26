@@ -3970,7 +3970,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
 
                   {/* Sale Price (editable per item) */}
                   {isColVisible("salePrice") && (
-                    <div className={cn(COL_WIDTHS.salePrice, "flex min-w-0 items-start px-3", cellPy)}>
+                    <div className={cn(COL_WIDTHS.salePrice, "flex min-w-0 items-center px-3", cellPy)}>
                       <EditableStoreBlockGroup
                         items={row.isParent ? [] : row.salePrices}
                         rowId={row.id}
@@ -4073,7 +4073,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
 
                   {/* Platform Fees */}
                   {isColVisible("platformFees") && (
-                    <div className={cn(COL_WIDTHS.platformFees, "flex min-w-0 items-start px-3", cellPy)}>
+                    <div className={cn(COL_WIDTHS.platformFees, "flex min-w-0 items-center px-3", cellPy)}>
                       <StoreBlockGroup
                         items={row.isParent ? [] : row.platformFees}
                         format="currency"
@@ -4087,7 +4087,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
 
                   {/* Ad Rate: editable only on parent/standalone rows; child SKUs use the parent eBay rate */}
                   {isColVisible("adRate") && (
-                    <div className={cn(COL_WIDTHS.adRate, "min-w-0 flex items-start px-3", cellPy)}>
+                    <div className={cn(COL_WIDTHS.adRate, "min-w-0 flex items-center px-3", cellPy)}>
                       {row.isVariation && !row.isParent ? (
                         <StoreBlockGroup
                           items={[]}
@@ -4110,7 +4110,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
                           quickPushStates={quickPushStates}
                           failedPushStates={failedPushStates.storeStates}
                           includeMissingPlatforms
-                          missingLabel={row.isParent ? "See child rows" : "No Listing"}
+                          missingLabel="No Listing"
                           missingPlaceholder={row.isParent ? "defer-to-children" : "absent"}
                           missingLabelsByPlatform={{
                             SHOPIFY: "N/A",
@@ -4123,7 +4123,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
 
                   {/* Profit */}
                   {isColVisible("profit") && (
-                    <div className={cn(COL_WIDTHS.profit, "flex min-w-0 items-start px-3", cellPy)}>
+                    <div className={cn(COL_WIDTHS.profit, "flex min-w-0 items-center px-3", cellPy)}>
                       <StoreBlockGroup
                         items={row.isParent ? [] : row.profits}
                         format="currency"

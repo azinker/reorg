@@ -965,8 +965,10 @@ function EditableAdRateBlock({
   }
 
   function fmtPercent(val: number | string | null): string {
-    if (val == null) return "N/A";
-    return `${(Number(val) * 100).toFixed(1)}%`;
+    // null means the rate hasn't been synced yet; treat as 0% rather than N/A
+    // (N/A is reserved for platforms that don't support ad rates, e.g. SHPFY/BC,
+    // which take a completely separate render path via isNonAdPlatform).
+    return `${(Number(val ?? 0) * 100).toFixed(1)}%`;
   }
 
   function normalizePercentInput(raw: string) {

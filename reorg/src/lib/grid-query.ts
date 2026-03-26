@@ -717,25 +717,18 @@ function buildGridRow(
     ? parentListings
         .filter((listing) => {
           const platform = listing.integration.platform as Platform;
-          if (platform !== "TPP_EBAY" && platform !== "TT_EBAY") return false;
-          const staged = stagedMap.get(`${listing.id}-adRate`);
-          // Only include this platform in the adRates array if we have an actual
-          // value or a staged change. Without a value, the block would show "N/A"
-          // which implies the platform doesn't support ad rates — which is wrong
-          // for eBay platforms. Excluding it lets EditableAdRateBlockGroup render
-          // it as a MissingStoreBlock with the defer-to-children label instead.
-          const effectiveValue = staged != null
-            ? parseFloat(staged.stagedValue)
-            : parentAdRatesByPlatform[platform] ?? null;
-          return effectiveValue != null;
+          return platform === "TPP_EBAY" || platform === "TT_EBAY";
         })
         .map((listing) => {
           const platform = listing.integration.platform as Platform;
           const staged = stagedMap.get(`${listing.id}-adRate`);
+          // When no rate has been synced yet, default to 0 so the block shows
+          // "0.0%" rather than "N/A" (N/A is reserved for SHPFY/BC which take a
+          // separate render path).
           const effectiveValue =
             staged != null
               ? parseFloat(staged.stagedValue)
-              : parentAdRatesByPlatform[platform] ?? null;
+              : (parentAdRatesByPlatform[platform] ?? 0);
 
           return {
             platform,
