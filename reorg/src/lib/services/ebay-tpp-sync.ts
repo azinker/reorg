@@ -359,8 +359,18 @@ export async function runEbayTppSync(
   let pendingIncrementalItemIdsForCompletion: string[] = [];
   let pendingIncrementalWindowEndedAtForCompletion: string | null = null;
   let analyticsSnapshot: EbayTradingRateLimitSnapshot | null = null;
+  const seedUsage = (() => {
+    const cfg = getIntegrationConfig(integration);
+    const saved = cfg.syncState?.localApiUsage as LocalEbayApiUsage | undefined;
+    const todayET = new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" }).format(new Date());
+    if (saved && saved.date === todayET) return saved;
+    return null;
+  })();
   const apiCalls: Record<MonitoredEbayMethod, number> = {
-    GetItem: 0, GetSellerList: 0, GetSellerEvents: 0, ReviseFixedPriceItem: 0,
+    GetItem: seedUsage?.GetItem ?? 0,
+    GetSellerList: seedUsage?.GetSellerList ?? 0,
+    GetSellerEvents: seedUsage?.GetSellerEvents ?? 0,
+    ReviseFixedPriceItem: seedUsage?.ReviseFixedPriceItem ?? 0,
   };
 
   try {

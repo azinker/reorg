@@ -660,7 +660,8 @@ export function mergeSyncCallsIntoLocalUsage(
 
   for (const [key, value] of Object.entries(delta)) {
     if (key in base && typeof value === "number") {
-      (base as unknown as Record<string, number>)[key] += value;
+      const current = (base as unknown as Record<string, number>)[key] ?? 0;
+      (base as unknown as Record<string, number>)[key] = Math.max(current, value);
     }
   }
   return base;

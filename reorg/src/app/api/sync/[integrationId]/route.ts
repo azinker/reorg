@@ -367,6 +367,25 @@ export async function GET(
       rateLimits = buildGetItemCooldownRateLimitsSnapshot(cooldownUntil);
     }
 
+    // If a cooldown is active (GetItem exhausted) but the locally tracked snapshot
+    // still shows GetItem as healthy (stale data from before the catch-block fix),
+    // retroactively mark GetItem as exhausted so the UI bar is correct immediately.
+    if (
+      cooldownUntil &&
+      rateLimits?.isLocallyTracked &&
+      rateLimits.methods.length > 0
+    ) {
+      const gi = rateLimits.methods.find((m) => m.name === "GetItem");
+      if (gi && gi.status !== "exhausted") {
+        gi.count = gi.limit;
+        gi.remaining = 0;
+        gi.status = "exhausted";
+        if (!rateLimits.exhaustedMethods.includes("GetItem")) {
+          rateLimits.exhaustedMethods.push("GetItem");
+        }
+      }
+    }
+
     const getItemRate = rateLimits ? getEbayMethodRate(rateLimits, "GetItem") : null;
     const reservedGetItemCalls =
       getItemRate && getItemRate.limit > 0 && !rateLimits?.isDegradedEstimate
