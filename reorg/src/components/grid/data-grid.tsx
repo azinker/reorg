@@ -1154,8 +1154,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
           for (const id of refreshFamilyIds) next[id] = errMsg;
           return next;
         });
-        scheduleRowRefreshReset(refreshFamilyIds);
-        showToast(errMsg, 12000, true);
+        scheduleRowRefreshReset(refreshFamilyIds, 8000);
         return;
       }
 
@@ -1176,8 +1175,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
         for (const id of refreshFamilyIds) next[id] = errMsg;
         return next;
       });
-      scheduleRowRefreshReset(refreshFamilyIds);
-      showToast(errMsg, 12000, true);
+      scheduleRowRefreshReset(refreshFamilyIds, 8000);
     }
   }
 
@@ -3811,9 +3809,10 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
                     )}
                     </div>
                     {!isChild && (
-                      <div className="flex flex-col items-center gap-0.5">
+                      <div className="relative flex flex-col items-center gap-0.5">
                         {(() => {
                           const phase = rowRefreshStates[row.id];
+                          const errorMsg = rowRefreshErrors[row.id];
                           return (
                             <>
                               <button
@@ -3838,7 +3837,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
                                   phase === "success"
                                     ? "Row refreshed"
                                     : phase === "error"
-                                      ? (rowRefreshErrors[row.id] ?? "Refresh failed — click to retry")
+                                      ? "Click to retry refresh"
                                       : "Refresh this row from linked marketplaces"
                                 }
                               >
@@ -3855,10 +3854,18 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
                               </button>
                               {phase === "error" && (
                                 <span className="max-w-[34px] break-words text-center text-[8px] font-semibold leading-tight text-amber-400/90">
-                                  {rowRefreshErrors[row.id]
-                                    ? getRefreshErrorLabel(rowRefreshErrors[row.id])
-                                    : "Failed"}
+                                  {errorMsg ? getRefreshErrorLabel(errorMsg) : "Failed"}
                                 </span>
+                              )}
+                              {phase === "error" && errorMsg && (
+                                <div className="absolute left-[calc(100%+6px)] top-1/2 z-20 w-max max-w-[300px] -translate-y-1/2 animate-in fade-in slide-in-from-left-1">
+                                  <div className="relative rounded-md border border-amber-500/40 bg-amber-950/95 px-3 py-2 shadow-lg backdrop-blur-sm">
+                                    <div className="absolute -left-[5px] top-1/2 h-2.5 w-2.5 -translate-y-1/2 rotate-45 border-b border-l border-amber-500/40 bg-amber-950/95" />
+                                    <p className="relative line-clamp-4 text-[11px] leading-relaxed text-amber-200">
+                                      {errorMsg}
+                                    </p>
+                                  </div>
+                                </div>
                               )}
                             </>
                           );
