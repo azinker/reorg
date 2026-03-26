@@ -1140,10 +1140,15 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
     });
   }
 
-  function scheduleQuickPushSuccessClear(key: string) {
+  function cancelQuickPushTimer(key: string) {
     if (quickPushTimersRef.current[key]) {
       clearTimeout(quickPushTimersRef.current[key]);
+      delete quickPushTimersRef.current[key];
     }
+  }
+
+  function scheduleQuickPushSuccessClear(key: string) {
+    cancelQuickPushTimer(key);
     quickPushTimersRef.current[key] = setTimeout(() => {
       clearQuickPushState(key);
     }, 2500);
@@ -1642,6 +1647,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
     submitPushRequest([pushItem], false, true)
       .then((result) => {
         if (result.status === "blocked") {
+          cancelQuickPushTimer(key);
           setQuickPushState(key, {
             phase: "blocked",
             detail: result.blockedReason ?? result.nextStep ?? result.message,
@@ -1656,13 +1662,16 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
           });
           scheduleQuickPushSuccessClear(key);
         } else {
+          cancelQuickPushTimer(key);
+          const itemError = result.results.find((r) => !r.success && r.error)?.error;
           setQuickPushState(key, {
             phase: "error",
-            detail: result.nextStep ?? result.message,
+            detail: itemError ?? result.nextStep ?? result.message,
           });
         }
       })
       .catch((error) => {
+        cancelQuickPushTimer(key);
         setQuickPushState(key, {
           phase: "error",
           detail: error instanceof Error ? error.message : "Live push failed.",
@@ -1696,6 +1705,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
         submitPushRequest(items, false, true)
           .then((liveResult) => {
             if (liveResult.status === "blocked") {
+              cancelQuickPushTimer(key);
               setQuickPushState(key, {
                 phase: "blocked",
                 detail: liveResult.blockedReason ?? liveResult.nextStep ?? liveResult.message,
@@ -1707,13 +1717,16 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
               setQuickPushState(key, { phase: "success", detail: "Push confirmed." });
               scheduleQuickPushSuccessClear(key);
             } else {
+              cancelQuickPushTimer(key);
+              const itemError = liveResult.results.find((r) => !r.success && r.error)?.error;
               setQuickPushState(key, {
                 phase: "error",
-                detail: liveResult.nextStep ?? liveResult.message,
+                detail: itemError ?? liveResult.nextStep ?? liveResult.message,
               });
             }
           })
           .catch((error) => {
+            cancelQuickPushTimer(key);
             setQuickPushState(key, {
               phase: "error",
               detail: error instanceof Error ? error.message : "Live push failed.",

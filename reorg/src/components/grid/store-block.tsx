@@ -527,6 +527,11 @@ function EditableStoreBlock({
                 >
                   {renderFastPushLabel()}
                 </div>
+                {fastPushRetry && quickPushState?.detail ? (
+                  <p className="mt-0.5 max-w-[160px] truncate text-[8px] leading-tight text-red-300/80" title={quickPushState.detail}>
+                    {quickPushState.detail}
+                  </p>
+                ) : null}
               </div>
             ) : (
               <div className="mt-1 grid grid-cols-2 gap-1">
@@ -570,6 +575,11 @@ function EditableStoreBlock({
             >
               {renderFastPushLabel()}
             </span>
+            {fastPushRetry && quickPushState?.detail ? (
+              <p className="max-w-[140px] truncate text-[8px] leading-tight text-red-300/80" title={quickPushState.detail}>
+                {quickPushState.detail}
+              </p>
+            ) : null}
           </div>
         ) : (
           <span className={cn("font-medium leading-tight", isNegative(item.value) ? "text-red-400" : "text-emerald-400")}>{fmt(item.value)}</span>
@@ -1147,6 +1157,11 @@ function EditableAdRateBlock({
                 >
                   {renderFastPushLabel()}
                 </div>
+                {fastPushRetry && quickPushState?.detail ? (
+                  <p className="mt-0.5 max-w-[160px] truncate text-[8px] leading-tight text-red-300/80" title={quickPushState.detail}>
+                    {quickPushState.detail}
+                  </p>
+                ) : null}
               </div>
             ) : (
               <div className="mt-1 grid grid-cols-2 gap-1">
