@@ -5,6 +5,7 @@ import {
   AlertTriangle,
   Filter,
   Save,
+  Trash2,
   X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -39,6 +40,7 @@ interface FailedPushesModalProps {
   onRetryAll: (items: PushItem[]) => void;
   onRetryOne: (item: PushItem) => void;
   onSaveLocalBatch: (items: FailedPushItem[]) => void;
+  onDismiss: (items: FailedPushItem[]) => void;
 }
 
 function stripExtraFields(failure: FailedPushItem): PushItem {
@@ -72,6 +74,7 @@ export function FailedPushesModal({
   onRetryAll,
   onRetryOne,
   onSaveLocalBatch,
+  onDismiss,
 }: FailedPushesModalProps) {
   const [filterCategory, setFilterCategory] = useState<string | null>(null);
   const [filterPlatform, setFilterPlatform] = useState<string | null>(null);
@@ -88,7 +91,6 @@ export function FailedPushesModal({
 
   const hasActiveFilter = filterCategory || filterPlatform || filterField;
 
-  // Any UPC failure can be saved locally — format-invalid ones especially should never be retried
   const validationUpcItems = useMemo(
     () => filtered.filter((f) => f.field === "upc"),
     [filtered],
@@ -154,10 +156,10 @@ export function FailedPushesModal({
           </button>
         </div>
 
-        {/* Summary bar */}
+        {/* Category summary */}
         {!failedPushesLoading && failedPushCount > 0 && (
           <div className="border-b border-border bg-muted/10 px-5 py-3">
-            <div className="grid gap-2 sm:grid-cols-3 lg:grid-cols-6">
+            <div className="flex flex-wrap gap-2">
               {[...categorySet.entries()]
                 .sort(([, a], [, b]) => b - a)
                 .map(([cat, count]) => (
@@ -165,7 +167,7 @@ export function FailedPushesModal({
                     key={cat}
                     onClick={() => setFilterCategory(filterCategory === cat ? null : cat)}
                     className={cn(
-                      "rounded-lg border px-2.5 py-1.5 text-left text-xs transition-all cursor-pointer",
+                      "rounded-lg border px-3 py-2 text-left text-xs transition-all cursor-pointer min-w-[100px]",
                       filterCategory === cat
                         ? "border-primary/50 bg-primary/15 text-primary font-semibold"
                         : "border-border/60 bg-background/40 text-muted-foreground hover:border-border hover:bg-background/60",
@@ -183,15 +185,15 @@ export function FailedPushesModal({
 
         {/* Filter row */}
         {!failedPushesLoading && failedPushCount > 0 && (
-          <div className="flex flex-wrap items-center gap-2 border-b border-border/60 px-5 py-2">
+          <div className="flex flex-wrap items-center gap-2 border-b border-border/60 px-5 py-2.5">
             <Filter className="h-3.5 w-3.5 text-muted-foreground" />
-            <span className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Platform</span>
+
             {[...platformSet.entries()].map(([plat, count]) => (
               <button
                 key={plat}
                 onClick={() => setFilterPlatform(filterPlatform === plat ? null : plat)}
                 className={cn(
-                  "rounded-md border px-2 py-0.5 text-[11px] cursor-pointer transition-colors",
+                  "rounded-md border px-2.5 py-1 text-[11px] cursor-pointer transition-colors",
                   filterPlatform === plat
                     ? "border-primary/50 bg-primary/15 text-primary font-medium"
                     : "border-border/60 text-muted-foreground hover:text-foreground",
@@ -201,13 +203,14 @@ export function FailedPushesModal({
               </button>
             ))}
 
-            <span className="ml-2 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Field</span>
+            <span className="mx-1 h-4 w-px bg-border/50" />
+
             {[...fieldSet.entries()].map(([field, count]) => (
               <button
                 key={field}
                 onClick={() => setFilterField(filterField === field ? null : field)}
                 className={cn(
-                  "rounded-md border px-2 py-0.5 text-[11px] cursor-pointer transition-colors",
+                  "rounded-md border px-2.5 py-1 text-[11px] cursor-pointer transition-colors",
                   filterField === field
                     ? "border-primary/50 bg-primary/15 text-primary font-medium"
                     : "border-border/60 text-muted-foreground hover:text-foreground",
@@ -220,7 +223,7 @@ export function FailedPushesModal({
             {hasActiveFilter && (
               <button
                 onClick={() => { setFilterCategory(null); setFilterPlatform(null); setFilterField(null); }}
-                className="ml-auto rounded-md border border-border/60 px-2 py-0.5 text-[11px] text-muted-foreground transition-colors hover:text-foreground cursor-pointer"
+                className="ml-auto rounded-md border border-border/60 px-2.5 py-1 text-[11px] text-muted-foreground transition-colors hover:text-foreground cursor-pointer"
               >
                 Clear filters
               </button>
@@ -230,7 +233,7 @@ export function FailedPushesModal({
 
         {/* Selection toolbar */}
         {!failedPushesLoading && filtered.length > 0 && (
-          <div className="flex flex-wrap items-center gap-2 border-b border-border/40 px-5 py-2 bg-background/30">
+          <div className="flex flex-wrap items-center gap-2 border-b border-border/40 px-5 py-2.5 bg-background/30">
             <input
               type="checkbox"
               checked={selectedKeys.size > 0 && selectedKeys.size >= filtered.length}
@@ -262,6 +265,16 @@ export function FailedPushesModal({
                     Save UPCs Locally ({selectedUpcValidationItems.length})
                   </button>
                 )}
+                <button
+                  onClick={() => {
+                    onDismiss(selectedItems);
+                    clearSelection();
+                  }}
+                  className="flex items-center gap-1 rounded-md border border-red-500/30 bg-red-500/10 px-2.5 py-1 text-[11px] font-medium text-red-300 transition-colors hover:bg-red-500/20 cursor-pointer"
+                >
+                  <Trash2 className="h-3 w-3" />
+                  Dismiss Selected ({selectedItems.length})
+                </button>
               </>
             )}
 
@@ -356,6 +369,12 @@ export function FailedPushesModal({
                                 Save Local
                               </button>
                             )}
+                            <button
+                              onClick={() => onDismiss([failure])}
+                              className="rounded-md border border-border/50 bg-background/50 px-3 py-1.5 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground cursor-pointer"
+                            >
+                              Dismiss
+                            </button>
                           </div>
                         </div>
                       </article>

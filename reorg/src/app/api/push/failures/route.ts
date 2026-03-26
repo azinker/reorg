@@ -84,8 +84,15 @@ export async function GET() {
         .filter((value): value is string => typeof value === "string" && value.length > 0),
     ),
   ];
+  const masterRowIds = [
+    ...new Set(
+      candidateFailures
+        .map((entry) => entry.result.masterRowId)
+        .filter((value): value is string => typeof value === "string" && value.length > 0),
+    ),
+  ];
 
-  const [stagedChanges, listings] = await Promise.all([
+  const [stagedChanges, listings, masterRows] = await Promise.all([
     stagedIds.length > 0
       ? db.stagedChange.findMany({
           where: { id: { in: stagedIds } },
@@ -105,10 +112,17 @@ export async function GET() {
           },
         })
       : Promise.resolve([]),
+    masterRowIds.length > 0
+      ? db.masterRow.findMany({
+          where: { id: { in: masterRowIds } },
+          select: { id: true, sku: true, title: true },
+        })
+      : Promise.resolve([]),
   ]);
 
   const stagedStatusById = new Map(stagedChanges.map((change) => [change.id, change.status]));
   const listingById = new Map(listings.map((listing) => [listing.id, listing]));
+  const masterRowById = new Map(masterRows.map((mr) => [mr.id, mr]));
   const seen = new Set<string>();
 
   const failures = candidateFailures.flatMap((entry) => {
@@ -126,8 +140,17 @@ export async function GET() {
     }
 
     const listing = listingById.get(result.marketplaceListingId);
-    const sku = listing?.masterRow?.sku ?? listing?.sku ?? "Unknown SKU";
-    const title = listing?.masterRow?.title ?? listing?.title ?? sku;
+    const masterRow = masterRowById.get(result.masterRowId);
+    const sku =
+      listing?.masterRow?.sku ??
+      listing?.sku ??
+      masterRow?.sku ??
+      "Unknown SKU";
+    const title =
+      listing?.masterRow?.title ??
+      listing?.title ??
+      masterRow?.title ??
+      sku;
     const platformVariantId = listing?.platformVariantId ?? null;
     const failureHelp = classifyPushFailure(
       result.error ?? "Push failed.",
@@ -168,6 +191,37 @@ export async function GET() {
     data: {
       count: failures.length,
       failures,
+    },
+  });
+}
+
+export async function DELETE(request: Request) {
+  const session = await auth();
+  if (!session?.user?.id && !isAuthBypassEnabled()) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const body = await request.json().catch(() => null);
+  const retryKeys: string[] = Array.isArray(body?.retryKeys) ? body.retryKeys : [];
+  const stagedChangeIds: string[] = Array.isArray(body?.stagedChangeIds) ? body.stagedChangeIds : [];
+
+  if (retryKeys.length === 0 && stagedChangeIds.length === 0) {
+    return NextResponse.json({ error: "No items specified for dismissal." }, { status: 400 });
+  }
+
+  // Delete the staged changes so the failures API no longer returns them
+  if (stagedChangeIds.length > 0) {
+    await db.stagedChange.deleteMany({
+      where: {
+        id: { in: stagedChangeIds },
+        status: "STAGED",
+      },
+    });
+  }
+
+  return NextResponse.json({
+    data: {
+      dismissed: stagedChangeIds.length,
     },
   });
 }

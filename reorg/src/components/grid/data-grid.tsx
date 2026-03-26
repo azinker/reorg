@@ -4354,6 +4354,23 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
               showToast(`Saved ${completed} UPC${completed === 1 ? "" : "s"} locally (dashboard only).`);
               void loadFailedPushes();
             }}
+            onDismiss={async (items) => {
+              const stagedChangeIds = items
+                .map((i) => i.stagedChangeId)
+                .filter((id): id is string => typeof id === "string" && id.length > 0);
+              const retryKeys = items.map((i) => i.retryKey);
+              try {
+                await fetch("/api/push/failures", {
+                  method: "DELETE",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ retryKeys, stagedChangeIds }),
+                });
+                showToast(`Dismissed ${items.length} alert${items.length === 1 ? "" : "s"}.`);
+              } catch {
+                showToast("Failed to dismiss alerts. Please try again.");
+              }
+              void loadFailedPushes();
+            }}
           />
         );
       })()}
