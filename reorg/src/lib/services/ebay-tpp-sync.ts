@@ -403,7 +403,27 @@ export async function runEbayTppSync(
         ));
 
       if (!incrementalWindow) {
-        effectiveMode = "full";
+        // No incremental cursor or it's older than 7 days — cannot do an
+        // incremental sync. Instead of silently starting a heavy full sync
+        // (which would likely timeout on a serverless function), complete
+        // this job with a clear message telling the user to run a Full Sync.
+        progress.status = "COMPLETED";
+        progress.errors.push({
+          sku: "_global",
+          message:
+            "Incremental sync could not run — no recent cursor was found (the store may not have synced recently enough). " +
+            "Please run a Full Sync to re-baseline this store, then future incremental syncs will work.",
+        });
+        await db.syncJob.update({
+          where: { id: syncJob.id },
+          data: {
+            status: "COMPLETED",
+            completedAt: new Date(),
+            itemsProcessed: 0,
+            errors: JSON.parse(JSON.stringify(progress.errors)),
+          },
+        });
+        return progress;
       } else {
         const budgetPlan = await buildEbayIncrementalBudgetPlan({
           integration,
@@ -995,7 +1015,10 @@ async function fetchIncrementalItemIds(
   const cursorDate = new Date(lastCursor);
   if (Number.isNaN(cursorDate.getTime())) return null;
 
-  if (Date.now() - cursorDate.getTime() > 36 * 60 * 60 * 1000) {
+  // eBay GetSellerEvents supports up to ~30 days of lookback. Use 7 days as
+  // the practical max — enough for weekends, holidays, or multi-day outages
+  // without silently falling back to a heavy full sync.
+  if (Date.now() - cursorDate.getTime() > 7 * 24 * 60 * 60 * 1000) {
     return null;
   }
 

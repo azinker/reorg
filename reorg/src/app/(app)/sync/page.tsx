@@ -539,6 +539,7 @@ export default function SyncPage() {
           : "Last sync failed — see details below";
       setSyncing((prev) => ({ ...prev, [apiPlatform]: job.status === "COMPLETED" ? "done" : "error" }));
       setResults((prev) => ({ ...prev, [apiPlatform]: message }));
+      if (issueCount > 0) setErrorsExpanded((prev) => ({ ...prev, [apiPlatform]: true }));
     }
 
     return data;
@@ -608,6 +609,9 @@ export default function SyncPage() {
                 : "Last sync failed — see details below";
             setSyncing((prev) => ({ ...prev, [store.apiPlatform]: job.status === "COMPLETED" ? "done" : "error" }));
             setResults((prev) => ({ ...prev, [store.apiPlatform]: message }));
+            if (issueCount > 0 && job.status === "FAILED") {
+              setErrorsExpanded((prev) => ({ ...prev, [store.apiPlatform]: true }));
+            }
           }
         } catch { /* ignore */ }
       }
