@@ -3797,59 +3797,61 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
                       <span className="text-base font-semibold text-emerald-400">↳</span>
                     )}
                     </div>
-                    <div className="flex flex-col items-center gap-0.5">
-                      {(() => {
-                        const phase = rowRefreshStates[row.id];
-                        return (
-                          <>
-                            <button
-                              onClick={() => void handleRefreshRow(row.id, row.parentId)}
-                              disabled={phase === "loading"}
-                              className={cn(
-                                "flex h-7 w-7 items-center justify-center rounded-md border transition-colors cursor-pointer",
-                                phase === "success"
-                                  ? "border-emerald-500/40 bg-emerald-500/15 text-emerald-300"
-                                  : phase === "error"
-                                    ? "border-amber-500/50 bg-amber-500/15 text-amber-300"
-                                    : "border-violet-500/35 bg-violet-500/15 text-violet-300",
-                                phase === "loading"
-                                  ? "cursor-wait opacity-80"
-                                  : phase === "success"
-                                    ? "hover:border-emerald-500/50 hover:bg-emerald-500/20 hover:text-emerald-200"
+                    {!isChild && (
+                      <div className="flex flex-col items-center gap-0.5">
+                        {(() => {
+                          const phase = rowRefreshStates[row.id];
+                          return (
+                            <>
+                              <button
+                                onClick={() => void handleRefreshRow(row.id, row.parentId)}
+                                disabled={phase === "loading"}
+                                className={cn(
+                                  "flex h-7 w-7 items-center justify-center rounded-md border transition-colors cursor-pointer",
+                                  phase === "success"
+                                    ? "border-emerald-500/40 bg-emerald-500/15 text-emerald-300"
                                     : phase === "error"
-                                      ? "hover:border-amber-500/70 hover:bg-amber-500/25 hover:text-amber-200"
-                                      : "hover:border-violet-400/60 hover:bg-violet-500/25 hover:text-violet-200"
+                                      ? "border-amber-500/50 bg-amber-500/15 text-amber-300"
+                                      : "border-violet-500/35 bg-violet-500/15 text-violet-300",
+                                  phase === "loading"
+                                    ? "cursor-wait opacity-80"
+                                    : phase === "success"
+                                      ? "hover:border-emerald-500/50 hover:bg-emerald-500/20 hover:text-emerald-200"
+                                      : phase === "error"
+                                        ? "hover:border-amber-500/70 hover:bg-amber-500/25 hover:text-amber-200"
+                                        : "hover:border-violet-400/60 hover:bg-violet-500/25 hover:text-violet-200"
+                                )}
+                                title={
+                                  phase === "success"
+                                    ? "Row refreshed"
+                                    : phase === "error"
+                                      ? (rowRefreshErrors[row.id] ?? "Refresh failed — click to retry")
+                                      : "Refresh this row from linked marketplaces"
+                                }
+                              >
+                                {phase === "success" ? (
+                                  <Check className="h-3.5 w-3.5" strokeWidth={3} />
+                                ) : phase === "error" ? (
+                                  <AlertTriangle className="h-3.5 w-3.5" strokeWidth={2.4} />
+                                ) : (
+                                  <RefreshCw
+                                    className={cn("h-3.5 w-3.5", phase === "loading" && "animate-spin")}
+                                    strokeWidth={2.4}
+                                  />
+                                )}
+                              </button>
+                              {phase === "error" && (
+                                <span className="max-w-[34px] break-words text-center text-[8px] font-semibold leading-tight text-amber-400/90">
+                                  {rowRefreshErrors[row.id]
+                                    ? getRefreshErrorLabel(rowRefreshErrors[row.id])
+                                    : "Failed"}
+                                </span>
                               )}
-                              title={
-                                phase === "success"
-                                  ? "Row refreshed"
-                                  : phase === "error"
-                                    ? (rowRefreshErrors[row.id] ?? "Refresh failed — click to retry")
-                                    : "Refresh this row from linked marketplaces"
-                              }
-                            >
-                              {phase === "success" ? (
-                                <Check className="h-3.5 w-3.5" strokeWidth={3} />
-                              ) : phase === "error" ? (
-                                <AlertTriangle className="h-3.5 w-3.5" strokeWidth={2.4} />
-                              ) : (
-                                <RefreshCw
-                                  className={cn("h-3.5 w-3.5", phase === "loading" && "animate-spin")}
-                                  strokeWidth={2.4}
-                                />
-                              )}
-                            </button>
-                            {phase === "error" && (
-                              <span className="max-w-[34px] break-words text-center text-[8px] font-semibold leading-tight text-amber-400/90">
-                                {rowRefreshErrors[row.id]
-                                  ? getRefreshErrorLabel(rowRefreshErrors[row.id])
-                                  : "Failed"}
-                              </span>
-                            )}
-                          </>
-                        );
-                      })()}
-                    </div>
+                            </>
+                          );
+                        })()}
+                      </div>
+                    )}
                   </div>
 
                   {/* Photo */}
