@@ -987,7 +987,10 @@ async function runFullSync(
         const itemId = str(item, "ItemID");
         let itemForApply = item;
 
-        if (itemId && needsFullItemForUpc(item) && !skipHydrateDueToLimit) {
+        const varNode = obj(item, "Variations");
+        const hasVariationsWithoutPictures =
+          varNode && arr(varNode, "Variation").length > 0 && !obj(varNode, "Pictures");
+        if (itemId && (needsFullItemForUpc(item) || hasVariationsWithoutPictures) && !skipHydrateDueToLimit) {
           if (hydrateCallsUsed >= hydrateBudget) {
             if (!hydrateNoticePushed) {
               hydrateNoticePushed = true;

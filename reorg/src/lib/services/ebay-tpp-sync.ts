@@ -980,7 +980,10 @@ async function runFullSync(
       const itemId = str(item, "ItemID");
       let itemForUpsert = item;
 
-      if (itemId && needsFullItemForUpc(item) && !skipHydrateDueToLimit) {
+      const varNode = obj(item, "Variations");
+      const hasVariationsWithoutPictures =
+        varNode && arr(varNode, "Variation").length > 0 && !obj(varNode, "Pictures");
+      if (itemId && (needsFullItemForUpc(item) || hasVariationsWithoutPictures) && !skipHydrateDueToLimit) {
         if (hydrateCallsUsed >= hydrateBudget) {
           if (!hydrateNoticePushed) {
             hydrateNoticePushed = true;
@@ -1654,7 +1657,10 @@ async function upsertEbayItem(
       if (existingChild) {
         await db.marketplaceListing.update({
           where: { id: existingChild.id },
-          data: listingData,
+          data: {
+            ...listingData,
+            imageUrl: variationImageUrl ?? existingChild.imageUrl,
+          },
         });
       } else {
         await db.marketplaceListing.create({ data: listingData });
