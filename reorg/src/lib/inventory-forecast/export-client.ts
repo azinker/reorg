@@ -22,8 +22,8 @@ const EXPORT_COLUMNS = [
   { header: "UPC", width: 24 },
   { header: "SKU", width: 45 },
   { header: "Product Image", width: 18 },
-  { header: "Required Quantity to Order", width: 30 },
-  { header: "Flat Avg. Estimate", width: 22 },
+  { header: "Order Qty (Smart)", width: 22 },
+  { header: "Order Qty (Simple)", width: 22 },
   { header: "Supplier Cost", width: 14 },
   { header: "Total Cost", width: 20 },
   { header: "Sales History Summary", width: 30 },
@@ -40,12 +40,12 @@ const EXPORT_COLUMNS = [
 ] as const;
 
 const HEADER_NOTES: Record<string, string> = {
-  "Required Quantity to Order":
-    "Final order quantity using the forecast model (accounts for seasonality, trends, intermittent demand). Rounded up to the next multiple of 5.",
-  "Flat Avg. Estimate":
-    "What the order quantity would be using a simple daily average (total sales ÷ days) instead of the forecast model. Compare with Required Quantity to see the model's impact.",
+  "Order Qty (Smart)":
+    "Order quantity from the forecast model (accounts for seasonality, trends, intermittent demand, safety buffer). Rounded up to a multiple of 5.",
+  "Order Qty (Simple)":
+    "Simple math: (avg sold per day × (shipping time + stock coverage days)) − current on hand − inbound. Rounded up to a multiple of 5. No safety buffer, no model — just the straight average.",
   "Total Cost":
-    "Required Quantity to Order multiplied by Supplier Cost. The export metadata includes the total estimated order cost.",
+    "Order Qty (Smart) multiplied by Supplier Cost.",
   "Transit demand (model)":
     "Units the forecast expects to sell while your order is in transit (uses your Shipping Time days). Sum of model-predicted weekly (or daily) buckets.",
   "Post-arrival demand (model)":
@@ -97,11 +97,10 @@ function modelExplanation(model: string) {
   return map[model] ?? "Uses the best-fit model for the row's demand pattern.";
 }
 
-function flatAvgEstimate(line: ForecastLineResult, totalDays: number) {
-  const simpleDemand = line.averageDailyDemand * totalDays;
-  const simpleGross = simpleDemand + line.safetyBuffer;
-  const simpleNet = Math.max(0, simpleGross - line.currentInventory - line.openInTransitQty);
-  return Math.ceil(simpleNet / 5) * 5;
+function simpleOrderQty(line: ForecastLineResult, totalDays: number) {
+  const demand = line.averageDailyDemand * totalDays;
+  const net = Math.max(0, demand - line.currentInventory - line.openInTransitQty);
+  return Math.ceil(net / 5) * 5;
 }
 
 function lineValues(line: ForecastLineResult, totalDays: number) {
@@ -117,7 +116,7 @@ function lineValues(line: ForecastLineResult, totalDays: number) {
     line.sku,
     "",
     line.finalQty,
-    flatAvgEstimate(line, totalDays),
+    simpleOrderQty(line, totalDays),
     formatCurrency(line.supplierCost),
     totalCost,
     line.salesHistorySummary,
@@ -272,8 +271,8 @@ function addGuideSheet(workbook: any) {
     ["UPC", "The UPC code stored for the SKU.", "Blank means no UPC was available."],
     ["SKU", "Internal SKU used to join sales and inventory.", "This is the main row identifier across the forecast."],
     ["Product Image", "Reference image pulled into the sheet.", "Helps the buyer visually confirm the item."],
-    ["Required Quantity to Order", HEADER_NOTES["Required Quantity to Order"], "19 becomes 20, 23 becomes 25, 96 becomes 100."],
-    ["Flat Avg. Estimate", HEADER_NOTES["Flat Avg. Estimate"], "If avg demand is 0.3/day over 165 days: 0.3 x 165 = 49.5 + buffer − stock = simple order qty. Compare with the model column to see the difference."],
+    ["Order Qty (Smart)", HEADER_NOTES["Order Qty (Smart)"], "Uses transit demand + post-arrival demand + safety buffer − on hand. 19 becomes 20, 23 becomes 25."],
+    ["Order Qty (Simple)", HEADER_NOTES["Order Qty (Simple)"], "Example: 0.267/day × 165 days = 44 − 36 on hand = 8 → rounded to 10. No safety, no model."],
     ["Supplier Cost", "Unit supplier cost stored for the SKU.", "$2.50 means each ordered unit costs $2.50 before shipping."],
     ["Total Cost", HEADER_NOTES["Total Cost"], "25 units x $2.50 supplier cost = $62.50 total cost."],
     ["Sales History Summary", "Shows units sold inside the selected lookback plus the average daily rate.", "4 total | 10d | 0.4/day means 4 units sold over the last 10 days."],
