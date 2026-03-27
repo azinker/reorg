@@ -118,6 +118,18 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+const UPSERT_TIMEOUT_MS = 60_000;
+
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([
+    promise,
+    new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+    }),
+  ]).finally(() => clearTimeout(timer));
+}
+
 async function fetchWithTimeout(
   url: string,
   options: RequestInit = {},
@@ -589,10 +601,14 @@ export async function runEbayTtSync(
           >();
           const itemIdsNeedingFetch: string[] = [];
           for (const itemId of batch) {
-            const directResult = await tryApplyIncrementalQuantityFirstTtItem(
-              incrementalEventItemsById?.[itemId],
-              integration.id,
-            );
+            const directResult = await withTimeout(
+              tryApplyIncrementalQuantityFirstTtItem(
+                incrementalEventItemsById?.[itemId],
+                integration.id,
+              ),
+              UPSERT_TIMEOUT_MS,
+              `tryApplyIncremental(${itemId})`,
+            ).catch(() => null);
             if (directResult) {
               directResults.set(itemId, directResult);
             } else {
@@ -637,7 +653,11 @@ export async function runEbayTtSync(
                 continue;
               }
 
-              await applyTtItem(fullItem, integration.id, ebayConfig, progress);
+              await withTimeout(
+                applyTtItem(fullItem, integration.id, ebayConfig, progress),
+                UPSERT_TIMEOUT_MS,
+                `applyTtItem(${itemId})`,
+              );
             } catch (error) {
               if (isEbayUsageLimitError(error)) {
                 apiCalls.GetItem = 5000;
@@ -1035,7 +1055,11 @@ async function runFullSync(
           }
         }
 
-        await applyTtItem(itemForApply, integrationId, ebayConfig, progress);
+        await withTimeout(
+          applyTtItem(itemForApply, integrationId, ebayConfig, progress),
+          UPSERT_TIMEOUT_MS,
+          `applyTtItem(${str(item, "ItemID") ?? "unknown"})`,
+        );
       } catch (error) {
         progress.errors.push({
           sku: str(item, "ItemID") ?? "_item",

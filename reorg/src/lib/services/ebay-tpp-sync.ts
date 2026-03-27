@@ -112,6 +112,18 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+const UPSERT_TIMEOUT_MS = 60_000;
+
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([
+    promise,
+    new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+    }),
+  ]).finally(() => clearTimeout(timer));
+}
+
 async function fetchWithTimeout(
   url: string,
   options: RequestInit = {},
@@ -573,11 +585,15 @@ export async function runEbayTppSync(
           const directResults = new Map<string, UpsertResult>();
           const itemIdsNeedingFetch: string[] = [];
           for (const itemId of batch) {
-            const directResult = await tryApplyIncrementalQuantityFirstTppItem(
-              incrementalEventItemsById?.[itemId],
-              integration.id,
-              ebayConfig,
-            );
+            const directResult = await withTimeout(
+              tryApplyIncrementalQuantityFirstTppItem(
+                incrementalEventItemsById?.[itemId],
+                integration.id,
+                ebayConfig,
+              ),
+              UPSERT_TIMEOUT_MS,
+              `tryApplyIncremental(${itemId})`,
+            ).catch(() => null);
             if (directResult) {
               directResults.set(itemId, directResult);
             } else {
@@ -616,7 +632,11 @@ export async function runEbayTppSync(
 
               const fullItem = fetched.value;
               const result = fullItem
-                ? await upsertEbayItem(fullItem, integration.id, ebayConfig)
+                ? await withTimeout(
+                    upsertEbayItem(fullItem, integration.id, ebayConfig),
+                    UPSERT_TIMEOUT_MS,
+                    `upsertEbayItem(${itemId})`,
+                  )
                 : null;
 
               if (!result) {
@@ -1028,7 +1048,11 @@ async function runFullSync(
         }
       }
 
-      const result = await upsertEbayItem(itemForUpsert, integrationId, ebayConfig);
+      const result = await withTimeout(
+        upsertEbayItem(itemForUpsert, integrationId, ebayConfig),
+        UPSERT_TIMEOUT_MS,
+        `upsertEbayItem(${itemId})`,
+      );
       progress.itemsProcessed++;
       if (result === "created") progress.itemsCreated++;
       else if (result === "updated") progress.itemsUpdated++;
