@@ -218,13 +218,16 @@ async function refreshBucket(
           },
         );
 
+        const bcError = result.errors?.[0];
         return {
           platform: bucket.platform,
           status: result.status === "completed" ? "COMPLETED" : "FAILED",
           message:
             result.status === "completed"
               ? `${integration.label} row refresh completed.`
-              : `${integration.label} row refresh failed.`,
+              : bcError
+                ? `${shortPlatform(bucket.platform)}: ${bcError}`
+                : `${integration.label} row refresh failed.`,
           jobId: result.syncJobId,
         };
       }
@@ -240,13 +243,16 @@ async function refreshBucket(
           },
         );
 
+        const shpfyError = result.errors?.[0]?.message;
         return {
           platform: bucket.platform,
           status: result.status === "COMPLETED" ? "COMPLETED" : "FAILED",
           message:
             result.status === "COMPLETED"
               ? `${integration.label} row refresh completed.`
-              : `${integration.label} row refresh failed.`,
+              : shpfyError
+                ? `${shortPlatform(bucket.platform)}: ${shpfyError}`
+                : `${integration.label} row refresh failed.`,
           jobId: result.jobId,
         };
       }
@@ -337,32 +343,36 @@ export async function POST(
     });
     const integrationById = new Map(integrations.map((integration) => [integration.id, integration]));
 
-    // Pre-check eBay rate limits — skip eBay platforms instantly if quota is exhausted.
+    // Pre-check eBay rate limits in parallel — skip eBay platforms instantly if quota is exhausted.
     const ebayRateLimitedPlatforms = new Set<RefreshablePlatform>();
     const ebayRateLimitMessages = new Map<RefreshablePlatform, string>();
-    for (const bucket of buckets.values()) {
-      if (bucket.platform !== Platform.TPP_EBAY && bucket.platform !== Platform.TT_EBAY) continue;
-      const integration = integrationById.get(bucket.integrationId);
-      if (!integration?.enabled) continue;
-      try {
-        const snapshot = await getEbayTradingRateLimitSnapshotForIntegration(integration);
-        const cooldownUntil = getEbayCooldownUntilFromSnapshot(snapshot, "GetItem");
-        if (cooldownUntil && cooldownUntil.getTime() > Date.now()) {
-          ebayRateLimitedPlatforms.add(bucket.platform);
-          const resetLabel = cooldownUntil.toLocaleTimeString("en-US", {
-            hour: "numeric",
-            minute: "2-digit",
-            timeZone: "America/New_York",
-          });
-          ebayRateLimitMessages.set(
-            bucket.platform,
-            `Daily API limit reached — resets around ${resetLabel} ET.`,
-          );
+    const ebayBuckets = [...buckets.values()].filter(
+      (b) => b.platform === Platform.TPP_EBAY || b.platform === Platform.TT_EBAY,
+    );
+    await Promise.all(
+      ebayBuckets.map(async (bucket) => {
+        const integration = integrationById.get(bucket.integrationId);
+        if (!integration?.enabled) return;
+        try {
+          const snapshot = await getEbayTradingRateLimitSnapshotForIntegration(integration);
+          const cooldownUntil = getEbayCooldownUntilFromSnapshot(snapshot, "GetItem");
+          if (cooldownUntil && cooldownUntil.getTime() > Date.now()) {
+            ebayRateLimitedPlatforms.add(bucket.platform);
+            const resetLabel = cooldownUntil.toLocaleTimeString("en-US", {
+              hour: "numeric",
+              minute: "2-digit",
+              timeZone: "America/New_York",
+            });
+            ebayRateLimitMessages.set(
+              bucket.platform,
+              `Daily API limit reached — resets around ${resetLabel} ET.`,
+            );
+          }
+        } catch {
+          // Rate limit check failed — proceed with the sync anyway
         }
-      } catch {
-        // Rate limit check failed — proceed with the sync anyway
-      }
-    }
+      }),
+    );
 
     const results = await Promise.all(
       [...buckets.values()].map(async (bucket) => {

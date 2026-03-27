@@ -52,6 +52,7 @@ type SyncDispatchMode = "background" | "inline";
 interface ExecutedSyncResult {
   jobId: string | null;
   status: "COMPLETED" | "FAILED" | "CONTINUING";
+  firstError?: string;
 }
 
 function formatTriggeredBy(options: SyncExecutionOptions): string {
@@ -120,6 +121,7 @@ async function executeIntegrationSync(
       return {
         jobId: result.jobId,
         status: result.status === "COMPLETED" ? "COMPLETED" : "FAILED",
+        firstError: result.errors?.[0]?.message,
       };
     }
     case "TPP_EBAY": {
@@ -127,6 +129,7 @@ async function executeIntegrationSync(
       return {
         jobId: result.jobId,
         status: result.status === "COMPLETED" ? "COMPLETED" : "FAILED",
+        firstError: result.errors?.[0]?.message,
       };
     }
     case "TT_EBAY": {
@@ -134,6 +137,7 @@ async function executeIntegrationSync(
       return {
         jobId: result.jobId,
         status: result.status === "COMPLETED" ? "COMPLETED" : "FAILED",
+        firstError: result.errors?.[0]?.message,
       };
     }
     case "BIGCOMMERCE": {
@@ -144,6 +148,7 @@ async function executeIntegrationSync(
       return {
         jobId: result.syncJobId,
         status: result.status === "completed" ? "COMPLETED" : "FAILED",
+        firstError: result.errors?.[0],
       };
     }
     default:
@@ -348,9 +353,11 @@ export async function startIntegrationSync(
           ? `${integration.label} ${
               modes.effectiveMode === "incremental" ? "incremental" : "full"
             } sync completed.`
-          : `${integration.label} ${
-              modes.effectiveMode === "incremental" ? "incremental" : "full"
-            } sync failed.`,
+          : result.firstError
+            ? `${integration.label}: ${result.firstError}`
+            : `${integration.label} ${
+                modes.effectiveMode === "incremental" ? "incremental" : "full"
+              } sync failed.`,
     };
   }
 
