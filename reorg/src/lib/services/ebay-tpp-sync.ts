@@ -863,9 +863,8 @@ async function runFullSync(
   const upcHydrationDisabled = integrationConfig.syncProfile.skipUpcHydration;
   const sharedStoreCount = await getSharedEbayQuotaStoreCount(integration);
   const getItemRate = getEbayMethodRate(analyticsSnapshot, "GetItem");
-  let hydrateBudget = upcHydrationDisabled
-    ? 0
-    : getItemRate && getItemRate.limit > 0
+  let hydrateBudget =
+    getItemRate && getItemRate.limit > 0
       ? getPerRunEbayGetItemBudget({
           remaining: getItemRate.remaining,
           limit: getItemRate.limit,
@@ -878,7 +877,7 @@ async function runFullSync(
           integrationConfig.syncProfile.timezone,
         );
   let hydrateCallsUsed = 0;
-  let skipHydrateDueToLimit = upcHydrationDisabled;
+  let skipHydrateDueToLimit = false;
   let hydrateNoticePushed = false;
 
   let page = 1;
@@ -983,7 +982,8 @@ async function runFullSync(
       const varNode = obj(item, "Variations");
       const hasVariationsWithoutPictures =
         varNode && arr(varNode, "Variation").length > 0 && !obj(varNode, "Pictures");
-      if (itemId && (needsFullItemForUpc(item) || hasVariationsWithoutPictures) && !skipHydrateDueToLimit) {
+      const needsUpcHydration = !upcHydrationDisabled && needsFullItemForUpc(item);
+      if (itemId && (needsUpcHydration || hasVariationsWithoutPictures) && !skipHydrateDueToLimit) {
         if (hydrateCallsUsed >= hydrateBudget) {
           if (!hydrateNoticePushed) {
             hydrateNoticePushed = true;
