@@ -113,6 +113,36 @@ export async function GET() {
       entry.tokenFetch = "skipped — no stored access token";
     }
 
+    // Test 5: Raw GetApiAccessRules call to see exact eBay response
+    if (typeof config.accessToken === "string" && config.accessToken.length > 0) {
+      try {
+        const ac = new AbortController();
+        const timer = setTimeout(() => ac.abort(), 10_000);
+        const xmlBody = `<?xml version="1.0" encoding="utf-8"?><GetApiAccessRulesRequest xmlns="urn:ebay:apis:eBLBaseComponents"></GetApiAccessRulesRequest>`;
+        const resp = await fetch("https://api.ebay.com/ws/api.dll", {
+          method: "POST",
+          headers: {
+            "X-EBAY-API-IAF-TOKEN": config.accessToken as string,
+            "X-EBAY-API-SITEID": "0",
+            "X-EBAY-API-COMPATIBILITY-LEVEL": "1199",
+            "X-EBAY-API-CALL-NAME": "GetApiAccessRules",
+            "Content-Type": "text/xml",
+          },
+          body: xmlBody,
+          signal: ac.signal,
+        });
+        const rawXml = await resp.text();
+        clearTimeout(timer);
+        entry.rawApiCall = {
+          httpStatus: resp.status,
+          ok: resp.ok,
+          responsePreview: rawXml.slice(0, 2000),
+        };
+      } catch (error) {
+        entry.rawApiCall = `ERROR: ${error instanceof Error ? `${error.name}: ${error.message}` : String(error)}`;
+      }
+    }
+
     results.push(entry);
   }
 
