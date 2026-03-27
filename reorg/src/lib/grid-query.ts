@@ -71,7 +71,7 @@ const masterRowWithRelations = Prisma.validator<Prisma.MasterRowDefaultArgs>()({
 
 type DBMasterRow = Prisma.MasterRowGetPayload<typeof masterRowWithRelations>;
 type DBListing = DBMasterRow["listings"][number];
-type DBListingRef = Pick<DBListing, "integration" | "platformItemId" | "platformVariantId">;
+type DBListingRef = Pick<DBListing, "id" | "integration" | "platformItemId" | "platformVariantId">;
 
 const childMasterRowFullSelect = Prisma.validator<Prisma.MasterRowDefaultArgs>()({
   select: {
@@ -147,6 +147,9 @@ function appendItemNumber(
     : (entry.integration.platform as Platform);
   const listingId = isStoreValue ? entry.listingId : entry.platformItemId;
   const variantId = isStoreValue ? entry.variantId : entry.platformVariantId || undefined;
+  const marketplaceListingId = isStoreValue
+    ? entry.marketplaceListingId
+    : entry.id;
   const key = `${platform}:${listingId}`;
 
   if (!map.has(key)) {
@@ -154,6 +157,7 @@ function appendItemNumber(
       platform,
       listingId,
       variantId,
+      marketplaceListingId,
       value: listingId,
     });
   }
