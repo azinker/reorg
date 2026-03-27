@@ -941,11 +941,6 @@ export default function SyncPage() {
                     <div className="flex items-center justify-between gap-2">
                       <span className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
                         eBay API Credits
-                        {rateLimits?.isLocallyTracked ? (
-                          <span className="ml-1.5 font-normal normal-case text-blue-400/90">(locally tracked)</span>
-                        ) : rateLimits?.isDegradedEstimate ? (
-                          <span className="ml-1.5 font-normal normal-case text-amber-400/90">(estimate)</span>
-                        ) : null}
                       </span>
                       {rateLimits?.nextResetAt && (
                         <span className="text-[10px] text-muted-foreground">
@@ -984,12 +979,8 @@ export default function SyncPage() {
                               : isUnknown ? "text-muted-foreground/60"
                               : "text-emerald-400";
                           const countLabel = isUnknown
-                            ? "Unknown"
-                            : rateLimits.isLocallyTracked
-                              ? `≥${usedCount.toLocaleString()} used / ${method.limit.toLocaleString()}`
-                              : rateLimits.isDegradedEstimate
-                                ? `~${usedCount.toLocaleString()} used / ~${method.limit.toLocaleString()}`
-                                : `${usedCount.toLocaleString()} used / ${method.limit.toLocaleString()}`;
+                            ? "—"
+                            : `${usedCount.toLocaleString()} / ${method.limit.toLocaleString()}`;
                           return (
                             <div key={method.name}>
                               <div className="flex items-center justify-between text-[11px]">
@@ -1010,9 +1001,7 @@ export default function SyncPage() {
                       </div>
                     ) : (
                       <p className="mt-2 text-[11px] text-muted-foreground">
-                        {isSyncing ? "Loading credits..." : cooldown?.active && cooldown.retryLabel
-                          ? `Live call counts will load after the cooldown (retry around ${cooldown.retryLabel}).`
-                          : "Credits unavailable — will refresh on next sync."}
+                        {isSyncing ? "Loading..." : "Credits will load on next sync."}
                       </p>
                     )}
                   </div>

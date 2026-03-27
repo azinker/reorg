@@ -10,11 +10,8 @@ export const MONITORED_EBAY_METHODS = [
 
 export type MonitoredEbayMethod = (typeof MONITORED_EBAY_METHODS)[number];
 
-/** Shown when credit bars use reorG's per-call counters (GetApiAccessRules unavailable). */
 export const EBAY_LOCAL_QUOTA_BAR_EXPLANATION =
-  "eBay's live quota API is unavailable. Each bar is reorG's own counter for that call name today (America/New_York). " +
-  "0 here means we did not record that call through sync/push in this app today — not that eBay guarantees a full 5,000 left. " +
-  "GetItem can show maxed when a cooldown is active even if today's counted GetItem calls are small.";
+  "These counts are tracked by reorG, not eBay. They show calls made through this app today.";
 
 export interface EbayMethodRateLimit {
   name: string;
@@ -65,7 +62,7 @@ type TokenCacheEntry = {
 
 const SNAPSHOT_CACHE_TTL_MS = 90_000;
 const FALLBACK_CACHE_TTL_MS = 30 * 60 * 1000;
-const NEGATIVE_CACHE_TTL_MS = 5 * 60 * 1000;
+const NEGATIVE_CACHE_TTL_MS = 60_000;
 const SITE_ID = "0";
 const COMPAT_LEVEL = "1113";
 
@@ -195,6 +192,7 @@ export function invalidateEbayRateLimitSnapshotCache(
   if (!credentials) return;
   const key = getCacheKey(credentials);
   snapshotCache.delete(key);
+  lastGetApiAccessRulesFailure = null;
 }
 
 /**
@@ -222,11 +220,11 @@ export function buildGetItemCooldownRateLimitsSnapshot(cooldownUntil: Date): Eba
     nextResetAt: resetIso,
     isDegradedEstimate: true,
     degradedNote:
-      "Live per-method counts from eBay could not be loaded. GetItem is over quota — shown as fully consumed. Other method counts are unknown (shown as —); they may also be exhausted. Exact usage appears after the quota resets.",
+      "GetItem is over quota. Other method counts are unknown until the quota resets.",
   };
 }
 
-function buildServiceUnavailableSnapshot(httpStatus: number): EbayTradingRateLimitSnapshot {
+function buildServiceUnavailableSnapshot(): EbayTradingRateLimitSnapshot {
   return {
     fetchedAt: new Date().toISOString(),
     methods: MONITORED_EBAY_METHODS.map((name) => ({
@@ -241,7 +239,7 @@ function buildServiceUnavailableSnapshot(httpStatus: number): EbayTradingRateLim
     exhaustedMethods: [],
     nextResetAt: null,
     isDegradedEstimate: true,
-    degradedNote: `eBay's reporting service is temporarily down (HTTP ${httpStatus}). Syncs still work normally — credit counts will appear once eBay's service recovers.`,
+    degradedNote: "Credit counts are temporarily unavailable from eBay. Syncs still work — counts will appear shortly.",
   };
 }
 
@@ -258,7 +256,7 @@ export async function getEbayTradingRateLimitSnapshotForIntegration(
     lastGetApiAccessRulesFailure &&
     Date.now() - lastGetApiAccessRulesFailure.at < NEGATIVE_CACHE_TTL_MS
   ) {
-    return buildServiceUnavailableSnapshot(lastGetApiAccessRulesFailure.status);
+    return buildServiceUnavailableSnapshot();
   }
 
   const credentials = extractFullCredentials(integration);
@@ -368,6 +366,8 @@ export async function getEbayTradingRateLimitSnapshotForIntegration(
       nextResetAt: resetCandidates[0]?.toISOString() ?? null,
     };
 
+    lastGetApiAccessRulesFailure = null;
+
     snapshotCache.set(cacheKey, {
       snapshot,
       expiresAt: Date.now() + SNAPSHOT_CACHE_TTL_MS,
@@ -386,7 +386,7 @@ export async function getEbayTradingRateLimitSnapshotForIntegration(
       return {
         ...fallback.snapshot,
         isDegradedEstimate: true,
-        degradedNote: `Last refreshed ${fallback.snapshot.fetchedAt ? new Date(fallback.snapshot.fetchedAt).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true, timeZone: "America/New_York" }) : "recently"}. Live refresh failed — counts may be slightly outdated.`,
+        degradedNote: "Using recent counts. Live refresh will retry shortly.",
       };
     }
     // No fallback available — show "Unknown" for all methods instead of
@@ -407,7 +407,7 @@ export async function getEbayTradingRateLimitSnapshotForIntegration(
       exhaustedMethods: [],
       nextResetAt: null,
       isDegradedEstimate: true,
-      degradedNote: "Live API credit counts could not be fetched from eBay. Credits will refresh automatically when eBay responds.",
+      degradedNote: "Could not load credit counts. Will retry automatically.",
     };
   }
 }
@@ -421,13 +421,6 @@ export async function getEbayTradingRateLimitSnapshotForIntegration(
 export async function fetchRateLimitSnapshotWithToken(
   accessToken: string,
 ): Promise<EbayTradingRateLimitSnapshot | null> {
-  // Skip if eBay's endpoint recently returned 5xx
-  if (
-    lastGetApiAccessRulesFailure &&
-    Date.now() - lastGetApiAccessRulesFailure.at < NEGATIVE_CACHE_TTL_MS
-  ) {
-    return null;
-  }
 
   const SYNC_COMPAT = "1199";
   try {
@@ -457,13 +450,11 @@ export async function fetchRateLimitSnapshotWithToken(
     }
 
     const xml = await response.text();
-    console.log(`[ebay-analytics] GetApiAccessRules HTTP ${response.status}, body length=${xml.length}, first 300: ${xml.slice(0, 300)}`);
 
     if (!response.ok) {
       if (response.status >= 500) {
         lastGetApiAccessRulesFailure = { at: Date.now(), status: response.status };
       }
-      console.error(`[ebay-analytics] GetApiAccessRules non-OK: ${response.status}`);
       return null;
     }
 
@@ -473,14 +464,9 @@ export async function fetchRateLimitSnapshotWithToken(
       apiResponse && typeof apiResponse === "object"
         ? String((apiResponse as Record<string, unknown>).Ack ?? "")
         : "";
-    if (ack === "Failure") {
-      const errors = apiResponse?.Errors;
-      console.error(`[ebay-analytics] GetApiAccessRules Ack=Failure, Errors:`, JSON.stringify(errors).slice(0, 500));
-      return null;
-    }
+    if (ack === "Failure") return null;
 
     const rules: unknown[] = apiResponse?.ApiAccessRule ?? [];
-    console.log(`[ebay-analytics] GetApiAccessRules returned ${rules.length} rules, Ack=${ack}`);
 
     const monitoredSet = new Set<string>(MONITORED_EBAY_METHODS);
     const methodMap = new Map<string, EbayMethodRateLimit>();
@@ -533,7 +519,7 @@ export async function fetchRateLimitSnapshotWithToken(
       nextResetAt: resetCandidates[0]?.toISOString() ?? null,
     };
 
-    console.log(`[ebay-analytics] fetchRateLimitSnapshotWithToken SUCCESS: ${methods.map((m) => `${m.name}=${m.count}/${m.limit}`).join(", ")}`);
+    lastGetApiAccessRulesFailure = null;
     return snapshot;
   } catch (err) {
     const msg = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
@@ -575,7 +561,7 @@ export function deserializeSnapshotFromConfig(
     isLocallyTracked: isLocal,
     degradedNote: isLocal
       ? EBAY_LOCAL_QUOTA_BAR_EXPLANATION
-      : `Saved at ${new Date(obj.fetchedAt).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true, timeZone: "America/New_York" })} — live refresh is temporarily unavailable.`,
+      : "Using saved counts. Live data will load on next refresh.",
   };
 }
 
