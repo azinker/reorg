@@ -4921,6 +4921,10 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
                   <div className="absolute left-0 right-0 top-full z-10 mt-1 max-h-[240px] overflow-y-auto rounded-lg border border-border bg-card shadow-xl">
                     {rematchResults.map((result) => {
                       const isSource = result.id === rematchRow.id;
+                      const platformCounts = new Map<string, number>();
+                      for (const s of result.stores) {
+                        platformCounts.set(s.platform, (platformCounts.get(s.platform) ?? 0) + 1);
+                      }
                       return (
                         <button
                           key={result.id}
@@ -4944,18 +4948,19 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
                           {result.title && (
                             <span className="line-clamp-1 text-xs text-muted-foreground">{result.title}</span>
                           )}
-                          {result.stores.length > 0 && (
-                            <div className="mt-0.5 flex flex-wrap gap-1.5">
-                              {result.stores.map((s) => (
+                          {platformCounts.size > 0 && (
+                            <div className="mt-0.5 flex items-center gap-1.5 text-[10px] text-muted-foreground">
+                              {[...platformCounts.entries()].map(([platform, count]) => (
                                 <span
-                                  key={s.marketplaceListingId}
-                                  className={cn("inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] font-semibold", PLATFORM_COLORS[s.platform as Platform] ?? "border-border text-muted-foreground")}
+                                  key={platform}
+                                  className={cn("inline-flex items-center gap-1 rounded border px-1.5 py-0.5 font-semibold", PLATFORM_COLORS[platform as Platform] ?? "border-border")}
                                 >
-                                  <PlatformIcon platform={s.platform as Platform} className="h-2.5 w-2.5" />
-                                  {PLATFORM_SHORT[s.platform as Platform] ?? s.platform}
-                                  <span className="opacity-50">#{s.itemId}</span>
+                                  <PlatformIcon platform={platform as Platform} className="h-2.5 w-2.5" />
+                                  {PLATFORM_SHORT[platform as Platform] ?? platform}
+                                  {count > 1 && <span className="opacity-60">({count})</span>}
                                 </span>
                               ))}
+                              <span className="text-muted-foreground/60">{result.stores.length} listing{result.stores.length !== 1 ? "s" : ""}</span>
                             </div>
                           )}
                         </button>
@@ -4975,30 +4980,50 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
               {/* Target preview — when user has typed/selected a SKU */}
               {rematchNewSku.trim() && !isSameAsSource && (
                 <div className="mt-3 rounded-lg border border-border bg-background/60 px-3.5 py-2.5">
-                  {targetPreview ? (
-                    <div className="flex flex-col gap-1">
-                      <div className="flex items-center gap-2">
-                        <span className="text-[10px] font-semibold uppercase text-emerald-400">Existing row</span>
-                      </div>
-                      <span className="text-sm font-bold text-foreground">{targetPreview.sku}</span>
-                      {targetPreview.title && (
-                        <span className="line-clamp-2 text-xs text-muted-foreground">{targetPreview.title}</span>
-                      )}
-                      {targetPreview.stores.length > 0 && (
-                        <div className="mt-0.5 flex flex-wrap gap-1.5">
-                          {targetPreview.stores.map((s) => (
-                            <span
-                              key={s.marketplaceListingId}
-                              className={cn("inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] font-semibold", PLATFORM_COLORS[s.platform as Platform] ?? "border-border text-muted-foreground")}
-                            >
-                              <PlatformIcon platform={s.platform as Platform} className="h-2.5 w-2.5" />
-                              {PLATFORM_SHORT[s.platform as Platform] ?? s.platform}
-                            </span>
-                          ))}
+                  {targetPreview ? (() => {
+                    const grouped = new Map<string, typeof targetPreview.stores>();
+                    for (const s of targetPreview.stores) {
+                      const key = s.platform;
+                      if (!grouped.has(key)) grouped.set(key, []);
+                      grouped.get(key)!.push(s);
+                    }
+                    return (
+                      <div className="flex flex-col gap-1.5">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] font-semibold uppercase text-emerald-400">Existing row</span>
+                          <span className="text-[10px] text-muted-foreground/60">
+                            {targetPreview.stores.length} listing{targetPreview.stores.length !== 1 ? "s" : ""} linked
+                          </span>
                         </div>
-                      )}
-                    </div>
-                  ) : (
+                        <span className="text-sm font-bold text-foreground">{targetPreview.sku}</span>
+                        {targetPreview.title && (
+                          <span className="line-clamp-2 text-xs text-muted-foreground">{targetPreview.title}</span>
+                        )}
+                        {grouped.size > 0 && (
+                          <div className="mt-1 flex flex-col gap-1">
+                            {[...grouped.entries()].map(([platform, stores]) => (
+                              <div key={platform} className="flex flex-wrap items-center gap-1.5">
+                                <span className={cn("inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] font-bold", PLATFORM_COLORS[platform as Platform] ?? "border-border text-muted-foreground")}>
+                                  <PlatformIcon platform={platform as Platform} className="h-2.5 w-2.5" />
+                                  {PLATFORM_SHORT[platform as Platform] ?? platform}
+                                </span>
+                                {stores.map((s) => (
+                                  <span key={s.marketplaceListingId} className="text-[10px] text-muted-foreground/70">
+                                    #{s.itemId}
+                                  </span>
+                                ))}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        {targetPreview.stores.length > 3 && (
+                          <p className="mt-0.5 text-[10px] text-muted-foreground/50">
+                            If this row shows as multiple rows on the dashboard, they share this master SKU.
+                          </p>
+                        )}
+                      </div>
+                    );
+                  })() : (
                     <div className="flex items-center gap-2">
                       <Plus className="h-3.5 w-3.5 text-violet-400" />
                       <span className="text-xs font-medium text-violet-300">
