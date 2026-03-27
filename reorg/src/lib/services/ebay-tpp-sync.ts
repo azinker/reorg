@@ -8,9 +8,11 @@ import {
 import { getIntegrationConfig, mergeIntegrationConfig } from "@/lib/integrations/runtime-config";
 import {
   buildEbayQuotaExhaustedMessage,
+  fetchRateLimitSnapshotWithToken,
   getEbayMethodRate,
   getEbayTradingRateLimitSnapshotForIntegration,
   mergeSyncCallsIntoLocalUsage,
+  serializeSnapshotForConfig,
   type EbayTradingRateLimitSnapshot,
   type LocalEbayApiUsage,
   type MonitoredEbayMethod,
@@ -828,15 +830,54 @@ export async function runEbayTppSync(
           cfg.syncState?.localApiUsage as LocalEbayApiUsage | undefined,
           apiCalls,
         );
+
+        let liveSnapshotSerialized: unknown = undefined;
+        if (ebayConfig.accessToken) {
+          try {
+            const liveSnapshot = await fetchRateLimitSnapshotWithToken(ebayConfig.accessToken);
+            if (liveSnapshot && !liveSnapshot.isDegradedEstimate) {
+              liveSnapshotSerialized = serializeSnapshotForConfig(liveSnapshot);
+            }
+          } catch {
+            // Non-fatal — quota bars won't update this cycle
+          }
+        }
+
         const updatedConfig = mergeIntegrationConfig(latest.platform, latest.config, {
           syncState: {
             localApiUsage: updatedUsage,
+            ...(liveSnapshotSerialized ? { lastRateLimitSnapshot: liveSnapshotSerialized } : {}),
           },
         });
         await db.integration.update({
           where: { id: integration.id },
           data: { config: updatedConfig as unknown as Prisma.InputJsonValue },
         });
+
+        // Propagate the live snapshot to sibling eBay integrations (same App ID)
+        if (liveSnapshotSerialized) {
+          try {
+            const siblings = await db.integration.findMany({
+              where: {
+                platform: { in: ["TPP_EBAY", "TT_EBAY"] as Platform[] },
+                id: { not: integration.id },
+                enabled: true,
+              },
+              select: { id: true, platform: true, config: true },
+            });
+            for (const sib of siblings) {
+              const sibMerged = mergeIntegrationConfig(sib.platform, sib.config, {
+                syncState: { lastRateLimitSnapshot: liveSnapshotSerialized },
+              });
+              await db.integration.update({
+                where: { id: sib.id },
+                data: { config: sibMerged as unknown as Prisma.InputJsonValue },
+              });
+            }
+          } catch {
+            // Non-fatal — sibling quota bars won't update
+          }
+        }
       }
     } catch (analyticsErr) {
       console.error("[ebay-tpp-sync] Post-sync analytics persist failed:", analyticsErr);
