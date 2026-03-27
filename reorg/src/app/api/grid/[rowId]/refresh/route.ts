@@ -343,36 +343,48 @@ export async function POST(
     });
     const integrationById = new Map(integrations.map((integration) => [integration.id, integration]));
 
-    // Pre-check eBay rate limits in parallel — skip eBay platforms instantly if quota is exhausted.
+    // Best-effort eBay rate limit pre-check with a tight timeout.
+    // A single-row refresh uses ~1 API call, so the pre-check overhead
+    // should never exceed 4 seconds. If it takes longer, skip it.
+    const RATE_LIMIT_CHECK_TIMEOUT_MS = 4_000;
     const ebayRateLimitedPlatforms = new Set<RefreshablePlatform>();
     const ebayRateLimitMessages = new Map<RefreshablePlatform, string>();
     const ebayBuckets = [...buckets.values()].filter(
       (b) => b.platform === Platform.TPP_EBAY || b.platform === Platform.TT_EBAY,
     );
-    await Promise.all(
-      ebayBuckets.map(async (bucket) => {
-        const integration = integrationById.get(bucket.integrationId);
-        if (!integration?.enabled) return;
-        try {
-          const snapshot = await getEbayTradingRateLimitSnapshotForIntegration(integration);
-          const cooldownUntil = getEbayCooldownUntilFromSnapshot(snapshot, "GetItem");
-          if (cooldownUntil && cooldownUntil.getTime() > Date.now()) {
-            ebayRateLimitedPlatforms.add(bucket.platform);
-            const resetLabel = cooldownUntil.toLocaleTimeString("en-US", {
-              hour: "numeric",
-              minute: "2-digit",
-              timeZone: "America/New_York",
-            });
-            ebayRateLimitMessages.set(
-              bucket.platform,
-              `Daily API limit reached — resets around ${resetLabel} ET.`,
-            );
-          }
-        } catch {
-          // Rate limit check failed — proceed with the sync anyway
-        }
-      }),
-    );
+    if (ebayBuckets.length > 0) {
+      try {
+        await Promise.race([
+          Promise.all(
+            ebayBuckets.map(async (bucket) => {
+              const integration = integrationById.get(bucket.integrationId);
+              if (!integration?.enabled) return;
+              try {
+                const snapshot = await getEbayTradingRateLimitSnapshotForIntegration(integration);
+                const cooldownUntil = getEbayCooldownUntilFromSnapshot(snapshot, "GetItem");
+                if (cooldownUntil && cooldownUntil.getTime() > Date.now()) {
+                  ebayRateLimitedPlatforms.add(bucket.platform);
+                  const resetLabel = cooldownUntil.toLocaleTimeString("en-US", {
+                    hour: "numeric",
+                    minute: "2-digit",
+                    timeZone: "America/New_York",
+                  });
+                  ebayRateLimitMessages.set(
+                    bucket.platform,
+                    `Daily API limit reached — resets around ${resetLabel} ET.`,
+                  );
+                }
+              } catch {
+                // Individual check failed — proceed without blocking
+              }
+            }),
+          ),
+          new Promise<void>((resolve) => setTimeout(resolve, RATE_LIMIT_CHECK_TIMEOUT_MS)),
+        ]);
+      } catch {
+        // Entire pre-check failed — proceed with refresh anyway
+      }
+    }
 
     const results = await Promise.all(
       [...buckets.values()].map(async (bucket) => {

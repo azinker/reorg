@@ -1230,9 +1230,9 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
       if (raw.includes("Failed to fetch") || raw.includes("NetworkError") || raw.includes("AbortError")) {
         errMsg = "Network error — unable to reach the server. Check your connection and try again.";
       } else if (raw.includes("(502)") || raw.includes("(504)")) {
-        errMsg = "The server timed out. This usually means eBay's API is responding slowly. Try again shortly.";
+        errMsg = "Server timed out — try again in a moment.";
       } else if (raw.includes("(500)")) {
-        errMsg = "Server error — check Engine Room logs for details. Try again in a moment.";
+        errMsg = "Server error — try again in a moment.";
       }
       setRowRefreshPhase(refreshFamilyIds, "error");
       setRowRefreshErrors((prev) => {

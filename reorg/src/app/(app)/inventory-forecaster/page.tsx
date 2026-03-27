@@ -282,8 +282,18 @@ export default function InventoryForecasterPage() {
           reorderRelevantOnly: controls.reorderRelevantOnly,
         }),
       });
-      const json = await response.json();
-      if (!response.ok) throw new Error(json.error ?? "Failed to run forecast");
+      const text = await response.text();
+      let json: Record<string, unknown>;
+      try {
+        json = JSON.parse(text) as Record<string, unknown>;
+      } catch {
+        throw new Error(
+          response.status === 504
+            ? "The forecast timed out. Try reducing the lookback period or try again."
+            : `Server returned an unexpected response (${response.status}).`,
+        );
+      }
+      if (!response.ok) throw new Error((json.error as string) ?? "Failed to run forecast");
       const forecast = json.data as ForecastResult;
       setResult(forecast);
       setOverrideMap(

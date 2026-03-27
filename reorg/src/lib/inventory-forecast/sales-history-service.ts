@@ -148,51 +148,80 @@ export async function syncSalesHistoryForLookback(lookbackDays: number): Promise
   const truncatedPlatforms = new Set<Platform>();
   let totalLinesSynced = 0;
 
-  for (const integration of integrations) {
+  const syncTasks = integrations.map((integration) => {
     if (
       useCachedLocalHistoryForHeavyPlatforms &&
       LOCAL_CACHED_FORECAST_PLATFORMS.has(integration.platform)
     ) {
       const coverage = coverageByPlatform?.get(integration.platform);
-      issues.push({
-        platform: integration.platform,
-        level: "warning",
-        message:
-          !coverage || !coverage.earliest || !coverage.latest || coverage.lineCount === 0
-            ? `Using cached local sales history to avoid long marketplace refreshes for ${lookbackDays}d forecasts. No cached ${integration.label} order lines are available yet.`
-            : `Using cached local sales history to avoid long marketplace refreshes for ${lookbackDays}d forecasts. Current cached ${integration.label} coverage is ${truncateIsoDate(coverage.earliest)} to ${truncateIsoDate(coverage.latest)}.`,
-      });
-      truncatedPlatforms.add(integration.platform);
-      continue;
+      return {
+        integration,
+        skip: true as const,
+        issue: {
+          platform: integration.platform,
+          level: "warning" as const,
+          message:
+            !coverage || !coverage.earliest || !coverage.latest || coverage.lineCount === 0
+              ? `Using cached local sales history to avoid long marketplace refreshes for ${lookbackDays}d forecasts. No cached ${integration.label} order lines are available yet.`
+              : `Using cached local sales history to avoid long marketplace refreshes for ${lookbackDays}d forecasts. Current cached ${integration.label} coverage is ${truncateIsoDate(coverage.earliest)} to ${truncateIsoDate(coverage.latest)}.`,
+        },
+      };
     }
+    return { integration, skip: false as const, issue: null };
+  });
 
-    const isEbay = integration.platform === "TPP_EBAY" || integration.platform === "TT_EBAY";
-    const isBigCommerce = integration.platform === "BIGCOMMERCE";
-    const perIntegrationTimeoutMs =
-      appEnv === "local"
-        ? isEbay
-          ? LOCAL_EBAY_FORECAST_SYNC_TIMEOUT_MS
-          : LOCAL_FORECAST_SYNC_TIMEOUT_MS
-        : isEbay
-          ? DEPLOYED_EBAY_SYNC_TIMEOUT_MS
-          : isBigCommerce
-            ? DEPLOYED_BIGCOMMERCE_SYNC_TIMEOUT_MS
-            : DEPLOYED_OTHER_SYNC_TIMEOUT_MS;
+  for (const task of syncTasks) {
+    if (task.skip) {
+      issues.push(task.issue!);
+      truncatedPlatforms.add(task.integration.platform);
+    }
+  }
 
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), perIntegrationTimeoutMs);
+  const liveTasks = syncTasks.filter((t) => !t.skip);
 
-    try {
-      const result = await fetchMarketplaceSales(integration, lookbackDays, {
-        signal: controller.signal,
-      });
+  const results = await Promise.allSettled(
+    liveTasks.map(async ({ integration }) => {
+      const isEbay = integration.platform === "TPP_EBAY" || integration.platform === "TT_EBAY";
+      const isBigCommerce = integration.platform === "BIGCOMMERCE";
+      const perIntegrationTimeoutMs =
+        appEnv === "local"
+          ? isEbay
+            ? LOCAL_EBAY_FORECAST_SYNC_TIMEOUT_MS
+            : LOCAL_FORECAST_SYNC_TIMEOUT_MS
+          : isEbay
+            ? DEPLOYED_EBAY_SYNC_TIMEOUT_MS
+            : isBigCommerce
+              ? DEPLOYED_BIGCOMMERCE_SYNC_TIMEOUT_MS
+              : DEPLOYED_OTHER_SYNC_TIMEOUT_MS;
+
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), perIntegrationTimeoutMs);
+
+      try {
+        const result = await fetchMarketplaceSales(integration, lookbackDays, {
+          signal: controller.signal,
+        });
+        return { integration, result };
+      } finally {
+        clearTimeout(timer);
+      }
+    }),
+  );
+
+  for (let i = 0; i < results.length; i++) {
+    const settled = results[i];
+    const { integration } = liveTasks[i];
+
+    if (settled.status === "fulfilled") {
+      const { result } = settled.value;
       issues.push(...result.issues);
       if (result.truncated) {
         truncatedPlatforms.add(integration.platform);
       }
       totalLinesSynced += result.lines.length;
       await upsertSalesHistoryLines(result.lines);
-    } catch (error) {
+    } else {
+      const error = settled.reason;
       issues.push({
         platform: integration.platform,
         level: isAbortError(error) ? "warning" : "error",
@@ -203,8 +232,6 @@ export async function syncSalesHistoryForLookback(lookbackDays: number): Promise
               ? error.message
               : `Failed to sync ${integration.label} sales history.`,
       });
-    } finally {
-      clearTimeout(timer);
     }
   }
 
