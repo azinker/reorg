@@ -35,6 +35,7 @@ export async function captureDailyInventorySnapshots(
 
   await db.inventorySnapshot.createMany({
     data: snapshotRows,
+    skipDuplicates: true,
   });
 
   await db.auditLog.create({
@@ -63,10 +64,12 @@ export async function getSnapshotSignals(
 ) {
   if (masterRowIds.length === 0) return new Map<string, SnapshotSignal>();
   const resolvedRunDate = normalizeRunDate(runDate);
+  const windowStart = startOfDay(new Date(resolvedRunDate.getTime() - lookbackDays * 86_400_000));
   const snapshots = await db.inventorySnapshot.findMany({
     where: {
       masterRowId: { in: masterRowIds },
       source: DEFAULT_FORECAST_INVENTORY_SOURCE,
+      snapshotDate: { gte: windowStart },
     },
     select: {
       masterRowId: true,

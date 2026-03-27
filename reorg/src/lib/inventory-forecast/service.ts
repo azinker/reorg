@@ -61,7 +61,7 @@ export async function runInventoryForecast(input: {
   const masterRowIds = inventoryRows.map((row) => row.masterRowId);
   const [salesHistory, snapshotSignals, openInboundByMasterRowId, truncatedHistoryBySku] =
     await Promise.all([
-      loadAggregatedSalesHistory(input.lookbackDays),
+      loadAggregatedSalesHistory(input.lookbackDays, runDate),
       getSnapshotSignals(masterRowIds, input.lookbackDays, runDate),
       getOpenInboundByMasterRowId(masterRowIds, arrivalDate),
       getTruncatedHistoryBySku(input.lookbackDays, syncState.truncatedPlatforms),

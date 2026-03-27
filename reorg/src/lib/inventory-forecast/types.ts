@@ -147,7 +147,7 @@ export interface SupplierOrderSummary {
   id: string;
   supplier: string | null;
   status: SupplierOrderStatus;
-  eta: string;
+  eta: string | null;
   forecastRunId: string | null;
   notes: string | null;
   lineCount: number;

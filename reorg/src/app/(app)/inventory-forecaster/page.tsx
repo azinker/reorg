@@ -228,6 +228,12 @@ export default function InventoryForecasterPage() {
     return () => window.clearInterval(interval);
   }, [runStartedAt, running]);
 
+  useEffect(() => {
+    if (!statusMessage) return undefined;
+    const timer = window.setTimeout(() => setStatusMessage(null), 8000);
+    return () => window.clearTimeout(timer);
+  }, [statusMessage]);
+
   const effectiveLines = useMemo(() => {
     if (!result) return [];
     return result.lines.map((line) => {
@@ -373,8 +379,10 @@ export default function InventoryForecasterPage() {
         body: JSON.stringify({ result: payload }),
       });
       if (!response.ok) {
-        const json = await response.json();
-        throw new Error(json.error ?? "Failed to export workbook");
+        const text = await response.text();
+        let errorMsg = "Failed to export workbook";
+        try { errorMsg = (JSON.parse(text) as { error?: string }).error ?? errorMsg; } catch { /* non-JSON response */ }
+        throw new Error(errorMsg);
       }
       const blob = await response.blob();
       const url = URL.createObjectURL(blob);
@@ -883,6 +891,7 @@ export default function InventoryForecasterPage() {
                           <td className="px-3 py-3 text-sm font-medium text-foreground">{order.id}</td>
                           <td className="px-3 py-3 text-sm text-foreground">
                             <input
+                              key={`supplier-${order.id}-${order.supplier ?? ""}`}
                               defaultValue={order.supplier ?? ""}
                               onBlur={(event) => {
                                 if (event.target.value !== (order.supplier ?? "")) {
@@ -921,9 +930,11 @@ export default function InventoryForecasterPage() {
                           <td className="px-3 py-3 text-sm text-foreground">
                             <input
                               type="date"
-                              defaultValue={order.eta.slice(0, 10)}
+                              key={`eta-${order.id}-${order.eta ?? ""}`}
+                              defaultValue={order.eta ? order.eta.slice(0, 10) : ""}
                               onBlur={(event) => {
-                                if (event.target.value && event.target.value !== order.eta.slice(0, 10)) {
+                                const currentEta = order.eta ? order.eta.slice(0, 10) : "";
+                                if (event.target.value && event.target.value !== currentEta) {
                                   void patchOrder(order.id, {
                                     eta: new Date(event.target.value).toISOString(),
                                   });
@@ -1191,10 +1202,13 @@ export default function InventoryForecasterPage() {
                             min={0}
                             value={overrideMap[line.masterRowId] ?? ""}
                             onChange={(event) =>
-                              setOverrideMap((prev) => ({
-                                ...prev,
-                                [line.masterRowId]: event.target.value,
-                              }))
+                              setOverrideMap((prev) => {
+                                setSavedRunId(null);
+                                return {
+                                  ...prev,
+                                  [line.masterRowId]: event.target.value,
+                                };
+                              })
                             }
                             placeholder="-"
                             className="w-24 rounded-lg border border-input bg-background px-2 py-1.5 text-sm text-foreground outline-none"

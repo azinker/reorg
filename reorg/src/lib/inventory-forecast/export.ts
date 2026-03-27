@@ -602,10 +602,18 @@ export async function buildInventoryForecastWorkbook(result: ForecastResult) {
 
 export function inventoryForecastExportFileName(runDateTime: string) {
   const date = new Date(runDateTime);
-  const stamp = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(
-    date.getDate(),
-  ).padStart(2, "0")}_${String(date.getHours()).padStart(2, "0")}${String(
-    date.getMinutes(),
-  ).padStart(2, "0")}`;
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+  const parts = Object.fromEntries(
+    formatter.formatToParts(date).map((p) => [p.type, p.value]),
+  );
+  const stamp = `${parts.year}-${parts.month}-${parts.day}_${parts.hour}${parts.minute}`;
   return `Inventory_Forecast_${stamp}.xlsx`;
 }

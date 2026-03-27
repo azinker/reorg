@@ -343,9 +343,13 @@ async function upsertSalesHistoryLines(lines: ForecastSaleLine[]) {
   }
 }
 
-export async function loadAggregatedSalesHistory(lookbackDays: number) {
-  const startDate = startOfDay(subDays(new Date(), lookbackDays - 1));
-  const endDate = endOfDay(new Date());
+export async function loadAggregatedSalesHistory(
+  lookbackDays: number,
+  runDate?: Date,
+) {
+  const anchor = runDate ?? new Date();
+  const startDate = startOfDay(subDays(anchor, lookbackDays - 1));
+  const endDate = endOfDay(anchor);
 
   const saleLines = await db.marketplaceSaleLine.findMany({
     where: {

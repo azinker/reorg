@@ -1,6 +1,5 @@
 import {
   addDays,
-  differenceInCalendarDays,
   eachDayOfInterval,
   endOfDay,
   endOfWeek,
@@ -59,7 +58,8 @@ function mean(values: number[]) {
 function standardDeviation(values: number[]) {
   if (values.length <= 1) return 0;
   const avg = mean(values);
-  const variance = mean(values.map((value) => (value - avg) ** 2));
+  const squaredDiffs = values.map((value) => (value - avg) ** 2);
+  const variance = sum(squaredDiffs) / (values.length - 1);
   return Math.sqrt(variance);
 }
 
@@ -617,5 +617,5 @@ export function lookbackWindowStart(runDate: Date, lookbackDays: number) {
 
 export function salesLineFallsWithinLookback(sale: ForecastSaleLine, runDate: Date, lookbackDays: number) {
   const start = lookbackWindowStart(runDate, lookbackDays);
-  return differenceInCalendarDays(endOfDay(runDate), start) >= 0 && sale.orderDate >= start && sale.orderDate <= endOfDay(runDate);
+  return sale.orderDate >= start && sale.orderDate <= endOfDay(runDate);
 }

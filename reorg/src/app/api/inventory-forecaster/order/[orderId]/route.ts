@@ -33,7 +33,7 @@ export async function PATCH(
       data: {
         id: order.id,
         status: order.status,
-        eta: order.eta.toISOString(),
+        eta: order.eta ? order.eta.toISOString() : null,
         supplier: order.supplier,
         notes: order.notes,
       },
