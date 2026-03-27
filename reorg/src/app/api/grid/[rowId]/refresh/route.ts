@@ -34,7 +34,7 @@ type RefreshResult =
       jobId: string | null;
     };
 
-const PLATFORM_REFRESH_TIMEOUT_MS = 25_000;
+const PLATFORM_REFRESH_TIMEOUT_MS = 45_000;
 
 const PLATFORM_SHORT: Record<string, string> = {
   TPP_EBAY: "eBay TPP",
