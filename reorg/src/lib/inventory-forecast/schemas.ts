@@ -32,7 +32,7 @@ export const forecastLineSchema = z.object({
   recommendedQty: z.number().int(),
   overrideQty: z.number().int().nullable(),
   finalQty: z.number().int(),
-  demandPattern: z.enum(["STABLE", "TRENDING", "SEASONAL", "INTERMITTENT", "NEW_ITEM"]),
+  demandPattern: z.enum(["STABLE", "TRENDING", "SEASONAL", "INTERMITTENT", "NEW_ITEM", "SLOW_MOVER"]),
   modelUsed: z.string(),
   confidence: z.enum(["HIGH", "MEDIUM", "LOW"]),
   confidenceNote: z.string(),
