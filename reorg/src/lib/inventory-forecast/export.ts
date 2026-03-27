@@ -15,6 +15,8 @@ const EXPORT_COLUMNS = [
   { header: "Supplier Cost", width: 14 },
   { header: "Total Cost", width: 20 },
   { header: "Sales History Summary", width: 30 },
+  { header: "Transit demand (model)", width: 18 },
+  { header: "Post-arrival demand (model)", width: 22 },
   { header: "Gross Required Quantity (Before Current On Hand)", width: 36 },
   { header: "Current Available Inventory", width: 16 },
   { header: "Safety Buffer", width: 14 },
@@ -37,14 +39,20 @@ const HEADER_NOTES: Record<string, string> = {
     "What the order quantity would be using a simple daily average (total sales ÷ days) instead of the forecast model. Compare with Required Quantity to see the model's impact.",
   "Total Cost":
     "Required Quantity to Order multiplied by Supplier Cost. The export metadata includes the total estimated order cost.",
+  "Transit demand (model)":
+    "Units the forecast expects to sell while your order is in transit (uses your Shipping Time days). Sum of model-predicted weekly (or daily) buckets.",
+  "Post-arrival demand (model)":
+    "Units the forecast expects to sell after the shipment arrives until you reach your Stock Coverage Goal (uses those days as the horizon).",
   "Safety Buffer":
-    "Extra units added on top of expected demand to protect against volatility, forecast error, and stockout risk.",
+    "Extra units on top of transit + post-arrival model demand. Computed as a percentage of that combined demand (adjusted for confidence and demand pattern).",
   "Demand Pattern":
     "How the demand history behaves: stable, trending, seasonal, intermittent, or new-item. Each row includes a short explanation.",
   "Model Used":
     "The forecasting method selected for the row, plus a short explanation of how it shaped the required quantity.",
   Confidence:
     "Confidence reflects how trustworthy the forecast is for the row based on history depth, forecast error, stockout risk, and fallback logic.",
+  "Gross Required Quantity (Before Current On Hand)":
+    "Round up to a whole number: Transit demand + Post-arrival demand + Safety buffer. Does not subtract on-hand stock (see Required Quantity for that).",
 };
 
 function fitWithin(width: number, height: number, maxWidth: number, maxHeight: number) {
@@ -430,6 +438,8 @@ function lineValues(line: ForecastLineResult, totalDays: number) {
     formatCurrency(line.supplierCost),
     totalCost,
     line.salesHistorySummary,
+    line.transitDemand,
+    line.postArrivalDemand,
     line.grossRequiredQty,
     line.currentInventory,
     line.safetyBuffer,
@@ -516,7 +526,9 @@ function addGuideSheet(workbook: ExcelJS.Workbook) {
     ["Supplier Cost", "Unit supplier cost stored for the SKU.", "$2.50 means each ordered unit costs $2.50 before shipping."],
     ["Total Cost", HEADER_NOTES["Total Cost"], "25 units x $2.50 supplier cost = $62.50 total cost."],
     ["Sales History Summary", "Shows units sold inside the selected lookback plus the average daily rate.", "4 total | 10d | 0.4/day means 4 units sold over the last 10 days."],
-    ["Gross Required Quantity (Before Current On Hand)", "The total need before subtracting current inventory and qualifying inbound units.", "Transit demand + post-arrival demand + safety buffer."],
+    ["Transit demand (model)", HEADER_NOTES["Transit demand (model)"], "With Weekly grouping and 45 shipping days, the engine sums about 7 future week-sized buckets from the model."],
+    ["Post-arrival demand (model)", HEADER_NOTES["Post-arrival demand (model)"], "With 120 coverage days, about 18 weekly buckets are summed."],
+    ["Gross Required Quantity (Before Current On Hand)", HEADER_NOTES["Gross Required Quantity (Before Current On Hand)"], "Example: 19 + 50 + 25 = 94 after rounding up the sum."],
     ["Current Available Inventory", "Live on-hand inventory used as the current stock number.", "If this is 25, the forecast assumes 25 units are available now."],
     ["Safety Buffer", HEADER_NOTES["Safety Buffer"], "If expected demand is 30 and buffer is 9, the forecast protects against running too lean."],
     ["Open In-Transit Quantity", "Units already on the way from internal supplier orders that qualify for subtraction.", "Only Ordered or In Transit orders count here."],
