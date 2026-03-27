@@ -4881,8 +4881,8 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
                 </div>
               ) : null}
 
-              {/* SKU search input + dropdown */}
-              <div className="relative mt-4">
+              {/* SKU search input */}
+              <div className="mt-4">
                 <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                   Target Master SKU
                 </label>
@@ -4894,6 +4894,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
                       const val = e.target.value;
                       setRematchNewSku(val);
                       setRematchError(null);
+                      setRematchSelectedTarget(null);
                       searchRematchSku(val);
                     }}
                     onFocus={() => { if (rematchResults.length > 0) setRematchDropdownOpen(true); }}
@@ -4915,60 +4916,6 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
                     <RefreshCw className="absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 animate-spin text-muted-foreground" />
                   )}
                 </div>
-
-                {/* Autocomplete dropdown */}
-                {rematchDropdownOpen && rematchResults.length > 0 && (
-                  <div className="absolute left-0 right-0 top-full z-10 mt-1 max-h-[240px] overflow-y-auto rounded-lg border border-border bg-card shadow-xl">
-                    {rematchResults.map((result) => {
-                      const isSource = result.id === rematchRow.id;
-                      const platformCounts = new Map<string, number>();
-                      for (const s of result.stores) {
-                        platformCounts.set(s.platform, (platformCounts.get(s.platform) ?? 0) + 1);
-                      }
-                      return (
-                        <button
-                          key={result.id}
-                          onClick={() => {
-                            if (isSource) return;
-                            setRematchNewSku(result.sku);
-                            setRematchSelectedTarget(result);
-                            setRematchDropdownOpen(false);
-                          }}
-                          className={cn(
-                            "flex w-full flex-col gap-0.5 border-b border-border/50 px-3 py-2.5 text-left transition-colors last:border-0",
-                            isSource
-                              ? "cursor-not-allowed opacity-40"
-                              : "cursor-pointer hover:bg-violet-500/10",
-                          )}
-                        >
-                          <div className="flex items-center gap-2">
-                            <span className="text-sm font-bold text-foreground">{result.sku}</span>
-                            {isSource && <span className="text-[10px] font-semibold uppercase text-amber-400">(current row)</span>}
-                          </div>
-                          {result.title && (
-                            <span className="line-clamp-1 text-xs text-muted-foreground">{result.title}</span>
-                          )}
-                          {platformCounts.size > 0 && (
-                            <div className="mt-0.5 flex items-center gap-1.5 text-[10px] text-muted-foreground">
-                              {[...platformCounts.entries()].map(([platform, count]) => (
-                                <span
-                                  key={platform}
-                                  className={cn("inline-flex items-center gap-1 rounded border px-1.5 py-0.5 font-semibold", PLATFORM_COLORS[platform as Platform] ?? "border-border")}
-                                >
-                                  <PlatformIcon platform={platform as Platform} className="h-2.5 w-2.5" />
-                                  {PLATFORM_SHORT[platform as Platform] ?? platform}
-                                  {count > 1 && <span className="opacity-60">({count})</span>}
-                                </span>
-                              ))}
-                              <span className="text-muted-foreground/60">{result.stores.length} listing{result.stores.length !== 1 ? "s" : ""}</span>
-                            </div>
-                          )}
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
-
                 {rematchError && (
                   <p className="mt-1.5 text-xs text-amber-400">{rematchError}</p>
                 )}
@@ -4977,29 +4924,78 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
                 )}
               </div>
 
-              {/* Target preview — when user has typed/selected a SKU */}
-              {rematchNewSku.trim() && !isSameAsSource && (
-                <div className="mt-3 rounded-lg border border-border bg-background/60 px-3.5 py-2.5">
-                  {targetPreview ? (() => {
-                    const grouped = new Map<string, typeof targetPreview.stores>();
-                    for (const s of targetPreview.stores) {
-                      const key = s.platform;
-                      if (!grouped.has(key)) grouped.set(key, []);
-                      grouped.get(key)!.push(s);
+              {/* Search results OR target preview — mutually exclusive */}
+              {rematchDropdownOpen && rematchResults.length > 0 ? (
+                <div className="mt-2 max-h-[220px] overflow-y-auto rounded-lg border border-border bg-background/40">
+                  {rematchResults.map((result) => {
+                    const isSource = result.id === rematchRow.id;
+                    const platformCounts = new Map<string, number>();
+                    for (const s of result.stores) {
+                      platformCounts.set(s.platform, (platformCounts.get(s.platform) ?? 0) + 1);
                     }
                     return (
-                      <div className="flex flex-col gap-1.5">
-                        <div className="flex items-center justify-between">
-                          <span className="text-[10px] font-semibold uppercase text-emerald-400">Existing row</span>
-                          <span className="text-[10px] text-muted-foreground/60">
-                            {targetPreview.stores.length} listing{targetPreview.stores.length !== 1 ? "s" : ""} linked
-                          </span>
-                        </div>
-                        <span className="text-sm font-bold text-foreground">{targetPreview.sku}</span>
-                        {targetPreview.title && (
-                          <span className="line-clamp-2 text-xs text-muted-foreground">{targetPreview.title}</span>
+                      <button
+                        key={result.id}
+                        onClick={() => {
+                          if (isSource) return;
+                          setRematchNewSku(result.sku);
+                          setRematchSelectedTarget(result);
+                          setRematchDropdownOpen(false);
+                        }}
+                        className={cn(
+                          "flex w-full flex-col gap-0.5 border-b border-border/50 px-3 py-2.5 text-left transition-colors last:border-0",
+                          isSource
+                            ? "cursor-not-allowed opacity-40"
+                            : "cursor-pointer hover:bg-violet-500/10",
                         )}
-                        {grouped.size > 0 && (
+                      >
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-bold text-foreground">{result.sku}</span>
+                          {isSource && <span className="text-[10px] font-semibold uppercase text-amber-400">(current row)</span>}
+                        </div>
+                        {result.title && (
+                          <span className="line-clamp-1 text-xs text-muted-foreground">{result.title}</span>
+                        )}
+                        {platformCounts.size > 0 && (
+                          <div className="mt-0.5 flex items-center gap-1.5 text-[10px] text-muted-foreground">
+                            {[...platformCounts.entries()].map(([platform, count]) => (
+                              <span
+                                key={platform}
+                                className={cn("inline-flex items-center gap-1 rounded border px-1.5 py-0.5 font-semibold", PLATFORM_COLORS[platform as Platform] ?? "border-border")}
+                              >
+                                <PlatformIcon platform={platform as Platform} className="h-2.5 w-2.5" />
+                                {PLATFORM_SHORT[platform as Platform] ?? platform}
+                                {count > 1 && <span className="opacity-60">({count})</span>}
+                              </span>
+                            ))}
+                            <span className="text-muted-foreground/60">{result.stores.length} listing{result.stores.length !== 1 ? "s" : ""}</span>
+                          </div>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : rematchNewSku.trim() && !isSameAsSource && !rematchDropdownOpen ? (
+                <div className="mt-2 rounded-lg border border-border bg-background/40 px-3.5 py-2.5">
+                  {targetPreview ? (
+                    <div className="flex flex-col gap-1">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] font-semibold uppercase text-emerald-400">Existing row</span>
+                        <span className="text-[10px] text-muted-foreground/60">
+                          {targetPreview.stores.length} listing{targetPreview.stores.length !== 1 ? "s" : ""} linked
+                        </span>
+                      </div>
+                      <span className="text-sm font-bold text-foreground">{targetPreview.sku}</span>
+                      {targetPreview.title && (
+                        <span className="line-clamp-2 text-xs text-muted-foreground">{targetPreview.title}</span>
+                      )}
+                      {targetPreview.stores.length > 0 && (() => {
+                        const grouped = new Map<string, typeof targetPreview.stores>();
+                        for (const s of targetPreview.stores) {
+                          if (!grouped.has(s.platform)) grouped.set(s.platform, []);
+                          grouped.get(s.platform)!.push(s);
+                        }
+                        return (
                           <div className="mt-1 flex flex-col gap-1">
                             {[...grouped.entries()].map(([platform, stores]) => (
                               <div key={platform} className="flex flex-wrap items-center gap-1.5">
@@ -5008,22 +5004,15 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
                                   {PLATFORM_SHORT[platform as Platform] ?? platform}
                                 </span>
                                 {stores.map((s) => (
-                                  <span key={s.marketplaceListingId} className="text-[10px] text-muted-foreground/70">
-                                    #{s.itemId}
-                                  </span>
+                                  <span key={s.marketplaceListingId} className="text-[10px] text-muted-foreground/70">#{s.itemId}</span>
                                 ))}
                               </div>
                             ))}
                           </div>
-                        )}
-                        {targetPreview.stores.length > 3 && (
-                          <p className="mt-0.5 text-[10px] text-muted-foreground/50">
-                            If this row shows as multiple rows on the dashboard, they share this master SKU.
-                          </p>
-                        )}
-                      </div>
-                    );
-                  })() : (
+                        );
+                      })()}
+                    </div>
+                  ) : (
                     <div className="flex items-center gap-2">
                       <Plus className="h-3.5 w-3.5 text-violet-400" />
                       <span className="text-xs font-medium text-violet-300">
@@ -5032,7 +5021,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
                     </div>
                   )}
                 </div>
-              )}
+              ) : null}
 
               <div className="mt-5 flex items-center justify-end gap-2">
                 <button
