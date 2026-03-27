@@ -15,7 +15,7 @@ export type ForecastWarningFlag =
   | "EBAY_HISTORY_TRUNCATED"
   | "NO_SALES_HISTORY";
 
-export type ForecastMode = "simple" | "smart";
+export type ForecastMode = "simple" | "smart" | "balanced";
 
 export interface ForecastControls {
   lookbackDays: number;
