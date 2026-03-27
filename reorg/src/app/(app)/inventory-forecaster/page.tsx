@@ -20,6 +20,11 @@ import type {
   ForecastResult,
   SupplierOrderSummary,
 } from "@/lib/inventory-forecast/types";
+import {
+  buildForecastWorkbookOnClient,
+  forecastExportFileName,
+  type ExportProgress,
+} from "@/lib/inventory-forecast/export-client";
 
 type BootstrapData = {
   recentRuns: Array<{
@@ -195,6 +200,8 @@ export default function InventoryForecasterPage() {
   const [savingRun, setSavingRun] = useState(false);
   const [creatingOrder, setCreatingOrder] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [exportProgress, setExportProgress] = useState<ExportProgress | null>(null);
+  const [exportAbort, setExportAbort] = useState<AbortController | null>(null);
   const [statusMessage, setStatusMessage] = useState<{ text: string; type: "success" | "error" | "info" } | null>(null);
   const [savedRunId, setSavedRunId] = useState<string | null>(null);
   const [supplier, setSupplier] = useState("");
@@ -397,38 +404,47 @@ export default function InventoryForecasterPage() {
   async function exportWorkbook() {
     const payload = buildResultForActions();
     if (!payload) return;
+    const ac = new AbortController();
+    setExportAbort(ac);
     setExporting(true);
+    setExportProgress({ phase: "preparing", percent: 0, message: "Starting export..." });
     try {
-      const response = await fetch("/api/inventory-forecaster/export", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ result: payload }),
-      });
-      if (!response.ok) {
-        const text = await response.text();
-        let errorMsg = "Failed to export workbook";
-        try { errorMsg = (JSON.parse(text) as { error?: string }).error ?? errorMsg; } catch { /* non-JSON response */ }
-        throw new Error(errorMsg);
-      }
-      const blob = await response.blob();
+      const blob = await buildForecastWorkbookOnClient(
+        payload,
+        (p) => setExportProgress(p),
+        ac.signal,
+      );
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement("a");
       anchor.href = url;
-      const disposition = response.headers.get("Content-Disposition") ?? "";
-      const match = disposition.match(/filename=\"([^\"]+)\"/);
-      anchor.download = match?.[1] ?? "Inventory_Forecast.xlsx";
+      anchor.download = forecastExportFileName(payload.runDateTime);
       document.body.appendChild(anchor);
       anchor.click();
       anchor.remove();
       URL.revokeObjectURL(url);
-      setStatusMessage({ text: "Spreadsheet downloaded.", type: "success" });
-    } catch (error) {
+      const failCount = exportProgress?.imageStats?.failed ?? 0;
       setStatusMessage({
-        text: error instanceof Error ? error.message : "Failed to export workbook.",
-        type: "error",
+        text: failCount > 0
+          ? `Spreadsheet downloaded. ${failCount} image${failCount === 1 ? "" : "s"} could not be loaded.`
+          : "Spreadsheet downloaded.",
+        type: "success",
       });
+    } catch (error) {
+      if ((error as Error).message === "Cancelled") {
+        setStatusMessage({ text: "Export cancelled.", type: "error" });
+      } else {
+        setExportProgress({
+          phase: "error",
+          percent: exportProgress?.percent ?? 0,
+          message: "Export failed",
+          errorDetail: error instanceof Error ? error.message : "Unknown error",
+        });
+        return;
+      }
     } finally {
       setExporting(false);
+      setExportAbort(null);
+      setTimeout(() => setExportProgress(null), 1500);
     }
   }
 
@@ -1301,6 +1317,84 @@ export default function InventoryForecasterPage() {
       </section>
 
       <PageTour page="inventoryForecaster" steps={PAGE_TOUR_STEPS.inventoryForecaster} ready />
+
+      {exportProgress && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-2xl border border-zinc-700/80 bg-zinc-900 p-6 shadow-2xl">
+            <div className="flex items-center gap-3">
+              {exportProgress.phase === "error" ? (
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-red-500/15">
+                  <AlertTriangle className="h-5 w-5 text-red-400" />
+                </div>
+              ) : exportProgress.phase === "done" ? (
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-500/15">
+                  <Download className="h-5 w-5 text-emerald-400" />
+                </div>
+              ) : (
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/15">
+                  <Loader2 className="h-5 w-5 animate-spin text-primary" />
+                </div>
+              )}
+              <div>
+                <h3 className="text-base font-semibold text-zinc-100">
+                  {exportProgress.phase === "error" ? "Export Failed" : exportProgress.phase === "done" ? "Export Complete" : "Exporting Forecast"}
+                </h3>
+                <p className="mt-0.5 text-xs text-zinc-500">{result?.lines.length ?? 0} rows</p>
+              </div>
+            </div>
+
+            <div className="mt-5">
+              <div className="flex items-center justify-between text-xs text-zinc-400">
+                <span>{exportProgress.message}</span>
+                <span className="tabular-nums">{exportProgress.percent}%</span>
+              </div>
+              <div className="mt-2 h-2.5 w-full overflow-hidden rounded-full bg-zinc-800">
+                <div
+                  className={cn(
+                    "h-full rounded-full transition-all duration-300 ease-out",
+                    exportProgress.phase === "error" ? "bg-red-500" : exportProgress.phase === "done" ? "bg-emerald-500" : "bg-primary",
+                  )}
+                  style={{ width: `${exportProgress.percent}%` }}
+                />
+              </div>
+            </div>
+
+            {exportProgress.imageStats && exportProgress.imageStats.failed > 0 && exportProgress.phase !== "error" && (
+              <p className="mt-3 text-xs text-amber-400/90">
+                <AlertTriangle className="mr-1 inline-block h-3 w-3" />
+                {exportProgress.imageStats.failed} image{exportProgress.imageStats.failed === 1 ? "" : "s"} could not be loaded — export continues without them
+              </p>
+            )}
+
+            {exportProgress.errorDetail && (
+              <div className="mt-3 rounded-lg border border-red-500/20 bg-red-500/5 p-3">
+                <p className="text-xs text-red-300">{exportProgress.errorDetail}</p>
+              </div>
+            )}
+
+            <div className="mt-5 flex justify-end gap-3">
+              {exportProgress.phase === "error" && (
+                <button
+                  type="button"
+                  onClick={() => setExportProgress(null)}
+                  className="cursor-pointer rounded-lg bg-zinc-800 px-4 py-2 text-sm font-medium text-zinc-300 transition-colors hover:bg-zinc-700"
+                >
+                  Close
+                </button>
+              )}
+              {exportProgress.phase !== "done" && exportProgress.phase !== "error" && (
+                <button
+                  type="button"
+                  onClick={() => { exportAbort?.abort(); }}
+                  className="cursor-pointer rounded-lg border border-zinc-600 px-4 py-2 text-sm text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-200"
+                >
+                  Cancel
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
