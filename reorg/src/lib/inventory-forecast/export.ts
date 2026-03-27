@@ -584,6 +584,21 @@ export async function buildInventoryForecastWorkbook(result: ForecastResult) {
     left.title.localeCompare(right.title, undefined, { sensitivity: "base" }),
   );
 
+  type PrefetchedImage = { buffer: Buffer; extension: WorkbookImageExtension } | null;
+  const IMAGE_BATCH = 50;
+  const productImages: PrefetchedImage[] = new Array(sortedLines.length).fill(null);
+  const barcodeBuffers: (Buffer | null)[] = new Array(sortedLines.length).fill(null);
+
+  for (let start = 0; start < sortedLines.length; start += IMAGE_BATCH) {
+    const end = Math.min(start + IMAGE_BATCH, sortedLines.length);
+    await Promise.allSettled(
+      sortedLines.slice(start, end).flatMap((line, i) => [
+        fetchImageBuffer(line.imageUrl).then((r) => { productImages[start + i] = r; }),
+        buildBarcodeBuffer(line.upc).then((r) => { barcodeBuffers[start + i] = r; }),
+      ]),
+    );
+  }
+
   for (let index = 0; index < sortedLines.length; index += 1) {
     const line = sortedLines[index];
     const rowNumber = headerRowNumber + 1 + index;
@@ -603,10 +618,22 @@ export async function buildInventoryForecastWorkbook(result: ForecastResult) {
     worksheet.getCell(rowNumber, 7).numFmt = '$#,##0.00';
     worksheet.getCell(rowNumber, 8).numFmt = '$#,##0.00';
 
-    await Promise.all([
-      addBarcodeImage(workbook, worksheet, rowNumber, 2, line.upc),
-      addProductImage(workbook, worksheet, rowNumber, 5, line.imageUrl),
-    ]);
+    const barcode = barcodeBuffers[index];
+    if (barcode) {
+      await addImageToCell({
+        workbook, worksheet, rowNumber, columnNumber: 2,
+        buffer: barcode, extension: "png",
+        maxWidth: BARCODE_MAX_WIDTH, maxHeight: BARCODE_MAX_HEIGHT,
+      });
+    }
+    const product = productImages[index];
+    if (product) {
+      await addImageToCell({
+        workbook, worksheet, rowNumber, columnNumber: 5,
+        buffer: product.buffer, extension: product.extension,
+        maxWidth: PRODUCT_IMAGE_SIZE, maxHeight: PRODUCT_IMAGE_SIZE,
+      });
+    }
   }
 
   addGuideSheet(workbook);
