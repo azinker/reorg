@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useRef, useEffect } from "react";
+import { useState, useMemo, useRef, useEffect, useCallback } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { cn } from "@/lib/utils";
 import type { GridRow, FilterState, ColumnConfig, StoreValue, Platform, UpcPushTarget } from "@/lib/grid-types";
@@ -1041,6 +1041,34 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
     }
   }
 
+  const searchRematchSku = useCallback((query: string) => {
+    if (rematchSearchTimer.current) clearTimeout(rematchSearchTimer.current);
+    const trimmed = query.trim();
+    if (trimmed.length === 0) {
+      setRematchResults([]);
+      setRematchDropdownOpen(false);
+      setRematchSelectedTarget(null);
+      return;
+    }
+    setRematchSearching(true);
+    rematchSearchTimer.current = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/grid/sku-search?q=${encodeURIComponent(trimmed)}`);
+        const json = await res.json().catch(() => ({ data: [] }));
+        const results = (json.data ?? []) as SkuSearchResult[];
+        setRematchResults(results);
+        setRematchDropdownOpen(results.length > 0);
+        const exact = results.find((r) => r.sku.toLowerCase() === trimmed.toLowerCase());
+        setRematchSelectedTarget(exact ?? null);
+      } catch {
+        setRematchResults([]);
+        setRematchDropdownOpen(false);
+      } finally {
+        setRematchSearching(false);
+      }
+    }, 300);
+  }, []);
+
   async function handleRematch() {
     if (!rematchRow || !rematchListingId || !rematchNewSku.trim()) return;
     setRematchLoading(true);
@@ -1061,6 +1089,9 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
       setRematchRow(null);
       setRematchListingId("");
       setRematchNewSku("");
+      setRematchResults([]);
+      setRematchDropdownOpen(false);
+      setRematchSelectedTarget(null);
       showToast(`Listing rematched to SKU: ${targetSku}`);
       // If the row now has no more listings, remove it from the grid.
       // Otherwise reload it so the listing appears removed from the store cells.
@@ -3173,6 +3204,12 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
   const [rematchNewSku, setRematchNewSku] = useState("");
   const [rematchLoading, setRematchLoading] = useState(false);
   const [rematchError, setRematchError] = useState<string | null>(null);
+  type SkuSearchResult = { id: string; sku: string; title: string | null; stores: { marketplaceListingId: string; platform: string; itemId: string }[] };
+  const [rematchResults, setRematchResults] = useState<SkuSearchResult[]>([]);
+  const [rematchSearching, setRematchSearching] = useState(false);
+  const [rematchDropdownOpen, setRematchDropdownOpen] = useState(false);
+  const [rematchSelectedTarget, setRematchSelectedTarget] = useState<SkuSearchResult | null>(null);
+  const rematchSearchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const failedPushCount = failedPushes.length;
   const failedPushStates = useMemo(() => {
     const failuresByComposite = new Map<string, FailedPushItem[]>();
@@ -4781,121 +4818,226 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
       )}
 
       {/* Rematch Modal */}
-      {rematchRow && (
-        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/50">
-          <div className="w-full max-w-md rounded-xl border border-border bg-card p-6 shadow-2xl">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <h3 className="text-base font-bold text-foreground">Rematch Listing</h3>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  Move a listing from <span className="font-semibold text-foreground">{rematchRow.sku}</span> to a different master SKU.
-                </p>
-              </div>
-              <button
-                onClick={() => { setRematchRow(null); setRematchError(null); }}
-                className="rounded-md p-1 text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </div>
+      {rematchRow && (() => {
+        const closeRematch = () => {
+          setRematchRow(null);
+          setRematchError(null);
+          setRematchResults([]);
+          setRematchDropdownOpen(false);
+          setRematchSelectedTarget(null);
+        };
+        const listings = rematchRow.itemNumbers.filter((sv) => sv.marketplaceListingId);
+        const isSameAsSource = rematchNewSku.trim().toLowerCase() === rematchRow.sku.toLowerCase();
+        const targetPreview = rematchSelectedTarget;
 
-            {/* Listing selector — show when there are multiple listings */}
-            {(() => {
-              const listings = rematchRow.itemNumbers.filter((sv) => sv.marketplaceListingId);
-              if (listings.length > 1) {
-                return (
-                  <div className="mt-4">
-                    <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                      Select listing to rematch
-                    </label>
-                    <div className="flex flex-wrap gap-2">
-                      {listings.map((sv) => (
+        return (
+          <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/50">
+            <div className="w-full max-w-lg rounded-xl border border-border bg-card p-6 shadow-2xl">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <h3 className="text-base font-bold text-foreground">Rematch Listing</h3>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    Move a listing from <span className="font-semibold text-foreground">{rematchRow.sku}</span> to a different master SKU.
+                  </p>
+                </div>
+                <button
+                  onClick={closeRematch}
+                  className="rounded-md p-1 text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+
+              {/* Listing selector */}
+              {listings.length > 1 ? (
+                <div className="mt-4">
+                  <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    Select listing to move
+                  </label>
+                  <div className="flex flex-wrap gap-2">
+                    {listings.map((sv) => (
+                      <button
+                        key={sv.marketplaceListingId}
+                        onClick={() => setRematchListingId(sv.marketplaceListingId!)}
+                        className={cn(
+                          "flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs font-semibold transition-colors cursor-pointer",
+                          rematchListingId === sv.marketplaceListingId
+                            ? "border-violet-500/60 bg-violet-500/20 text-violet-200"
+                            : "border-border bg-background text-muted-foreground hover:border-violet-500/40 hover:text-violet-300",
+                        )}
+                      >
+                        <PlatformIcon platform={sv.platform} className="h-3 w-3" />
+                        <span>{PLATFORM_SHORT[sv.platform]}</span>
+                        {sv.listingId && <span className="text-[10px] opacity-60">#{sv.listingId}</span>}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : listings[0] ? (
+                <div className="mt-4 flex items-center gap-2 rounded-md border border-border bg-background px-3 py-2">
+                  <PlatformIcon platform={listings[0].platform} className="h-3.5 w-3.5 text-muted-foreground" />
+                  <span className="text-sm font-medium text-foreground">{PLATFORM_SHORT[listings[0].platform]}</span>
+                  {listings[0].listingId && <span className="text-xs text-muted-foreground">#{listings[0].listingId}</span>}
+                </div>
+              ) : null}
+
+              {/* SKU search input + dropdown */}
+              <div className="relative mt-4">
+                <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  Target Master SKU
+                </label>
+                <div className="relative">
+                  <input
+                    type="text"
+                    value={rematchNewSku}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setRematchNewSku(val);
+                      setRematchError(null);
+                      searchRematchSku(val);
+                    }}
+                    onFocus={() => { if (rematchResults.length > 0) setRematchDropdownOpen(true); }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && rematchNewSku.trim() && rematchListingId && !rematchLoading && !isSameAsSource) {
+                        setRematchDropdownOpen(false);
+                        void handleRematch();
+                      }
+                      if (e.key === "Escape") {
+                        if (rematchDropdownOpen) { setRematchDropdownOpen(false); e.stopPropagation(); }
+                        else closeRematch();
+                      }
+                    }}
+                    placeholder="Search or type a SKU…"
+                    autoFocus
+                    className="w-full rounded-md border border-input bg-background px-3 py-2 pr-8 text-sm text-foreground outline-none focus:ring-2 focus:ring-ring"
+                  />
+                  {rematchSearching && (
+                    <RefreshCw className="absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 animate-spin text-muted-foreground" />
+                  )}
+                </div>
+
+                {/* Autocomplete dropdown */}
+                {rematchDropdownOpen && rematchResults.length > 0 && (
+                  <div className="absolute left-0 right-0 top-full z-10 mt-1 max-h-[240px] overflow-y-auto rounded-lg border border-border bg-card shadow-xl">
+                    {rematchResults.map((result) => {
+                      const isSource = result.id === rematchRow.id;
+                      return (
                         <button
-                          key={sv.marketplaceListingId}
-                          onClick={() => setRematchListingId(sv.marketplaceListingId!)}
+                          key={result.id}
+                          onClick={() => {
+                            if (isSource) return;
+                            setRematchNewSku(result.sku);
+                            setRematchSelectedTarget(result);
+                            setRematchDropdownOpen(false);
+                          }}
                           className={cn(
-                            "flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-semibold transition-colors cursor-pointer",
-                            rematchListingId === sv.marketplaceListingId
-                              ? "border-violet-500/60 bg-violet-500/20 text-violet-200"
-                              : "border-border bg-background text-muted-foreground hover:border-violet-500/40 hover:text-violet-300",
+                            "flex w-full flex-col gap-0.5 border-b border-border/50 px-3 py-2.5 text-left transition-colors last:border-0",
+                            isSource
+                              ? "cursor-not-allowed opacity-40"
+                              : "cursor-pointer hover:bg-violet-500/10",
                           )}
                         >
-                          <PlatformIcon platform={sv.platform} className="h-3 w-3" />
-                          <span>{PLATFORM_SHORT[sv.platform]}</span>
-                          {sv.listingId && (
-                            <span className="text-[10px] opacity-60">#{sv.listingId}</span>
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-bold text-foreground">{result.sku}</span>
+                            {isSource && <span className="text-[10px] font-semibold uppercase text-amber-400">(current row)</span>}
+                          </div>
+                          {result.title && (
+                            <span className="line-clamp-1 text-xs text-muted-foreground">{result.title}</span>
+                          )}
+                          {result.stores.length > 0 && (
+                            <div className="mt-0.5 flex flex-wrap gap-1.5">
+                              {result.stores.map((s) => (
+                                <span
+                                  key={s.marketplaceListingId}
+                                  className={cn("inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] font-semibold", PLATFORM_COLORS[s.platform as Platform] ?? "border-border text-muted-foreground")}
+                                >
+                                  <PlatformIcon platform={s.platform as Platform} className="h-2.5 w-2.5" />
+                                  {PLATFORM_SHORT[s.platform as Platform] ?? s.platform}
+                                  <span className="opacity-50">#{s.itemId}</span>
+                                </span>
+                              ))}
+                            </div>
                           )}
                         </button>
-                      ))}
+                      );
+                    })}
+                  </div>
+                )}
+
+                {rematchError && (
+                  <p className="mt-1.5 text-xs text-amber-400">{rematchError}</p>
+                )}
+                {isSameAsSource && rematchNewSku.trim() && (
+                  <p className="mt-1.5 text-xs text-amber-400">This is the same SKU as the current row.</p>
+                )}
+              </div>
+
+              {/* Target preview — when user has typed/selected a SKU */}
+              {rematchNewSku.trim() && !isSameAsSource && (
+                <div className="mt-3 rounded-lg border border-border bg-background/60 px-3.5 py-2.5">
+                  {targetPreview ? (
+                    <div className="flex flex-col gap-1">
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] font-semibold uppercase text-emerald-400">Existing row</span>
+                      </div>
+                      <span className="text-sm font-bold text-foreground">{targetPreview.sku}</span>
+                      {targetPreview.title && (
+                        <span className="line-clamp-2 text-xs text-muted-foreground">{targetPreview.title}</span>
+                      )}
+                      {targetPreview.stores.length > 0 && (
+                        <div className="mt-0.5 flex flex-wrap gap-1.5">
+                          {targetPreview.stores.map((s) => (
+                            <span
+                              key={s.marketplaceListingId}
+                              className={cn("inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] font-semibold", PLATFORM_COLORS[s.platform as Platform] ?? "border-border text-muted-foreground")}
+                            >
+                              <PlatformIcon platform={s.platform as Platform} className="h-2.5 w-2.5" />
+                              {PLATFORM_SHORT[s.platform as Platform] ?? s.platform}
+                            </span>
+                          ))}
+                        </div>
+                      )}
                     </div>
-                  </div>
-                );
-              }
-              // Single listing — show it as info, no selection needed
-              const single = listings[0];
-              if (single) {
-                return (
-                  <div className="mt-4 flex items-center gap-2 rounded-md border border-border bg-background px-3 py-2">
-                    <PlatformIcon platform={single.platform} className="h-3.5 w-3.5 text-muted-foreground" />
-                    <span className="text-sm font-medium text-foreground">{PLATFORM_SHORT[single.platform]}</span>
-                    {single.listingId && (
-                      <span className="text-xs text-muted-foreground">#{single.listingId}</span>
-                    )}
-                  </div>
-                );
-              }
-              return null;
-            })()}
-
-            <div className="mt-4">
-              <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                New Master SKU
-              </label>
-              <input
-                type="text"
-                value={rematchNewSku}
-                onChange={(e) => { setRematchNewSku(e.target.value); setRematchError(null); }}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && rematchNewSku.trim() && rematchListingId && !rematchLoading) void handleRematch();
-                  if (e.key === "Escape") { setRematchRow(null); setRematchError(null); }
-                }}
-                placeholder="Enter target master SKU…"
-                autoFocus
-                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground outline-none focus:ring-2 focus:ring-ring"
-              />
-              {rematchError && (
-                <p className="mt-1.5 text-xs text-amber-400">{rematchError}</p>
+                  ) : (
+                    <div className="flex items-center gap-2">
+                      <Plus className="h-3.5 w-3.5 text-violet-400" />
+                      <span className="text-xs font-medium text-violet-300">
+                        New row will be created for <span className="font-bold text-foreground">{rematchNewSku.trim()}</span>
+                      </span>
+                    </div>
+                  )}
+                </div>
               )}
-            </div>
 
-            <div className="mt-5 flex items-center justify-end gap-2">
-              <button
-                onClick={() => { setRematchRow(null); setRematchError(null); }}
-                className="rounded-md px-4 py-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={() => void handleRematch()}
-                disabled={!rematchNewSku.trim() || !rematchListingId || rematchLoading}
-                className={cn(
-                  "flex items-center gap-1.5 rounded-md px-4 py-2 text-sm font-bold transition-colors cursor-pointer",
-                  rematchNewSku.trim() && rematchListingId && !rematchLoading
-                    ? "bg-violet-600 text-white hover:bg-violet-700"
-                    : "bg-muted text-muted-foreground cursor-not-allowed opacity-50",
-                )}
-              >
-                {rematchLoading ? (
-                  <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-                ) : (
-                  <Link2 className="h-3.5 w-3.5" />
-                )}
-                Rematch
-              </button>
+              <div className="mt-5 flex items-center justify-end gap-2">
+                <button
+                  onClick={closeRematch}
+                  className="rounded-md px-4 py-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => { setRematchDropdownOpen(false); void handleRematch(); }}
+                  disabled={!rematchNewSku.trim() || !rematchListingId || rematchLoading || isSameAsSource}
+                  className={cn(
+                    "flex items-center gap-1.5 rounded-md px-4 py-2 text-sm font-bold transition-colors cursor-pointer",
+                    rematchNewSku.trim() && rematchListingId && !rematchLoading && !isSameAsSource
+                      ? "bg-violet-600 text-white hover:bg-violet-700"
+                      : "bg-muted text-muted-foreground cursor-not-allowed opacity-50",
+                  )}
+                >
+                  {rematchLoading ? (
+                    <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Link2 className="h-3.5 w-3.5" />
+                  )}
+                  Rematch
+                </button>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       <PushConfirmModal
         open={pushModalOpen}
