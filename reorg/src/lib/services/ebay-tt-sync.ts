@@ -1682,7 +1682,7 @@ async function fetchAndStorePromotedListingRates(
     return 0;
   }
 
-  const campaignData = (await campaignResponse.json()) as {
+  const campaignData = JSON.parse(campaignResponse.body) as {
     campaigns?: MarketingCampaign[];
   };
   const campaigns = campaignData.campaigns ?? [];
@@ -1713,7 +1713,7 @@ async function fetchAndStorePromotedListingRates(
         break;
       }
 
-      const adsData = (await adsResponse.json()) as {
+      const adsData = JSON.parse(adsResponse.body) as {
         ads?: MarketingAd[];
         total?: number;
       };
