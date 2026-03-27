@@ -183,7 +183,7 @@ export default function InventoryForecasterPage() {
   const [savingRun, setSavingRun] = useState(false);
   const [creatingOrder, setCreatingOrder] = useState(false);
   const [exporting, setExporting] = useState(false);
-  const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const [statusMessage, setStatusMessage] = useState<{ text: string; type: "success" | "error" | "info" } | null>(null);
   const [savedRunId, setSavedRunId] = useState<string | null>(null);
   const [supplier, setSupplier] = useState("");
   const [orderEta, setOrderEta] = useState("");
@@ -203,9 +203,10 @@ export default function InventoryForecasterPage() {
         setBootstrap(data);
         setRecentOrders(data.recentOrders ?? []);
       } catch (error) {
-        setStatusMessage(
-          error instanceof Error ? error.message : "Failed to load Inventory Forecaster.",
-        );
+        setStatusMessage({
+          text: error instanceof Error ? error.message : "Failed to load Inventory Forecaster.",
+          type: "error",
+        });
       } finally {
         setLoading(false);
       }
@@ -285,13 +286,15 @@ export default function InventoryForecasterPage() {
           .toISOString()
           .slice(0, 10),
       );
-      setStatusMessage(
-        `Forecast ready for ${forecast.lines.length} SKU${forecast.lines.length === 1 ? "" : "s"}.`,
-      );
+      setStatusMessage({
+        text: `Forecast complete — ${forecast.lines.length} SKU${forecast.lines.length === 1 ? "" : "s"} analyzed.`,
+        type: "success",
+      });
     } catch (error) {
-      setStatusMessage(
-        error instanceof Error ? error.message : "Failed to run Inventory Forecast.",
-      );
+      setStatusMessage({
+        text: error instanceof Error ? error.message : "Failed to run Inventory Forecast.",
+        type: "error",
+      });
     } finally {
       setRunning(false);
       setRunStartedAt(null);
@@ -322,10 +325,10 @@ export default function InventoryForecasterPage() {
       if (!response.ok) throw new Error(json.error ?? "Failed to save run");
       const runId = String(json.data.id);
       setSavedRunId(runId);
-      setStatusMessage(`Forecast run saved with ${payload.lines.length} lines.`);
+      setStatusMessage({ text: `Run saved — ${payload.lines.length} SKUs.`, type: "success" });
       return runId;
     } catch (error) {
-      setStatusMessage(error instanceof Error ? error.message : "Failed to save run.");
+      setStatusMessage({ text: error instanceof Error ? error.message : "Failed to save run.", type: "error" });
       return null;
     } finally {
       setSavingRun(false);
@@ -352,7 +355,7 @@ export default function InventoryForecasterPage() {
       });
       const json = await response.json();
       if (!response.ok) throw new Error(json.error ?? "Failed to create supplier order");
-      setStatusMessage(`Supplier order ${json.data.id} created with ${json.data.lineCount} lines.`);
+      setStatusMessage({ text: `Order created with ${json.data.lineCount} lines.`, type: "success" });
 
       const refresh = await fetch("/api/inventory-forecaster", { cache: "no-store" });
       const refreshJson = await refresh.json();
@@ -360,9 +363,10 @@ export default function InventoryForecasterPage() {
         setRecentOrders((refreshJson.data as BootstrapData).recentOrders ?? []);
       }
     } catch (error) {
-      setStatusMessage(
-        error instanceof Error ? error.message : "Failed to create supplier order.",
-      );
+      setStatusMessage({
+        text: error instanceof Error ? error.message : "Failed to create supplier order.",
+        type: "error",
+      });
     } finally {
       setCreatingOrder(false);
     }
@@ -395,11 +399,12 @@ export default function InventoryForecasterPage() {
       anchor.click();
       anchor.remove();
       URL.revokeObjectURL(url);
-      setStatusMessage("Forecast workbook exported.");
+      setStatusMessage({ text: "Spreadsheet downloaded.", type: "success" });
     } catch (error) {
-      setStatusMessage(
-        error instanceof Error ? error.message : "Failed to export workbook.",
-      );
+      setStatusMessage({
+        text: error instanceof Error ? error.message : "Failed to export workbook.",
+        type: "error",
+      });
     } finally {
       setExporting(false);
     }
@@ -431,11 +436,12 @@ export default function InventoryForecasterPage() {
             : order,
         ),
       );
-      setStatusMessage(`Supplier order ${orderId} updated.`);
+      setStatusMessage({ text: "Order updated.", type: "info" });
     } catch (error) {
-      setStatusMessage(
-        error instanceof Error ? error.message : "Failed to update supplier order.",
-      );
+      setStatusMessage({
+        text: error instanceof Error ? error.message : "Failed to update supplier order.",
+        type: "error",
+      });
     } finally {
       setPatchingOrderId(null);
     }
@@ -481,8 +487,8 @@ export default function InventoryForecasterPage() {
             Inventory Forecaster
           </h1>
           <p className="max-w-3xl text-sm text-muted-foreground">
-            Read-only marketplace demand planning across eBay TPP, eBay TT, Shopify, and
-            BigCommerce using one deduped live master inventory quantity per SKU.
+            See what needs reordering based on real sales across all your stores.
+            Adjust the controls, run a forecast, then export or create a supplier order.
           </p>
         </div>
         <div className="grid grid-cols-3 gap-3" data-tour="inventory-forecaster-stats">
@@ -537,9 +543,10 @@ export default function InventoryForecasterPage() {
 
           <div className="space-y-5">
             <div>
-              <label className="mb-2 block text-sm font-medium text-foreground">
-                Lookback Window
+              <label className="mb-1 block text-sm font-medium text-foreground">
+                Sales History
               </label>
+              <p className="mb-2 text-xs text-muted-foreground">How many days of past sales to analyze</p>
               <div className="grid grid-cols-4 gap-2">
                 {(["90", "180", "365", "custom"] as const).map((preset) => (
                   <button
@@ -580,9 +587,10 @@ export default function InventoryForecasterPage() {
 
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="mb-2 block text-sm font-medium text-foreground">
-                  Forecast Bucket
+                <label className="mb-1 block text-sm font-medium text-foreground">
+                  Grouping
                 </label>
+                <p className="mb-2 text-xs text-muted-foreground">How to group sales data</p>
                 <select
                   value={controls.forecastBucket}
                   onChange={(event) =>
@@ -598,9 +606,10 @@ export default function InventoryForecasterPage() {
                 </select>
               </div>
               <div>
-                <label className="mb-2 block text-sm font-medium text-foreground">
-                  Supplier Transit Days
+                <label className="mb-1 block text-sm font-medium text-foreground">
+                  Shipping Time
                 </label>
+                <p className="mb-2 text-xs text-muted-foreground">Days for supplier to deliver</p>
                 <input
                   type="number"
                   min={0}
@@ -615,9 +624,10 @@ export default function InventoryForecasterPage() {
             </div>
 
             <div>
-              <label className="mb-2 block text-sm font-medium text-foreground">
-                Desired Inventory Days After Arrival
+              <label className="mb-1 block text-sm font-medium text-foreground">
+                Stock Coverage Goal
               </label>
+              <p className="mb-2 text-xs text-muted-foreground">How many days of stock you want after the order arrives</p>
               <input
                 type="number"
                 min={0}
@@ -647,11 +657,11 @@ export default function InventoryForecasterPage() {
               />
               <span className="min-w-0">
                 <span className="flex items-center gap-2 font-medium text-foreground">
-                  Count incoming supplier orders that are already on the way
-                  <InfoBlurb text="Turn this on to subtract internal supplier orders that are already marked Ordered or In Transit. Example: if the forecast says you need 40 units, and 15 units are already on the way with an ETA that arrives in time, the new recommendation becomes about 25 instead of 40." />
+                  Subtract orders already on the way
+                  <InfoBlurb text="When on, the forecast subtracts units from existing orders that are marked Ordered or In Transit. For example, if you need 40 units but 15 are already coming, the suggestion drops to about 25." />
                 </span>
                 <span className="mt-1 block text-xs leading-5 text-muted-foreground">
-                  Prevents double-ordering by counting units already expected to arrive soon.
+                  Prevents double-ordering.
                 </span>
               </span>
             </label>
@@ -670,11 +680,11 @@ export default function InventoryForecasterPage() {
               />
               <span className="min-w-0">
                 <span className="flex items-center gap-2 font-medium text-foreground">
-                  Only show SKUs that need attention right now
-                  <InfoBlurb text="Turn this on to hide SKUs that are already covered. A SKU is usually considered 'no action needed' when projected stock on arrival, plus any qualifying inbound units, already covers expected demand and safety buffer, so required quantity stays at 0. Example: if 2,000 SKUs exist but only 85 need action, this keeps the table focused on those 85." />
+                  Only show SKUs that need attention
+                  <InfoBlurb text="When on, SKUs that already have enough stock are hidden from the results. For example, if 2,000 SKUs exist but only 85 need reordering, you'll only see those 85." />
                 </span>
                 <span className="mt-1 block text-xs leading-5 text-muted-foreground">
-                  Hides fully-covered SKUs whose projected stock after arrival already meets demand.
+                  Hides well-stocked SKUs to keep the list focused.
                 </span>
               </span>
             </label>
@@ -696,7 +706,7 @@ export default function InventoryForecasterPage() {
               <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 px-3 py-3">
                 <div className="mb-2 flex items-center justify-between gap-3 text-[11px]">
                   <span className="font-medium text-emerald-300">
-                    Estimated progress
+                    Crunching the numbers…
                   </span>
                   <span className="text-muted-foreground">
                     {remainingSeconds > 0
@@ -712,7 +722,7 @@ export default function InventoryForecasterPage() {
                 </div>
                 <div className="mt-2 flex items-center justify-between gap-3 text-[11px] text-muted-foreground">
                   <span>{formatDuration(elapsedSeconds)} elapsed</span>
-                  <span>Typical run: {formatDuration(estimatedSeconds)}</span>
+                  <span>Usually takes about {formatDuration(estimatedSeconds)}</span>
                 </div>
               </div>
             ) : null}
@@ -723,54 +733,57 @@ export default function InventoryForecasterPage() {
           <div className="mb-4 flex items-center gap-2">
             <Boxes className="h-4 w-4 text-primary" />
             <h2 className="text-sm font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-              Run Summary
+              Overview
             </h2>
           </div>
 
           {statusMessage && (
-            <div className="mb-4 rounded-xl border border-border bg-background/70 px-4 py-3 text-sm text-muted-foreground">
-              {statusMessage}
+            <div
+              className={cn(
+                "mb-4 rounded-xl border px-4 py-3 text-sm",
+                statusMessage.type === "error"
+                  ? "border-red-500/30 bg-red-500/10 text-red-300"
+                  : statusMessage.type === "success"
+                    ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+                    : "border-border bg-background/70 text-muted-foreground",
+              )}
+            >
+              {statusMessage.text}
             </div>
           )}
 
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
             <div className="rounded-xl border border-border bg-background/60 p-4">
               <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
-                Inventory Source
+                Where Data Comes From
               </div>
-              <div className="mt-2 text-lg font-semibold text-emerald-400">
-                Live TPP master inventory
+              <div className="mt-2 text-sm font-semibold text-emerald-400">
+                Live TPP inventory + sales from all stores
               </div>
               <div className="mt-2 text-xs leading-5 text-muted-foreground">
-                Uses the live on-hand quantity from The Perfect Part eBay master rows as the base inventory number for each SKU.
+                Current stock is pulled from The Perfect Part eBay. Sales data comes from all connected stores.
               </div>
               <div className="mt-3 flex flex-wrap gap-2 text-[11px]">
                 <span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 font-medium text-emerald-300">
-                  Base stock: TPP eBay live
+                  Stock: TPP eBay
                 </span>
                 <span className="rounded-full border border-border bg-card px-2.5 py-1 font-medium text-muted-foreground">
-                  Sales: eBay TPP
+                  eBay TPP
                 </span>
                 <span className="rounded-full border border-border bg-card px-2.5 py-1 font-medium text-muted-foreground">
-                  Sales: eBay TT
+                  eBay TT
                 </span>
                 <span className="rounded-full border border-border bg-card px-2.5 py-1 font-medium text-muted-foreground">
-                  Sales: Shopify
+                  Shopify
                 </span>
                 <span className="rounded-full border border-border bg-card px-2.5 py-1 font-medium text-muted-foreground">
-                  Sales: BigCommerce
-                </span>
-              </div>
-              <div className="mt-3 text-xs leading-5 text-muted-foreground">
-                Internal label:{" "}
-                <span className="font-medium text-foreground">
-                  {bootstrap?.inventorySource ?? "MASTER_TPP_LIVE"}
+                  BigCommerce
                 </span>
               </div>
             </div>
             <div className="rounded-xl border border-border bg-background/60 p-4">
               <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
-                Sales Coverage
+                Sales Data Range
               </div>
               <div
                 className={cn(
@@ -779,13 +792,13 @@ export default function InventoryForecasterPage() {
                 )}
               >
                 {result?.salesSync.earliestCoveredAt
-                  ? `${shortDate(result.salesSync.earliestCoveredAt)} to ${shortDate(result.salesSync.latestCoveredAt)}`
-                  : "Run forecast to calculate"}
+                  ? `${shortDate(result.salesSync.earliestCoveredAt)} — ${shortDate(result.salesSync.latestCoveredAt)}`
+                  : "Run a forecast to see"}
               </div>
             </div>
             <div className="rounded-xl border border-border bg-background/60 p-4">
               <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
-                Recent Saved Runs
+                Saved Runs
               </div>
               <div
                 className={cn(
@@ -796,12 +809,12 @@ export default function InventoryForecasterPage() {
                 {savedRunCount}
               </div>
               <div className="mt-2 text-xs text-muted-foreground">
-                Saved runs are snapshots only.
+                For reference only
               </div>
             </div>
             <div className="rounded-xl border border-border bg-background/60 p-4">
               <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
-                Open Internal Orders
+                Open Orders
               </div>
               <div
                 className={cn(
@@ -815,7 +828,7 @@ export default function InventoryForecasterPage() {
                 <span className="font-medium text-emerald-300">
                   {inboundCountedOrderCount}
                 </span>{" "}
-                currently affect forecast math.
+                counted as inbound in the forecast
               </div>
             </div>
           </div>
@@ -824,7 +837,7 @@ export default function InventoryForecasterPage() {
             <div className="mt-4 rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4">
               <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-amber-300">
                 <AlertTriangle className="h-4 w-4" />
-                Sales sync notes
+                Heads up
               </div>
               <div className="space-y-2 text-sm text-amber-100/90">
                 {result.salesSync.issues.map((issue, index) => (
@@ -837,7 +850,7 @@ export default function InventoryForecasterPage() {
           ) : null}
 
           <div className="mt-4 rounded-2xl border border-border bg-background/60 p-4 text-sm text-muted-foreground">
-            <div className="mb-2 font-semibold text-foreground">Confidence guide</div>
+            <div className="mb-2 font-semibold text-foreground">What the confidence levels mean</div>
             <div className="grid gap-2 md:grid-cols-3">
               {bootstrap?.confidenceLegend &&
                 Object.entries(bootstrap.confidenceLegend).map(([level, text]) => (
@@ -868,7 +881,7 @@ export default function InventoryForecasterPage() {
                 <table className="w-full min-w-[960px]">
                   <thead>
                     <tr className="border-b border-border bg-muted/40 text-left">
-                      {["Order", "Supplier", "Status", "ETA", "Units", "Lines", "Forecast Run", "Created", "Notes"].map((label) => (
+                      {["Order #", "Supplier", "Status", "Expected Arrival", "Units", "Lines", "From Run", "Created", "Notes"].map((label) => (
                         <th
                           key={label}
                           className="px-3 py-3 text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground"
@@ -881,14 +894,19 @@ export default function InventoryForecasterPage() {
                   <tbody>
                     {recentOrders.length === 0 ? (
                       <tr>
-                        <td colSpan={9} className="px-4 py-10 text-center text-muted-foreground">
-                          No internal supplier orders yet.
+                        <td colSpan={9} className="px-4 py-10 text-center">
+                          <PackagePlus className="mx-auto mb-2 h-5 w-5 text-muted-foreground/50" />
+                          <p className="text-sm text-muted-foreground">
+                            No orders yet — run a forecast and click <span className="font-medium text-emerald-300">Create Order</span> to get started.
+                          </p>
                         </td>
                       </tr>
                     ) : (
                       recentOrders.map((order) => (
                         <tr key={order.id} className="border-b border-border/60 align-top">
-                          <td className="px-3 py-3 text-sm font-medium text-foreground">{order.id}</td>
+                          <td className="px-3 py-3 text-sm font-medium text-foreground" title={order.id}>
+                            {order.id.length > 8 ? `…${order.id.slice(-8)}` : order.id}
+                          </td>
                           <td className="px-3 py-3 text-sm text-foreground">
                             <input
                               key={`supplier-${order.id}-${order.supplier ?? ""}`}
@@ -945,7 +963,13 @@ export default function InventoryForecasterPage() {
                           </td>
                           <td className="px-3 py-3 text-sm text-foreground">{formatNumber(order.totalUnits)}</td>
                           <td className="px-3 py-3 text-sm text-foreground">{formatNumber(order.lineCount)}</td>
-                          <td className="px-3 py-3 text-sm text-muted-foreground">{order.forecastRunId ?? "-"}</td>
+                          <td className="px-3 py-3 text-sm text-muted-foreground" title={order.forecastRunId ?? undefined}>
+                            {order.forecastRunId
+                              ? order.forecastRunId.length > 8
+                                ? `…${order.forecastRunId.slice(-8)}`
+                                : order.forecastRunId
+                              : "-"}
+                          </td>
                           <td className="px-3 py-3 text-sm text-muted-foreground">{formatDateTime(order.createdAt)}</td>
                           <td className="px-3 py-3 text-sm text-muted-foreground">{order.notes ?? "-"}</td>
                         </tr>
@@ -967,8 +991,7 @@ export default function InventoryForecasterPage() {
           <div>
             <h2 className="text-lg font-semibold text-foreground">Forecast Results</h2>
             <p className="text-sm text-muted-foreground">
-              One row per SKU. Required Quantity to Order uses the final effective quantity:
-              override if present, otherwise system recommendation.
+              One row per SKU. You can override any quantity — the Order Qty column always shows the number that will be used.
             </p>
           </div>
           <div className="flex flex-wrap gap-2" data-tour="inventory-forecaster-actions">
@@ -1006,106 +1029,68 @@ export default function InventoryForecasterPage() {
           </div>
         </div>
 
-        <div className="mb-5 rounded-2xl border border-emerald-500/25 bg-emerald-500/5 p-4 text-sm text-muted-foreground">
-          <div className="mb-2 font-semibold text-emerald-300">How saved runs and incoming orders work</div>
-          <p>
-            <span className="font-medium text-foreground">Save Run</span> stores a forecast snapshot for reference only.
-            It does <span className="font-medium text-foreground">not</span> create inbound inventory.
-          </p>
-          <p className="mt-2">
-            <span className="font-medium text-emerald-300">Create Order</span> creates an internal supplier order. Future
-            forecasts subtract those units only when the order status is{" "}
-            <span className="font-medium text-foreground">Ordered</span> or{" "}
-            <span className="font-medium text-foreground">In Transit</span> and the ETA is inside the arrival window.
-          </p>
-          <p className="mt-2">
-            If an order should stop counting, change it to{" "}
-            <span className="font-medium text-foreground">Cancelled</span> or{" "}
-            <span className="font-medium text-foreground">Received</span>. Those stay in history but no longer count as inbound.
-          </p>
-        </div>
-
         <div className="mb-5 grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
-          <div className="grid gap-4">
-            <div className="rounded-2xl border border-border bg-background/60 p-4 text-sm text-muted-foreground">
-              <div className="mb-2 font-semibold text-emerald-300">Open in-transit supplier order info</div>
-              The forecaster subtracts open internal supplier orders only when they are marked
-              <span className="font-medium text-foreground"> Ordered</span> or
-              <span className="font-medium text-foreground"> In Transit</span> and the ETA lands on or before the arrival window.
+          <div className="rounded-2xl border border-emerald-500/25 bg-emerald-500/5 p-4 text-sm text-muted-foreground">
+            <div className="mb-2 flex items-center gap-2 font-semibold text-emerald-300">
+              <Info className="h-3.5 w-3.5" />
+              Quick guide
             </div>
-            <div className="rounded-2xl border border-border bg-background/60 p-4 text-sm text-muted-foreground">
-              <div className="mb-3 font-semibold text-emerald-300">What these controls do</div>
-              <div className="grid gap-3 lg:grid-cols-3">
-                <div className="rounded-xl border border-border bg-card/70 p-3">
-                  <div className="text-sm font-semibold text-foreground">Forecast Bucket</div>
-                  <p className="mt-2 text-xs leading-5">
-                    <span className="font-medium text-foreground">Weekly</span> groups demand into week-sized chunks.
-                    Best for most purchasing decisions because it smooths noisy day-to-day spikes.
-                  </p>
-                  <p className="mt-2 text-xs leading-5">
-                    <span className="font-medium text-foreground">Daily</span> looks at day-level demand.
-                    Best when you want tighter timing on fast movers or short lead-time items.
-                  </p>
-                  <p className="mt-2 text-xs leading-5">
-                    Example: if a SKU sells 28 units in 4 weeks, weekly sees about 7 per week. Daily sees about 1 per day.
-                  </p>
-                </div>
-                <div className="rounded-xl border border-border bg-card/70 p-3">
-                  <div className="text-sm font-semibold text-foreground">
-                    Use open in-transit supplier orders in calculations
-                  </div>
-                  <p className="mt-2 text-xs leading-5">
-                    When this is on, the forecaster subtracts incoming units that are already on the way, so it does not over-order.
-                  </p>
-                  <p className="mt-2 text-xs leading-5">
-                    Example: if you need 40 units and already have 15 marked{" "}
-                    <span className="font-medium text-emerald-300">Ordered</span> or{" "}
-                    <span className="font-medium text-emerald-300">In Transit</span>, the new recommendation drops to about 25.
-                  </p>
-                </div>
-                <div className="rounded-xl border border-border bg-card/70 p-3">
-                  <div className="text-sm font-semibold text-foreground">
-                    Show only reorder-relevant SKUs
-                  </div>
-                  <p className="mt-2 text-xs leading-5">
-                    When this is on, you only see SKUs that need attention now, such as items with a positive required quantity or important warnings.
-                  </p>
-                  <p className="mt-2 text-xs leading-5">
-                    Example: if 2,000 SKUs are fine and only 85 need action, this keeps the list focused on the 85.
-                  </p>
-                </div>
-              </div>
-            </div>
+            <ul className="space-y-2 text-xs leading-5">
+              <li>
+                <span className="font-medium text-foreground">Save Run</span> — saves a snapshot for reference. Does not create any orders.
+              </li>
+              <li>
+                <span className="font-medium text-emerald-300">Create Order</span> — creates an internal supplier order using the draft info on the right.
+                Future forecasts automatically subtract these units when the order is marked{" "}
+                <span className="font-medium text-foreground">Ordered</span> or{" "}
+                <span className="font-medium text-foreground">In Transit</span>.
+              </li>
+              <li>
+                <span className="font-medium text-foreground">Export Excel</span> — downloads the full forecast as a spreadsheet with barcodes and images.
+              </li>
+              <li>
+                To stop an order from counting as inbound, change its status to{" "}
+                <span className="font-medium text-foreground">Received</span> or{" "}
+                <span className="font-medium text-foreground">Cancelled</span>.
+              </li>
+            </ul>
           </div>
           <div className="rounded-2xl border border-border bg-background/60 p-4">
             <div className="mb-3 flex items-center gap-2">
               <Truck className="h-4 w-4 text-primary" />
-              <div className="text-sm font-semibold text-foreground">Internal Supplier Order Draft</div>
+              <div className="text-sm font-semibold text-foreground">Order Details</div>
             </div>
+            <p className="mb-3 text-xs text-muted-foreground">
+              Fill this in before clicking Create Order above.
+            </p>
             <div className="space-y-3">
-              <input
-                value={supplier}
-                onChange={(event) => setSupplier(event.target.value)}
-                placeholder="Supplier name"
-                className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm text-foreground outline-none"
-              />
-              <input
-                type="date"
-                value={orderEta}
-                onChange={(event) => setOrderEta(event.target.value)}
-                className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm text-foreground outline-none"
-              />
-              <textarea
-                value={orderNotes}
-                onChange={(event) => setOrderNotes(event.target.value)}
-                placeholder="Internal notes"
-                rows={3}
-                className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm text-foreground outline-none"
-              />
-              <div className="text-xs text-muted-foreground">
-                Draft orders stay visible here, but only{" "}
-                <span className="font-medium text-emerald-300">Ordered</span> and{" "}
-                <span className="font-medium text-emerald-300">In Transit</span> subtract from future forecasts.
+              <div>
+                <label className="mb-1 block text-xs font-medium text-muted-foreground">Supplier Name</label>
+                <input
+                  value={supplier}
+                  onChange={(event) => setSupplier(event.target.value)}
+                  placeholder="e.g. Main warehouse, AliExpress, etc."
+                  className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm text-foreground outline-none"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-muted-foreground">Expected Arrival Date</label>
+                <input
+                  type="date"
+                  value={orderEta}
+                  onChange={(event) => setOrderEta(event.target.value)}
+                  className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm text-foreground outline-none"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-muted-foreground">Notes (optional)</label>
+                <textarea
+                  value={orderNotes}
+                  onChange={(event) => setOrderNotes(event.target.value)}
+                  placeholder="Any internal notes about this order…"
+                  rows={2}
+                  className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm text-foreground outline-none"
+                />
               </div>
             </div>
           </div>
@@ -1119,17 +1104,17 @@ export default function InventoryForecasterPage() {
                   {[
                     "Title",
                     "SKU",
-                    "Current Stock",
+                    "In Stock",
                     "Sales Summary",
-                    "Transit Demand",
-                    "Post-Arrival Demand",
+                    "Needed While Shipping",
+                    "Needed After Arrival",
                     "Safety Buffer",
-                    "Gross Need",
-                    "Inbound",
-                    "Projected On Arrival",
-                    "Recommended",
-                    "Override",
-                    "Required Qty",
+                    "Total Need",
+                    "Already Coming",
+                    "Est. Stock on Arrival",
+                    "Suggested",
+                    "Your Override",
+                    "Order Qty",
                     "Pattern",
                     "Model",
                     "Confidence",
@@ -1153,14 +1138,22 @@ export default function InventoryForecasterPage() {
                   </tr>
                 ) : !result ? (
                   <tr>
-                    <td colSpan={17} className="px-4 py-12 text-center text-muted-foreground">
-                      Run a forecast to see replenishment recommendations.
+                    <td colSpan={17} className="px-4 py-16 text-center">
+                      <Sparkles className="mx-auto mb-3 h-6 w-6 text-primary/50" />
+                      <p className="text-sm font-medium text-foreground">No forecast yet</p>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        Adjust the controls on the left, then click <span className="font-medium text-primary">Run Forecast</span> to see what needs reordering.
+                      </p>
                     </td>
                   </tr>
                 ) : effectiveLines.length === 0 ? (
                   <tr>
-                    <td colSpan={17} className="px-4 py-12 text-center text-muted-foreground">
-                      No SKUs matched the current filter set.
+                    <td colSpan={17} className="px-4 py-16 text-center">
+                      <Boxes className="mx-auto mb-3 h-6 w-6 text-emerald-400/50" />
+                      <p className="text-sm font-medium text-foreground">All SKUs are well-stocked</p>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        Nothing needs reordering right now. Uncheck &quot;Only show SKUs that need attention&quot; to see all SKUs.
+                      </p>
                     </td>
                   </tr>
                 ) : (
@@ -1211,16 +1204,27 @@ export default function InventoryForecasterPage() {
                               })
                             }
                             placeholder="-"
-                            className="w-24 rounded-lg border border-input bg-background px-2 py-1.5 text-sm text-foreground outline-none"
+                            className={cn(
+                              "w-24 rounded-lg border px-2 py-1.5 text-sm text-foreground outline-none",
+                              line.overrideQty != null
+                                ? "border-violet-500/50 bg-violet-500/10"
+                                : "border-input bg-background",
+                            )}
                           />
                         </td>
-                        <td
-                          className={cn(
-                            "px-3 py-3 text-sm font-semibold",
-                            line.finalQty > 0 ? "text-emerald-400" : "text-primary",
-                          )}
-                        >
-                          {formatNumber(line.finalQty)}
+                        <td className="px-3 py-3">
+                          <div
+                            className={cn(
+                              "inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-sm font-semibold",
+                              line.overrideQty != null
+                                ? "border border-violet-500/30 bg-violet-500/10 text-violet-300"
+                                : line.finalQty > 0
+                                  ? "text-emerald-400"
+                                  : "text-primary",
+                            )}
+                          >
+                            {formatNumber(line.finalQty)}
+                          </div>
                         </td>
                         <td className="px-3 py-3 text-sm text-foreground">
                           {line.demandPattern.replace(/_/g, " ")}
