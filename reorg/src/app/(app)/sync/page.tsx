@@ -935,12 +935,12 @@ export default function SyncPage() {
                   </div>
                 )}
 
-                {/* ---- eBay API credits ---- */}
+                {/* ---- eBay API Quota ---- */}
                 {isEbay && (
                   <div className="mt-4 rounded-lg border border-border/60 bg-muted/10 px-3 py-2.5">
                     <div className="flex items-center justify-between gap-2">
                       <span className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
-                        eBay API Credits
+                        eBay API Quota
                       </span>
                       {rateLimits?.nextResetAt && (
                         <span className="text-[10px] text-muted-foreground">
@@ -948,23 +948,22 @@ export default function SyncPage() {
                         </span>
                       )}
                     </div>
-                    {rateLimits?.degradedNote && (
+                    {rateLimits?.degradedNote && !rateLimits.isLocallyTracked && (
                       <p className="mt-1.5 text-[10px] leading-snug text-amber-400/90">{rateLimits.degradedNote}</p>
                     )}
                     {rateLimits && rateLimits.methods.length > 0 ? (
                       <div className="mt-2 space-y-2">
                         {rateLimits.methods.map((method) => {
                           const isUnknown = method.limit === 0;
-                          const usedCount = method.limit > 0 ? method.count : 0;
-                          // Bar shows how much of the quota has been CONSUMED
+                          const remainingCount = method.limit > 0 ? method.remaining : 0;
                           const usedPct = isUnknown
                             ? 0
                             : method.status === "exhausted"
                               ? 100
                               : method.limit > 0
                                 ? Math.max(
-                                    usedCount > 0 ? 2 : 0,
-                                    Math.round((usedCount / method.limit) * 100),
+                                    method.count > 0 ? 2 : 0,
+                                    Math.round((method.count / method.limit) * 100),
                                   )
                                 : 0;
                           const barColor =
@@ -980,7 +979,7 @@ export default function SyncPage() {
                               : "text-emerald-400";
                           const countLabel = isUnknown
                             ? "—"
-                            : `${usedCount.toLocaleString()} / ${method.limit.toLocaleString()}`;
+                            : `${remainingCount.toLocaleString()} / ${method.limit.toLocaleString()}`;
                           return (
                             <div key={method.name}>
                               <div className="flex items-center justify-between text-[11px]">
@@ -1001,7 +1000,7 @@ export default function SyncPage() {
                       </div>
                     ) : (
                       <p className="mt-2 text-[11px] text-muted-foreground">
-                        {isSyncing ? "Loading..." : "Credits will load on next sync."}
+                        {isSyncing ? "Loading..." : "Quota data will appear after next sync or page refresh."}
                       </p>
                     )}
                   </div>
@@ -1148,9 +1147,6 @@ export default function SyncPage() {
                   <div className="mt-4 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
                     <span className="font-semibold">eBay daily quota reached</span>
                     {cooldown?.retryLabel ? ` — resets around ${cooldown.retryLabel}` : " — waiting for quota reset"}
-                    {!rateLimits?.isLocallyTracked && (
-                      <span className="ml-1 opacity-80">· Other method counts are unknown until quota resets</span>
-                    )}
                   </div>
                 )}
 

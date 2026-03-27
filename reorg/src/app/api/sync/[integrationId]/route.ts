@@ -21,6 +21,7 @@ import {
   getEbayCredentialFingerprint,
   getEbayMethodRate,
   getEbayTradingRateLimitSnapshotForIntegration,
+  serializeSnapshotForConfig,
 } from "@/lib/services/ebay-analytics";
 import { getSharedEbayQuotaStoreCount } from "@/lib/services/ebay-sync-budget";
 import { getReservedEbayGetItemCalls } from "@/lib/services/ebay-sync-policy";
@@ -277,48 +278,77 @@ export async function GET(
         })
       : null;
 
-    if (isEbayPlatform(integration.platform) && rateLimits) {
-      const savedSnapshot = deserializeSnapshotFromConfig(config.syncState?.lastRateLimitSnapshot);
-      if (savedSnapshot?.isLocallyTracked) {
-        const localByName = new Map(savedSnapshot.methods.map((m) => [m.name, m]));
-        rateLimits = {
-          ...rateLimits,
-          methods: rateLimits.methods.map((m) => {
-            const local = localByName.get(m.name);
-            if (!local || local.count <= m.count) return m;
-            const count = Math.max(m.count, local.count);
-            const limit = m.limit || local.limit || 5000;
-            const remaining = Math.max(0, limit - count);
-            return { ...m, count, limit, remaining };
-          }),
-        };
-      }
+    // When we get live data from eBay, persist it for both this integration and
+    // any sibling eBay integration that shares the same developer App ID so
+    // both cards always show the same live quota.
+    if (isEbayPlatform(integration.platform) && rateLimits && !rateLimits.isDegradedEstimate) {
+      const serialized = serializeSnapshotForConfig(rateLimits);
+      const fingerprint = getEbayCredentialFingerprint(integration);
+
+      after(async () => {
+        try {
+          const latest = await db.integration.findUnique({
+            where: { id: integration.id },
+            select: { config: true, platform: true },
+          });
+          if (latest) {
+            const merged = mergeIntegrationConfig(latest.platform, latest.config, {
+              syncState: { lastRateLimitSnapshot: serialized },
+            });
+            await db.integration.update({
+              where: { id: integration.id },
+              data: { config: merged as unknown as Prisma.InputJsonValue },
+            });
+          }
+
+          if (fingerprint) {
+            const siblings = await db.integration.findMany({
+              where: {
+                platform: { in: ["TPP_EBAY", "TT_EBAY"] as Platform[] },
+                id: { not: integration.id },
+                enabled: true,
+              },
+              select: { id: true, platform: true, config: true },
+            });
+            for (const sib of siblings) {
+              if (getEbayCredentialFingerprint(sib) !== fingerprint) continue;
+              const sibMerged = mergeIntegrationConfig(sib.platform, sib.config, {
+                syncState: { lastRateLimitSnapshot: serialized },
+              });
+              await db.integration.update({
+                where: { id: sib.id },
+                data: { config: sibMerged as unknown as Prisma.InputJsonValue },
+              });
+            }
+          }
+        } catch (e) {
+          console.error("[sync][GET] Failed to persist live eBay snapshot:", e);
+        }
+      });
     }
 
+    // Fallback: if live fetch failed or was degraded, try the last saved live
+    // snapshot from this integration or a sibling with the same App ID.
     if (isEbayPlatform(integration.platform) && (!rateLimits || rateLimits.isDegradedEstimate)) {
-      const fingerprint = getEbayCredentialFingerprint(integration);
-      const candidates = fingerprint
-        ? await db.integration.findMany({
-            where: { platform: { in: ["TPP_EBAY", "TT_EBAY"] as Platform[] }, enabled: true },
-            select: { id: true, platform: true, config: true },
-          })
-        : [];
-      const self = candidates.find((c) => c.id === integration.id);
-      const selfConfig = self
-        ? getIntegrationConfig({ ...integration, config: self.config })
-        : config;
-      const selfSnapshot = deserializeSnapshotFromConfig(selfConfig.syncState?.lastRateLimitSnapshot);
-      if (selfSnapshot) {
+      const selfSnapshot = deserializeSnapshotFromConfig(config.syncState?.lastRateLimitSnapshot);
+      if (selfSnapshot && !selfSnapshot.isLocallyTracked) {
         rateLimits = selfSnapshot;
       } else {
-        for (const sibling of candidates) {
-          if (sibling.id === integration.id) continue;
-          if (getEbayCredentialFingerprint(sibling) !== fingerprint) continue;
-          const sibConfig = getIntegrationConfig(sibling);
-          const sibSnapshot = deserializeSnapshotFromConfig(sibConfig.syncState?.lastRateLimitSnapshot);
-          if (sibSnapshot) {
-            rateLimits = sibSnapshot;
-            break;
+        const fingerprint = getEbayCredentialFingerprint(integration);
+        if (fingerprint) {
+          const candidates = await db.integration.findMany({
+            where: { platform: { in: ["TPP_EBAY", "TT_EBAY"] as Platform[] }, enabled: true, id: { not: integration.id } },
+            select: { id: true, platform: true, config: true },
+          });
+          for (const sibling of candidates) {
+            if (getEbayCredentialFingerprint(sibling) !== fingerprint) continue;
+            const sibSnapshot = deserializeSnapshotFromConfig(
+              getIntegrationConfig(sibling).syncState?.lastRateLimitSnapshot,
+            );
+            if (sibSnapshot && !sibSnapshot.isLocallyTracked) {
+              rateLimits = sibSnapshot;
+              break;
+            }
           }
         }
       }
@@ -371,36 +401,13 @@ export async function GET(
       rateLimits = buildGetItemCooldownRateLimitsSnapshot(cooldownUntil);
     }
 
-    // If we now have a cooldown but rateLimits is still just the generic healthy
-    // placeholder, upgrade it to the exhausted cooldown snapshot.
-    // SKIP if we already have locally tracked data — it's more accurate.
     if (
       isEbayPlatform(integration.platform) &&
       cooldownUntil &&
       rateLimits?.isDegradedEstimate &&
-      !rateLimits?.isLocallyTracked &&
       rateLimits.exhaustedMethods.length === 0
     ) {
       rateLimits = buildGetItemCooldownRateLimitsSnapshot(cooldownUntil);
-    }
-
-    // If a cooldown is active (GetItem exhausted) but the locally tracked snapshot
-    // still shows GetItem as healthy (stale data from before the catch-block fix),
-    // retroactively mark GetItem as exhausted so the UI bar is correct immediately.
-    if (
-      cooldownUntil &&
-      rateLimits?.isLocallyTracked &&
-      rateLimits.methods.length > 0
-    ) {
-      const gi = rateLimits.methods.find((m) => m.name === "GetItem");
-      if (gi && gi.status !== "exhausted") {
-        gi.count = gi.limit;
-        gi.remaining = 0;
-        gi.status = "exhausted";
-        if (!rateLimits.exhaustedMethods.includes("GetItem")) {
-          rateLimits.exhaustedMethods.push("GetItem");
-        }
-      }
     }
 
     const getItemRate = rateLimits ? getEbayMethodRate(rateLimits, "GetItem") : null;

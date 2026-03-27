@@ -9,11 +9,9 @@ import {
 } from "@/lib/services/sync-control";
 import {
   buildEbayQuotaExhaustedMessage,
-  buildLocallyTrackedSnapshot,
   getEbayMethodRate,
   getEbayTradingRateLimitSnapshotForIntegration,
   mergeSyncCallsIntoLocalUsage,
-  serializeSnapshotForConfig,
   type EbayTradingRateLimitSnapshot,
   type LocalEbayApiUsage,
   type MonitoredEbayMethod,
@@ -836,11 +834,9 @@ export async function runEbayTtSync(
           cfg.syncState?.localApiUsage as LocalEbayApiUsage | undefined,
           apiCalls,
         );
-        const localSnapshot = buildLocallyTrackedSnapshot(updatedUsage);
         const updatedConfig = mergeIntegrationConfig(latest.platform, latest.config, {
           syncState: {
             localApiUsage: updatedUsage,
-            lastRateLimitSnapshot: serializeSnapshotForConfig(localSnapshot),
           },
         });
         await db.integration.update({
