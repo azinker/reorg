@@ -14,10 +14,12 @@ type FetchedImage = { buffer: ArrayBuffer; extension: ImgExt } | null;
 const IMAGE_BATCH = 40;
 const IMAGE_TIMEOUT_MS = 3_000;
 const PRODUCT_IMAGE_SIZE = 112;
+const BARCODE_MAX_WIDTH = 140;
+const BARCODE_MAX_HEIGHT = 68;
 
 const EXPORT_COLUMNS = [
   { header: "Product Title", width: 45 },
-  { header: "UPC", width: 18 },
+  { header: "UPC", width: 24 },
   { header: "SKU", width: 45 },
   { header: "Product Image", width: 18 },
   { header: "Required Quantity to Order", width: 30 },
@@ -170,6 +172,46 @@ async function fetchProductImage(url: string | null, signal?: AbortSignal): Prom
   }
 }
 
+type BarcodeResult = { buffer: ArrayBuffer; width: number; height: number } | null;
+
+let _bwipToCanvas: ((canvas: HTMLCanvasElement, opts: Record<string, unknown>) => void) | null = null;
+
+async function loadBwip() {
+  if (_bwipToCanvas) return _bwipToCanvas;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const mod = await import("bwip-js" as any);
+    const fn = mod.toCanvas ?? mod.default?.toCanvas;
+    if (typeof fn === "function") { _bwipToCanvas = fn; return fn; }
+  } catch { /* bwip-js not available in browser — skip barcodes */ }
+  return null;
+}
+
+async function generateBarcode(upc: string | null): Promise<BarcodeResult> {
+  if (!upc || typeof document === "undefined") return null;
+  const toCanvas = await loadBwip();
+  if (!toCanvas) return null;
+
+  const digits = upc.replace(/\D/g, "");
+  const configs = [
+    digits.length === 12 ? { bcid: "upca", text: digits } :
+    digits.length === 13 ? { bcid: "ean13", text: digits } :
+    { bcid: "code128", text: upc },
+    { bcid: "code128", text: upc },
+  ];
+
+  const canvas = document.createElement("canvas");
+  for (const cfg of configs) {
+    try {
+      toCanvas(canvas, { ...cfg, scale: 2, height: 18, includetext: false, backgroundcolor: "FFFFFF" } as Record<string, unknown>);
+      const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/png"));
+      if (!blob) continue;
+      return { buffer: await blob.arrayBuffer(), width: canvas.width, height: canvas.height };
+    } catch { continue; }
+  }
+  return null;
+}
+
 function demandPatternGuide(pattern: string) {
   const guides: Record<string, [string, string, string]> = {
     NEW_ITEM: ["Demand Pattern: New item", "A recently listed item without enough sales history for reliable forecasting.", "Example: a listing created in the last 45 days without enough data yet."],
@@ -311,6 +353,7 @@ export async function buildForecastWorkbookOnClient(
   );
 
   const images: FetchedImage[] = new Array(sorted.length).fill(null);
+  const barcodes: BarcodeResult[] = new Array(sorted.length).fill(null);
   let fetched = 0;
   let failed = 0;
   const total = sorted.length;
@@ -321,23 +364,23 @@ export async function buildForecastWorkbookOnClient(
     const batch = sorted.slice(start, end);
 
     const results = await Promise.allSettled(
-      batch.map((line) => fetchProductImage(line.imageUrl, signal)),
+      batch.flatMap((line, i) => [
+        fetchProductImage(line.imageUrl, signal).then((r) => { images[start + i] = r; }),
+        generateBarcode(line.upc).then((r) => { barcodes[start + i] = r; }),
+      ]),
     );
 
-    results.forEach((r, i) => {
-      if (r.status === "fulfilled" && r.value) {
-        images[start + i] = r.value;
-      } else {
-        failed++;
-      }
+    for (let i = 0; i < batch.length; i++) {
+      const imgResult = results[i * 2];
+      if (imgResult.status !== "fulfilled" || !images[start + i]) failed++;
       fetched++;
-    });
+    }
 
     const pct = 5 + Math.round((fetched / total) * 75);
     onProgress({
       phase: "images",
       percent: pct,
-      message: `Fetching product images... (${fetched} / ${total})`,
+      message: `Fetching images & barcodes... (${fetched} / ${total})`,
       imageStats: { fetched, failed, total },
     });
   }
@@ -352,12 +395,13 @@ export async function buildForecastWorkbookOnClient(
   };
 
   const imgColIdx = HEADERS.indexOf("Product Image") + 1;
+  const upcColIdx = HEADERS.indexOf("UPC") + 1;
+  const totalDays = result.controls.transitDays + result.controls.desiredCoverageDays;
 
   for (let idx = 0; idx < sorted.length; idx++) {
     const line = sorted[idx];
     const rowNum = headerRow + 1 + idx;
     const row = ws.getRow(rowNum);
-    const totalDays = result.controls.transitDays + result.controls.desiredCoverageDays;
     row.values = lineValues(line, totalDays);
     row.height = 108;
     row.alignment = { vertical: "middle", horizontal: "center", wrapText: true };
@@ -366,6 +410,12 @@ export async function buildForecastWorkbookOnClient(
       cell.alignment = { vertical: "middle", horizontal: "center", wrapText: true };
       cell.border = border;
     });
+
+    if (upcColIdx > 0) {
+      const upcCell = ws.getCell(rowNum, upcColIdx);
+      upcCell.numFmt = "@";
+      upcCell.alignment = { vertical: "bottom", horizontal: "center", wrapText: false };
+    }
 
     const costCol = HEADERS.indexOf("Supplier Cost") + 1;
     const totalCostCol = HEADERS.indexOf("Total Cost") + 1;
@@ -381,6 +431,23 @@ export async function buildForecastWorkbookOnClient(
         type: "pattern", pattern: "solid", fgColor: { argb: "33DC2626" },
       };
       ws.getCell(rowNum, totalCostCol).font = { color: { argb: "FFEF4444" } };
+    }
+
+    const barcode = barcodes[idx];
+    if (barcode && upcColIdx > 0) {
+      try {
+        const bcId = workbook.addImage({ buffer: barcode.buffer, extension: "png" });
+        const colW = ws.getColumn(upcColIdx).width ?? 24;
+        const colPx = Math.round(colW * 7 + 5);
+        const fitW = Math.min(barcode.width, BARCODE_MAX_WIDTH, colPx - 8);
+        const fitH = Math.min(barcode.height, BARCODE_MAX_HEIGHT);
+        const xOff = Math.max(0, (colPx - fitW) / 2);
+        ws.addImage(bcId, {
+          tl: { col: upcColIdx - 1 + xOff / Math.max(1, colW), row: rowNum - 1 + 4 / Math.max(1, 108) },
+          ext: { width: fitW, height: fitH },
+          editAs: "oneCell",
+        });
+      } catch { /* skip barcode */ }
     }
 
     const img = images[idx];

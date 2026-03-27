@@ -7,7 +7,7 @@ type WorkbookImageExtension = "png" | "jpeg" | "gif";
 const EXPORT_COLUMNS = [
   { header: "Product Title", width: 45 },
   { header: "UPC Image", width: 20 },
-  { header: "UPC", width: 18 },
+  { header: "UPC", width: 24 },
   { header: "SKU", width: 45 },
   { header: "Product Image", width: 18 },
   { header: "Required Quantity to Order", width: 30 },
@@ -629,6 +629,12 @@ export async function buildInventoryForecastWorkbook(result: ForecastResult) {
         right: { style: "thin", color: { argb: "FF374151" } },
       };
     });
+    const upcCol = EXPORT_HEADERS.indexOf("UPC") + 1;
+    if (upcCol > 0) {
+      worksheet.getCell(rowNumber, upcCol).numFmt = "@";
+      worksheet.getCell(rowNumber, upcCol).alignment = { vertical: "bottom", horizontal: "center", wrapText: false };
+    }
+
     const supplierCostCol = EXPORT_HEADERS.indexOf("Supplier Cost") + 1;
     const totalCostCol = EXPORT_HEADERS.indexOf("Total Cost") + 1;
     worksheet.getCell(rowNumber, supplierCostCol).numFmt = '$#,##0.00';
