@@ -581,17 +581,8 @@ export function buildForecastResultLines(args: {
   );
 }
 
-const ACTIONABLE_REORDER_WARNING_FLAGS = new Set<ForecastWarningFlag>([
-  "IN_TRANSIT_EXISTS",
-  "SUSPECTED_STOCKOUT",
-  "EBAY_HISTORY_TRUNCATED",
-]);
-
 export function isReorderRelevantLine(line: ForecastLineResult) {
-  if (line.finalQty > 0) return true;
-  if (line.openInTransitQty > 0) return true;
-  if (line.salesTotalUnits === 0) return false;
-  return line.warningFlags.some((flag) => ACTIONABLE_REORDER_WARNING_FLAGS.has(flag));
+  return line.finalQty > 0 || line.openInTransitQty > 0;
 }
 
 export const FORECAST_CONFIDENCE_LEGEND: Record<ForecastConfidence, string> = {
