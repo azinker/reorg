@@ -10,7 +10,6 @@ import {
 import {
   buildEbayQuotaExhaustedMessage,
   buildLocallyTrackedSnapshot,
-  fetchRateLimitSnapshotWithToken,
   getEbayMethodRate,
   getEbayTradingRateLimitSnapshotForIntegration,
   mergeSyncCallsIntoLocalUsage,
@@ -830,41 +829,24 @@ export async function runEbayTtSync(
     });
   } finally {
     try {
-      const token = await getAccessToken(integration.id, ebayConfig);
-      const freshSnapshot = await fetchRateLimitSnapshotWithToken(token);
       const latest = await db.integration.findUnique({ where: { id: integration.id } });
       if (latest) {
         const cfg = getIntegrationConfig(latest);
-        if (freshSnapshot) {
-          const updatedConfig = mergeIntegrationConfig(latest.platform, latest.config, {
-            syncState: { lastRateLimitSnapshot: serializeSnapshotForConfig(freshSnapshot) },
-          });
-          await db.integration.update({
-            where: { id: integration.id },
-            data: { config: updatedConfig as unknown as Prisma.InputJsonValue },
-          });
-        } else {
-          const updatedUsage = mergeSyncCallsIntoLocalUsage(
-            cfg.syncState?.localApiUsage as LocalEbayApiUsage | undefined,
-            apiCalls,
-          );
-          const localSnapshot = buildLocallyTrackedSnapshot(updatedUsage);
-          const updatedConfig = mergeIntegrationConfig(latest.platform, latest.config, {
-            syncState: {
-              localApiUsage: updatedUsage,
-              lastRateLimitSnapshot: serializeSnapshotForConfig(localSnapshot),
-            },
-          });
-          await db.integration.update({
-            where: { id: integration.id },
-            data: { config: updatedConfig as unknown as Prisma.InputJsonValue },
-          });
-          console.log(
-            `[ebay-tt-sync] GetApiAccessRules unavailable — saved local tracking: ` +
-            `GetItem=${updatedUsage.GetItem}, GetSellerList=${updatedUsage.GetSellerList}, ` +
-            `GetSellerEvents=${updatedUsage.GetSellerEvents}`,
-          );
-        }
+        const updatedUsage = mergeSyncCallsIntoLocalUsage(
+          cfg.syncState?.localApiUsage as LocalEbayApiUsage | undefined,
+          apiCalls,
+        );
+        const localSnapshot = buildLocallyTrackedSnapshot(updatedUsage);
+        const updatedConfig = mergeIntegrationConfig(latest.platform, latest.config, {
+          syncState: {
+            localApiUsage: updatedUsage,
+            lastRateLimitSnapshot: serializeSnapshotForConfig(localSnapshot),
+          },
+        });
+        await db.integration.update({
+          where: { id: integration.id },
+          data: { config: updatedConfig as unknown as Prisma.InputJsonValue },
+        });
       }
     } catch (analyticsErr) {
       console.error("[ebay-tt-sync] Post-sync analytics persist failed:", analyticsErr);

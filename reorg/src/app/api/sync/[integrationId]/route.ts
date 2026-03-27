@@ -21,7 +21,6 @@ import {
   getEbayCredentialFingerprint,
   getEbayMethodRate,
   getEbayTradingRateLimitSnapshotForIntegration,
-  serializeSnapshotForConfig,
 } from "@/lib/services/ebay-analytics";
 import { getSharedEbayQuotaStoreCount } from "@/lib/services/ebay-sync-budget";
 import { getReservedEbayGetItemCalls } from "@/lib/services/ebay-sync-policy";
@@ -278,18 +277,22 @@ export async function GET(
         })
       : null;
 
-    if (isEbayPlatform(integration.platform) && rateLimits && !rateLimits.isDegradedEstimate) {
-      const updatedConfig = mergeIntegrationConfig(
-        integration.platform,
-        integration.config,
-        { syncState: { lastRateLimitSnapshot: serializeSnapshotForConfig(rateLimits) } },
-      );
-      db.integration.update({
-        where: { id: integration.id },
-        data: { config: updatedConfig as unknown as Prisma.InputJsonValue },
-      }).catch((err) =>
-        console.error(`[sync][GET] Failed to persist rateLimits snapshot:`, err),
-      );
+    if (isEbayPlatform(integration.platform) && rateLimits) {
+      const savedSnapshot = deserializeSnapshotFromConfig(config.syncState?.lastRateLimitSnapshot);
+      if (savedSnapshot?.isLocallyTracked) {
+        const localByName = new Map(savedSnapshot.methods.map((m) => [m.name, m]));
+        rateLimits = {
+          ...rateLimits,
+          methods: rateLimits.methods.map((m) => {
+            const local = localByName.get(m.name);
+            if (!local || local.count <= m.count) return m;
+            const count = Math.max(m.count, local.count);
+            const limit = m.limit || local.limit || 5000;
+            const remaining = Math.max(0, limit - count);
+            return { ...m, count, limit, remaining };
+          }),
+        };
+      }
     }
 
     if (isEbayPlatform(integration.platform) && (!rateLimits || rateLimits.isDegradedEstimate)) {
