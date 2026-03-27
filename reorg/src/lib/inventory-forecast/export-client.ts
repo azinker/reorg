@@ -20,11 +20,11 @@ const EXPORT_COLUMNS = [
   { header: "UPC", width: 18 },
   { header: "SKU", width: 45 },
   { header: "Product Image", width: 18 },
-  { header: "Required Quantity to Order", width: 16 },
+  { header: "Required Quantity to Order", width: 30 },
   { header: "Supplier Cost", width: 14 },
-  { header: "Total Cost", width: 14 },
-  { header: "Sales History Summary", width: 24 },
-  { header: "Gross Required Quantity (Before Current On Hand)", width: 18 },
+  { header: "Total Cost", width: 20 },
+  { header: "Sales History Summary", width: 30 },
+  { header: "Gross Required Quantity (Before Current On Hand)", width: 36 },
   { header: "Current Available Inventory", width: 16 },
   { header: "Safety Buffer", width: 14 },
   { header: "Open In-Transit Quantity", width: 16 },
@@ -358,6 +358,17 @@ export async function buildForecastWorkbookOnClient(
     const totalCostCol = HEADERS.indexOf("Total Cost") + 1;
     ws.getCell(rowNum, costCol).numFmt = "$#,##0.00";
     ws.getCell(rowNum, totalCostCol).numFmt = "$#,##0.00";
+
+    if (line.supplierCost == null && line.finalQty > 0) {
+      ws.getCell(rowNum, costCol).fill = {
+        type: "pattern", pattern: "solid", fgColor: { argb: "33DC2626" },
+      };
+      ws.getCell(rowNum, costCol).font = { color: { argb: "FFEF4444" } };
+      ws.getCell(rowNum, totalCostCol).fill = {
+        type: "pattern", pattern: "solid", fgColor: { argb: "33DC2626" },
+      };
+      ws.getCell(rowNum, totalCostCol).font = { color: { argb: "FFEF4444" } };
+    }
 
     const img = images[idx];
     if (img && imgColIdx > 0) {

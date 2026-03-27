@@ -10,11 +10,11 @@ const EXPORT_COLUMNS = [
   { header: "UPC", width: 18 },
   { header: "SKU", width: 45 },
   { header: "Product Image", width: 18 },
-  { header: "Required Quantity to Order", width: 16 },
+  { header: "Required Quantity to Order", width: 30 },
   { header: "Supplier Cost", width: 14 },
-  { header: "Total Cost", width: 14 },
-  { header: "Sales History Summary", width: 24 },
-  { header: "Gross Required Quantity (Before Current On Hand)", width: 18 },
+  { header: "Total Cost", width: 20 },
+  { header: "Sales History Summary", width: 30 },
+  { header: "Gross Required Quantity (Before Current On Hand)", width: 36 },
   { header: "Current Available Inventory", width: 16 },
   { header: "Safety Buffer", width: 14 },
   { header: "Open In-Transit Quantity", width: 16 },
@@ -617,6 +617,17 @@ export async function buildInventoryForecastWorkbook(result: ForecastResult) {
     });
     worksheet.getCell(rowNumber, 7).numFmt = '$#,##0.00';
     worksheet.getCell(rowNumber, 8).numFmt = '$#,##0.00';
+
+    if (line.supplierCost == null && line.finalQty > 0) {
+      worksheet.getCell(rowNumber, 7).fill = {
+        type: "pattern", pattern: "solid", fgColor: { argb: "33DC2626" },
+      };
+      worksheet.getCell(rowNumber, 7).font = { color: { argb: "FFEF4444" } };
+      worksheet.getCell(rowNumber, 8).fill = {
+        type: "pattern", pattern: "solid", fgColor: { argb: "33DC2626" },
+      };
+      worksheet.getCell(rowNumber, 8).font = { color: { argb: "FFEF4444" } };
+    }
 
     const barcode = barcodeBuffers[index];
     if (barcode) {
