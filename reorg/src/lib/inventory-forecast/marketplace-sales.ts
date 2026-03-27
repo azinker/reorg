@@ -46,9 +46,10 @@ const parser = new XMLParser({
 const EBAY_MAX_LOOKBACK_DAYS = 90;
 const EBAY_PAGE_CONCURRENCY = 4;
 const SHOPIFY_PAGE_LIMIT = 250;
-const BIGCOMMERCE_PAGE_LIMIT = 50;
+const BIGCOMMERCE_PAGE_LIMIT = 250;
 const BIGCOMMERCE_MAX_RETRIES = 3;
 const BIGCOMMERCE_RETRY_FALLBACK_MS = 2_000;
+const BIGCOMMERCE_PRODUCT_CONCURRENCY = 5;
 type ForecastSalesFetchOptions = {
   signal?: AbortSignal;
 };
@@ -540,37 +541,46 @@ async function fetchBigCommerceSales(
     const orders = (await ordersResponse.json()) as Array<Record<string, unknown>>;
     keepGoing = orders.length === BIGCOMMERCE_PAGE_LIMIT;
 
-    for (const order of orders) {
-      const orderId = Number(order.id ?? 0);
-      const orderDate = new Date(String(order.date_created ?? ""));
-      if (!Number.isFinite(orderId) || Number.isNaN(orderDate.getTime())) continue;
-      const statusLabel = getString(order.status) ?? "";
-      const isCancelled = statusLabel.toLowerCase().includes("cancel");
-      const products = await fetchBigCommerceOrderProducts(
-        config.storeHash,
-        config.accessToken,
-        orderId,
-        options,
+    const validOrders = orders
+      .map((order) => ({
+        order,
+        orderId: Number(order.id ?? 0),
+        orderDate: new Date(String(order.date_created ?? "")),
+        isCancelled: (getString(order.status) ?? "").toLowerCase().includes("cancel"),
+      }))
+      .filter((entry) => Number.isFinite(entry.orderId) && !Number.isNaN(entry.orderDate.getTime()));
+
+    for (let batch = 0; batch < validOrders.length; batch += BIGCOMMERCE_PRODUCT_CONCURRENCY) {
+      const chunk = validOrders.slice(batch, batch + BIGCOMMERCE_PRODUCT_CONCURRENCY);
+      const productResults = await Promise.all(
+        chunk.map((entry) =>
+          fetchBigCommerceOrderProducts(config.storeHash, config.accessToken, entry.orderId, options),
+        ),
       );
-      for (let index = 0; index < products.length; index += 1) {
-        const product = products[index];
-        const sku = getString(product.sku) ?? "";
-        const quantity = Number(product.quantity ?? 0);
-        if (!sku.trim() || quantity <= 0) continue;
-        lines.push({
-          platform: integration.platform,
-          externalOrderId: String(orderId),
-          externalLineId: String(product.id ?? `${orderId}:${index}`),
-          orderDate,
-          sku,
-          title: getString(product.name) ?? null,
-          quantity,
-          platformItemId: product.product_id != null ? String(product.product_id) : null,
-          platformVariantId: product.product_options != null ? String(product.variant_id ?? "") || null : null,
-          isCancelled,
-          isReturn: false,
-          rawData: { order, product },
-        });
+
+      for (let ci = 0; ci < chunk.length; ci += 1) {
+        const entry = chunk[ci];
+        const products = productResults[ci];
+        for (let index = 0; index < products.length; index += 1) {
+          const product = products[index];
+          const sku = getString(product.sku) ?? "";
+          const quantity = Number(product.quantity ?? 0);
+          if (!sku.trim() || quantity <= 0) continue;
+          lines.push({
+            platform: integration.platform,
+            externalOrderId: String(entry.orderId),
+            externalLineId: String(product.id ?? `${entry.orderId}:${index}`),
+            orderDate: entry.orderDate,
+            sku,
+            title: getString(product.name) ?? null,
+            quantity,
+            platformItemId: product.product_id != null ? String(product.product_id) : null,
+            platformVariantId: product.product_options != null ? String(product.variant_id ?? "") || null : null,
+            isCancelled: entry.isCancelled,
+            isReturn: false,
+            rawData: { order: entry.order, product },
+          });
+        }
       }
     }
 

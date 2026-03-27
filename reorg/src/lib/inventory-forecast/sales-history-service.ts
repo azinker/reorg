@@ -17,6 +17,7 @@ const LOCAL_LIVE_FORECAST_HISTORY_LOOKBACK_LIMIT_DAYS = 30;
 const LOCAL_FORECAST_SYNC_TIMEOUT_MS = 15_000;
 const LOCAL_EBAY_FORECAST_SYNC_TIMEOUT_MS = 120_000;
 const DEPLOYED_EBAY_SYNC_TIMEOUT_MS = 180_000;
+const DEPLOYED_BIGCOMMERCE_SYNC_TIMEOUT_MS = 120_000;
 const DEPLOYED_OTHER_SYNC_TIMEOUT_MS = 60_000;
 const LOCAL_CACHED_FORECAST_PLATFORMS = new Set<Platform>(["SHOPIFY", "BIGCOMMERCE"]);
 
@@ -166,6 +167,7 @@ export async function syncSalesHistoryForLookback(lookbackDays: number): Promise
     }
 
     const isEbay = integration.platform === "TPP_EBAY" || integration.platform === "TT_EBAY";
+    const isBigCommerce = integration.platform === "BIGCOMMERCE";
     const perIntegrationTimeoutMs =
       appEnv === "local"
         ? isEbay
@@ -173,7 +175,9 @@ export async function syncSalesHistoryForLookback(lookbackDays: number): Promise
           : LOCAL_FORECAST_SYNC_TIMEOUT_MS
         : isEbay
           ? DEPLOYED_EBAY_SYNC_TIMEOUT_MS
-          : DEPLOYED_OTHER_SYNC_TIMEOUT_MS;
+          : isBigCommerce
+            ? DEPLOYED_BIGCOMMERCE_SYNC_TIMEOUT_MS
+            : DEPLOYED_OTHER_SYNC_TIMEOUT_MS;
 
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), perIntegrationTimeoutMs);
