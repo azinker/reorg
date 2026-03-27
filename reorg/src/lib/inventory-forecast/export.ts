@@ -11,6 +11,7 @@ const EXPORT_COLUMNS = [
   { header: "SKU", width: 45 },
   { header: "Product Image", width: 18 },
   { header: "Required Quantity to Order", width: 30 },
+  { header: "Flat Avg. Estimate", width: 22 },
   { header: "Supplier Cost", width: 14 },
   { header: "Total Cost", width: 20 },
   { header: "Sales History Summary", width: 30 },
@@ -31,7 +32,9 @@ const BARCODE_MAX_HEIGHT = 68;
 
 const HEADER_NOTES: Record<string, string> = {
   "Required Quantity to Order":
-    "This is the final order quantity for the row. System recommendations round up to the next multiple of 5.",
+    "Final order quantity using the forecast model (accounts for seasonality, trends, intermittent demand). Rounded up to the next multiple of 5.",
+  "Flat Avg. Estimate":
+    "What the order quantity would be using a simple daily average (total sales ÷ days) instead of the forecast model. Compare with Required Quantity to see the model's impact.",
   "Total Cost":
     "Required Quantity to Order multiplied by Supplier Cost. The export metadata includes the total estimated order cost.",
   "Safety Buffer":
@@ -402,7 +405,14 @@ function confidenceExplanation(line: ForecastLineResult) {
   return `${line.confidence} - ${line.confidenceNote.replace(/^(High|Medium|Low) confidence because\s+/i, "").replace(/\.$/, "")}.`;
 }
 
-function lineValues(line: ForecastLineResult) {
+function flatAvgEstimate(line: ForecastLineResult, totalDays: number) {
+  const simpleDemand = line.averageDailyDemand * totalDays;
+  const simpleGross = simpleDemand + line.safetyBuffer;
+  const simpleNet = Math.max(0, simpleGross - line.currentInventory - line.openInTransitQty);
+  return Math.ceil(simpleNet / 5) * 5;
+}
+
+function lineValues(line: ForecastLineResult, totalDays: number) {
   const totalCost =
     line.supplierCost != null ? formatCurrency(line.finalQty * line.supplierCost) : "";
   const modelImpact =
@@ -416,6 +426,7 @@ function lineValues(line: ForecastLineResult) {
     line.sku,
     "",
     line.finalQty,
+    flatAvgEstimate(line, totalDays),
     formatCurrency(line.supplierCost),
     totalCost,
     line.salesHistorySummary,
@@ -501,6 +512,7 @@ function addGuideSheet(workbook: ExcelJS.Workbook) {
     ["SKU", "Internal SKU used to join sales and inventory.", "This is the main row identifier across the forecast."],
     ["Product Image", "Reference image pulled into the sheet.", "Helps the buyer visually confirm the item."],
     ["Required Quantity to Order", HEADER_NOTES["Required Quantity to Order"], "19 becomes 20, 23 becomes 25, 96 becomes 100."],
+    ["Flat Avg. Estimate", HEADER_NOTES["Flat Avg. Estimate"], "If avg demand is 0.3/day over 165 days: 0.3 x 165 = 49.5 + buffer − stock = simple order qty. Compare with the model column to see the difference."],
     ["Supplier Cost", "Unit supplier cost stored for the SKU.", "$2.50 means each ordered unit costs $2.50 before shipping."],
     ["Total Cost", HEADER_NOTES["Total Cost"], "25 units x $2.50 supplier cost = $62.50 total cost."],
     ["Sales History Summary", "Shows units sold inside the selected lookback plus the average daily rate.", "4 total | 10d | 0.4/day means 4 units sold over the last 10 days."],
@@ -599,11 +611,13 @@ export async function buildInventoryForecastWorkbook(result: ForecastResult) {
     );
   }
 
+  const totalDays = result.controls.transitDays + result.controls.desiredCoverageDays;
+
   for (let index = 0; index < sortedLines.length; index += 1) {
     const line = sortedLines[index];
     const rowNumber = headerRowNumber + 1 + index;
     const row = worksheet.getRow(rowNumber);
-    row.values = lineValues(line);
+    row.values = lineValues(line, totalDays);
     row.height = 108;
     row.alignment = { vertical: "middle", horizontal: "center", wrapText: true };
     row.eachCell((cell) => {
@@ -615,18 +629,20 @@ export async function buildInventoryForecastWorkbook(result: ForecastResult) {
         right: { style: "thin", color: { argb: "FF374151" } },
       };
     });
-    worksheet.getCell(rowNumber, 7).numFmt = '$#,##0.00';
-    worksheet.getCell(rowNumber, 8).numFmt = '$#,##0.00';
+    const supplierCostCol = EXPORT_HEADERS.indexOf("Supplier Cost") + 1;
+    const totalCostCol = EXPORT_HEADERS.indexOf("Total Cost") + 1;
+    worksheet.getCell(rowNumber, supplierCostCol).numFmt = '$#,##0.00';
+    worksheet.getCell(rowNumber, totalCostCol).numFmt = '$#,##0.00';
 
     if (line.supplierCost == null && line.finalQty > 0) {
-      worksheet.getCell(rowNumber, 7).fill = {
+      worksheet.getCell(rowNumber, supplierCostCol).fill = {
         type: "pattern", pattern: "solid", fgColor: { argb: "33DC2626" },
       };
-      worksheet.getCell(rowNumber, 7).font = { color: { argb: "FFEF4444" } };
-      worksheet.getCell(rowNumber, 8).fill = {
+      worksheet.getCell(rowNumber, supplierCostCol).font = { color: { argb: "FFEF4444" } };
+      worksheet.getCell(rowNumber, totalCostCol).fill = {
         type: "pattern", pattern: "solid", fgColor: { argb: "33DC2626" },
       };
-      worksheet.getCell(rowNumber, 8).font = { color: { argb: "FFEF4444" } };
+      worksheet.getCell(rowNumber, totalCostCol).font = { color: { argb: "FFEF4444" } };
     }
 
     const barcode = barcodeBuffers[index];
