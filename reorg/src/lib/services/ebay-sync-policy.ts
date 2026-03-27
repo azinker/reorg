@@ -1,10 +1,10 @@
 const PEAK_START_HOUR = 9;
 const PEAK_END_HOUR = 16;
 const QUIET_START_HOUR = 22;
-const BASE_GETITEM_RESERVE_MIN = 500;
-const BASE_GETITEM_RESERVE_RATIO = 0.2;
-const TARGETED_REFRESH_RESERVE_PER_STORE = 200;
-const TARGETED_REFRESH_RESERVE_RATIO = 0.08;
+const BASE_GETITEM_RESERVE_MIN = 300;
+const BASE_GETITEM_RESERVE_RATIO = 0.10;
+const TARGETED_REFRESH_RESERVE_PER_STORE = 100;
+const TARGETED_REFRESH_RESERVE_RATIO = 0.04;
 
 export type EbayPullWindow = "peak" | "shoulder" | "quiet";
 
@@ -243,7 +243,7 @@ export function getPerRunEbayGetItemBudget(args: {
   const weightedShare = Math.floor(
     (usableRemaining * currentWeight) / weightedRunsRemaining,
   );
-  const minimumBudget = Math.min(25, usableRemaining);
+  const minimumBudget = Math.min(250, usableRemaining);
   return Math.max(minimumBudget, Math.min(usableRemaining, weightedShare));
 }
 
@@ -282,7 +282,7 @@ export function getFallbackPerRunEbayGetItemBudget(
   timeZone: string,
 ) {
   const window = getEbayPullWindow(now, timeZone);
-  if (window === "peak") return 100;
-  if (window === "shoulder") return 60;
+  if (window === "peak") return 500;
+  if (window === "shoulder") return 300;
   return 0;
 }

@@ -18,6 +18,7 @@ import {
   buildGetItemCooldownRateLimitsSnapshot,
   deserializeSnapshotFromConfig,
   getEbayCooldownUntilFromSnapshot,
+  getEbayCredentialFingerprint,
   getEbayMethodRate,
   getEbayTradingRateLimitSnapshotForIntegration,
   serializeSnapshotForConfig,
@@ -291,19 +292,32 @@ export async function GET(
       );
     }
 
-    // Prefer the DB-persisted snapshot over the "Unknown" degraded placeholder.
-    // Re-read from DB to catch snapshots saved by a sync that just finished.
     if (isEbayPlatform(integration.platform) && (!rateLimits || rateLimits.isDegradedEstimate)) {
-      const freshIntegration = await db.integration.findUnique({
-        where: { id: integration.id },
-        select: { config: true },
-      });
-      const freshConfig = freshIntegration
-        ? getIntegrationConfig({ ...integration, config: freshIntegration.config })
+      const fingerprint = getEbayCredentialFingerprint(integration);
+      const candidates = fingerprint
+        ? await db.integration.findMany({
+            where: { platform: { in: ["TPP_EBAY", "TT_EBAY"] as Platform[] }, enabled: true },
+            select: { id: true, platform: true, config: true },
+          })
+        : [];
+      const self = candidates.find((c) => c.id === integration.id);
+      const selfConfig = self
+        ? getIntegrationConfig({ ...integration, config: self.config })
         : config;
-      const savedSnapshot = deserializeSnapshotFromConfig(freshConfig.syncState?.lastRateLimitSnapshot);
-      if (savedSnapshot) {
-        rateLimits = savedSnapshot;
+      const selfSnapshot = deserializeSnapshotFromConfig(selfConfig.syncState?.lastRateLimitSnapshot);
+      if (selfSnapshot) {
+        rateLimits = selfSnapshot;
+      } else {
+        for (const sibling of candidates) {
+          if (sibling.id === integration.id) continue;
+          if (getEbayCredentialFingerprint(sibling) !== fingerprint) continue;
+          const sibConfig = getIntegrationConfig(sibling);
+          const sibSnapshot = deserializeSnapshotFromConfig(sibConfig.syncState?.lastRateLimitSnapshot);
+          if (sibSnapshot) {
+            rateLimits = sibSnapshot;
+            break;
+          }
+        }
       }
     }
 

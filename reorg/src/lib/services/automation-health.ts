@@ -405,9 +405,7 @@ function getBacklogHealthStatus(args: {
       backlogStatus: "stale" as const,
       monitorStatus: "attention" as const,
       backlogMessage:
-        backlogAgeMinutes !== null
-          ? `Queued eBay backlog has carried for ${formatMinutesLabel(backlogAgeMinutes)} across multiple pull windows (${args.pendingBacklogCount.toLocaleString()} listings still waiting).`
-          : `Queued eBay backlog is large (${args.pendingBacklogCount.toLocaleString()} listings still waiting) and has likely carried across multiple pull windows.`,
+        `${args.pendingBacklogCount.toLocaleString()} listings still queued — next sync will continue processing.`,
     };
   }
 
@@ -421,9 +419,7 @@ function getBacklogHealthStatus(args: {
       backlogStatus: "delayed" as const,
       monitorStatus: "delayed" as const,
       backlogMessage:
-        backlogAgeMinutes !== null
-          ? `Queued eBay backlog is still draining after ${formatMinutesLabel(backlogAgeMinutes)} (${args.pendingBacklogCount.toLocaleString()} changed listings waiting for later pulls).`
-          : `Queued eBay backlog is still draining (${args.pendingBacklogCount.toLocaleString()} changed listings waiting for later pulls).`,
+        `${args.pendingBacklogCount.toLocaleString()} listings still queued — processing will continue on the next sync.`,
     };
   }
 
@@ -433,9 +429,7 @@ function getBacklogHealthStatus(args: {
     backlogStatus: "queued" as const,
     monitorStatus: "healthy" as const,
     backlogMessage:
-      args.pendingBacklogCount === 1
-        ? "1 changed eBay listing is queued for the next pull window to protect shared quota."
-        : `${args.pendingBacklogCount.toLocaleString()} changed eBay listings are queued for later pull windows to protect shared quota.`,
+      `${args.pendingBacklogCount.toLocaleString()} listing${args.pendingBacklogCount === 1 ? "" : "s"} queued for next sync.`,
   };
 }
 
@@ -467,28 +461,28 @@ function getRecommendedAction(args: {
 
   if (args.syncMonitorStatus === "attention") {
     if (args.backlogStatus === "stale" && args.backlogCount > 0) {
-      return "This eBay backlog has carried across several pull windows. Let the next automatic checks keep draining it, and review Sync or Engine Room if the queued count is not shrinking.";
+      return "Queued listings will continue processing on the next sync. Run another sync if you want to speed it up.";
     }
     if (args.running) {
-      return "A pull is already running. Let it finish, then check Sync or Errors if this store still needs attention.";
+      return "A sync is running. Let it finish, then check if this store still needs attention.";
     }
     if (args.due) {
-      return "Start a manual pull from Sync now. If it still fails, check Errors and the integration credentials.";
+      return "Run a sync now. If it still fails, check Errors.";
     }
-    return "Open Sync and run a manual pull. If this store stays behind after that, check Errors and the integration credentials.";
+    return "Run a sync from the Sync page. If this store stays behind, check Errors.";
   }
 
   if (args.syncMonitorStatus === "delayed") {
     if (args.backlogStatus === "delayed" && args.backlogCount > 0) {
-      return "reorG is pacing a larger eBay backlog across multiple pull windows. Watch the next automatic checks and make sure the queued count keeps shrinking.";
+      return "Remaining listings will process on the next sync.";
     }
     if (args.running) {
-      return "A pull is already running. Refresh Sync after it finishes to confirm this store recovers.";
+      return "A sync is running. Check back once it finishes.";
     }
     if (args.due) {
-      return "This store is due now. Let the next automatic check start it, or run a manual pull from Sync if you need it refreshed immediately.";
+      return "This store is due for a sync. It will run automatically, or you can start one manually.";
     }
-    return "Watch the next automatic check. If this store stays behind, run a manual pull from Sync.";
+    return "The next automatic sync will catch up. Run a manual sync if you need it sooner.";
   }
 
   if (args.webhookExpected && args.webhookStatus === "missing") {

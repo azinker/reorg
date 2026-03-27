@@ -511,11 +511,7 @@ export async function runEbayTppSync(
           fallbackReasonForCompletion =
             `Processed ${budgetPlan.itemIdsToProcess.length} changed eBay listings this run ` +
             `to stay within the shared API quota. ${budgetPlan.pendingItemIds.length} more ` +
-            `will continue on the next scheduled pull.` +
-            (budgetPlan.reservedGetItemCalls
-              ? ` reorG kept about ${budgetPlan.reservedGetItemCalls} GetItem calls in reserve ` +
-                `for later targeted refreshes.`
-              : "");
+            `will continue on the next scheduled pull.`;
         }
 
         if (
