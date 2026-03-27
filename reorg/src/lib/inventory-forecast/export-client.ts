@@ -22,8 +22,8 @@ const EXPORT_COLUMNS = [
   { header: "UPC", width: 24 },
   { header: "SKU", width: 45 },
   { header: "Product Image", width: 18 },
-  { header: "Order Qty (Smart)", width: 22 },
-  { header: "Order Qty (Simple)", width: 22 },
+  { header: "Order Qty", width: 22 },
+  { header: "Simple Estimate", width: 22 },
   { header: "Supplier Cost", width: 14 },
   { header: "Total Cost", width: 20 },
   { header: "Sales History Summary", width: 30 },
@@ -40,16 +40,16 @@ const EXPORT_COLUMNS = [
 ] as const;
 
 const HEADER_NOTES: Record<string, string> = {
-  "Order Qty (Smart)":
-    "Order quantity from the forecast model (accounts for seasonality, trends, intermittent demand, safety buffer). Rounded up to a multiple of 5.",
-  "Order Qty (Simple)":
-    "Simple math: (avg sold per day × (shipping time + stock coverage days)) − current on hand − inbound. Rounded up to a multiple of 5. No safety buffer, no model — just the straight average.",
+  "Order Qty":
+    "The recommended order quantity from the forecast mode you selected (Simple or Smart).",
+  "Simple Estimate":
+    "Simple math: (avg sold per day × (shipping time + stock coverage days)) − current on hand − inbound. No safety buffer, no model — just the straight average.",
   "Total Cost":
-    "Order Qty (Smart) multiplied by Supplier Cost.",
+    "Order Qty multiplied by Supplier Cost.",
   "Transit demand (model)":
-    "Units the forecast expects to sell while your order is in transit (uses your Shipping Time days). Sum of model-predicted weekly (or daily) buckets.",
+    "Units the forecast expects to sell while your order is in transit (Shipping Time days). In Smart mode, uses model-predicted buckets. In Simple mode, uses flat daily average × days.",
   "Post-arrival demand (model)":
-    "Units the forecast expects to sell after the shipment arrives until you reach your Stock Coverage Goal (uses those days as the horizon).",
+    "Units the forecast expects to sell after arrival through your Stock Coverage Goal. In Smart mode, uses model-predicted buckets. In Simple mode, uses flat daily average × days.",
   "Safety Buffer":
     "Extra units on top of transit + post-arrival model demand. Computed as a percentage of that combined demand (adjusted for confidence and demand pattern).",
   "Demand Pattern":
@@ -100,7 +100,7 @@ function modelExplanation(model: string) {
 function simpleOrderQty(line: ForecastLineResult, totalDays: number) {
   const demand = line.averageDailyDemand * totalDays;
   const net = Math.max(0, demand - line.currentInventory - line.openInTransitQty);
-  return Math.ceil(net / 5) * 5;
+  return Math.ceil(net);
 }
 
 function lineValues(line: ForecastLineResult, totalDays: number) {
@@ -145,7 +145,7 @@ function metadataItems(result: ForecastResult) {
     { label: "Transit Days", value: result.controls.transitDays },
     { label: "Desired Days After Arrival", value: result.controls.desiredCoverageDays },
     { label: "Forecast Bucket", value: result.controls.forecastBucket },
-    { label: "Mode", value: result.controls.mode },
+    { label: "Forecast Type", value: result.controls.mode === "simple" ? "Simple (flat average)" : "Smart (models + safety buffer)" },
     { label: "Inventory Source", value: result.inventorySource },
     {
       label: "Sales Coverage",
@@ -271,8 +271,8 @@ function addGuideSheet(workbook: any) {
     ["UPC", "The UPC code stored for the SKU.", "Blank means no UPC was available."],
     ["SKU", "Internal SKU used to join sales and inventory.", "This is the main row identifier across the forecast."],
     ["Product Image", "Reference image pulled into the sheet.", "Helps the buyer visually confirm the item."],
-    ["Order Qty (Smart)", HEADER_NOTES["Order Qty (Smart)"], "Uses transit demand + post-arrival demand + safety buffer − on hand. 19 becomes 20, 23 becomes 25."],
-    ["Order Qty (Simple)", HEADER_NOTES["Order Qty (Simple)"], "Example: 0.267/day × 165 days = 44 − 36 on hand = 8 → rounded to 10. No safety, no model."],
+    ["Order Qty", HEADER_NOTES["Order Qty"], "The recommended quantity based on the forecast type you chose (Simple or Smart)."],
+    ["Simple Estimate", HEADER_NOTES["Simple Estimate"], "Example: 0.267/day × 165 days = 44 − 36 on hand = 8 → 8. No safety, no model."],
     ["Supplier Cost", "Unit supplier cost stored for the SKU.", "$2.50 means each ordered unit costs $2.50 before shipping."],
     ["Total Cost", HEADER_NOTES["Total Cost"], "25 units x $2.50 supplier cost = $62.50 total cost."],
     ["Sales History Summary", "Shows units sold inside the selected lookback plus the average daily rate.", "4 total | 10d | 0.4/day means 4 units sold over the last 10 days."],

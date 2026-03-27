@@ -419,15 +419,15 @@ function safetyBufferForLine(args: {
 }) {
   const grossBase = args.transitDemand + args.postArrivalDemand;
   let bufferRate =
-    args.confidence === "HIGH" ? 0.08 : args.confidence === "MEDIUM" ? 0.14 : 0.22;
+    args.confidence === "HIGH" ? 0.05 : args.confidence === "MEDIUM" ? 0.08 : 0.12;
 
   if (args.backtestError != null) {
-    bufferRate += clamp(args.backtestError, 0, 0.08);
+    bufferRate += clamp(args.backtestError, 0, 0.05);
   }
-  if (args.pattern === "INTERMITTENT") bufferRate += 0.05;
-  if (args.suspectedStockout) bufferRate += 0.05;
+  if (args.pattern === "INTERMITTENT") bufferRate += 0.03;
+  if (args.suspectedStockout) bufferRate += 0.03;
 
-  return Math.max(0, Math.ceil(grossBase * clamp(bufferRate, 0.04, 0.4)));
+  return Math.max(0, Math.ceil(grossBase * clamp(bufferRate, 0.03, 0.2)));
 }
 
 function forecastSummary(totalUnits: number, lookbackDays: number) {
@@ -447,7 +447,7 @@ function sumForecast(model: CandidateModel, series: number[], bucket: ForecastBu
 
 function roundOrderQuantity(value: number) {
   if (value <= 0) return 0;
-  return Math.ceil(value / 5) * 5;
+  return Math.ceil(value);
 }
 
 export function buildForecastResultLines(args: {
@@ -499,28 +499,34 @@ export function buildForecastResultLines(args: {
       pattern: demandPattern,
       usedFallback,
     });
-    const transitDemand = sumForecast(
-      model,
-      prepared.series,
-      args.controls.forecastBucket,
-      args.controls.transitDays,
-      prepared.bucketDays,
-    );
-    const postArrivalDemand = sumForecast(
-      model,
-      prepared.series,
-      args.controls.forecastBucket,
-      args.controls.desiredCoverageDays,
-      prepared.bucketDays,
-    );
-    const safetyBuffer = safetyBufferForLine({
-      transitDemand,
-      postArrivalDemand,
-      backtestError,
-      confidence: confidenceInfo.confidence,
-      pattern: demandPattern,
-      suspectedStockout: snapshotSignal.suspectedStockout,
-    });
+    const isSimple = args.controls.mode === "simple";
+    const dailyRate = totalUnits / Math.max(1, args.controls.lookbackDays);
+    const flatTransit = round(dailyRate * args.controls.transitDays);
+    const flatPostArrival = round(dailyRate * args.controls.desiredCoverageDays);
+
+    const MODEL_DIVERGENCE_CAP = 1.5;
+    const transitDemand = isSimple
+      ? flatTransit
+      : Math.min(
+          sumForecast(model, prepared.series, args.controls.forecastBucket, args.controls.transitDays, prepared.bucketDays),
+          Math.max(flatTransit * MODEL_DIVERGENCE_CAP, flatTransit + 2),
+        );
+    const postArrivalDemand = isSimple
+      ? flatPostArrival
+      : Math.min(
+          sumForecast(model, prepared.series, args.controls.forecastBucket, args.controls.desiredCoverageDays, prepared.bucketDays),
+          Math.max(flatPostArrival * MODEL_DIVERGENCE_CAP, flatPostArrival + 2),
+        );
+    const safetyBuffer = isSimple
+      ? 0
+      : safetyBufferForLine({
+          transitDemand,
+          postArrivalDemand,
+          backtestError,
+          confidence: confidenceInfo.confidence,
+          pattern: demandPattern,
+          suspectedStockout: snapshotSignal.suspectedStockout,
+        });
     const grossRequiredQty = Math.max(0, Math.ceil(transitDemand + postArrivalDemand + safetyBuffer));
     const openInTransitQty = args.controls.useOpenInTransit ? inbound.totalQty : 0;
     const projectedStockOnArrival = Math.max(
@@ -564,9 +570,9 @@ export function buildForecastResultLines(args: {
       overrideQty,
       finalQty,
       demandPattern,
-      modelUsed: model.label,
-      confidence: confidenceInfo.confidence,
-      confidenceNote: confidenceInfo.note,
+      modelUsed: isSimple ? "Flat Average" : model.label,
+      confidence: isSimple ? ("HIGH" as ForecastConfidence) : confidenceInfo.confidence,
+      confidenceNote: isSimple ? "Simple mode uses a flat daily average." : confidenceInfo.note,
       warningFlags,
       backtestError,
       suspectedStockout: snapshotSignal.suspectedStockout,

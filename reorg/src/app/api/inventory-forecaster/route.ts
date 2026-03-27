@@ -14,6 +14,7 @@ const runSchema = z.object({
   desiredCoverageDays: z.number().int().min(0).max(730),
   useOpenInTransit: z.boolean().default(true),
   reorderRelevantOnly: z.boolean().default(true),
+  mode: z.enum(["simple", "smart"]).default("smart"),
 });
 
 export async function GET() {

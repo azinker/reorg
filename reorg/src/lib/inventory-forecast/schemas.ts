@@ -7,7 +7,7 @@ export const forecastControlsSchema = z.object({
   desiredCoverageDays: z.number().int().min(0).max(730),
   useOpenInTransit: z.boolean(),
   reorderRelevantOnly: z.boolean(),
-  mode: z.literal("balanced"),
+  mode: z.enum(["simple", "smart", "balanced"]),
 });
 
 export const forecastLineSchema = z.object({

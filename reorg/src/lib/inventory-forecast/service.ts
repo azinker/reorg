@@ -39,6 +39,7 @@ export async function runInventoryForecast(input: {
   desiredCoverageDays: number;
   useOpenInTransit: boolean;
   reorderRelevantOnly: boolean;
+  mode?: "simple" | "smart";
   runDate?: string | Date;
 }) {
   const runDate = normalizeRunDate(input.runDate);
@@ -49,7 +50,7 @@ export async function runInventoryForecast(input: {
     desiredCoverageDays: input.desiredCoverageDays,
     useOpenInTransit: input.useOpenInTransit,
     reorderRelevantOnly: input.reorderRelevantOnly,
-    mode: "balanced",
+    mode: input.mode ?? "smart",
   };
 
   const [syncState, inventoryRows] = await Promise.all([

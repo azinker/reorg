@@ -49,6 +49,7 @@ type ForecastControlsState = {
   desiredCoverageDays: string;
   useOpenInTransit: boolean;
   reorderRelevantOnly: boolean;
+  forecastMode: "simple" | "smart";
 };
 
 const DEFAULT_CONTROLS: ForecastControlsState = {
@@ -59,6 +60,7 @@ const DEFAULT_CONTROLS: ForecastControlsState = {
   desiredCoverageDays: "120",
   useOpenInTransit: true,
   reorderRelevantOnly: true,
+  forecastMode: "smart",
 };
 
 function formatDateTime(value: string | null) {
@@ -287,6 +289,7 @@ export default function InventoryForecasterPage() {
           desiredCoverageDays: Number(controls.desiredCoverageDays) || 0,
           useOpenInTransit: controls.useOpenInTransit,
           reorderRelevantOnly: controls.reorderRelevantOnly,
+          mode: controls.forecastMode,
         }),
       });
       const text = await response.text();
@@ -315,8 +318,9 @@ export default function InventoryForecasterPage() {
           .toISOString()
           .slice(0, 10),
       );
+      const modeLabel = controls.forecastMode === "simple" ? "Simple" : "Smart";
       setStatusMessage({
-        text: `Forecast complete — ${forecast.lines.length} SKU${forecast.lines.length === 1 ? "" : "s"} analyzed.`,
+        text: `${modeLabel} forecast complete — ${forecast.lines.length} SKU${forecast.lines.length === 1 ? "" : "s"} analyzed.`,
         type: "success",
       });
     } catch (error) {
@@ -582,6 +586,35 @@ export default function InventoryForecasterPage() {
           <div className="space-y-5">
             <div>
               <label className="mb-1 block text-sm font-medium text-foreground">
+                Forecast Type
+              </label>
+              <p className="mb-2 text-xs text-muted-foreground">Choose how order quantities are calculated</p>
+              <div className="grid grid-cols-2 gap-2">
+                {(["simple", "smart"] as const).map((m) => (
+                  <button
+                    key={m}
+                    type="button"
+                    onClick={() => setControls((prev) => ({ ...prev, forecastMode: m }))}
+                    className={cn(
+                      "rounded-lg border px-3 py-2.5 text-sm font-medium transition-colors cursor-pointer text-left",
+                      controls.forecastMode === m
+                        ? "border-primary bg-primary/10 text-primary"
+                        : "border-border bg-background text-muted-foreground hover:text-foreground",
+                    )}
+                  >
+                    <span className="block">{m === "simple" ? "Simple" : "Smart"}</span>
+                    <span className="mt-0.5 block text-[11px] font-normal leading-snug opacity-70">
+                      {m === "simple"
+                        ? "Avg sold/day × days − on hand"
+                        : "Models + safety buffer"}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <label className="mb-1 block text-sm font-medium text-foreground">
                 Sales History
               </label>
               <p className="mb-2 text-xs text-muted-foreground">How many days of past sales to analyze</p>
@@ -623,26 +656,28 @@ export default function InventoryForecasterPage() {
               )}
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="mb-1 block text-sm font-medium text-foreground">
-                  Grouping
-                </label>
-                <p className="mb-2 text-xs text-muted-foreground">How to group sales data</p>
-                <select
-                  value={controls.forecastBucket}
-                  onChange={(event) =>
-                    setControls((prev) => ({
-                      ...prev,
-                      forecastBucket: event.target.value as "WEEKLY" | "DAILY",
-                    }))
-                  }
-                  className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm text-foreground outline-none"
-                >
-                  <option value="WEEKLY">Weekly</option>
-                  <option value="DAILY">Daily</option>
-                </select>
-              </div>
+            <div className={cn("grid gap-4", controls.forecastMode === "smart" ? "grid-cols-2" : "grid-cols-1")}>
+              {controls.forecastMode === "smart" && (
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-foreground">
+                    Grouping
+                  </label>
+                  <p className="mb-2 text-xs text-muted-foreground">How to group sales data</p>
+                  <select
+                    value={controls.forecastBucket}
+                    onChange={(event) =>
+                      setControls((prev) => ({
+                        ...prev,
+                        forecastBucket: event.target.value as "WEEKLY" | "DAILY",
+                      }))
+                    }
+                    className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm text-foreground outline-none"
+                  >
+                    <option value="WEEKLY">Weekly</option>
+                    <option value="DAILY">Daily</option>
+                  </select>
+                </div>
+              )}
               <div>
                 <label className="mb-1 block text-sm font-medium text-foreground">
                   Shipping Time
@@ -737,7 +772,9 @@ export default function InventoryForecasterPage() {
               )}
             >
               {running ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-              {running ? "Running Forecast..." : "Run Forecast"}
+              {running
+                ? "Running Forecast..."
+                : `Run ${controls.forecastMode === "simple" ? "Simple" : "Smart"} Forecast`}
             </button>
 
             {running ? (
