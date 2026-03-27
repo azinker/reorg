@@ -34,7 +34,7 @@ type RefreshResult =
       jobId: string | null;
     };
 
-const PLATFORM_REFRESH_TIMEOUT_MS = 6_000;
+const PLATFORM_REFRESH_TIMEOUT_MS = 25_000;
 
 const PLATFORM_SHORT: Record<string, string> = {
   TPP_EBAY: "eBay TPP",
@@ -87,8 +87,26 @@ function normalizeRowId(rowId: string) {
   }
 
   if (rowId.startsWith("variation-parent:")) {
+    const familyKey = rowId.slice("variation-parent:".length);
+
+    if (familyKey.startsWith("child-")) {
+      const firstChildMasterRowId = familyKey.split("|")[0].slice("child-".length);
+      return {
+        dbRowId: firstChildMasterRowId,
+        includeChildListings: true,
+      };
+    }
+
+    const titleSep = familyKey.indexOf("::");
+    if (titleSep !== -1) {
+      return {
+        dbRowId: familyKey,
+        includeChildListings: true,
+      };
+    }
+
     return {
-      dbRowId: rowId.slice("variation-parent:".length),
+      dbRowId: familyKey,
       includeChildListings: true,
     };
   }

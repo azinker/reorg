@@ -1522,6 +1522,21 @@ async function upsertEbayItem(
     ? obj(variationsNode, "Pictures")
     : undefined;
 
+  if (variationList.length > 0 && variationsNode) {
+    const picSets = variationPictures
+      ? arr(variationPictures, "VariationSpecificPictureSet")
+      : [];
+    const picDimension = variationPictures
+      ? str(variationPictures, "VariationSpecificName")
+      : null;
+    console.log(
+      `[ebay-tpp-sync][images] Item ${itemId}: ${variationList.length} variations, ` +
+      `Pictures node: ${variationPictures ? "present" : "MISSING"}, ` +
+      `PictureSets: ${picSets.length}, Dimension: ${picDimension ?? "none"}, ` +
+      `Keys in Variations: ${Object.keys(variationsNode as Record<string, unknown>).join(",")}`,
+    );
+  }
+
   if (variationList.length > 0) {
     const parentSku = `TPP-${itemId}`;
     let parentMaster = await db.masterRow.findUnique({ where: { sku: parentSku } });
@@ -1596,6 +1611,12 @@ async function upsertEbayItem(
         variation,
         variationPictures,
       );
+      if (variationList.indexOf(variation) < 3) {
+        console.log(
+          `[ebay-tpp-sync][images] Item ${itemId} SKU ${sku}: ` +
+          `variationImageUrl=${variationImageUrl ? "FOUND" : "null"}`,
+        );
+      }
       const variationUpc = extractVariationUpc(variation);
 
       let childMaster = await db.masterRow.findUnique({ where: { sku } });
