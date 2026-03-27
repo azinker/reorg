@@ -33,6 +33,7 @@ export interface ForecastInventoryRow {
   imageUrl: string | null;
   supplierCost: number | null;
   currentInventory: number;
+  itemAgeDays: number;
 }
 
 export interface ForecastSaleLine {

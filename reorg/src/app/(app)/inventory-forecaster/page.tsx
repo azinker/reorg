@@ -97,11 +97,11 @@ function getLookbackDays(controls: ForecastControlsState) {
 
 function warningChip(flag: ForecastLineResult["warningFlags"][number]) {
   if (flag === "LOW_CONFIDENCE") return "Low confidence";
-  if (flag === "SUSPECTED_STOCKOUT") return "Suspected stockout-distorted history";
-  if (flag === "LIMITED_HISTORY") return "New item / limited history";
-  if (flag === "IN_TRANSIT_EXISTS") return "In-transit already exists";
+  if (flag === "SUSPECTED_STOCKOUT") return "Possible stockout distortion";
+  if (flag === "LIMITED_HISTORY") return "Limited sales history";
+  if (flag === "IN_TRANSIT_EXISTS") return "Order already on the way";
   if (flag === "EBAY_HISTORY_TRUNCATED") return "eBay history still building";
-  return "No sales history";
+  return "No sales found";
 }
 
 function noteForWarnings(line: ForecastLineResult) {
@@ -129,6 +129,18 @@ function estimateForecastDurationMs(controls: ForecastControlsState) {
   if (!controls.reorderRelevantOnly) estimateMs += 5000;
 
   return estimateMs;
+}
+
+function patternLabel(pattern: string) {
+  switch (pattern) {
+    case "STABLE": return "Steady";
+    case "TRENDING": return "Trending";
+    case "SEASONAL": return "Seasonal";
+    case "INTERMITTENT": return "Sporadic";
+    case "SLOW_MOVER": return "Slow mover";
+    case "NEW_ITEM": return "New item";
+    default: return pattern.replace(/_/g, " ");
+  }
 }
 
 function confidenceTone(level: keyof BootstrapData["confidenceLegend"]) {
@@ -1098,10 +1110,11 @@ export default function InventoryForecasterPage() {
 
         <div className="overflow-hidden rounded-2xl border border-border bg-background/50">
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[1800px]">
+            <table className="w-full min-w-[1860px]">
               <thead>
                 <tr className="border-b border-border bg-muted/40 text-left">
                   {[
+                    "",
                     "Title",
                     "SKU",
                     "In Stock",
@@ -1132,13 +1145,13 @@ export default function InventoryForecasterPage() {
               <tbody>
                 {loading ? (
                   <tr>
-                    <td colSpan={17} className="px-4 py-12 text-center text-muted-foreground">
+                    <td colSpan={18} className="px-4 py-12 text-center text-muted-foreground">
                       <Loader2 className="mx-auto h-6 w-6 animate-spin" />
                     </td>
                   </tr>
                 ) : !result ? (
                   <tr>
-                    <td colSpan={17} className="px-4 py-16 text-center">
+                    <td colSpan={18} className="px-4 py-16 text-center">
                       <Sparkles className="mx-auto mb-3 h-6 w-6 text-primary/50" />
                       <p className="text-sm font-medium text-foreground">No forecast yet</p>
                       <p className="mt-1 text-xs text-muted-foreground">
@@ -1148,7 +1161,7 @@ export default function InventoryForecasterPage() {
                   </tr>
                 ) : effectiveLines.length === 0 ? (
                   <tr>
-                    <td colSpan={17} className="px-4 py-16 text-center">
+                    <td colSpan={18} className="px-4 py-16 text-center">
                       <Boxes className="mx-auto mb-3 h-6 w-6 text-emerald-400/50" />
                       <p className="text-sm font-medium text-foreground">All SKUs are well-stocked</p>
                       <p className="mt-1 text-xs text-muted-foreground">
@@ -1161,6 +1174,20 @@ export default function InventoryForecasterPage() {
                     const inboundNote = noteForWarnings(line);
                     return (
                       <tr key={line.masterRowId} className="border-b border-border/60 align-top">
+                        <td className="w-12 px-2 py-3">
+                          {line.imageUrl ? (
+                            <img
+                              src={`/api/image-proxy?url=${encodeURIComponent(line.imageUrl)}`}
+                              alt=""
+                              className="h-10 w-10 rounded-lg border border-border object-cover"
+                              loading="lazy"
+                            />
+                          ) : (
+                            <div className="flex h-10 w-10 items-center justify-center rounded-lg border border-border bg-muted/30 text-xs text-muted-foreground">
+                              —
+                            </div>
+                          )}
+                        </td>
                         <td className="px-3 py-3">
                           <div className="font-medium text-foreground">{line.title}</div>
                           <div className="mt-1 text-xs text-muted-foreground">{line.upc ?? "No UPC"}</div>
@@ -1227,7 +1254,7 @@ export default function InventoryForecasterPage() {
                           </div>
                         </td>
                         <td className="px-3 py-3 text-sm text-foreground">
-                          {line.demandPattern.replace(/_/g, " ")}
+                          {patternLabel(line.demandPattern)}
                         </td>
                         <td className="px-3 py-3 text-sm text-foreground">{line.modelUsed}</td>
                         <td className="px-3 py-3">

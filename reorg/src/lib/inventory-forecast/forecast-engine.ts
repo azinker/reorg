@@ -99,7 +99,11 @@ function autoCorrelation(values: number[], lag: number) {
   return numerator / Math.sqrt(sourceVariance * targetVariance);
 }
 
-function inferDemandPattern(series: number[], bucket: ForecastBucket): DemandPattern {
+function inferDemandPattern(
+  series: number[],
+  bucket: ForecastBucket,
+  itemAgeDays: number,
+): DemandPattern {
   const total = sum(series);
   const nonZero = series.filter((value) => value > 0);
   const nonZeroShare = series.length === 0 ? 0 : nonZero.length / series.length;
@@ -109,7 +113,13 @@ function inferDemandPattern(series: number[], bucket: ForecastBucket): DemandPat
   const seasonalLag = bucket === "DAILY" ? 7 : 4;
   const seasonalScore = autoCorrelation(series, seasonalLag);
 
-  if (series.length < 6 || total < 8) return "NEW_ITEM";
+  const isGenuinelyNewItem = itemAgeDays < 45;
+
+  if (series.length < 6 || total < 8) {
+    if (isGenuinelyNewItem) return "NEW_ITEM";
+    if (total === 0) return "SLOW_MOVER" as DemandPattern;
+    return "INTERMITTENT";
+  }
   if (nonZeroShare <= 0.4 || (nonZeroShare <= 0.55 && cv >= 1.2)) return "INTERMITTENT";
   if (series.length >= seasonalLag * 3 && seasonalScore >= 0.45) return "SEASONAL";
   if (Math.abs(slope) >= Math.max(0.25, avg * 0.12)) return "TRENDING";
@@ -227,7 +237,7 @@ const CANDIDATE_MODELS: CandidateModel[] = [
     key: "croston_sba",
     label: "Croston / SBA",
     minHistory: 4,
-    supportsPattern: (pattern) => pattern === "INTERMITTENT",
+    supportsPattern: (pattern) => pattern === "INTERMITTENT" || pattern === "SLOW_MOVER",
     forecast: (series, horizon) => crostonSbaForecast(series, horizon),
   },
   {
@@ -366,6 +376,7 @@ function confidenceForLine(args: {
     args.truncatedHistory ||
     args.usedFallback ||
     args.pattern === "INTERMITTENT" ||
+    args.pattern === "SLOW_MOVER" ||
     (args.backtestError != null && args.backtestError >= 0.35)
   ) {
     return {
@@ -461,7 +472,7 @@ export function buildForecastResultLines(args: {
     );
     const totalUnits = sum(prepared.series);
     const limitedHistory = rawSales.length === 0 || totalUnits < 8 || prepared.series.filter((value) => value > 0).length < 4;
-    const demandPattern = inferDemandPattern(prepared.series, args.controls.forecastBucket);
+    const demandPattern = inferDemandPattern(prepared.series, args.controls.forecastBucket, inventoryRow.itemAgeDays);
     const { model, backtestError, usedFallback } = selectBestModel(
       prepared.series,
       args.controls.forecastBucket,
@@ -524,7 +535,7 @@ export function buildForecastResultLines(args: {
 
     const warningFlags: ForecastWarningFlag[] = [];
     if (confidenceInfo.confidence === "LOW") warningFlags.push("LOW_CONFIDENCE");
-    if (snapshotSignal.suspectedStockout) warningFlags.push("SUSPECTED_STOCKOUT");
+    if (snapshotSignal.suspectedStockout && totalUnits > 0) warningFlags.push("SUSPECTED_STOCKOUT");
     if (limitedHistory) warningFlags.push("LIMITED_HISTORY");
     if (openInTransitQty > 0) warningFlags.push("IN_TRANSIT_EXISTS");
     if (truncatedHistory) warningFlags.push("EBAY_HISTORY_TRUNCATED");
@@ -577,11 +588,10 @@ const ACTIONABLE_REORDER_WARNING_FLAGS = new Set<ForecastWarningFlag>([
 ]);
 
 export function isReorderRelevantLine(line: ForecastLineResult) {
-  return (
-    line.finalQty > 0 ||
-    line.openInTransitQty > 0 ||
-    line.warningFlags.some((flag) => ACTIONABLE_REORDER_WARNING_FLAGS.has(flag))
-  );
+  if (line.finalQty > 0) return true;
+  if (line.openInTransitQty > 0) return true;
+  if (line.salesTotalUnits === 0) return false;
+  return line.warningFlags.some((flag) => ACTIONABLE_REORDER_WARNING_FLAGS.has(flag));
 }
 
 export const FORECAST_CONFIDENCE_LEGEND: Record<ForecastConfidence, string> = {

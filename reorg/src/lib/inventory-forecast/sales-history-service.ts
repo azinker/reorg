@@ -16,7 +16,8 @@ const FORECAST_HISTORY_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 const LOCAL_LIVE_FORECAST_HISTORY_LOOKBACK_LIMIT_DAYS = 30;
 const LOCAL_FORECAST_SYNC_TIMEOUT_MS = 15_000;
 const LOCAL_EBAY_FORECAST_SYNC_TIMEOUT_MS = 120_000;
-const DEPLOYED_FORECAST_SYNC_TIMEOUT_MS = 45_000;
+const DEPLOYED_EBAY_SYNC_TIMEOUT_MS = 180_000;
+const DEPLOYED_OTHER_SYNC_TIMEOUT_MS = 60_000;
 const LOCAL_CACHED_FORECAST_PLATFORMS = new Set<Platform>(["SHOPIFY", "BIGCOMMERCE"]);
 
 function uniquePlatforms(lines: ForecastSaleLine[]) {
@@ -123,12 +124,15 @@ export async function syncSalesHistoryForLookback(lookbackDays: number): Promise
     appEnv === "local" && lookbackDays > LOCAL_LIVE_FORECAST_HISTORY_LOOKBACK_LIMIT_DAYS;
   const coverageByPlatform = await getCachedSalesCoverageByPlatform();
   const recentAudit = await getRecentForecastSalesSyncAudit();
+  const cacheHasNoIssues =
+    recentAudit?.issues.length === 0 ||
+    recentAudit?.issues.every((issue) => issue.level !== "error" && issue.level !== "warning");
   if (
     recentAudit &&
     recentAudit.lookbackDays != null &&
     recentAudit.lookbackDays >= lookbackDays &&
     Date.now() - recentAudit.createdAt.getTime() <= FORECAST_HISTORY_CACHE_TTL_MS &&
-    recentAudit.issues.every((issue) => issue.level !== "error") &&
+    cacheHasNoIssues &&
     integrations.every(
       (integration) => (coverageByPlatform?.get(integration.platform)?.lineCount ?? 0) > 0,
     )
@@ -161,12 +165,15 @@ export async function syncSalesHistoryForLookback(lookbackDays: number): Promise
       continue;
     }
 
+    const isEbay = integration.platform === "TPP_EBAY" || integration.platform === "TT_EBAY";
     const perIntegrationTimeoutMs =
       appEnv === "local"
-        ? integration.platform === "TPP_EBAY" || integration.platform === "TT_EBAY"
+        ? isEbay
           ? LOCAL_EBAY_FORECAST_SYNC_TIMEOUT_MS
           : LOCAL_FORECAST_SYNC_TIMEOUT_MS
-        : DEPLOYED_FORECAST_SYNC_TIMEOUT_MS;
+        : isEbay
+          ? DEPLOYED_EBAY_SYNC_TIMEOUT_MS
+          : DEPLOYED_OTHER_SYNC_TIMEOUT_MS;
 
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), perIntegrationTimeoutMs);

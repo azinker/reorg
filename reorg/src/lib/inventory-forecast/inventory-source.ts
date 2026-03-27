@@ -1,4 +1,5 @@
 import type { InventorySourceType } from "@prisma/client";
+import { db } from "@/lib/db";
 import { getGridData } from "@/lib/grid-query";
 import type { GridRow } from "@/lib/grid-types";
 import type { ForecastInventoryRow } from "@/lib/inventory-forecast/types";
@@ -22,13 +23,25 @@ function flattenLeafRows(rows: GridRow[]) {
 }
 
 export async function getForecastInventoryRows(): Promise<ForecastInventoryRow[]> {
-  const rows = await getGridData();
+  const [rows, masterRowDates] = await Promise.all([
+    getGridData(),
+    db.masterRow.findMany({
+      select: { id: true, createdAt: true },
+    }),
+  ]);
+
+  const createdAtById = new Map(masterRowDates.map((r) => [r.id, r.createdAt]));
+  const now = Date.now();
   const leafRows = flattenLeafRows(rows);
   const deduped = new Map<string, ForecastInventoryRow>();
 
   for (const row of leafRows) {
     const masterRowId = normalizeMasterRowId(row.id);
     const existing = deduped.get(masterRowId);
+    const createdAt = createdAtById.get(masterRowId);
+    const itemAgeDays = createdAt
+      ? Math.floor((now - createdAt.getTime()) / 86_400_000)
+      : 0;
     const nextRow: ForecastInventoryRow = {
       masterRowId,
       sku: row.sku,
@@ -37,6 +50,7 @@ export async function getForecastInventoryRows(): Promise<ForecastInventoryRow[]
       imageUrl: row.imageUrl,
       supplierCost: row.supplierCost,
       currentInventory: row.inventory ?? 0,
+      itemAgeDays,
     };
 
     if (!existing) {
@@ -52,6 +66,7 @@ export async function getForecastInventoryRows(): Promise<ForecastInventoryRow[]
       imageUrl: existing.imageUrl ?? nextRow.imageUrl,
       supplierCost: existing.supplierCost ?? nextRow.supplierCost,
       currentInventory: Math.max(existing.currentInventory, nextRow.currentInventory),
+      itemAgeDays: Math.max(existing.itemAgeDays, nextRow.itemAgeDays),
     });
   }
 

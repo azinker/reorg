@@ -80,6 +80,7 @@ enum DemandPattern {
   SEASONAL
   INTERMITTENT
   NEW_ITEM
+  SLOW_MOVER
 }
 
 enum SupplierOrderStatus {

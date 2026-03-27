@@ -332,7 +332,10 @@ function demandPatternLabel(line: ForecastLineResult) {
       return "SEASONAL";
     case "INTERMITTENT":
       return "INTERMITTENT";
+    case "SLOW_MOVER":
+      return "SLOW MOVER";
     case "NEW_ITEM":
+      return "NEW ITEM";
     default:
       return "LIMITED RECENT HISTORY";
   }
@@ -348,9 +351,12 @@ function demandPatternExplanation(line: ForecastLineResult) {
       return "Sales repeat a recent weekly or seasonal pattern.";
     case "INTERMITTENT":
       return "Sales arrive in bursts with quiet gaps between them.";
+    case "SLOW_MOVER":
+      return "This item has very few or no sales in the lookback window. It is an established listing, not a new one.";
     case "NEW_ITEM":
+      return "This listing was created recently and does not have enough history yet.";
     default:
-      return "The selected lookback has thin recent history, so the forecast uses a simpler fallback. This can happen on newer listings or on slower sellers.";
+      return "The selected lookback has thin recent history, so the forecast uses a simpler fallback.";
   }
 }
 
@@ -364,9 +370,12 @@ function demandPatternGuide(pattern: ForecastLineResult["demandPattern"]) {
       return "Demand repeats a recognizable weekly or seasonal pattern.";
     case "INTERMITTENT":
       return "Demand comes in bursts with quiet gaps between them.";
+    case "SLOW_MOVER":
+      return "An established item with very few or no recent sales. Not a new listing — just low recent activity.";
     case "NEW_ITEM":
+      return "A recently listed item without enough sales history for reliable forecasting.";
     default:
-      return "Recent history inside the selected lookback is thin. This does not always mean a brand-new listing; it can also mean a slow seller or a short lookback.";
+      return "Recent history inside the selected lookback is thin.";
   }
 }
 
@@ -456,9 +465,14 @@ function addGuideSheet(workbook: ExcelJS.Workbook) {
       "Example: if 2,000 SKUs exist but only 85 need action, this filter keeps attention on the 85.",
     ],
     [
-      "Demand Pattern: Limited recent history",
+      "Demand Pattern: New item",
       demandPatternGuide("NEW_ITEM"),
-      "Example: a slow seller with only a few recent sales in the selected 10-day lookback may fall into this bucket even if the listing itself is older.",
+      "Example: a listing created in the last 45 days without enough data yet.",
+    ],
+    [
+      "Demand Pattern: Slow mover",
+      demandPatternGuide("SLOW_MOVER" as ForecastLineResult["demandPattern"]),
+      "Example: an item that has been listed for months but has very few or no sales in the lookback window.",
     ],
   ];
 
