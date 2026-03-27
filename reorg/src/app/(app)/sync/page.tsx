@@ -948,7 +948,7 @@ export default function SyncPage() {
                         </span>
                       )}
                     </div>
-                    {rateLimits?.degradedNote && !rateLimits.isLocallyTracked && (
+                    {rateLimits?.degradedNote && (
                       <p className="mt-1.5 text-[10px] leading-snug text-amber-400/90">{rateLimits.degradedNote}</p>
                     )}
                     {rateLimits && rateLimits.methods.length > 0 ? (

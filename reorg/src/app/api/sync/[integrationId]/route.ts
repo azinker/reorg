@@ -327,13 +327,17 @@ export async function GET(
       });
     }
 
-    // Fallback: if live fetch failed or was degraded, try the last saved live
-    // snapshot from this integration or a sibling with the same App ID.
+    // Fallback chain when live eBay fetch failed or was degraded:
+    // 1. Try saved live snapshot from this integration
+    // 2. Try saved live snapshot from a sibling (same App ID)
+    // 3. Accept locally tracked snapshot (best available when eBay's
+    //    GetApiAccessRules is returning 503)
     if (isEbayPlatform(integration.platform) && (!rateLimits || rateLimits.isDegradedEstimate)) {
       const selfSnapshot = deserializeSnapshotFromConfig(config.syncState?.lastRateLimitSnapshot);
       if (selfSnapshot && !selfSnapshot.isLocallyTracked) {
         rateLimits = selfSnapshot;
       } else {
+        let found = false;
         const fingerprint = getEbayCredentialFingerprint(integration);
         if (fingerprint) {
           const candidates = await db.integration.findMany({
@@ -347,9 +351,19 @@ export async function GET(
             );
             if (sibSnapshot && !sibSnapshot.isLocallyTracked) {
               rateLimits = sibSnapshot;
+              found = true;
               break;
             }
           }
+        }
+
+        // Last resort: use locally tracked data when eBay's quota
+        // service is down (HTTP 503). Better than showing nothing.
+        if (!found && selfSnapshot) {
+          rateLimits = {
+            ...selfSnapshot,
+            degradedNote: "eBay's quota service is temporarily down (HTTP 503). Showing calls tracked by reorG today.",
+          };
         }
       }
     }
