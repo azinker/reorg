@@ -120,11 +120,13 @@ function sleep(ms: number) {
 async function fetchWithTimeout(
   url: string,
   options: RequestInit = {},
-): Promise<Response> {
+): Promise<{ ok: boolean; status: number; body: string }> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   try {
-    return await fetch(url, { ...options, signal: controller.signal });
+    const response = await fetch(url, { ...options, signal: controller.signal });
+    const body = await response.text();
+    return { ok: response.ok, status: response.status, body };
   } catch (error) {
     if (error instanceof Error && error.name === "AbortError") {
       throw new Error(`eBay request timed out after ${REQUEST_TIMEOUT_MS}ms: ${url}`);
@@ -902,7 +904,7 @@ async function runFullSync(
         body,
       });
 
-      const xml = await response.text();
+      const xml = response.body;
       if (!response.ok) {
         throw new Error(`GetSellerList HTTP ${response.status}: ${xml.slice(0, 500)}`);
       }
@@ -1407,11 +1409,10 @@ async function getAccessToken(
   });
 
   if (!tokenResponse.ok) {
-    const text = await tokenResponse.text();
-    throw new Error(`eBay token refresh failed: ${tokenResponse.status} ${text}`);
+    throw new Error(`eBay token refresh failed: ${tokenResponse.status} ${tokenResponse.body}`);
   }
 
-  const data = await tokenResponse.json();
+  const data = JSON.parse(tokenResponse.body);
   const accessToken = data.access_token;
   const expiresIn = data.expires_in ?? 7200;
   const refreshExpiresIn =
@@ -1498,7 +1499,7 @@ async function fetchIncrementalItemIds(
         body,
       });
 
-      const xml = await response.text();
+      const xml = response.body;
       if (!response.ok) {
         throw new Error(`GetSellerEvents HTTP ${response.status}: ${xml.slice(0, 500)}`);
       }
@@ -1594,7 +1595,7 @@ async function fetchFullItem(
       body,
     });
 
-    const xml = await response.text();
+    const xml = response.body;
     if (!response.ok) {
       throw new Error(`GetItem failed for ${itemId}: ${response.status} ${xml.slice(0, 300)}`);
     }

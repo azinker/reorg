@@ -114,11 +114,13 @@ function sleep(ms: number) {
 async function fetchWithTimeout(
   url: string,
   options: RequestInit = {},
-): Promise<Response> {
+): Promise<{ ok: boolean; status: number; body: string }> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   try {
-    return await fetch(url, { ...options, signal: controller.signal });
+    const response = await fetch(url, { ...options, signal: controller.signal });
+    const body = await response.text();
+    return { ok: response.ok, status: response.status, body };
   } catch (error) {
     if (error instanceof Error && error.name === "AbortError") {
       throw new Error(`eBay request timed out after ${REQUEST_TIMEOUT_MS}ms: ${url}`);
@@ -896,7 +898,7 @@ async function runFullSync(
         body,
       });
 
-      const xml = await res.text();
+      const xml = res.body;
       if (!res.ok) {
         throw new Error(`GetSellerList HTTP ${res.status}: ${xml.slice(0, 500)}`);
       }
@@ -1065,11 +1067,10 @@ async function getAccessToken(
   });
 
   if (!tokenRes.ok) {
-    const text = await tokenRes.text();
-    throw new Error(`eBay token refresh failed: ${tokenRes.status} ${text}`);
+    throw new Error(`eBay token refresh failed: ${tokenRes.status} ${tokenRes.body}`);
   }
 
-  const data = await tokenRes.json();
+  const data = JSON.parse(tokenRes.body);
   const accessToken = data.access_token;
   const expiresIn = data.expires_in ?? 7200;
   const refreshExpiresIn =
@@ -1154,7 +1155,7 @@ async function fetchIncrementalItemIds(
         body,
       });
 
-      const xml = await res.text();
+      const xml = res.body;
       if (!res.ok) {
         throw new Error(`GetSellerEvents HTTP ${res.status}: ${xml.slice(0, 500)}`);
       }
@@ -1250,7 +1251,7 @@ async function fetchFullItem(
       body,
     });
 
-    const xml = await response.text();
+    const xml = response.body;
     if (!response.ok) {
       throw new Error(`GetItem failed for ${itemId}: ${response.status} ${xml.slice(0, 300)}`);
     }
@@ -1967,7 +1968,7 @@ async function fetchAndStorePromotedListingRates(
 
   if (!campaignRes.ok) return 0;
 
-  const campaignData = (await campaignRes.json()) as {
+  const campaignData = JSON.parse(campaignRes.body) as {
     campaigns?: MarketingCampaign[];
   };
   const campaigns = campaignData.campaigns ?? [];
@@ -1996,7 +1997,7 @@ async function fetchAndStorePromotedListingRates(
 
       if (!adsRes.ok) break;
 
-      const adsData = (await adsRes.json()) as {
+      const adsData = JSON.parse(adsRes.body) as {
         ads?: MarketingAd[];
         total?: number;
       };
