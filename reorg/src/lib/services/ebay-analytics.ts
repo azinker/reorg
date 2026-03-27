@@ -120,9 +120,11 @@ async function getUserAccessToken(credentials: FullEbayCredentials) {
   const baseUrl = getBaseUrl(credentials.environment);
   const ac = new AbortController();
   const abortTimer = setTimeout(() => ac.abort(), 8_000);
-  let response: Response;
+  let bodyText: string;
+  let ok: boolean;
+  let status: number;
   try {
-    response = await fetch(`${baseUrl}/identity/v1/oauth2/token`, {
+    const response = await fetch(`${baseUrl}/identity/v1/oauth2/token`, {
       method: "POST",
       headers: {
         Authorization: `Basic ${basicAuth}`,
@@ -134,16 +136,18 @@ async function getUserAccessToken(credentials: FullEbayCredentials) {
       }),
       signal: ac.signal,
     });
+    bodyText = await response.text();
+    ok = response.ok;
+    status = response.status;
   } finally {
     clearTimeout(abortTimer);
   }
 
-  if (!response.ok) {
-    const body = await response.text().catch(() => "");
-    throw new Error(`eBay token refresh failed: ${response.status} — ${body.slice(0, 200)}`);
+  if (!ok) {
+    throw new Error(`eBay token refresh failed: ${status} — ${bodyText.slice(0, 200)}`);
   }
 
-  const payload = (await response.json()) as {
+  const payload = JSON.parse(bodyText) as {
     access_token?: string;
     expires_in?: number;
   };
@@ -340,7 +344,7 @@ export async function getEbayTradingRateLimitSnapshotForIntegration(
     const storedExpiry = typeof configRecord.accessTokenExpiresAt === "number" ? configRecord.accessTokenExpiresAt : 0;
     const tradingUrl = getTradingUrl(credentials.environment);
 
-    const tryGetApiAccessRules = async (token: string) => {
+    const tryGetApiAccessRules = async (token: string): Promise<{ ok: boolean; status: number; body: string }> => {
       const reqBody = `<?xml version="1.0" encoding="utf-8"?>
 <GetApiAccessRulesRequest xmlns="urn:ebay:apis:eBLBaseComponents">
 </GetApiAccessRulesRequest>`;
@@ -359,7 +363,8 @@ export async function getEbayTradingRateLimitSnapshotForIntegration(
           body: reqBody,
           signal: ac.signal,
         });
-        return resp;
+        const body = await resp.text();
+        return { ok: resp.ok, status: resp.status, body };
       } finally {
         clearTimeout(abortTimer);
       }
@@ -374,22 +379,21 @@ export async function getEbayTradingRateLimitSnapshotForIntegration(
       token = await getUserAccessToken(credentials);
     }
 
-    let response = await tryGetApiAccessRules(token);
+    let result = await tryGetApiAccessRules(token);
 
-    if (!response.ok && usedStoredToken) {
+    if (!result.ok && usedStoredToken) {
       token = await getUserAccessToken(credentials);
-      response = await tryGetApiAccessRules(token);
+      result = await tryGetApiAccessRules(token);
     }
 
-    if (!response.ok) {
-      if (response.status >= 500) {
-        lastGetApiAccessRulesFailure = { at: Date.now(), status: response.status };
+    if (!result.ok) {
+      if (result.status >= 500) {
+        lastGetApiAccessRulesFailure = { at: Date.now(), status: result.status };
       }
-      throw new Error(`GetApiAccessRules failed: ${response.status}`);
+      throw new Error(`GetApiAccessRules failed: ${result.status}`);
     }
 
-    const xml = await response.text();
-    const parsed = xmlParser.parse(xml);
+    const parsed = xmlParser.parse(result.body);
     const apiResponse = parsed?.GetApiAccessRulesResponse;
     const ack =
       apiResponse && typeof apiResponse === "object"
@@ -398,10 +402,9 @@ export async function getEbayTradingRateLimitSnapshotForIntegration(
     if (ack === "Failure") {
       if (usedStoredToken) {
         token = await getUserAccessToken(credentials);
-        const retryResp = await tryGetApiAccessRules(token);
-        if (retryResp.ok) {
-          const retryXml = await retryResp.text();
-          const retryParsed = xmlParser.parse(retryXml);
+        const retryResult = await tryGetApiAccessRules(token);
+        if (retryResult.ok) {
+          const retryParsed = xmlParser.parse(retryResult.body);
           const retryApi = retryParsed?.GetApiAccessRulesResponse;
           const retryAck = retryApi && typeof retryApi === "object"
             ? String((retryApi as Record<string, unknown>).Ack ?? "")
@@ -469,9 +472,11 @@ export async function fetchRateLimitSnapshotWithToken(
 
     const ac = new AbortController();
     const abortTimer = setTimeout(() => ac.abort(), 15_000);
-    let response: Response;
+    let xml: string;
+    let ok: boolean;
+    let status: number;
     try {
-      response = await fetch(tradingUrl, {
+      const response = await fetch(tradingUrl, {
         method: "POST",
         headers: {
           "X-EBAY-API-IAF-TOKEN": accessToken,
@@ -483,15 +488,16 @@ export async function fetchRateLimitSnapshotWithToken(
         body,
         signal: ac.signal,
       });
+      xml = await response.text();
+      ok = response.ok;
+      status = response.status;
     } finally {
       clearTimeout(abortTimer);
     }
 
-    const xml = await response.text();
-
-    if (!response.ok) {
-      if (response.status >= 500) {
-        lastGetApiAccessRulesFailure = { at: Date.now(), status: response.status };
+    if (!ok) {
+      if (status >= 500) {
+        lastGetApiAccessRulesFailure = { at: Date.now(), status };
       }
       return null;
     }

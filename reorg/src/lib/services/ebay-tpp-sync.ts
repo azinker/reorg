@@ -43,6 +43,7 @@ const GET_ITEM_RETRY_DELAYS_MS = [1_000, 3_000];
 const MARKETING_API_BASE = "https://api.ebay.com/sell/marketing/v1";
 const ADS_PAGE_SIZE = 500;
 const REQUEST_TIMEOUT_MS = 30_000;
+const SYNC_WALL_CLOCK_LIMIT_MS = 700_000;
 
 const parser = new XMLParser({
   ignoreAttributes: true,
@@ -377,6 +378,8 @@ export async function runEbayTppSync(
     ReviseFixedPriceItem: seedUsage?.ReviseFixedPriceItem ?? 0,
   };
 
+  const syncStartedAt = Date.now();
+
   try {
     let effectiveMode = options.effectiveMode ?? options.requestedMode ?? "full";
     let completionCursor = new Date().toISOString();
@@ -547,6 +550,22 @@ export async function runEbayTppSync(
           index < processingItemIds.length;
           index += GETITEM_CONCURRENCY
         ) {
+          if (Date.now() - syncStartedAt > SYNC_WALL_CLOCK_LIMIT_MS) {
+            const remaining = processingItemIds.slice(index);
+            pendingIncrementalItemIdsForCompletion = [
+              ...remaining,
+              ...pendingIncrementalItemIdsForCompletion,
+            ];
+            pendingIncrementalWindowEndedAtForCompletion =
+              incrementalWindow.windowEndedAt.toISOString();
+            completionCursor = lastCursorValue ?? completionCursor;
+            haltedIncrementalReason =
+              `Sync reached the ${Math.round(SYNC_WALL_CLOCK_LIMIT_MS / 1000)}s wall-clock limit. ` +
+              `${progress.itemsProcessed} items processed; ${remaining.length} remaining will continue on the next run.`;
+            progress.errors.push({ sku: "_global", message: haltedIncrementalReason });
+            break;
+          }
+
           const batch = processingItemIds.slice(
             index,
             index + GETITEM_CONCURRENCY,

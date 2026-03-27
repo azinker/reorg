@@ -48,6 +48,7 @@ const EBAY_INVALID_TOKEN_ERROR_CODE = "21916984";
 const GET_SELLER_EVENTS_RETRY_DELAYS_MS = [3_000, 8_000];
 const GET_ITEM_RETRY_DELAYS_MS = [1_000, 3_000];
 const REQUEST_TIMEOUT_MS = 30_000;
+const SYNC_WALL_CLOCK_LIMIT_MS = 700_000;
 
 const parser = new XMLParser({
   ignoreAttributes: true,
@@ -391,6 +392,8 @@ export async function runEbayTtSync(
     ReviseFixedPriceItem: seedUsage?.ReviseFixedPriceItem ?? 0,
   };
 
+  const syncStartedAt = Date.now();
+
   try {
     let effectiveMode = options.effectiveMode ?? options.requestedMode ?? "full";
     let completionCursor = new Date().toISOString();
@@ -560,6 +563,22 @@ export async function runEbayTtSync(
           index < processingItemIds.length;
           index += GETITEM_CONCURRENCY
         ) {
+          if (Date.now() - syncStartedAt > SYNC_WALL_CLOCK_LIMIT_MS) {
+            const remaining = processingItemIds.slice(index);
+            pendingIncrementalItemIdsForCompletion = [
+              ...remaining,
+              ...pendingIncrementalItemIdsForCompletion,
+            ];
+            pendingIncrementalWindowEndedAtForCompletion =
+              incrementalWindow.windowEndedAt.toISOString();
+            completionCursor = lastCursorValue ?? completionCursor;
+            haltedIncrementalReason =
+              `Sync reached the ${Math.round(SYNC_WALL_CLOCK_LIMIT_MS / 1000)}s wall-clock limit. ` +
+              `${progress.itemsProcessed} items processed; ${remaining.length} remaining will continue on the next run.`;
+            progress.errors.push({ sku: "_global", message: haltedIncrementalReason });
+            break;
+          }
+
           const batch = processingItemIds.slice(
             index,
             index + GETITEM_CONCURRENCY,
