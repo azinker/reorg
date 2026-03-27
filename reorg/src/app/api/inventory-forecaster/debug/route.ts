@@ -44,8 +44,12 @@ export async function GET() {
         select: {
           id: true,
           createdAt: true,
-          controls: true,
-          lineCount: true,
+          lookbackDays: true,
+          forecastBucket: true,
+          transitDays: true,
+          desiredCoverageDays: true,
+          mode: true,
+          _count: { select: { lines: true } },
         },
       }),
       db.auditLog.findMany({
@@ -110,8 +114,14 @@ export async function GET() {
             ageMinutes: Math.round(
               (Date.now() - latestForecastRun.createdAt.getTime()) / 60_000,
             ),
-            lineCount: latestForecastRun.lineCount,
-            controls: latestForecastRun.controls,
+            lineCount: latestForecastRun._count.lines,
+            controls: {
+              lookbackDays: latestForecastRun.lookbackDays,
+              forecastBucket: latestForecastRun.forecastBucket,
+              transitDays: latestForecastRun.transitDays,
+              desiredCoverageDays: latestForecastRun.desiredCoverageDays,
+              mode: latestForecastRun.mode,
+            },
           }
         : null,
       recentAuditEntries: recentErrors.map((e) => ({
