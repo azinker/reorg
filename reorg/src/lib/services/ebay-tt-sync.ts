@@ -1418,11 +1418,23 @@ async function getAccessToken(
     data.refresh_token_expires_in ?? 18 * 30 * 24 * 60 * 60;
   const expiresAt = Date.now() + expiresIn * 1000;
 
+  const current = await db.integration.findUnique({
+    where: { id: integrationId },
+    select: { config: true },
+  });
+  const fullConfig =
+    current?.config && typeof current.config === "object" && !Array.isArray(current.config)
+      ? (current.config as Record<string, unknown>)
+      : {};
+
   await db.integration.update({
     where: { id: integrationId },
     data: {
       config: {
-        ...config,
+        ...fullConfig,
+        appId: config.appId,
+        certId: config.certId,
+        refreshToken: config.refreshToken,
         accessToken,
         accessTokenExpiresAt: expiresAt,
         refreshTokenExpiresAt: Date.now() + refreshExpiresIn * 1000,
