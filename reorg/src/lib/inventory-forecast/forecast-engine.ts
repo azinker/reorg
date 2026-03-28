@@ -460,6 +460,7 @@ export function buildForecastResultLines(args: {
   snapshotSignalsByMasterRowId: Map<string, SnapshotSignal>;
   truncatedPlatformsBySku: Map<string, boolean>;
   overrideByMasterRowId?: Map<string, number | null>;
+  isUploadedData?: boolean;
 }) {
   const effectiveDays = args.effectiveLookbackDays;
   const lines: ForecastLineResult[] = args.inventoryRows.map((inventoryRow) => {
@@ -478,7 +479,9 @@ export function buildForecastResultLines(args: {
     for (const sale of rawSales) {
       platformUnitsMap.set(sale.platform, (platformUnitsMap.get(sale.platform) ?? 0) + sale.quantity);
     }
-    const limitedHistory = rawSales.length === 0 || totalUnits < 8 || prepared.series.filter((value) => value > 0).length < 4;
+    const limitedHistory = args.isUploadedData
+      ? rawSales.length === 0 || totalUnits === 0
+      : rawSales.length === 0 || totalUnits < 8 || prepared.series.filter((value) => value > 0).length < 4;
     const demandPattern = inferDemandPattern(prepared.series, args.controls.forecastBucket, inventoryRow.itemAgeDays);
     const { model, backtestError, usedFallback } = selectBestModel(
       prepared.series,

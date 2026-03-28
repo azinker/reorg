@@ -50,10 +50,8 @@ const POST_SALES_COLUMNS = [
   { header: "Confidence", width: 32 },
 ] as const;
 
-function buildExportColumns(result: ForecastResult) {
-  const activePlatforms = PLATFORM_ORDER.filter((p) =>
-    result.lines.some((l) => l.salesByPlatform?.some((s) => s.platform === p)),
-  );
+function buildExportColumns(_result: ForecastResult) {
+  const activePlatforms = [...PLATFORM_ORDER];
   const platformCols = activePlatforms.map((p) => ({
     header: PLATFORM_COLUMN_LABELS[p] ?? p,
     width: 16,

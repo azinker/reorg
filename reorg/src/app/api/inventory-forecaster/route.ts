@@ -3,10 +3,17 @@ import { z } from "zod";
 import {
   getInventoryForecasterBootstrap,
   runInventoryForecast,
+  runInventoryForecastFromUpload,
 } from "@/lib/inventory-forecast/service";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
+
+const uploadedSaleSchema = z.object({
+  sku: z.string().min(1),
+  qty: z.number().int().min(1),
+  platformQty: z.record(z.string(), z.number()),
+});
 
 const runSchema = z.object({
   lookbackDays: z.number().int().min(1).max(365),
@@ -16,6 +23,7 @@ const runSchema = z.object({
   useOpenInTransit: z.boolean().default(true),
   reorderRelevantOnly: z.boolean().default(true),
   mode: z.enum(["simple", "smart"]).default("smart"),
+  uploadedSales: z.array(uploadedSaleSchema).optional(),
 });
 
 export async function GET() {
@@ -42,7 +50,18 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const data = await runInventoryForecast(parsed.data);
+    const data = parsed.data.uploadedSales?.length
+      ? await runInventoryForecastFromUpload({
+          lookbackDays: parsed.data.lookbackDays,
+          forecastBucket: parsed.data.forecastBucket,
+          transitDays: parsed.data.transitDays,
+          desiredCoverageDays: parsed.data.desiredCoverageDays,
+          useOpenInTransit: parsed.data.useOpenInTransit,
+          reorderRelevantOnly: parsed.data.reorderRelevantOnly,
+          uploadedSales: parsed.data.uploadedSales,
+        })
+      : await runInventoryForecast(parsed.data);
+
     return NextResponse.json({ data });
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);

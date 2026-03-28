@@ -25,6 +25,12 @@ import {
   forecastExportFileName,
   type ExportProgress,
 } from "@/lib/inventory-forecast/export-client";
+import {
+  parseSalesUpload,
+  aggregateSalesUpload,
+  type ParsedSalesUpload,
+} from "@/lib/inventory-forecast/parse-sales-upload";
+import { Upload, FileSpreadsheet, X } from "lucide-react";
 
 type BootstrapData = {
   recentRuns: Array<{
@@ -213,6 +219,9 @@ export default function InventoryForecasterPage() {
   const [patchingOrderId, setPatchingOrderId] = useState<string | null>(null);
   const [runStartedAt, setRunStartedAt] = useState<number | null>(null);
   const [runElapsedMs, setRunElapsedMs] = useState(0);
+  const [salesSource, setSalesSource] = useState<"api" | "upload">("api");
+  const [uploadedFile, setUploadedFile] = useState<ParsedSalesUpload | null>(null);
+  const [uploadFileName, setUploadFileName] = useState<string>("");
 
   useEffect(() => {
     async function load() {
@@ -280,6 +289,9 @@ export default function InventoryForecasterPage() {
     setSavedRunId(null);
 
     try {
+      const isUpload = salesSource === "upload" && uploadedFile;
+      const aggregated = isUpload ? aggregateSalesUpload(uploadedFile) : undefined;
+
       const response = await fetch("/api/inventory-forecaster", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -290,7 +302,8 @@ export default function InventoryForecasterPage() {
           desiredCoverageDays: Number(controls.desiredCoverageDays) || 0,
           useOpenInTransit: controls.useOpenInTransit,
           reorderRelevantOnly: controls.reorderRelevantOnly,
-          mode: controls.forecastMode,
+          mode: isUpload ? "simple" : controls.forecastMode,
+          ...(aggregated ? { uploadedSales: aggregated } : {}),
         }),
       });
       const text = await response.text();
@@ -595,27 +608,176 @@ export default function InventoryForecasterPage() {
               </label>
               <p className="mb-2 text-xs text-muted-foreground">Choose how order quantities are calculated</p>
               <div className="grid grid-cols-2 gap-2">
-                {(["simple", "smart"] as const).map((m) => (
-                  <button
-                    key={m}
-                    type="button"
-                    onClick={() => setControls((prev) => ({ ...prev, forecastMode: m }))}
-                    className={cn(
-                      "rounded-lg border px-3 py-2.5 text-sm font-medium transition-colors cursor-pointer text-left",
-                      controls.forecastMode === m
-                        ? "border-primary bg-primary/10 text-primary"
-                        : "border-border bg-background text-muted-foreground hover:text-foreground",
-                    )}
-                  >
-                    <span className="block">{m === "simple" ? "Simple" : "Smart"}</span>
-                    <span className="mt-0.5 block text-[11px] font-normal leading-snug opacity-70">
-                      {m === "simple"
-                        ? "Avg sold/day × days − on hand"
-                        : "Models + safety buffer"}
-                    </span>
-                  </button>
-                ))}
+                {(["simple", "smart"] as const).map((m) => {
+                  const disabled = m === "smart" && salesSource === "upload";
+                  return (
+                    <button
+                      key={m}
+                      type="button"
+                      disabled={disabled}
+                      onClick={() => setControls((prev) => ({ ...prev, forecastMode: m }))}
+                      className={cn(
+                        "rounded-lg border px-3 py-2.5 text-sm font-medium transition-colors cursor-pointer text-left",
+                        disabled && "opacity-40 cursor-not-allowed",
+                        controls.forecastMode === m
+                          ? "border-primary bg-primary/10 text-primary"
+                          : "border-border bg-background text-muted-foreground hover:text-foreground",
+                      )}
+                    >
+                      <span className="block">{m === "simple" ? "Simple" : "Smart"}</span>
+                      <span className="mt-0.5 block text-[11px] font-normal leading-snug opacity-70">
+                        {m === "simple"
+                          ? "Avg sold/day × days − on hand"
+                          : disabled ? "Requires live API data" : "Models + safety buffer"}
+                      </span>
+                    </button>
+                  );
+                })}
               </div>
+            </div>
+
+            <div>
+              <label className="mb-1 block text-sm font-medium text-foreground">
+                Sales Data Source
+              </label>
+              <p className="mb-2 text-xs text-muted-foreground">Where should sales history come from?</p>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => { setSalesSource("api"); }}
+                  className={cn(
+                    "rounded-lg border px-3 py-2.5 text-sm font-medium transition-colors cursor-pointer text-left",
+                    salesSource === "api"
+                      ? "border-primary bg-primary/10 text-primary"
+                      : "border-border bg-background text-muted-foreground hover:text-foreground",
+                  )}
+                >
+                  <span className="block">Live API</span>
+                  <span className="mt-0.5 block text-[11px] font-normal leading-snug opacity-70">
+                    Pull from synced stores
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSalesSource("upload");
+                    setControls((prev) => ({ ...prev, forecastMode: "simple" }));
+                  }}
+                  className={cn(
+                    "rounded-lg border px-3 py-2.5 text-sm font-medium transition-colors cursor-pointer text-left",
+                    salesSource === "upload"
+                      ? "border-primary bg-primary/10 text-primary"
+                      : "border-border bg-background text-muted-foreground hover:text-foreground",
+                  )}
+                >
+                  <span className="flex items-center gap-1.5"><Upload className="h-3.5 w-3.5" /> Upload Report</span>
+                  <span className="mt-0.5 block text-[11px] font-normal leading-snug opacity-70">
+                    Import .xlsx sales file
+                  </span>
+                </button>
+              </div>
+
+              {salesSource === "upload" && (
+                <div className="mt-3 space-y-3">
+                  {!uploadedFile ? (
+                    <label className="flex cursor-pointer flex-col items-center gap-2 rounded-xl border-2 border-dashed border-border bg-background/60 px-4 py-6 text-center transition-colors hover:border-primary/40 hover:bg-primary/5">
+                      <FileSpreadsheet className="h-8 w-8 text-muted-foreground" />
+                      <span className="text-sm font-medium text-foreground">Drop or click to upload .xlsx</span>
+                      <span className="text-xs text-muted-foreground">Product Sales Report format</span>
+                      <input
+                        type="file"
+                        accept=".xlsx,.xls"
+                        className="hidden"
+                        onChange={async (e) => {
+                          const file = e.target.files?.[0];
+                          if (!file) return;
+                          try {
+                            const buffer = await file.arrayBuffer();
+                            const parsed = parseSalesUpload(buffer);
+                            setUploadedFile(parsed);
+                            setUploadFileName(file.name);
+                            if (parsed.dateRange) {
+                              const from = new Date(parsed.dateRange.from);
+                              const to = new Date(parsed.dateRange.to);
+                              const days = Math.round((to.getTime() - from.getTime()) / (1000 * 60 * 60 * 24));
+                              if (days > 0 && days <= 365) {
+                                const preset = days <= 95 ? "90" : days <= 185 ? "180" : days <= 370 ? "365" : "custom";
+                                setControls((prev) => ({
+                                  ...prev,
+                                  lookbackDaysPreset: preset as ForecastControlsState["lookbackDaysPreset"],
+                                  customLookbackDays: String(days),
+                                }));
+                              }
+                            }
+                          } catch {
+                            setStatusMessage({ text: "Failed to parse the uploaded file. Make sure it is a valid .xlsx sales report.", type: "error" });
+                          }
+                        }}
+                      />
+                    </label>
+                  ) : (
+                    <div className="rounded-xl border border-border bg-background/60 p-3 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2 text-sm font-medium text-foreground">
+                          <FileSpreadsheet className="h-4 w-4 text-emerald-400" />
+                          {uploadFileName}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => { setUploadedFile(null); setUploadFileName(""); }}
+                          className="rounded p-1 text-muted-foreground hover:text-foreground cursor-pointer"
+                        >
+                          <X className="h-4 w-4" />
+                        </button>
+                      </div>
+                      {uploadedFile.dateRange && (
+                        <p className="text-xs text-muted-foreground">
+                          Date range: {uploadedFile.dateRange.from} — {uploadedFile.dateRange.to}
+                        </p>
+                      )}
+                      <p className="text-xs text-muted-foreground">
+                        {uploadedFile.skuSales.size.toLocaleString()} unique SKUs
+                        {" · "}
+                        {[...uploadedFile.skuSales.values()].reduce((s, v) => s + v.totalQty, 0).toLocaleString()} total units
+                      </p>
+                      <div className="space-y-1 pt-1">
+                        <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">Sections</p>
+                        {uploadedFile.sections.map((sec, i) => (
+                          <label key={sec.name} className="flex items-center gap-2 text-xs">
+                            <input
+                              type="checkbox"
+                              checked={sec.enabled}
+                              onChange={(e) => {
+                                setUploadedFile((prev) => {
+                                  if (!prev) return prev;
+                                  const sections = [...prev.sections];
+                                  sections[i] = { ...sections[i], enabled: e.target.checked };
+                                  return { ...prev, sections };
+                                });
+                              }}
+                              className="h-3.5 w-3.5"
+                            />
+                            <span className={cn("text-foreground", !sec.enabled && "opacity-50")}>
+                              {sec.name}
+                              <span className="ml-1.5 text-muted-foreground">
+                                ({sec.skuCount.toLocaleString()} SKUs · {sec.totalUnits.toLocaleString()} units)
+                              </span>
+                              {sec.platform && (
+                                <span className="ml-1.5 rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">
+                                  {sec.platform === "TPP_EBAY" ? "eBay TPP" : sec.platform === "TT_EBAY" ? "eBay TT" : sec.platform === "SHOPIFY" ? "Shopify" : sec.platform === "BIGCOMMERCE" ? "BigCommerce" : sec.platform}
+                                </span>
+                              )}
+                            </span>
+                          </label>
+                        ))}
+                      </div>
+                      <div className="mt-1 rounded-lg border border-amber-500/30 bg-amber-500/10 px-2 py-1.5 text-[11px] text-amber-200">
+                        Smart forecast is not available with uploaded data. Simple mode will be used.
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
 
             <div>
@@ -770,7 +932,7 @@ export default function InventoryForecasterPage() {
             <button
               type="button"
               onClick={() => void runForecast()}
-              disabled={running}
+              disabled={running || (salesSource === "upload" && !uploadedFile)}
               className={cn(
                 "inline-flex w-full items-center justify-center gap-2 rounded-xl bg-primary px-4 py-3 text-sm font-semibold text-primary-foreground transition-colors cursor-pointer",
                 "hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60",
@@ -779,7 +941,9 @@ export default function InventoryForecasterPage() {
               {running ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
               {running
                 ? "Running Forecast..."
-                : `Run ${controls.forecastMode === "simple" ? "Simple" : "Smart"} Forecast`}
+                : salesSource === "upload"
+                  ? "Run Forecast (Uploaded Data)"
+                  : `Run ${controls.forecastMode === "simple" ? "Simple" : "Smart"} Forecast`}
             </button>
 
             {running ? (

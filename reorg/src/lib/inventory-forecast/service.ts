@@ -30,6 +30,7 @@ import type {
   ForecastControls,
   ForecastLineResult,
   ForecastResult,
+  ForecastSaleLine,
   PlatformCoverage,
   SaveForecastRunInput,
 } from "@/lib/inventory-forecast/types";
@@ -131,6 +132,137 @@ export async function runInventoryForecast(input: {
     salesSync: {
       ...salesHistory.summary,
       issues: syncState.issues,
+    },
+    platformCoverage,
+  } satisfies ForecastResult;
+}
+
+export interface UploadedSkuSale {
+  sku: string;
+  qty: number;
+  platformQty: Record<string, number>;
+}
+
+export async function runInventoryForecastFromUpload(input: {
+  lookbackDays: number;
+  forecastBucket: ForecastBucket;
+  transitDays: number;
+  desiredCoverageDays: number;
+  useOpenInTransit: boolean;
+  reorderRelevantOnly: boolean;
+  runDate?: string | Date;
+  uploadedSales: UploadedSkuSale[];
+}) {
+  const runDate = normalizeRunDate(input.runDate);
+  const controls: ForecastControls = {
+    lookbackDays: input.lookbackDays,
+    forecastBucket: input.forecastBucket,
+    transitDays: input.transitDays,
+    desiredCoverageDays: input.desiredCoverageDays,
+    useOpenInTransit: input.useOpenInTransit,
+    reorderRelevantOnly: input.reorderRelevantOnly,
+    mode: "simple",
+  };
+
+  const inventoryRows = await getForecastInventoryRows();
+  await captureDailyInventorySnapshots(runDate, inventoryRows);
+  const arrivalDate = inventoryArrivalDate(runDate, input.transitDays);
+  const masterRowIds = inventoryRows.map((row) => row.masterRowId);
+  const [snapshotSignals, openInboundByMasterRowId] = await Promise.all([
+    getSnapshotSignals(masterRowIds, input.lookbackDays, runDate),
+    getOpenInboundByMasterRowId(masterRowIds, arrivalDate),
+  ]);
+
+  // Build synthetic ForecastSaleLine entries from uploaded data.
+  // Spread sales evenly across the lookback period so the engine's
+  // series bucketing produces reasonable results.
+  const SYNTHETIC_POINTS = 7;
+  const salesBySku = new Map<string, ForecastSaleLine[]>();
+  const uploadedBySku = new Map(input.uploadedSales.map((s) => [s.sku, s]));
+
+  for (const uploaded of input.uploadedSales) {
+    const lines: ForecastSaleLine[] = [];
+    const platforms = Object.entries(uploaded.platformQty).filter(([, q]) => q > 0);
+    if (platforms.length === 0) continue;
+
+    for (const [platformKey, platformTotal] of platforms) {
+      const platform = (["TPP_EBAY", "TT_EBAY", "SHOPIFY", "BIGCOMMERCE"].includes(platformKey)
+        ? platformKey
+        : "TPP_EBAY") as Platform;
+
+      const perPoint = Math.floor(platformTotal / SYNTHETIC_POINTS);
+      const remainder = platformTotal - perPoint * SYNTHETIC_POINTS;
+
+      for (let i = 0; i < SYNTHETIC_POINTS; i++) {
+        const dayOffset = Math.round((input.lookbackDays / (SYNTHETIC_POINTS + 1)) * (i + 1));
+        const orderDate = new Date(runDate.getTime() - dayOffset * 24 * 60 * 60 * 1000);
+        const qty = perPoint + (i === SYNTHETIC_POINTS - 1 ? remainder : 0);
+        if (qty <= 0) continue;
+        lines.push({
+          platform,
+          externalOrderId: `upload-${uploaded.sku}-${platformKey}-${i}`,
+          externalLineId: `upload-${uploaded.sku}-${platformKey}-${i}`,
+          orderDate,
+          sku: uploaded.sku,
+          title: null,
+          quantity: qty,
+          isCancelled: false,
+          isReturn: false,
+        });
+      }
+    }
+    if (lines.length > 0) salesBySku.set(uploaded.sku, lines);
+  }
+
+  const platformCoverage: PlatformCoverage[] = [
+    { platform: "TPP_EBAY", label: "eBay TPP", lineCount: 0, earliestDate: null, latestDate: null, daysCovered: 0 },
+    { platform: "TT_EBAY", label: "eBay TT", lineCount: 0, earliestDate: null, latestDate: null, daysCovered: 0 },
+    { platform: "SHOPIFY", label: "Shopify", lineCount: 0, earliestDate: null, latestDate: null, daysCovered: 0 },
+    { platform: "BIGCOMMERCE", label: "BigCommerce", lineCount: 0, earliestDate: null, latestDate: null, daysCovered: 0 },
+  ];
+  for (const pc of platformCoverage) {
+    const totalForPlatform = input.uploadedSales.reduce(
+      (sum, s) => sum + (s.platformQty[pc.platform] ?? 0), 0,
+    );
+    if (totalForPlatform > 0) {
+      pc.lineCount = totalForPlatform;
+      pc.daysCovered = input.lookbackDays;
+    }
+  }
+
+  const lines = buildForecastResultLines({
+    controls,
+    effectiveLookbackDays: input.lookbackDays,
+    runDate,
+    inventoryRows,
+    salesBySku,
+    openInboundByMasterRowId,
+    snapshotSignalsByMasterRowId: snapshotSignals,
+    truncatedPlatformsBySku: new Map(),
+    isUploadedData: true,
+  });
+
+  const filteredLines = controls.reorderRelevantOnly
+    ? lines.filter(isReorderRelevantLine)
+    : lines;
+
+  const skusMatched = input.uploadedSales.filter((s) => salesBySku.has(s.sku)).length;
+  const skusUnmatched = input.uploadedSales.length - skusMatched;
+
+  return {
+    controls,
+    effectiveLookbackDays: input.lookbackDays,
+    inventorySource: DEFAULT_FORECAST_INVENTORY_SOURCE,
+    runDateTime: runDate.toISOString(),
+    confidenceLegend: FORECAST_CONFIDENCE_LEGEND,
+    lines: filteredLines,
+    salesSync: {
+      earliestCoveredAt: null,
+      latestCoveredAt: null,
+      platformsSynced: [] as Platform[],
+      issues: skusUnmatched > 0
+        ? [{ platform: "TPP_EBAY" as Platform, level: "warning" as const, message: `${skusMatched} SKUs matched to dashboard rows. ${skusUnmatched} SKUs from the upload were not found in the dashboard and were ignored.` }]
+        : [],
     },
     platformCoverage,
   } satisfies ForecastResult;
