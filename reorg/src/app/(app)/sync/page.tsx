@@ -582,6 +582,10 @@ export default function SyncPage() {
             if (issueCount > 0) setErrorsExpanded((prev) => ({ ...prev, [apiPlatform]: true }));
             fetchIntegrations();
             fetchSchedulerStatus(true);
+          } else if (job && job.status === "RUNNING" && job.itemsProcessed > 0) {
+            const issueCount = Array.isArray(job.errors) ? job.errors.filter((e: Record<string, unknown>) => e.sku !== "_phase").length : 0;
+            const liveMsg = `${job.itemsProcessed} processed, ${job.itemsCreated} created, ${job.itemsUpdated} updated${issueCount > 0 ? `, ${issueCount} issues so far` : ""}`;
+            setResults((prev) => ({ ...prev, [apiPlatform]: liveMsg }));
           }
         } catch { /* ignore */ }
       }, 2000);
@@ -1142,12 +1146,16 @@ export default function SyncPage() {
                   </div>
                 )}
 
-                {/* result message (after sync completes) */}
-                {result && !isSyncing && (
+                {/* result message (live during sync + after sync completes) */}
+                {result && (
                   <div
                     className={cn(
                       "mt-4 rounded-lg px-3 py-2 text-xs font-medium",
-                      storeSync === "error" ? "bg-red-500/10 text-red-400" : "bg-emerald-500/10 text-emerald-400",
+                      storeSync === "error"
+                        ? "bg-red-500/10 text-red-400"
+                        : isSyncing
+                          ? "bg-violet-500/10 text-violet-300"
+                          : "bg-emerald-500/10 text-emerald-400",
                     )}
                   >
                     {result}

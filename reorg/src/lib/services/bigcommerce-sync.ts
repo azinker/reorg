@@ -137,6 +137,13 @@ export async function runBigCommerceWebhookReconcile(
       totalUpdated += upsertResult.updated;
       totalUnmatched += matchResult.stats.unmatched;
 
+      if (totalProcessed % 25 === 0) {
+        await db.syncJob.update({
+          where: { id: syncJob.id },
+          data: { itemsProcessed: totalProcessed, itemsCreated: totalCreated, itemsUpdated: totalUpdated },
+        }).catch(() => {});
+      }
+
       const pruned = await removeMarketplaceListingsMissingFromProductSet(
         integration.id,
         productId,
