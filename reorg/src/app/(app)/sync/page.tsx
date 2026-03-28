@@ -633,7 +633,11 @@ export default function SyncPage() {
       setErrorsExpanded((prev) => ({ ...prev, [apiPlatform]: false }));
 
       try {
-        const res = await fetch(`/api/sync/${apiPlatform}`, {
+        const useExecuteRoute = mode === "full";
+        const syncUrl = useExecuteRoute
+          ? `/api/sync/${apiPlatform}/execute`
+          : `/api/sync/${apiPlatform}`;
+        const res = await fetch(syncUrl, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: mode ? JSON.stringify({ mode }) : undefined,
@@ -662,6 +666,14 @@ export default function SyncPage() {
           if (fb) setResults((prev) => ({ ...prev, [apiPlatform]: fb }));
           pollSyncStatus(apiPlatform);
           setTimeout(() => { delete preSyncJobIds.current[apiPlatform]; }, 60_000);
+          return;
+        }
+
+        if (useExecuteRoute && (data?.status === "COMPLETED" || data?.status === "FAILED")) {
+          delete preSyncJobIds.current[apiPlatform];
+          await loadStoreStatus(apiPlatform);
+          fetchIntegrations();
+          fetchSchedulerStatus(true);
           return;
         }
 
