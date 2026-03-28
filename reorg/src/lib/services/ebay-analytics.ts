@@ -313,6 +313,16 @@ function buildSnapshotFromRules(rules: unknown[], cacheKey: string): EbayTrading
   return snapshot;
 }
 
+function readSavedSnapshotFromConfig(
+  integration: Pick<Integration, "config">,
+): EbayTradingRateLimitSnapshot | null {
+  const configRecord = isRecord(integration.config) ? integration.config : null;
+  if (!configRecord) return null;
+  const syncState = isRecord(configRecord.syncState) ? configRecord.syncState : null;
+  if (!syncState) return null;
+  return deserializeSnapshotFromConfig(syncState.lastRateLimitSnapshot);
+}
+
 export async function getEbayTradingRateLimitSnapshotForIntegration(
   integration: Pick<Integration, "config">,
 ): Promise<EbayTradingRateLimitSnapshot | null> {
@@ -321,11 +331,13 @@ export async function getEbayTradingRateLimitSnapshotForIntegration(
   }
 
   // Short-circuit if eBay's GetApiAccessRules recently returned 503/5xx.
-  // Avoids hammering a down endpoint every 2s during polling.
+  // Fall back to the DB-persisted snapshot saved after the last sync.
   if (
     lastGetApiAccessRulesFailure &&
     Date.now() - lastGetApiAccessRulesFailure.at < NEGATIVE_CACHE_TTL_MS
   ) {
+    const savedSnapshot = readSavedSnapshotFromConfig(integration);
+    if (savedSnapshot) return savedSnapshot;
     return buildServiceUnavailableSnapshot();
   }
 
@@ -430,9 +442,9 @@ export async function getEbayTradingRateLimitSnapshotForIntegration(
         degradedNote: "Using recent counts. Live refresh will retry shortly.",
       };
     }
-    // No fallback available — show "Unknown" for all methods instead of
-    // fabricating fake counts which mislead the user into thinking quota
-    // is available.  limit=0 triggers "Unknown" in the UI.
+    // Try the DB-persisted snapshot saved after the last sync
+    const savedSnapshot = readSavedSnapshotFromConfig(integration);
+    if (savedSnapshot) return savedSnapshot;
     console.warn("[ebay-analytics] No fallback snapshot available, returning Unknown placeholder");
     return {
       fetchedAt: new Date().toISOString(),
