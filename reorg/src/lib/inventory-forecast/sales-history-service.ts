@@ -133,15 +133,16 @@ export async function syncSalesHistoryForLookback(lookbackDays: number): Promise
   const cacheHasNoIssues =
     recentAudit?.issues.length === 0 ||
     recentAudit?.issues.every((issue) => issue.level !== "error");
+  // Cache is valid when: a recent audit exists, covers the requested lookback,
+  // is within TTL, and had no error-level issues.  We no longer require every
+  // platform to have data — if one platform always times out, the cache for the
+  // others is still valid.  Missing platforms show as "No data" in the UI.
   if (
     recentAudit &&
     recentAudit.lookbackDays != null &&
     recentAudit.lookbackDays >= lookbackDays &&
     Date.now() - recentAudit.createdAt.getTime() <= FORECAST_HISTORY_CACHE_TTL_MS &&
-    cacheHasNoIssues &&
-    integrations.every(
-      (integration) => (coverageByPlatform?.get(integration.platform)?.lineCount ?? 0) > 0,
-    )
+    cacheHasNoIssues
   ) {
     return {
       issues: [],

@@ -872,9 +872,13 @@ export default function InventoryForecasterPage() {
                       <span className="font-medium text-foreground">{pc.label}</span>
                       <span className={cn(
                         "font-medium",
-                        pc.daysCovered < Number(controls.transitDays) + Number(controls.desiredCoverageDays) ? "text-amber-300" : "text-emerald-400",
+                        pc.daysCovered === 0
+                          ? "text-red-400"
+                          : pc.daysCovered < Number(controls.transitDays) + Number(controls.desiredCoverageDays)
+                            ? "text-amber-300"
+                            : "text-emerald-400",
                       )}>
-                        {pc.daysCovered}d
+                        {pc.daysCovered === 0 ? "No data" : `${pc.daysCovered}d`}
                       </span>
                     </div>
                   ))}

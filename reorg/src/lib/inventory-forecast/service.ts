@@ -22,6 +22,7 @@ import {
   loadAggregatedSalesHistory,
   syncSalesHistoryForLookback,
 } from "@/lib/inventory-forecast/sales-history-service";
+import { getEnabledForecastIntegrations } from "@/lib/inventory-forecast/marketplace-sales";
 import { captureDailyInventorySnapshots, getSnapshotSignals } from "@/lib/inventory-forecast/snapshots";
 import type { Platform } from "@prisma/client";
 import type {
@@ -62,9 +63,10 @@ export async function runInventoryForecast(input: {
     mode: input.mode ?? "smart",
   };
 
-  const [syncState, inventoryRows] = await Promise.all([
+  const [syncState, inventoryRows, enabledIntegrations] = await Promise.all([
     syncSalesHistoryForLookback(input.lookbackDays),
     getForecastInventoryRows(),
+    getEnabledForecastIntegrations(),
   ]);
   await captureDailyInventorySnapshots(runDate, inventoryRows);
   const arrivalDate = inventoryArrivalDate(runDate, input.transitDays);
@@ -77,21 +79,24 @@ export async function runInventoryForecast(input: {
       getTruncatedHistoryBySku(input.lookbackDays, syncState.truncatedPlatforms),
     ]);
 
+  // Build coverage for ALL enabled integrations — not just those with data.
+  // Platforms with no data show daysCovered: 0 so the UI can display "No data".
   const platformCoverage: PlatformCoverage[] = [];
   let oldestSaleDate: Date | null = null;
-  for (const [platform, stats] of salesHistory.platformStats) {
-    const daysCovered = stats.earliest && stats.latest
+  for (const integration of enabledIntegrations) {
+    const stats = salesHistory.platformStats.get(integration.platform);
+    const daysCovered = stats?.earliest && stats.latest
       ? Math.round((stats.latest.getTime() - stats.earliest.getTime()) / (1000 * 60 * 60 * 24)) + 1
       : 0;
     platformCoverage.push({
-      platform,
-      label: PLATFORM_LABELS[platform as keyof typeof PLATFORM_LABELS] ?? platform,
-      lineCount: stats.lineCount,
-      earliestDate: stats.earliest?.toISOString().slice(0, 10) ?? null,
-      latestDate: stats.latest?.toISOString().slice(0, 10) ?? null,
+      platform: integration.platform,
+      label: PLATFORM_LABELS[integration.platform as keyof typeof PLATFORM_LABELS] ?? integration.label,
+      lineCount: stats?.lineCount ?? 0,
+      earliestDate: stats?.earliest?.toISOString().slice(0, 10) ?? null,
+      latestDate: stats?.latest?.toISOString().slice(0, 10) ?? null,
       daysCovered,
     });
-    if (stats.earliest && (!oldestSaleDate || stats.earliest < oldestSaleDate)) {
+    if (stats?.earliest && (!oldestSaleDate || stats.earliest < oldestSaleDate)) {
       oldestSaleDate = stats.earliest;
     }
   }
