@@ -33,6 +33,7 @@ const INVENTORY_ROW: ForecastInventoryRow = {
   imageUrl: null,
   supplierCost: 12.5,
   currentInventory: 2,
+  itemAgeDays: 365,
 };
 
 const SNAPSHOT_SIGNAL: SnapshotSignal = {
@@ -58,6 +59,7 @@ function buildSales(quantity = 1): ForecastSaleLine[] {
 test("buildForecastResultLines subtracts inbound supply and respects overrides", () => {
   const baseArgs = {
     runDate: RUN_DATE,
+    effectiveLookbackDays: 14,
     inventoryRows: [INVENTORY_ROW],
     salesBySku: new Map([[INVENTORY_ROW.sku, buildSales()]]),
     snapshotSignalsByMasterRowId: new Map([[INVENTORY_ROW.masterRowId, SNAPSHOT_SIGNAL]]),
@@ -99,6 +101,7 @@ test("buildForecastResultLines subtracts inbound supply and respects overrides",
 test("isReorderRelevantLine only keeps rows with action or actionable warnings", () => {
   const [line] = buildForecastResultLines({
     controls: DEFAULT_CONTROLS,
+    effectiveLookbackDays: 14,
     runDate: RUN_DATE,
     inventoryRows: [INVENTORY_ROW],
     salesBySku: new Map(),

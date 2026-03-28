@@ -43,7 +43,7 @@ interface MarketplaceAdapter {
 
 ## Rate Limiting
 
-- eBay: ~5000 calls/day; use bulk endpoints where available; 30-min sync interval
+- eBay: 50,000 calls/day; use bulk endpoints where available; 15-min sync interval (peak), 30-min (shoulder)
 - BigCommerce: tier-based generous limits; 15-min sync interval
 - Shopify: 2 req/sec REST or cost-based GraphQL; 15-min sync interval
 - Implement exponential backoff on rate limit errors (429 responses)

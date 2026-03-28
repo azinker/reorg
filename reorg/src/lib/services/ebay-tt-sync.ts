@@ -40,8 +40,8 @@ const MARKETING_API_BASE = "https://api.ebay.com/sell/marketing/v1";
 const SITE_ID = "0";
 const COMPAT_LEVEL = "1199";
 const ADS_PAGE_SIZE = 500;
-const GETITEM_CONCURRENCY = 3;
-const GETITEM_BATCH_DELAY_MS = 250;
+const GETITEM_CONCURRENCY = 8;
+const GETITEM_BATCH_DELAY_MS = 100;
 const EBAY_USAGE_LIMIT_ERROR_CODE = "518";
 const EBAY_INVALID_TOKEN_ERROR_CODE = "21916984";
 const GET_SELLER_EVENTS_RETRY_DELAYS_MS = [3_000, 8_000];
@@ -659,7 +659,7 @@ export async function runEbayTtSync(
               );
             } catch (error) {
               if (isEbayUsageLimitError(error)) {
-                apiCalls.GetItem = 5000;
+                apiCalls.GetItem = 50_000;
                 const remainingCurrentBatch = batch.slice(batchIndex);
                 const remainingProcessingItemIds = processingItemIds.slice(
                   index + GETITEM_CONCURRENCY,
@@ -802,7 +802,7 @@ export async function runEbayTtSync(
   } catch (error) {
     progress.status = "FAILED";
     if (isEbayUsageLimitError(error)) {
-      apiCalls.GetItem = 5000;
+      apiCalls.GetItem = 50_000;
       await recordRateLimitState(
         integration.id,
         error instanceof Error ? error.message : "eBay API usage limit reached.",
@@ -1046,7 +1046,7 @@ async function runFullSync(
             } catch (error) {
               if (isEbayUsageLimitError(error)) {
                 skipHydrateDueToLimit = true;
-                apiCalls.GetItem = 5000;
+                apiCalls.GetItem = 50_000;
                 await recordRateLimitState(
                   integrationId,
                   error instanceof Error ? error.message : "eBay GetItem usage limit reached.",

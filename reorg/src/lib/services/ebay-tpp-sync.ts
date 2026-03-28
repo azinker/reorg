@@ -33,8 +33,8 @@ import { propagateEbayRateLimitToAllSharedIntegrations } from "@/lib/services/eb
 const TRADING_API = "https://api.ebay.com/ws/api.dll";
 const SITE_ID = "0";
 const COMPAT_LEVEL = "1199";
-const GETITEM_CONCURRENCY = 3;
-const GETITEM_BATCH_DELAY_MS = 250;
+const GETITEM_CONCURRENCY = 8;
+const GETITEM_BATCH_DELAY_MS = 100;
 const EBAY_USAGE_LIMIT_ERROR_CODE = "518";
 const EBAY_INVALID_TOKEN_ERROR_CODE = "21916984";
 const GET_SELLER_EVENTS_RETRY_DELAYS_MS = [3_000, 8_000];
@@ -652,7 +652,7 @@ export async function runEbayTppSync(
               if (result === "variation_parent") progress.variationsFound++;
             } catch (err) {
               if (isEbayUsageLimitError(err)) {
-                apiCalls.GetItem = 5000;
+                apiCalls.GetItem = 50_000;
                 const remainingCurrentBatch = batch.slice(batchIndex);
                 const remainingProcessingItemIds = processingItemIds.slice(
                   index + GETITEM_CONCURRENCY,
@@ -796,7 +796,7 @@ export async function runEbayTppSync(
   } catch (err) {
     progress.status = "FAILED";
     if (isEbayUsageLimitError(err)) {
-      apiCalls.GetItem = 5000;
+      apiCalls.GetItem = 50_000;
       await recordRateLimitState(
         integration.id,
         err instanceof Error ? err.message : "eBay API usage limit reached.",
@@ -1041,7 +1041,7 @@ async function runFullSync(
             } catch (error) {
               if (isEbayUsageLimitError(error)) {
                 skipHydrateDueToLimit = true;
-                apiCalls.GetItem = 5000;
+                apiCalls.GetItem = 50_000;
                 await recordRateLimitState(
                   integrationId,
                   error instanceof Error ? error.message : "eBay GetItem usage limit reached.",

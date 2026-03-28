@@ -213,8 +213,8 @@ export function buildGetItemCooldownRateLimitsSnapshot(cooldownUntil: Date): Eba
     methods: MONITORED_EBAY_METHODS.map((name) => ({
       name,
       // limit=0 signals "unknown" to the UI so it renders "—" instead of a fake count
-      count: name === "GetItem" ? 5000 : 0,
-      limit: name === "GetItem" ? 5000 : 0,
+      count: name === "GetItem" ? EBAY_DAILY_LIMIT : 0,
+      limit: name === "GetItem" ? EBAY_DAILY_LIMIT : 0,
       remaining: 0,
       reset: resetIso,
       timeWindowSeconds: 86400,
@@ -431,7 +431,7 @@ export async function getEbayTradingRateLimitSnapshotForIntegration(
       };
     }
     // No fallback available — show "Unknown" for all methods instead of
-    // fabricating ~0/~5,000 which misleads the user into thinking quota
+    // fabricating fake counts which mislead the user into thinking quota
     // is available.  limit=0 triggers "Unknown" in the UI.
     console.warn("[ebay-analytics] No fallback snapshot available, returning Unknown placeholder");
     return {
@@ -675,7 +675,7 @@ export function getEbayCooldownUntilFromSnapshot(
   return fallbackResets[0] ?? null;
 }
 
-const EBAY_DAILY_LIMIT = 5_000;
+const EBAY_DAILY_LIMIT = 50_000;
 
 /**
  * Merge the current sync's API call counts into the cumulative daily tracker.

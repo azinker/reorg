@@ -1,10 +1,10 @@
 const PEAK_START_HOUR = 9;
 const PEAK_END_HOUR = 16;
 const QUIET_START_HOUR = 22;
-const BASE_GETITEM_RESERVE_MIN = 300;
-const BASE_GETITEM_RESERVE_RATIO = 0.10;
-const TARGETED_REFRESH_RESERVE_PER_STORE = 100;
-const TARGETED_REFRESH_RESERVE_RATIO = 0.04;
+const BASE_GETITEM_RESERVE_MIN = 500;
+const BASE_GETITEM_RESERVE_RATIO = 0.02;
+const TARGETED_REFRESH_RESERVE_PER_STORE = 200;
+const TARGETED_REFRESH_RESERVE_RATIO = 0.01;
 
 export type EbayPullWindow = "peak" | "shoulder" | "quiet";
 
@@ -105,13 +105,13 @@ export function getEbayPullWindow(date: Date, timeZone: string): EbayPullWindow 
 
 export function getEbayAutoSyncIntervalMinutes(date: Date, timeZone: string) {
   const window = getEbayPullWindow(date, timeZone);
-  if (window === "peak") return 30;
-  if (window === "shoulder") return 60;
+  if (window === "peak") return 15;
+  if (window === "shoulder") return 30;
   return null;
 }
 
 export function formatEbayAutoSyncSchedule() {
-  return "Every 30m from 9:00-16:00, every 1h from 16:00-22:00, paused overnight";
+  return "Every 15m from 9:00-16:00, every 30m from 16:00-22:00, paused overnight";
 }
 
 export function getNextEbayAutoSyncAt(now: Date, timeZone: string) {
@@ -121,8 +121,8 @@ export function getNextEbayAutoSyncAt(now: Date, timeZone: string) {
   const minute = parts.minute;
 
   if (window === "peak") {
-    const nextMinute = minute < 30 ? 30 : 60;
-    if (nextMinute === 60) {
+    const slot = minute < 15 ? 15 : minute < 30 ? 30 : minute < 45 ? 45 : 60;
+    if (slot === 60) {
       if (hour + 1 < PEAK_END_HOUR) {
         return zonedDateTimeToUtc(
           timeZone,
@@ -151,20 +151,33 @@ export function getNextEbayAutoSyncAt(now: Date, timeZone: string) {
       parts.month,
       parts.day,
       hour,
-      nextMinute,
+      slot,
       0,
     );
   }
 
   if (window === "shoulder") {
-    if (hour + 1 < QUIET_START_HOUR) {
+    const nextSlot = minute < 30 ? 30 : 60;
+    if (nextSlot === 60) {
+      if (hour + 1 < QUIET_START_HOUR) {
+        return zonedDateTimeToUtc(
+          timeZone,
+          parts.year,
+          parts.month,
+          parts.day,
+          hour + 1,
+          0,
+          0,
+        );
+      }
+    } else {
       return zonedDateTimeToUtc(
         timeZone,
         parts.year,
         parts.month,
         parts.day,
-        hour + 1,
-        0,
+        hour,
+        nextSlot,
         0,
       );
     }
@@ -207,8 +220,8 @@ export function getRemainingEbayWeightedStoreRuns(
   const peakHoursRemaining = Math.max(0, PEAK_END_HOUR - Math.max(decimalHour, PEAK_START_HOUR));
   const shoulderHoursRemaining = Math.max(0, QUIET_START_HOUR - Math.max(decimalHour, PEAK_END_HOUR));
 
-  const peakRunsRemainingPerStore = Math.max(0, Math.ceil((peakHoursRemaining * 60) / 30));
-  const shoulderRunsRemainingPerStore = Math.max(0, Math.ceil(shoulderHoursRemaining));
+  const peakRunsRemainingPerStore = Math.max(0, Math.ceil((peakHoursRemaining * 60) / 15));
+  const shoulderRunsRemainingPerStore = Math.max(0, Math.ceil((shoulderHoursRemaining * 60) / 30));
 
   return {
     currentWeight,
@@ -243,7 +256,7 @@ export function getPerRunEbayGetItemBudget(args: {
   const weightedShare = Math.floor(
     (usableRemaining * currentWeight) / weightedRunsRemaining,
   );
-  const minimumBudget = Math.min(250, usableRemaining);
+  const minimumBudget = Math.min(2_000, usableRemaining);
   return Math.max(minimumBudget, Math.min(usableRemaining, weightedShare));
 }
 
@@ -282,7 +295,7 @@ export function getFallbackPerRunEbayGetItemBudget(
   timeZone: string,
 ) {
   const window = getEbayPullWindow(now, timeZone);
-  if (window === "peak") return 500;
-  if (window === "shoulder") return 300;
+  if (window === "peak") return 5_000;
+  if (window === "shoulder") return 3_000;
   return 0;
 }

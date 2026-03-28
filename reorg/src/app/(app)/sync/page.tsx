@@ -1028,7 +1028,7 @@ export default function SyncPage() {
                       <p className="mt-0.5 text-[10px] leading-snug text-muted-foreground">
                         {syncProfile.skipUpcHydration
                           ? "Full Sync uses only GetSellerList (no GetItem burn). Import UPCs and push with ReviseFixedPriceItem instead."
-                          : "Full Sync will call GetItem per listing to pull UPCs — uses significant API quota."}
+                          : "Full Sync will call GetItem for variation listings to pull UPCs and variant photos."}
                       </p>
                     </div>
                     <button

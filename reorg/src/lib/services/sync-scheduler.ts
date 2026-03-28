@@ -320,12 +320,12 @@ export async function planScheduledSyncs(now = new Date()) {
 
     for (let i = 1; i < group.length; i += 1) {
       const { index } = group[i];
-      const delayedUntil = new Date(now.getTime() + 15 * 60 * 1000);
+      const delayedUntil = new Date(now.getTime() + 5 * 60 * 1000);
       items[index] = {
         ...items[index],
         due: false,
         nextDueAt: delayedUntil.toISOString(),
-        minutesUntilDue: 15,
+        minutesUntilDue: 5,
         reason:
           "Queued behind another eBay store that shares the same Trading API quota window.",
       };
