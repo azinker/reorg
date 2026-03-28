@@ -16,10 +16,12 @@ const FORECAST_HISTORY_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 const LOCAL_LIVE_FORECAST_HISTORY_LOOKBACK_LIMIT_DAYS = 30;
 const LOCAL_FORECAST_SYNC_TIMEOUT_MS = 15_000;
 const LOCAL_EBAY_FORECAST_SYNC_TIMEOUT_MS = 120_000;
-// Fetch-only timeouts (DB upsert happens after, outside the abort window)
-const DEPLOYED_EBAY_SYNC_TIMEOUT_MS = 300_000;
-const DEPLOYED_BIGCOMMERCE_SYNC_TIMEOUT_MS = 180_000;
-const DEPLOYED_OTHER_SYNC_TIMEOUT_MS = 90_000;
+// Fetch-only timeouts — keep total function time under Vercel Pro's 300s limit.
+// Sync phase runs in parallel, so effective max is max(eBay, BC, Other) = 120s.
+// That leaves ~180s for DB upsert + forecast computation + response serialization.
+const DEPLOYED_EBAY_SYNC_TIMEOUT_MS = 120_000;
+const DEPLOYED_BIGCOMMERCE_SYNC_TIMEOUT_MS = 90_000;
+const DEPLOYED_OTHER_SYNC_TIMEOUT_MS = 60_000;
 const LOCAL_CACHED_FORECAST_PLATFORMS = new Set<Platform>(["SHOPIFY", "BIGCOMMERCE"]);
 
 function uniquePlatforms(lines: ForecastSaleLine[]) {
@@ -126,9 +128,11 @@ export async function syncSalesHistoryForLookback(lookbackDays: number): Promise
     appEnv === "local" && lookbackDays > LOCAL_LIVE_FORECAST_HISTORY_LOOKBACK_LIMIT_DAYS;
   const coverageByPlatform = await getCachedSalesCoverageByPlatform();
   const recentAudit = await getRecentForecastSalesSyncAudit();
+  // Warnings (e.g. a platform timeout) don't invalidate the cache — only errors do.
+  // This prevents a perpetual re-sync loop when one platform consistently times out.
   const cacheHasNoIssues =
     recentAudit?.issues.length === 0 ||
-    recentAudit?.issues.every((issue) => issue.level !== "error" && issue.level !== "warning");
+    recentAudit?.issues.every((issue) => issue.level !== "error");
   if (
     recentAudit &&
     recentAudit.lookbackDays != null &&

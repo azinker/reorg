@@ -1,6 +1,39 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { getEnabledForecastIntegrations } from "@/lib/inventory-forecast/marketplace-sales";
+import { getForecastInventoryRows } from "@/lib/inventory-forecast/inventory-source";
+import { loadAggregatedSalesHistory, syncSalesHistoryForLookback } from "@/lib/inventory-forecast/sales-history-service";
+
+export const runtime = "nodejs";
+
+/** POST /api/inventory-forecaster/debug
+ * Runs the forecast pipeline step-by-step and returns results/errors for each phase.
+ * Use this to pinpoint exactly which step is crashing. */
+export async function POST() {
+  const steps: Record<string, { ok: boolean; result?: unknown; error?: string; durationMs: number }> = {};
+
+  async function runStep(name: string, fn: () => Promise<unknown>) {
+    const start = Date.now();
+    try {
+      const result = await fn();
+      steps[name] = { ok: true, durationMs: Date.now() - start, result };
+    } catch (err) {
+      steps[name] = {
+        ok: false,
+        durationMs: Date.now() - start,
+        error: err instanceof Error ? `${err.message}\n${err.stack?.slice(0, 600)}` : String(err),
+      };
+    }
+  }
+
+  await runStep("1_getEnabledIntegrations", () => getEnabledForecastIntegrations().then((rows) => rows.map((r) => r.platform)));
+  await runStep("2_getForecastInventoryRows", () => getForecastInventoryRows().then((rows) => rows.length));
+  await runStep("3_syncSalesHistoryForLookback_90d", () => syncSalesHistoryForLookback(90).then((s) => ({ issueCount: s.issues.length, truncatedCount: s.truncatedPlatforms.size })));
+  await runStep("4_loadAggregatedSalesHistory_90d", () => loadAggregatedSalesHistory(90).then((s) => ({ skuCount: s.salesBySku.size, platformStatKeys: [...s.platformStats.keys()] })));
+  await runStep("5_dbPing", () => db.$queryRaw`SELECT 1`);
+
+  return NextResponse.json({ steps, allOk: Object.values(steps).every((s) => s.ok) });
+}
 
 export async function GET() {
   try {
