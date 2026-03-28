@@ -130,13 +130,13 @@ export interface ForecastLineResult {
 
 export interface ForecastResult {
   controls: ForecastControls;
-  effectiveLookbackDays: number;
+  effectiveLookbackDays?: number;
   inventorySource: InventorySourceType;
   runDateTime: string;
   confidenceLegend: Record<ForecastConfidence, string>;
   lines: ForecastLineResult[];
   salesSync: SalesSyncSummary;
-  platformCoverage: PlatformCoverage[];
+  platformCoverage?: PlatformCoverage[];
 }
 
 export interface SaveForecastRunInput {
