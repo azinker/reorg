@@ -17,11 +17,12 @@ const LOCAL_LIVE_FORECAST_HISTORY_LOOKBACK_LIMIT_DAYS = 30;
 const LOCAL_FORECAST_SYNC_TIMEOUT_MS = 15_000;
 const LOCAL_EBAY_FORECAST_SYNC_TIMEOUT_MS = 120_000;
 // Fetch-only timeouts — keep total function time under Vercel Pro's 300s limit.
-// Sync phase runs in parallel, so effective max is max(eBay, BC, Other).
-// With 50K daily eBay calls, we give eBay generous time to complete.
+// All integrations fetch in parallel, so wall clock = max(all timeouts).
+// eBay is the slowest; BC and Shopify get the same generous window since
+// they don't add to total time when running concurrently.
 const DEPLOYED_EBAY_SYNC_TIMEOUT_MS = 180_000;
-const DEPLOYED_BIGCOMMERCE_SYNC_TIMEOUT_MS = 90_000;
-const DEPLOYED_OTHER_SYNC_TIMEOUT_MS = 60_000;
+const DEPLOYED_BIGCOMMERCE_SYNC_TIMEOUT_MS = 180_000;
+const DEPLOYED_OTHER_SYNC_TIMEOUT_MS = 180_000;
 const LOCAL_CACHED_FORECAST_PLATFORMS = new Set<Platform>(["SHOPIFY", "BIGCOMMERCE"]);
 
 function uniquePlatforms(lines: ForecastSaleLine[]) {
