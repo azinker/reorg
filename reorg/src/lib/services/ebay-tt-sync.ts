@@ -1993,7 +1993,6 @@ export async function refreshEbayTtItemsDirect(
   const dummyProgress: SyncProgress = {
     jobId: "",
     status: "RUNNING",
-    message: "",
     itemsProcessed: 0,
     itemsCreated: 0,
     itemsUpdated: 0,
