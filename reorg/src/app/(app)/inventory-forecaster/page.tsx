@@ -30,7 +30,7 @@ import {
   aggregateSalesUpload,
   type ParsedSalesUpload,
 } from "@/lib/inventory-forecast/parse-sales-upload";
-import { Upload, FileSpreadsheet, X } from "lucide-react";
+import { Upload, FileSpreadsheet, X, Trash2, Check } from "lucide-react";
 
 type BootstrapData = {
   recentRuns: Array<{
@@ -206,6 +206,7 @@ export default function InventoryForecasterPage() {
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
   const [savingRun, setSavingRun] = useState(false);
+  const [saveRunDone, setSaveRunDone] = useState(false);
   const [creatingOrder, setCreatingOrder] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [exportProgress, setExportProgress] = useState<ExportProgress | null>(null);
@@ -377,6 +378,8 @@ export default function InventoryForecasterPage() {
       const runId = String(json.data.id);
       setSavedRunId(runId);
       setStatusMessage({ text: `Run saved — ${payload.lines.length} SKUs.`, type: "success" });
+      setSaveRunDone(true);
+      setTimeout(() => setSaveRunDone(false), 3000);
       return runId;
     } catch (error) {
       setStatusMessage({ text: error instanceof Error ? error.message : "Failed to save run.", type: "error" });
@@ -504,6 +507,30 @@ export default function InventoryForecasterPage() {
       });
     } finally {
       setPatchingOrderId(null);
+    }
+  }
+
+  const [deletingOrderId, setDeletingOrderId] = useState<string | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+
+  async function deleteOrder(orderId: string) {
+    setDeletingOrderId(orderId);
+    try {
+      const response = await fetch(`/api/inventory-forecaster/order/${orderId}`, {
+        method: "DELETE",
+      });
+      const json = await response.json();
+      if (!response.ok) throw new Error(json.error ?? "Failed to delete order");
+      setRecentOrders((prev) => prev.filter((o) => o.id !== orderId));
+      setStatusMessage({ text: "Order removed.", type: "info" });
+    } catch (error) {
+      setStatusMessage({
+        text: error instanceof Error ? error.message : "Failed to delete order.",
+        type: "error",
+      });
+    } finally {
+      setDeletingOrderId(null);
+      setConfirmDeleteId(null);
     }
   }
 
@@ -1133,7 +1160,7 @@ export default function InventoryForecasterPage() {
             </div>
           </div>
 
-          <div className="mt-4 rounded-2xl border border-border bg-background/60 p-4">
+          <div className="mt-4 rounded-2xl border border-border bg-background/60 p-4" data-tour="inventory-forecaster-orders">
             <div className="mb-4 flex items-center gap-2">
               <PackagePlus className="h-4 w-4 text-emerald-400" />
               <h3 className="text-sm font-semibold uppercase tracking-[0.18em] text-muted-foreground">
@@ -1145,9 +1172,9 @@ export default function InventoryForecasterPage() {
                 <table className="w-full min-w-[960px]">
                   <thead>
                     <tr className="border-b border-border bg-muted/40 text-left">
-                      {["Order #", "Supplier", "Status", "Expected Arrival", "Units", "Lines", "From Run", "Created", "Notes"].map((label) => (
+                      {["Order #", "Supplier", "Status", "Expected Arrival", "Units", "Lines", "From Run", "Created", "Notes", ""].map((label, i) => (
                         <th
-                          key={label}
+                          key={`${label}-${i}`}
                           className="px-3 py-3 text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground"
                         >
                           {label}
@@ -1158,7 +1185,7 @@ export default function InventoryForecasterPage() {
                   <tbody>
                     {recentOrders.length === 0 ? (
                       <tr>
-                        <td colSpan={9} className="px-4 py-10 text-center">
+                        <td colSpan={10} className="px-4 py-10 text-center">
                           <PackagePlus className="mx-auto mb-2 h-5 w-5 text-muted-foreground/50" />
                           <p className="text-sm text-muted-foreground">
                             No orders yet — run a forecast and click <span className="font-medium text-emerald-300">Create Order</span> to get started.
@@ -1235,7 +1262,51 @@ export default function InventoryForecasterPage() {
                               : "-"}
                           </td>
                           <td className="px-3 py-3 text-sm text-muted-foreground">{formatDateTime(order.createdAt)}</td>
-                          <td className="px-3 py-3 text-sm text-muted-foreground">{order.notes ?? "-"}</td>
+                          <td className="px-3 py-3">
+                            <textarea
+                              key={`notes-${order.id}-${order.notes ?? ""}`}
+                              defaultValue={order.notes ?? ""}
+                              placeholder="Add notes..."
+                              rows={2}
+                              onBlur={(event) => {
+                                const current = order.notes ?? "";
+                                if (event.target.value !== current) {
+                                  void patchOrder(order.id, { notes: event.target.value || null });
+                                }
+                              }}
+                              className="w-full min-w-[140px] rounded-lg border border-input bg-background px-2 py-1.5 text-sm text-foreground outline-none resize-y"
+                            />
+                          </td>
+                          <td className="px-3 py-3">
+                            {confirmDeleteId === order.id ? (
+                              <div className="flex items-center gap-1">
+                                <button
+                                  type="button"
+                                  onClick={() => void deleteOrder(order.id)}
+                                  disabled={deletingOrderId === order.id}
+                                  className="rounded-md bg-red-500/20 px-2 py-1 text-[11px] font-semibold text-red-400 transition-colors hover:bg-red-500/30 cursor-pointer disabled:opacity-50"
+                                >
+                                  {deletingOrderId === order.id ? "..." : "Yes"}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setConfirmDeleteId(null)}
+                                  className="rounded-md bg-muted px-2 py-1 text-[11px] font-semibold text-muted-foreground transition-colors hover:bg-accent cursor-pointer"
+                                >
+                                  No
+                                </button>
+                              </div>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => setConfirmDeleteId(order.id)}
+                                title="Remove order"
+                                className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-red-500/10 hover:text-red-400 cursor-pointer"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
+                            )}
+                          </td>
                         </tr>
                       ))
                     )}
@@ -1263,10 +1334,15 @@ export default function InventoryForecasterPage() {
               type="button"
               onClick={() => void saveRunIfNeeded(true)}
               disabled={!result || savingRun}
-              className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-border bg-background px-4 py-2.5 text-sm font-medium text-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+              className={cn(
+                "inline-flex cursor-pointer items-center gap-2 rounded-lg border px-4 py-2.5 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50",
+                saveRunDone
+                  ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+                  : "border-border bg-background text-foreground hover:bg-muted",
+              )}
             >
-              {savingRun ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-              Save Run
+              {savingRun ? <Loader2 className="h-4 w-4 animate-spin" /> : saveRunDone ? <Check className="h-4 w-4" /> : <Save className="h-4 w-4" />}
+              {savingRun ? "Saving..." : saveRunDone ? "Saved!" : "Save Run"}
             </button>
             <button
               type="button"

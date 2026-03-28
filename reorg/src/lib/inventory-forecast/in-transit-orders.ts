@@ -146,6 +146,26 @@ export async function updateSupplierOrderRecord(input: {
   return updated;
 }
 
+export async function deleteSupplierOrderRecord(orderId: string) {
+  const existing = await db.supplierOrder.findUnique({
+    where: { id: orderId },
+    select: { id: true, status: true },
+  });
+  if (!existing) throw new Error(`Supplier order ${orderId} not found.`);
+
+  await db.supplierOrderLine.deleteMany({ where: { supplierOrderId: orderId } });
+  await db.supplierOrder.delete({ where: { id: orderId } });
+
+  await db.auditLog.create({
+    data: {
+      action: "supplier_order_deleted",
+      entityType: "supplier_order",
+      entityId: orderId,
+      details: { previousStatus: existing.status },
+    },
+  });
+}
+
 export async function listRecentSupplierOrders(limit = 12): Promise<SupplierOrderSummary[]> {
   const orders = await db.supplierOrder.findMany({
     take: limit,

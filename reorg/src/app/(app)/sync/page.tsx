@@ -759,8 +759,9 @@ export default function SyncPage() {
             Pull-only — fetches the latest data from your connected marketplaces
           </p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3" data-tour="sync-actions">
           <div
+            data-tour="sync-auto-badge"
             className={cn(
               "flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium",
               schedulerEnabled
@@ -882,7 +883,7 @@ export default function SyncPage() {
                 </div>
 
                 {/* ---- stats: next pull + last sync ---- */}
-                <div className="mt-5 grid grid-cols-2 gap-3">
+                <div className="mt-5 grid grid-cols-2 gap-3" data-tour="sync-store-stats">
                   <div className="rounded-lg border border-violet-500/15 bg-violet-500/[0.03] p-3">
                     <div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Next Pull</div>
                     <div className="mt-1.5 text-xl font-bold tabular-nums text-violet-400">
@@ -953,7 +954,7 @@ export default function SyncPage() {
 
                 {/* ---- eBay API Quota ---- */}
                 {isEbay && (
-                  <div className="mt-4 rounded-lg border border-border/60 bg-muted/10 px-3 py-2.5">
+                  <div className="mt-4 rounded-lg border border-border/60 bg-muted/10 px-3 py-2.5" data-tour="sync-ebay-quota">
                     <div className="flex items-center justify-between gap-2">
                       <span className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
                         eBay API Quota
@@ -1079,7 +1080,7 @@ export default function SyncPage() {
                       ? Math.round((liveJob.itemsProcessed / (durationMs / 1000)) * 60)
                       : null;
                   return (
-                    <div className="mt-4 rounded-lg border border-violet-500/30 bg-violet-500/[0.04] p-4">
+                    <div className="mt-4 rounded-lg border border-violet-500/30 bg-violet-500/[0.04] p-4" data-tour="sync-live-progress">
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-2">
                           <Loader2 className="h-4 w-4 animate-spin text-violet-400" />
@@ -1244,7 +1245,7 @@ export default function SyncPage() {
                 })()}
 
                 {/* ---- action buttons with tooltips ---- */}
-                <div className="mt-5 flex flex-wrap items-center gap-2">
+                <div className="mt-5 flex flex-wrap items-center gap-2" data-tour="sync-store-actions">
                   <Tip text={
                     cooldownActive
                       ? "Incremental sync is still available — it uses GetSellerEvents and GetSellerList, which have their own separate quota (not GetItem). Safe to run."

@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
-import { patchSupplierOrder } from "@/lib/inventory-forecast/service";
+import { deleteSupplierOrder, patchSupplierOrder } from "@/lib/inventory-forecast/service";
 
 const patchSchema = z.object({
   status: z.enum(["DRAFT", "ORDERED", "IN_TRANSIT", "RECEIVED", "CANCELLED"]).optional(),
@@ -46,6 +46,28 @@ export async function PATCH(
           error instanceof Error
             ? error.message
             : "Failed to update supplier order",
+      },
+      { status: 500 },
+    );
+  }
+}
+
+export async function DELETE(
+  _request: NextRequest,
+  context: { params: Promise<{ orderId: string }> },
+) {
+  try {
+    const { orderId } = await context.params;
+    await deleteSupplierOrder(orderId);
+    return NextResponse.json({ data: { deleted: true } });
+  } catch (error) {
+    console.error("[inventory-forecaster/order/:orderId] DELETE failed", error);
+    return NextResponse.json(
+      {
+        error:
+          error instanceof Error
+            ? error.message
+            : "Failed to delete supplier order",
       },
       { status: 500 },
     );

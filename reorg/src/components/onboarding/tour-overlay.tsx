@@ -59,10 +59,15 @@ export function TourOverlay({
     const el = queryTarget(step.target);
     if (!el) return;
 
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "";
     el.scrollIntoView({
       behavior: "smooth",
       block: "center",
       inline: "nearest",
+    });
+    requestAnimationFrame(() => {
+      document.body.style.overflow = prev || "hidden";
     });
   }, [open, step]);
 

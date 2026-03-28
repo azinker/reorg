@@ -9,6 +9,7 @@ import {
 import {
   createSupplierOrderRecord,
   defaultEtaFromTransitDays,
+  deleteSupplierOrderRecord,
   getOpenInboundByMasterRowId,
   listRecentSupplierOrders,
   updateSupplierOrderRecord,
@@ -432,4 +433,8 @@ export async function patchSupplierOrder(input: {
     supplier: input.supplier,
     notes: input.notes,
   });
+}
+
+export async function deleteSupplierOrder(orderId: string) {
+  return deleteSupplierOrderRecord(orderId);
 }
