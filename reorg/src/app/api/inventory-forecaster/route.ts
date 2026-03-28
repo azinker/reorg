@@ -44,14 +44,11 @@ export async function POST(request: NextRequest) {
     const data = await runInventoryForecast(parsed.data);
     return NextResponse.json({ data });
   } catch (error) {
-    console.error("[inventory-forecaster] POST failed", error);
+    const msg = error instanceof Error ? error.message : String(error);
+    const stack = error instanceof Error ? error.stack?.slice(0, 800) : undefined;
+    console.error("[inventory-forecaster] POST failed:", msg, stack, error);
     return NextResponse.json(
-      {
-        error:
-          error instanceof Error
-            ? error.message
-            : "Failed to run inventory forecast",
-      },
+      { error: msg || "Failed to run inventory forecast", stack },
       { status: 500 },
     );
   }

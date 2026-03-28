@@ -252,7 +252,8 @@ export default function InventoryForecasterPage() {
 
   useEffect(() => {
     if (!statusMessage) return undefined;
-    const timer = window.setTimeout(() => setStatusMessage(null), 8000);
+    const duration = statusMessage.type === "error" ? 30000 : 8000;
+    const timer = window.setTimeout(() => setStatusMessage(null), duration);
     return () => window.clearTimeout(timer);
   }, [statusMessage]);
 
@@ -303,7 +304,11 @@ export default function InventoryForecasterPage() {
             : `Server returned an unexpected response (${response.status}).`,
         );
       }
-      if (!response.ok) throw new Error((json.error as string) ?? "Failed to run forecast");
+      if (!response.ok) {
+        const errMsg = (json.error as string) ?? "Failed to run forecast";
+        const stack = json.stack as string | undefined;
+        throw new Error(stack ? `${errMsg}\n\n${stack}` : errMsg);
+      }
       const forecast = json.data as ForecastResult;
       setResult(forecast);
       setOverrideMap(
