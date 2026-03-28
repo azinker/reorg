@@ -5,6 +5,7 @@ import { deleteSupplierOrder, patchSupplierOrder } from "@/lib/inventory-forecas
 const patchSchema = z.object({
   status: z.enum(["DRAFT", "ORDERED", "IN_TRANSIT", "RECEIVED", "CANCELLED"]).optional(),
   eta: z.string().nullable().optional(),
+  orderName: z.string().trim().max(200).nullable().optional(),
   supplier: z.string().trim().max(200).nullable().optional(),
   notes: z.string().max(2000).nullable().optional(),
 });
@@ -34,6 +35,7 @@ export async function PATCH(
         id: order.id,
         status: order.status,
         eta: order.eta ? order.eta.toISOString() : null,
+        orderName: order.orderName,
         supplier: order.supplier,
         notes: order.notes,
       },

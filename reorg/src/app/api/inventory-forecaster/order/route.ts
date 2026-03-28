@@ -6,6 +6,7 @@ import { createSupplierOrderFromForecast } from "@/lib/inventory-forecast/servic
 
 const createOrderSchema = z.object({
   forecastRunId: z.string().nullable().optional(),
+  orderName: z.string().trim().max(200).nullable().optional(),
   supplier: z.string().trim().max(200).nullable().optional(),
   eta: z.string().nullable().optional(),
   notes: z.string().max(2000).nullable().optional(),
@@ -28,6 +29,7 @@ export async function POST(request: NextRequest) {
     const order = await createSupplierOrderFromForecast({
       createdById: session?.user?.id ?? null,
       forecastRunId: parsed.data.forecastRunId ?? null,
+      orderName: parsed.data.orderName ?? null,
       supplier: parsed.data.supplier ?? null,
       eta: parsed.data.eta ?? null,
       notes: parsed.data.notes ?? null,

@@ -61,6 +61,7 @@ export async function createSupplierOrderRecord(input: CreateSupplierOrderInput)
     data: {
       createdById: input.createdById ?? null,
       forecastRunId: input.forecastRunId ?? null,
+      orderName: input.orderName ?? null,
       supplier: input.supplier ?? null,
       status: input.status ?? "DRAFT",
       eta: input.eta,
@@ -102,6 +103,7 @@ export async function updateSupplierOrderRecord(input: {
   orderId: string;
   status?: "DRAFT" | "ORDERED" | "IN_TRANSIT" | "RECEIVED" | "CANCELLED";
   eta?: Date;
+  orderName?: string | null;
   supplier?: string | null;
   notes?: string | null;
 }) {
@@ -123,6 +125,7 @@ export async function updateSupplierOrderRecord(input: {
     data: {
       status: input.status,
       eta: input.eta,
+      orderName: input.orderName === undefined ? undefined : input.orderName,
       supplier: input.supplier === undefined ? undefined : input.supplier,
       notes: input.notes === undefined ? undefined : input.notes,
     },
@@ -174,23 +177,52 @@ export async function listRecentSupplierOrders(limit = 12): Promise<SupplierOrde
       lines: {
         select: {
           finalQty: true,
+          supplierCost: true,
         },
       },
     },
   });
 
-  return orders.map((order) => ({
-    id: order.id,
-    supplier: order.supplier,
-    status: order.status,
-    eta: order.eta.toISOString(),
-    forecastRunId: order.forecastRunId,
-    notes: order.notes,
-    lineCount: order.lines.length,
-    totalUnits: order.lines.reduce((total, line) => total + line.finalQty, 0),
-    createdAt: order.createdAt.toISOString(),
-    updatedAt: order.updatedAt.toISOString(),
-  }));
+  return orders.map((order) => {
+    const totalUnits = order.lines.reduce((t, l) => t + l.finalQty, 0);
+    const hasAnyCost = order.lines.some((l) => l.supplierCost != null);
+    const totalCost = hasAnyCost
+      ? order.lines.reduce((t, l) => t + l.finalQty * (l.supplierCost ?? 0), 0)
+      : null;
+    return {
+      id: order.id,
+      orderName: order.orderName,
+      supplier: order.supplier,
+      status: order.status,
+      eta: order.eta.toISOString(),
+      forecastRunId: order.forecastRunId,
+      notes: order.notes,
+      lineCount: order.lines.length,
+      totalUnits,
+      totalCost,
+      createdAt: order.createdAt.toISOString(),
+      updatedAt: order.updatedAt.toISOString(),
+    };
+  });
+}
+
+export async function getSupplierOrderWithLines(orderId: string) {
+  const order = await db.supplierOrder.findUnique({
+    where: { id: orderId },
+    include: {
+      lines: {
+        select: {
+          sku: true,
+          title: true,
+          supplierCost: true,
+          finalQty: true,
+        },
+        orderBy: { title: "asc" },
+      },
+    },
+  });
+  if (!order) throw new Error(`Order ${orderId} not found.`);
+  return order;
 }
 
 export function defaultEtaFromTransitDays(transitDays: number, runDate = new Date()) {

@@ -157,6 +157,7 @@ export interface SupplierOrderDraftLine {
 export interface CreateSupplierOrderInput {
   createdById?: string | null;
   forecastRunId?: string | null;
+  orderName?: string | null;
   supplier?: string | null;
   eta: Date;
   notes?: string | null;
@@ -166,6 +167,7 @@ export interface CreateSupplierOrderInput {
 
 export interface SupplierOrderSummary {
   id: string;
+  orderName: string | null;
   supplier: string | null;
   status: SupplierOrderStatus;
   eta: string | null;
@@ -173,6 +175,14 @@ export interface SupplierOrderSummary {
   notes: string | null;
   lineCount: number;
   totalUnits: number;
+  totalCost: number | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface SupplierOrderLineSummary {
+  sku: string;
+  title: string | null;
+  supplierCost: number | null;
+  finalQty: number;
 }

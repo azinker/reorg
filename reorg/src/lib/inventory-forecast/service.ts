@@ -11,6 +11,7 @@ import {
   defaultEtaFromTransitDays,
   deleteSupplierOrderRecord,
   getOpenInboundByMasterRowId,
+  getSupplierOrderWithLines,
   listRecentSupplierOrders,
   updateSupplierOrderRecord,
 } from "@/lib/inventory-forecast/in-transit-orders";
@@ -348,6 +349,7 @@ export async function saveInventoryForecastRun(input: SaveForecastRunInput) {
 export async function createSupplierOrderFromForecast(input: {
   createdById?: string | null;
   forecastRunId?: string | null;
+  orderName?: string | null;
   supplier?: string | null;
   eta?: string | Date | null;
   notes?: string | null;
@@ -357,6 +359,7 @@ export async function createSupplierOrderFromForecast(input: {
   const draft: CreateSupplierOrderInput = {
     createdById: input.createdById ?? null,
     forecastRunId: input.forecastRunId ?? null,
+    orderName: input.orderName ?? null,
     supplier: input.supplier ?? null,
     eta:
       input.eta != null
@@ -423,6 +426,7 @@ export async function patchSupplierOrder(input: {
   orderId: string;
   status?: "DRAFT" | "ORDERED" | "IN_TRANSIT" | "RECEIVED" | "CANCELLED";
   eta?: string | null;
+  orderName?: string | null;
   supplier?: string | null;
   notes?: string | null;
 }) {
@@ -430,9 +434,14 @@ export async function patchSupplierOrder(input: {
     orderId: input.orderId,
     status: input.status,
     eta: input.eta ? normalizeRunDate(input.eta) : undefined,
+    orderName: input.orderName,
     supplier: input.supplier,
     notes: input.notes,
   });
+}
+
+export async function getSupplierOrderForDownload(orderId: string) {
+  return getSupplierOrderWithLines(orderId);
 }
 
 export async function deleteSupplierOrder(orderId: string) {

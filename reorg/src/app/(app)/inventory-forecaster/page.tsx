@@ -213,6 +213,7 @@ export default function InventoryForecasterPage() {
   const [exportAbort, setExportAbort] = useState<AbortController | null>(null);
   const [statusMessage, setStatusMessage] = useState<{ text: string; type: "success" | "error" | "info" } | null>(null);
   const [savedRunId, setSavedRunId] = useState<string | null>(null);
+  const [orderName, setOrderName] = useState("");
   const [supplier, setSupplier] = useState("");
   const [orderEta, setOrderEta] = useState("");
   const [orderNotes, setOrderNotes] = useState("");
@@ -400,6 +401,7 @@ export default function InventoryForecasterPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           forecastRunId: runId,
+          orderName: orderName.trim() || null,
           supplier: supplier.trim() || null,
           eta: orderEta ? new Date(orderEta).toISOString() : null,
           notes: orderNotes.trim() || null,
@@ -475,7 +477,7 @@ export default function InventoryForecasterPage() {
 
   async function patchOrder(
     orderId: string,
-    patch: Partial<Pick<SupplierOrderSummary, "status" | "supplier" | "notes">> & { eta?: string },
+    patch: Partial<Pick<SupplierOrderSummary, "status" | "supplier" | "notes" | "orderName">> & { eta?: string },
   ) {
     setPatchingOrderId(orderId);
     try {
@@ -493,6 +495,7 @@ export default function InventoryForecasterPage() {
                 ...order,
                 status: json.data.status,
                 eta: json.data.eta,
+                orderName: json.data.orderName,
                 supplier: json.data.supplier,
                 notes: json.data.notes,
               }
@@ -531,6 +534,71 @@ export default function InventoryForecasterPage() {
     } finally {
       setDeletingOrderId(null);
       setConfirmDeleteId(null);
+    }
+  }
+
+  const [downloadingOrderId, setDownloadingOrderId] = useState<string | null>(null);
+
+  async function downloadOrder(orderId: string) {
+    setDownloadingOrderId(orderId);
+    try {
+      const response = await fetch(`/api/inventory-forecaster/order/${orderId}/download`);
+      const json = await response.json();
+      if (!response.ok) throw new Error(json.error ?? "Failed to load order");
+      const d = json.data;
+      const lines = d.lines as Array<{ sku: string; title: string | null; supplierCost: number | null; qty: number; lineCost: number | null }>;
+
+      const rows = [
+        ["Supplier Order Export"],
+        [],
+        ["Order Name", d.orderName ?? "-"],
+        ["Order ID", d.id],
+        ["Supplier", d.supplier ?? "-"],
+        ["Status", d.status.replace(/_/g, " ")],
+        ["Expected Arrival", d.eta ? new Date(d.eta).toLocaleDateString("en-US", { month: "short", day: "2-digit", year: "numeric" }) : "-"],
+        ["Created", new Date(d.createdAt).toLocaleString("en-US", { month: "short", day: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" })],
+        ["Notes", d.notes ?? "-"],
+        [],
+        ["Total SKUs", String(lines.length)],
+        ["Total Units", String(d.totalUnits)],
+        ["Total Cost", d.totalCost != null ? `$${d.totalCost.toFixed(2)}` : "N/A"],
+        [],
+        ["SKU", "Title", "Supplier Cost", "Qty", "Line Cost"],
+        ...lines.map((l) => [
+          l.sku,
+          l.title ?? "",
+          l.supplierCost != null ? `$${l.supplierCost.toFixed(2)}` : "",
+          String(l.qty),
+          l.lineCost != null ? `$${l.lineCost.toFixed(2)}` : "",
+        ]),
+      ];
+
+      const csvContent = rows.map((row) =>
+        row.map((cell) => {
+          const str = String(cell);
+          return str.includes(",") || str.includes('"') || str.includes("\n")
+            ? `"${str.replace(/"/g, '""')}"`
+            : str;
+        }).join(","),
+      ).join("\n");
+
+      const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      const safeName = (d.orderName || d.supplier || "order").replace(/[^a-zA-Z0-9_-]/g, "_");
+      anchor.download = `Supplier_Order_${safeName}_${d.id.slice(-6)}.csv`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      setStatusMessage({
+        text: error instanceof Error ? error.message : "Failed to download order.",
+        type: "error",
+      });
+    } finally {
+      setDownloadingOrderId(null);
     }
   }
 
@@ -1169,10 +1237,10 @@ export default function InventoryForecasterPage() {
             </div>
             <div className="overflow-hidden rounded-2xl border border-border bg-background/50">
               <div className="overflow-x-auto">
-                <table className="w-full min-w-[960px]">
+                <table className="w-full min-w-[1200px]">
                   <thead>
                     <tr className="border-b border-border bg-muted/40 text-left">
-                      {["Order #", "Supplier", "Status", "Expected Arrival", "Units", "Lines", "From Run", "Created", "Notes", ""].map((label, i) => (
+                      {["Order Name", "Supplier", "Status", "ETA", "Units", "SKUs", "Est. Cost", "Created", "Notes", ""].map((label, i) => (
                         <th
                           key={`${label}-${i}`}
                           className="px-3 py-3 text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground"
@@ -1195,19 +1263,33 @@ export default function InventoryForecasterPage() {
                     ) : (
                       recentOrders.map((order) => (
                         <tr key={order.id} className="border-b border-border/60 align-top">
-                          <td className="px-3 py-3 text-sm font-medium text-foreground" title={order.id}>
-                            {order.id.length > 8 ? `…${order.id.slice(-8)}` : order.id}
+                          <td className="px-3 py-3">
+                            <input
+                              key={`name-${order.id}-${order.orderName ?? ""}`}
+                              defaultValue={order.orderName ?? ""}
+                              placeholder="Name this order..."
+                              onBlur={(event) => {
+                                if (event.target.value !== (order.orderName ?? "")) {
+                                  void patchOrder(order.id, { orderName: event.target.value || null });
+                                }
+                              }}
+                              className="w-full min-w-[120px] rounded-lg border border-input bg-background px-2 py-1.5 text-sm font-medium text-foreground outline-none"
+                            />
+                            <div className="mt-1 text-[10px] text-muted-foreground/60" title={order.id}>
+                              ID: …{order.id.slice(-8)}
+                            </div>
                           </td>
                           <td className="px-3 py-3 text-sm text-foreground">
                             <input
                               key={`supplier-${order.id}-${order.supplier ?? ""}`}
                               defaultValue={order.supplier ?? ""}
+                              placeholder="Supplier..."
                               onBlur={(event) => {
                                 if (event.target.value !== (order.supplier ?? "")) {
                                   void patchOrder(order.id, { supplier: event.target.value || null });
                                 }
                               }}
-                              className="w-full rounded-lg border border-input bg-background px-2 py-1.5 text-sm text-foreground outline-none"
+                              className="w-full min-w-[100px] rounded-lg border border-input bg-background px-2 py-1.5 text-sm text-foreground outline-none"
                             />
                           </td>
                           <td className="px-3 py-3">
@@ -1252,14 +1334,14 @@ export default function InventoryForecasterPage() {
                               className="rounded-lg border border-input bg-background px-2 py-1.5 text-sm text-foreground outline-none"
                             />
                           </td>
-                          <td className="px-3 py-3 text-sm text-foreground">{formatNumber(order.totalUnits)}</td>
-                          <td className="px-3 py-3 text-sm text-foreground">{formatNumber(order.lineCount)}</td>
-                          <td className="px-3 py-3 text-sm text-muted-foreground" title={order.forecastRunId ?? undefined}>
-                            {order.forecastRunId
-                              ? order.forecastRunId.length > 8
-                                ? `…${order.forecastRunId.slice(-8)}`
-                                : order.forecastRunId
-                              : "-"}
+                          <td className="px-3 py-3 text-sm text-foreground tabular-nums">{formatNumber(order.totalUnits)}</td>
+                          <td className="px-3 py-3 text-sm text-foreground tabular-nums">{formatNumber(order.lineCount)}</td>
+                          <td className="px-3 py-3 text-sm tabular-nums">
+                            {order.totalCost != null ? (
+                              <span className="font-medium text-foreground">${order.totalCost.toFixed(2)}</span>
+                            ) : (
+                              <span className="text-muted-foreground/60">—</span>
+                            )}
                           </td>
                           <td className="px-3 py-3 text-sm text-muted-foreground">{formatDateTime(order.createdAt)}</td>
                           <td className="px-3 py-3">
@@ -1278,34 +1360,49 @@ export default function InventoryForecasterPage() {
                             />
                           </td>
                           <td className="px-3 py-3">
-                            {confirmDeleteId === order.id ? (
-                              <div className="flex items-center gap-1">
-                                <button
-                                  type="button"
-                                  onClick={() => void deleteOrder(order.id)}
-                                  disabled={deletingOrderId === order.id}
-                                  className="rounded-md bg-red-500/20 px-2 py-1 text-[11px] font-semibold text-red-400 transition-colors hover:bg-red-500/30 cursor-pointer disabled:opacity-50"
-                                >
-                                  {deletingOrderId === order.id ? "..." : "Yes"}
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => setConfirmDeleteId(null)}
-                                  className="rounded-md bg-muted px-2 py-1 text-[11px] font-semibold text-muted-foreground transition-colors hover:bg-accent cursor-pointer"
-                                >
-                                  No
-                                </button>
-                              </div>
-                            ) : (
+                            <div className="flex items-center gap-1">
                               <button
                                 type="button"
-                                onClick={() => setConfirmDeleteId(order.id)}
-                                title="Remove order"
-                                className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-red-500/10 hover:text-red-400 cursor-pointer"
+                                onClick={() => void downloadOrder(order.id)}
+                                disabled={downloadingOrderId === order.id}
+                                title="Download order"
+                                className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-primary/10 hover:text-primary cursor-pointer disabled:opacity-50"
                               >
-                                <Trash2 className="h-3.5 w-3.5" />
+                                {downloadingOrderId === order.id ? (
+                                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                ) : (
+                                  <Download className="h-3.5 w-3.5" />
+                                )}
                               </button>
-                            )}
+                              {confirmDeleteId === order.id ? (
+                                <div className="flex items-center gap-1">
+                                  <button
+                                    type="button"
+                                    onClick={() => void deleteOrder(order.id)}
+                                    disabled={deletingOrderId === order.id}
+                                    className="rounded-md bg-red-500/20 px-2 py-1 text-[11px] font-semibold text-red-400 transition-colors hover:bg-red-500/30 cursor-pointer disabled:opacity-50"
+                                  >
+                                    {deletingOrderId === order.id ? "..." : "Yes"}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setConfirmDeleteId(null)}
+                                    className="rounded-md bg-muted px-2 py-1 text-[11px] font-semibold text-muted-foreground transition-colors hover:bg-accent cursor-pointer"
+                                  >
+                                    No
+                                  </button>
+                                </div>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => setConfirmDeleteId(order.id)}
+                                  title="Remove order"
+                                  className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-red-500/10 hover:text-red-400 cursor-pointer"
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </button>
+                              )}
+                            </div>
                           </td>
                         </tr>
                       ))
@@ -1404,6 +1501,15 @@ export default function InventoryForecasterPage() {
               Fill this in before clicking Create Order above.
             </p>
             <div className="space-y-3">
+              <div>
+                <label className="mb-1 block text-xs font-medium text-muted-foreground">Order Name</label>
+                <input
+                  value={orderName}
+                  onChange={(event) => setOrderName(event.target.value)}
+                  placeholder="e.g. March Restock, Q2 Bulk Order, etc."
+                  className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm text-foreground outline-none"
+                />
+              </div>
               <div>
                 <label className="mb-1 block text-xs font-medium text-muted-foreground">Supplier Name</label>
                 <input
