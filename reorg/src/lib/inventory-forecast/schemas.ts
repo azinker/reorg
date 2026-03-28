@@ -22,6 +22,11 @@ export const forecastLineSchema = z.object({
   salesHistoryDays: z.number().int(),
   averageDailyDemand: z.number(),
   salesHistorySummary: z.string(),
+  salesByPlatform: z.array(z.object({
+    platform: z.string(),
+    label: z.string(),
+    units: z.number(),
+  })).default([]),
   transitDemand: z.number(),
   postArrivalDemand: z.number(),
   safetyBuffer: z.number(),
@@ -55,10 +60,19 @@ export const forecastLineSchema = z.object({
 
 export const forecastResultSchema = z.object({
   controls: forecastControlsSchema,
+  effectiveLookbackDays: z.number().int().optional(),
   inventorySource: z.enum(["MASTER_TPP_LIVE"]),
   runDateTime: z.string(),
   confidenceLegend: z.record(z.enum(["HIGH", "MEDIUM", "LOW"]), z.string()),
   lines: z.array(forecastLineSchema),
+  platformCoverage: z.array(z.object({
+    platform: z.string(),
+    label: z.string(),
+    lineCount: z.number(),
+    earliestDate: z.string().nullable(),
+    latestDate: z.string().nullable(),
+    daysCovered: z.number(),
+  })).default([]),
   salesSync: z.object({
     earliestCoveredAt: z.string().nullable(),
     latestCoveredAt: z.string().nullable(),

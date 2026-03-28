@@ -420,6 +420,8 @@ export async function loadAggregatedSalesHistory(
   });
 
   const salesBySku = new Map<string, ForecastSaleLine[]>();
+  const platformStats = new Map<string, { lineCount: number; earliest: Date | null; latest: Date | null }>();
+
   for (const line of saleLines) {
     const sale: ForecastSaleLine = {
       platform: line.platform,
@@ -437,6 +439,12 @@ export async function loadAggregatedSalesHistory(
     const bucket = salesBySku.get(line.sku) ?? [];
     bucket.push(sale);
     salesBySku.set(line.sku, bucket);
+
+    const stats = platformStats.get(line.platform) ?? { lineCount: 0, earliest: null, latest: null };
+    stats.lineCount += 1;
+    if (!stats.earliest || line.orderDate < stats.earliest) stats.earliest = line.orderDate;
+    if (!stats.latest || line.orderDate > stats.latest) stats.latest = line.orderDate;
+    platformStats.set(line.platform, stats);
   }
 
   const summary: SalesSyncSummary = {
@@ -456,7 +464,7 @@ export async function loadAggregatedSalesHistory(
     issues: [],
   };
 
-  return { salesBySku, summary };
+  return { salesBySku, summary, platformStats };
 }
 
 export async function getTruncatedHistoryBySku(

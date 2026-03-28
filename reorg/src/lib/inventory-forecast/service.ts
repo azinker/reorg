@@ -23,14 +23,23 @@ import {
   syncSalesHistoryForLookback,
 } from "@/lib/inventory-forecast/sales-history-service";
 import { captureDailyInventorySnapshots, getSnapshotSignals } from "@/lib/inventory-forecast/snapshots";
+import type { Platform } from "@prisma/client";
 import type {
   CreateSupplierOrderInput,
   ForecastControls,
   ForecastLineResult,
   ForecastResult,
+  PlatformCoverage,
   SaveForecastRunInput,
 } from "@/lib/inventory-forecast/types";
 import { db } from "@/lib/db";
+
+const PLATFORM_LABELS: Record<Platform, string> = {
+  TPP_EBAY: "eBay TPP",
+  TT_EBAY: "eBay TT",
+  SHOPIFY: "Shopify",
+  BIGCOMMERCE: "BigCommerce",
+};
 
 export async function runInventoryForecast(input: {
   lookbackDays: number;
@@ -68,8 +77,33 @@ export async function runInventoryForecast(input: {
       getTruncatedHistoryBySku(input.lookbackDays, syncState.truncatedPlatforms),
     ]);
 
+  const platformCoverage: PlatformCoverage[] = [];
+  let oldestSaleDate: Date | null = null;
+  for (const [platform, stats] of salesHistory.platformStats) {
+    const daysCovered = stats.earliest && stats.latest
+      ? Math.round((stats.latest.getTime() - stats.earliest.getTime()) / (1000 * 60 * 60 * 24)) + 1
+      : 0;
+    platformCoverage.push({
+      platform: platform as Platform,
+      label: PLATFORM_LABELS[platform as Platform] ?? platform,
+      lineCount: stats.lineCount,
+      earliestDate: stats.earliest?.toISOString().slice(0, 10) ?? null,
+      latestDate: stats.latest?.toISOString().slice(0, 10) ?? null,
+      daysCovered,
+    });
+    if (stats.earliest && (!oldestSaleDate || stats.earliest < oldestSaleDate)) {
+      oldestSaleDate = stats.earliest;
+    }
+  }
+
+  const actualDataDays = oldestSaleDate
+    ? Math.round((runDate.getTime() - oldestSaleDate.getTime()) / (1000 * 60 * 60 * 24)) + 1
+    : input.lookbackDays;
+  const effectiveLookbackDays = Math.min(input.lookbackDays, actualDataDays);
+
   const lines = buildForecastResultLines({
     controls,
+    effectiveLookbackDays,
     runDate,
     inventoryRows,
     salesBySku: salesHistory.salesBySku,
@@ -84,6 +118,7 @@ export async function runInventoryForecast(input: {
 
   return {
     controls,
+    effectiveLookbackDays,
     inventorySource: DEFAULT_FORECAST_INVENTORY_SOURCE,
     runDateTime: runDate.toISOString(),
     confidenceLegend: FORECAST_CONFIDENCE_LEGEND,
@@ -92,6 +127,7 @@ export async function runInventoryForecast(input: {
       ...salesHistory.summary,
       issues: syncState.issues,
     },
+    platformCoverage,
   } satisfies ForecastResult;
 }
 
@@ -114,6 +150,8 @@ export async function saveInventoryForecastRun(input: SaveForecastRunInput) {
         runDateTime: input.result.runDateTime,
         confidenceLegend: input.result.confidenceLegend,
         salesSync: input.result.salesSync,
+        effectiveLookbackDays: input.result.effectiveLookbackDays,
+        platformCoverage: input.result.platformCoverage,
       } as never,
       lines: {
         create: input.result.lines.map((line) => ({

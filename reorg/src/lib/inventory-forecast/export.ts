@@ -4,7 +4,15 @@ import type { ForecastLineResult, ForecastResult } from "@/lib/inventory-forecas
 
 type WorkbookImageExtension = "png" | "jpeg" | "gif";
 
-const EXPORT_COLUMNS = [
+const PLATFORM_COL_LABELS: Record<string, string> = {
+  TPP_EBAY: "Sales: eBay TPP",
+  TT_EBAY: "Sales: eBay TT",
+  SHOPIFY: "Sales: Shopify",
+  BIGCOMMERCE: "Sales: BigCommerce",
+};
+const PLATFORM_ORDER = ["TPP_EBAY", "TT_EBAY", "SHOPIFY", "BIGCOMMERCE"];
+
+const BASE_COLUMNS = [
   { header: "Product Title", width: 45 },
   { header: "UPC Image", width: 20 },
   { header: "UPC", width: 24 },
@@ -15,6 +23,9 @@ const EXPORT_COLUMNS = [
   { header: "Supplier Cost", width: 14 },
   { header: "Total Cost", width: 20 },
   { header: "Sales History Summary", width: 30 },
+] as const;
+
+const POST_SALES_COLUMNS = [
   { header: "Transit demand (model)", width: 18 },
   { header: "Post-arrival demand (model)", width: 22 },
   { header: "Gross Required Quantity (Before Current On Hand)", width: 36 },
@@ -27,7 +38,20 @@ const EXPORT_COLUMNS = [
   { header: "Confidence", width: 32 },
 ] as const;
 
-const EXPORT_HEADERS = EXPORT_COLUMNS.map((column) => column.header);
+function buildColumns(result: ForecastResult) {
+  const activePlatforms = PLATFORM_ORDER.filter((p) =>
+    result.lines.some((l) => l.salesByPlatform?.some((s) => s.platform === p)),
+  );
+  const platformCols = activePlatforms.map((p) => ({
+    header: PLATFORM_COL_LABELS[p] ?? p,
+    width: 16,
+  }));
+  return {
+    columns: [...BASE_COLUMNS, ...platformCols, ...POST_SALES_COLUMNS],
+    headers: [...BASE_COLUMNS, ...platformCols, ...POST_SALES_COLUMNS].map((c) => c.header),
+    activePlatforms,
+  };
+}
 const PRODUCT_IMAGE_SIZE = 112;
 const BARCODE_MAX_WIDTH = 125;
 const BARCODE_MAX_HEIGHT = 68;
@@ -264,8 +288,8 @@ async function addBarcodeImage(
   });
 }
 
-function styleWorksheet(worksheet: ExcelJS.Worksheet, headerRowNumber: number) {
-  EXPORT_COLUMNS.forEach((column, index) => {
+function styleWorksheet(worksheet: ExcelJS.Worksheet, headerRowNumber: number, columns: readonly { header: string; width: number }[]) {
+  columns.forEach((column, index) => {
     worksheet.getColumn(index + 1).width = column.width;
   });
 
@@ -312,6 +336,7 @@ function metadataItems(result: ForecastResult) {
     { label: "Transit Days", value: result.controls.transitDays },
     { label: "Desired Days After Arrival", value: result.controls.desiredCoverageDays },
     { label: "Forecast Bucket", value: result.controls.forecastBucket },
+    { label: "Lookback Days (actual data)", value: result.effectiveLookbackDays ?? result.controls.lookbackDays },
     { label: "Forecast Type", value: result.controls.mode === "simple" ? "Simple (flat average)" : "Smart (models + safety buffer)" },
     { label: "Inventory Source", value: result.inventorySource },
     {
@@ -419,12 +444,17 @@ function simpleOrderQty(line: ForecastLineResult, totalDays: number) {
   return Math.ceil(net);
 }
 
-function lineValues(line: ForecastLineResult, totalDays: number) {
+function lineValues(line: ForecastLineResult, totalDays: number, activePlatforms: string[]) {
   const totalCost =
     line.supplierCost != null ? formatCurrency(line.finalQty * line.supplierCost) : "";
   const modelImpact =
     `${line.modelUsed} - ${modelExplanation(line.modelUsed)} ` +
     `Gross need ${line.grossRequiredQty}; current ${line.currentInventory}; inbound ${line.openInTransitQty}; final qty ${line.finalQty}.`;
+
+  const platformSales = activePlatforms.map((p) => {
+    const match = line.salesByPlatform?.find((s) => s.platform === p);
+    return match ? match.units : 0;
+  });
 
   return [
     line.title,
@@ -437,6 +467,7 @@ function lineValues(line: ForecastLineResult, totalDays: number) {
     formatCurrency(line.supplierCost),
     totalCost,
     line.salesHistorySummary,
+    ...platformSales,
     line.transitDemand,
     line.postArrivalDemand,
     line.grossRequiredQty,
@@ -556,9 +587,10 @@ function addGuideSheet(workbook: ExcelJS.Workbook) {
 export async function buildInventoryForecastWorkbook(result: ForecastResult) {
   const workbook = new ExcelJS.Workbook();
   const worksheet = workbook.addWorksheet("Inventory Forecast");
+  const { columns: EXPORT_COLUMNS, headers: EXPORT_HEADERS, activePlatforms } = buildColumns(result);
   const metadata = metadataItems(result);
   const headerRowNumber = 5;
-  styleWorksheet(worksheet, headerRowNumber);
+  styleWorksheet(worksheet, headerRowNumber, EXPORT_COLUMNS);
 
   worksheet.mergeCells(1, 1, 1, EXPORT_COLUMNS.length);
   worksheet.getCell(1, 1).value = "Inventory Forecast Export";
@@ -628,7 +660,7 @@ export async function buildInventoryForecastWorkbook(result: ForecastResult) {
     const line = sortedLines[index];
     const rowNumber = headerRowNumber + 1 + index;
     const row = worksheet.getRow(rowNumber);
-    row.values = lineValues(line, totalDays);
+    row.values = lineValues(line, totalDays, activePlatforms);
     row.height = 108;
     row.alignment = { vertical: "middle", horizontal: "center", wrapText: true };
     row.eachCell((cell) => {

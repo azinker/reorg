@@ -858,18 +858,34 @@ export default function InventoryForecasterPage() {
             </div>
             <div className="rounded-xl border border-border bg-background/60 p-4">
               <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
-                Sales Data Range
+                Sales Data Coverage
               </div>
-              <div
-                className={cn(
-                  "mt-2 text-sm font-medium",
-                  result?.salesSync.earliestCoveredAt ? "text-emerald-400" : "text-foreground",
-                )}
-              >
-                {result?.salesSync.earliestCoveredAt
-                  ? `${shortDate(result.salesSync.earliestCoveredAt)} — ${shortDate(result.salesSync.latestCoveredAt)}`
-                  : "Run a forecast to see"}
-              </div>
+              {result?.platformCoverage && result.platformCoverage.length > 0 ? (
+                <div className="mt-2 space-y-1.5">
+                  {result.platformCoverage.map((pc) => (
+                    <div key={pc.platform} className="flex items-center justify-between text-xs">
+                      <span className="font-medium text-foreground">{pc.label}</span>
+                      <span className={cn(
+                        "font-medium",
+                        pc.daysCovered < Number(controls.transitDays) + Number(controls.desiredCoverageDays) ? "text-amber-300" : "text-emerald-400",
+                      )}>
+                        {pc.daysCovered}d
+                      </span>
+                    </div>
+                  ))}
+                  {result.effectiveLookbackDays != null && result.effectiveLookbackDays < getLookbackDays(controls) && (
+                    <div className="mt-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-2 py-1.5 text-[11px] text-amber-200">
+                      Using {result.effectiveLookbackDays}d of actual data (requested {getLookbackDays(controls)}d)
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="mt-2 text-sm text-foreground">
+                  {result?.salesSync.earliestCoveredAt
+                    ? `${shortDate(result.salesSync.earliestCoveredAt)} — ${shortDate(result.salesSync.latestCoveredAt)}`
+                    : "Run a forecast to see"}
+                </div>
+              )}
             </div>
             <div className="rounded-xl border border-border bg-background/60 p-4">
               <div className="text-xs uppercase tracking-[0.18em] text-muted-foreground">

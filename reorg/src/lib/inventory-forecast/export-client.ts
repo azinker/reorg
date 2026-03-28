@@ -17,7 +17,15 @@ const PRODUCT_IMAGE_SIZE = 112;
 const BARCODE_MAX_WIDTH = 140;
 const BARCODE_MAX_HEIGHT = 68;
 
-const EXPORT_COLUMNS = [
+const PLATFORM_COLUMN_LABELS: Record<string, string> = {
+  TPP_EBAY: "Sales: eBay TPP",
+  TT_EBAY: "Sales: eBay TT",
+  SHOPIFY: "Sales: Shopify",
+  BIGCOMMERCE: "Sales: BigCommerce",
+};
+const PLATFORM_ORDER = ["TPP_EBAY", "TT_EBAY", "SHOPIFY", "BIGCOMMERCE"];
+
+const BASE_EXPORT_COLUMNS = [
   { header: "Product Title", width: 45 },
   { header: "UPC", width: 24 },
   { header: "SKU", width: 45 },
@@ -27,6 +35,9 @@ const EXPORT_COLUMNS = [
   { header: "Supplier Cost", width: 14 },
   { header: "Total Cost", width: 20 },
   { header: "Sales History Summary", width: 30 },
+] as const;
+
+const POST_SALES_COLUMNS = [
   { header: "Transit demand (model)", width: 18 },
   { header: "Post-arrival demand (model)", width: 22 },
   { header: "Gross Required Quantity (Before Current On Hand)", width: 36 },
@@ -39,6 +50,21 @@ const EXPORT_COLUMNS = [
   { header: "Confidence", width: 32 },
 ] as const;
 
+function buildExportColumns(result: ForecastResult) {
+  const activePlatforms = PLATFORM_ORDER.filter((p) =>
+    result.lines.some((l) => l.salesByPlatform?.some((s) => s.platform === p)),
+  );
+  const platformCols = activePlatforms.map((p) => ({
+    header: PLATFORM_COLUMN_LABELS[p] ?? p,
+    width: 16,
+    platform: p,
+  }));
+  return {
+    columns: [...BASE_EXPORT_COLUMNS, ...platformCols, ...POST_SALES_COLUMNS],
+    activePlatforms,
+  };
+}
+
 const HEADER_NOTES: Record<string, string> = {
   "Order Qty":
     "The recommended order quantity from the forecast mode you selected (Simple or Smart).",
@@ -46,6 +72,10 @@ const HEADER_NOTES: Record<string, string> = {
     "Simple math: (avg sold per day × (shipping time + stock coverage days)) − current on hand − inbound. No safety buffer, no model — just the straight average.",
   "Total Cost":
     "Order Qty multiplied by Supplier Cost.",
+  "Sales: eBay TPP": "Units sold on eBay TPP during the lookback period.",
+  "Sales: eBay TT": "Units sold on eBay TT during the lookback period.",
+  "Sales: Shopify": "Units sold on Shopify during the lookback period.",
+  "Sales: BigCommerce": "Units sold on BigCommerce during the lookback period.",
   "Transit demand (model)":
     "Units the forecast expects to sell while your order is in transit (Shipping Time days). In Smart mode, uses model-predicted buckets. In Simple mode, uses flat daily average × days.",
   "Post-arrival demand (model)":
@@ -103,12 +133,17 @@ function simpleOrderQty(line: ForecastLineResult, totalDays: number) {
   return Math.ceil(net);
 }
 
-function lineValues(line: ForecastLineResult, totalDays: number) {
+function lineValues(line: ForecastLineResult, totalDays: number, activePlatforms: string[]) {
   const totalCost = line.supplierCost != null ? formatCurrency(line.finalQty * line.supplierCost) : "";
   const modelImpact =
     `${line.modelUsed} - ${modelExplanation(line.modelUsed)} ` +
     `Gross need ${line.grossRequiredQty}; current ${line.currentInventory}; inbound ${line.openInTransitQty}; final qty ${line.finalQty}.`;
   const confText = `${line.confidence} - ${line.confidenceNote.replace(/^(High|Medium|Low) confidence because\s+/i, "").replace(/\.$/, "")}.`;
+
+  const platformSales = activePlatforms.map((p) => {
+    const match = line.salesByPlatform?.find((s) => s.platform === p);
+    return match ? match.units : 0;
+  });
 
   return [
     line.title,
@@ -120,6 +155,7 @@ function lineValues(line: ForecastLineResult, totalDays: number) {
     formatCurrency(line.supplierCost),
     totalCost,
     line.salesHistorySummary,
+    ...platformSales,
     line.transitDemand,
     line.postArrivalDemand,
     line.grossRequiredQty,
@@ -141,7 +177,8 @@ function metadataItems(result: ForecastResult) {
   const rowsMissingCost = result.lines.filter((l) => l.finalQty > 0 && l.supplierCost == null).length;
   return [
     { label: "Run Date/Time", value: new Date(result.runDateTime).toLocaleString("en-US") },
-    { label: "Lookback Days", value: result.controls.lookbackDays },
+    { label: "Lookback Days (requested)", value: result.controls.lookbackDays },
+    { label: "Lookback Days (actual data)", value: result.effectiveLookbackDays ?? result.controls.lookbackDays },
     { label: "Transit Days", value: result.controls.transitDays },
     { label: "Desired Days After Arrival", value: result.controls.desiredCoverageDays },
     { label: "Forecast Bucket", value: result.controls.forecastBucket },
@@ -275,7 +312,11 @@ function addGuideSheet(workbook: any) {
     ["Simple Estimate", HEADER_NOTES["Simple Estimate"], "Example: 0.267/day × 165 days = 44 − 36 on hand = 8 → 8. No safety, no model."],
     ["Supplier Cost", "Unit supplier cost stored for the SKU.", "$2.50 means each ordered unit costs $2.50 before shipping."],
     ["Total Cost", HEADER_NOTES["Total Cost"], "25 units x $2.50 supplier cost = $62.50 total cost."],
-    ["Sales History Summary", "Shows units sold inside the selected lookback plus the average daily rate.", "4 total | 10d | 0.4/day means 4 units sold over the last 10 days."],
+    ["Sales History Summary", "Shows units sold inside the effective lookback plus the average daily rate.", "4 total | 10d | 0.4/day means 4 units sold over the last 10 days."],
+    ["Sales: eBay TPP", "Units sold on eBay TPP during the lookback period.", "If 150, that SKU had 150 units sold on eBay TPP."],
+    ["Sales: eBay TT", "Units sold on eBay TT during the lookback period.", "Helps see which store drives demand."],
+    ["Sales: Shopify", "Units sold on Shopify during the lookback period.", "0 means no Shopify sales for that SKU."],
+    ["Sales: BigCommerce", "Units sold on BigCommerce during the lookback period.", "0 means no BigCommerce sales for that SKU."],
     ["Transit demand (model)", HEADER_NOTES["Transit demand (model)"], "With Weekly grouping and 45 shipping days, the engine sums about 7 future week-sized buckets from the model."],
     ["Post-arrival demand (model)", HEADER_NOTES["Post-arrival demand (model)"], "With 120 coverage days, about 18 weekly buckets are summed."],
     ["Gross Required Quantity (Before Current On Hand)", HEADER_NOTES["Gross Required Quantity (Before Current On Hand)"], "Example: 19 + 50 + 25 = 94 after rounding up the sum."],
@@ -317,6 +358,7 @@ export async function buildForecastWorkbookOnClient(
 
   const workbook = new ExcelJS.Workbook();
   const ws = workbook.addWorksheet("Inventory Forecast");
+  const { columns: EXPORT_COLUMNS, activePlatforms } = buildExportColumns(result);
   const HEADERS = EXPORT_COLUMNS.map((c) => c.header);
   const headerRow = 5;
 
@@ -413,7 +455,7 @@ export async function buildForecastWorkbookOnClient(
     const line = sorted[idx];
     const rowNum = headerRow + 1 + idx;
     const row = ws.getRow(rowNum);
-    row.values = lineValues(line, totalDays);
+    row.values = lineValues(line, totalDays, activePlatforms);
     row.height = 108;
     row.alignment = { vertical: "middle", horizontal: "center", wrapText: true };
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

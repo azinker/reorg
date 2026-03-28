@@ -78,6 +78,21 @@ export interface SnapshotSignal {
   nearZeroDays: number;
 }
 
+export interface PlatformSalesBreakdown {
+  platform: Platform;
+  label: string;
+  units: number;
+}
+
+export interface PlatformCoverage {
+  platform: Platform;
+  label: string;
+  lineCount: number;
+  earliestDate: string | null;
+  latestDate: string | null;
+  daysCovered: number;
+}
+
 export interface ForecastLineResult {
   masterRowId: string;
   sku: string;
@@ -90,6 +105,7 @@ export interface ForecastLineResult {
   salesHistoryDays: number;
   averageDailyDemand: number;
   salesHistorySummary: string;
+  salesByPlatform: PlatformSalesBreakdown[];
   transitDemand: number;
   postArrivalDemand: number;
   safetyBuffer: number;
@@ -114,11 +130,13 @@ export interface ForecastLineResult {
 
 export interface ForecastResult {
   controls: ForecastControls;
+  effectiveLookbackDays: number;
   inventorySource: InventorySourceType;
   runDateTime: string;
   confidenceLegend: Record<ForecastConfidence, string>;
   lines: ForecastLineResult[];
   salesSync: SalesSyncSummary;
+  platformCoverage: PlatformCoverage[];
 }
 
 export interface SaveForecastRunInput {

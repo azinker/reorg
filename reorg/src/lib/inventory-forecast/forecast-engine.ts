@@ -452,6 +452,7 @@ function roundOrderQuantity(value: number) {
 
 export function buildForecastResultLines(args: {
   controls: ForecastControls;
+  effectiveLookbackDays: number;
   runDate: Date;
   inventoryRows: ForecastInventoryRow[];
   salesBySku: Map<string, ForecastSaleLine[]>;
@@ -460,17 +461,23 @@ export function buildForecastResultLines(args: {
   truncatedPlatformsBySku: Map<string, boolean>;
   overrideByMasterRowId?: Map<string, number | null>;
 }) {
+  const effectiveDays = args.effectiveLookbackDays;
   const lines: ForecastLineResult[] = args.inventoryRows.map((inventoryRow) => {
     const rawSales = (args.salesBySku.get(inventoryRow.sku) ?? [])
       .filter((sale) => !sale.isCancelled && !sale.isReturn)
       .sort((left, right) => left.orderDate.getTime() - right.orderDate.getTime());
     const prepared = prepareSeries(
       rawSales,
-      args.controls.lookbackDays,
+      effectiveDays,
       args.controls.forecastBucket,
       args.runDate,
     );
     const totalUnits = sum(prepared.series);
+
+    const platformUnitsMap = new Map<string, number>();
+    for (const sale of rawSales) {
+      platformUnitsMap.set(sale.platform, (platformUnitsMap.get(sale.platform) ?? 0) + sale.quantity);
+    }
     const limitedHistory = rawSales.length === 0 || totalUnits < 8 || prepared.series.filter((value) => value > 0).length < 4;
     const demandPattern = inferDemandPattern(prepared.series, args.controls.forecastBucket, inventoryRow.itemAgeDays);
     const { model, backtestError, usedFallback } = selectBestModel(
@@ -500,7 +507,7 @@ export function buildForecastResultLines(args: {
       usedFallback,
     });
     const isSimple = args.controls.mode === "simple";
-    const dailyRate = totalUnits / Math.max(1, args.controls.lookbackDays);
+    const dailyRate = totalUnits / Math.max(1, effectiveDays);
     const flatTransit = round(dailyRate * args.controls.transitDays);
     const flatPostArrival = round(dailyRate * args.controls.desiredCoverageDays);
 
@@ -556,9 +563,14 @@ export function buildForecastResultLines(args: {
       supplierCost: inventoryRow.supplierCost,
       currentInventory: inventoryRow.currentInventory,
       salesTotalUnits: totalUnits,
-      salesHistoryDays: args.controls.lookbackDays,
-      averageDailyDemand: round(totalUnits / Math.max(1, args.controls.lookbackDays), 3),
-      salesHistorySummary: forecastSummary(totalUnits, args.controls.lookbackDays),
+      salesHistoryDays: effectiveDays,
+      averageDailyDemand: round(totalUnits / Math.max(1, effectiveDays), 3),
+      salesHistorySummary: forecastSummary(totalUnits, effectiveDays),
+      salesByPlatform: [...platformUnitsMap.entries()].map(([platform, units]) => ({
+        platform: platform as ForecastSaleLine["platform"],
+        label: platform,
+        units,
+      })),
       transitDemand,
       postArrivalDemand,
       safetyBuffer,
