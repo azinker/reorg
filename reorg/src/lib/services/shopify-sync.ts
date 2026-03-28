@@ -538,7 +538,6 @@ export async function runShopifyWebhookReconcile(
           const result = await upsertListing(listing, integration.id);
           if (result?.status === "created") progress.itemsCreated++;
           if (result?.status === "updated") progress.itemsUpdated++;
-          progress.itemsProcessed++;
         } catch (err) {
           progress.errors.push({
             sku: listing.sku || listing.platformItemId,
@@ -546,6 +545,7 @@ export async function runShopifyWebhookReconcile(
           });
         }
       }
+      progress.itemsProcessed++;
 
       const pruned = await removeMarketplaceListingsMissingFromProductSet(
         integration.id,

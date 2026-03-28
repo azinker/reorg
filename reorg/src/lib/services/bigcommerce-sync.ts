@@ -132,7 +132,7 @@ export async function runBigCommerceWebhookReconcile(
         await saveUnmatchedListings(matchResult.unmatched, integration.id);
       }
 
-      totalProcessed += targetedListings.length;
+      totalProcessed++;
       totalCreated += upsertResult.created;
       totalUpdated += upsertResult.updated;
       totalUnmatched += matchResult.stats.unmatched;
