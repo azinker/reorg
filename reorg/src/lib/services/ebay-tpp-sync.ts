@@ -8,6 +8,7 @@ import {
 import { getIntegrationConfig, mergeIntegrationConfig } from "@/lib/integrations/runtime-config";
 import {
   buildEbayQuotaExhaustedMessage,
+  buildLocallyTrackedSnapshot,
   fetchRateLimitSnapshotWithToken,
   getEbayMethodRate,
   getEbayTradingRateLimitSnapshotForIntegration,
@@ -831,22 +832,27 @@ export async function runEbayTppSync(
           apiCalls,
         );
 
-        let liveSnapshotSerialized: unknown = undefined;
+        let snapshotToSave: unknown;
         if (ebayConfig.accessToken) {
           try {
             const liveSnapshot = await fetchRateLimitSnapshotWithToken(ebayConfig.accessToken);
             if (liveSnapshot && !liveSnapshot.isDegradedEstimate) {
-              liveSnapshotSerialized = serializeSnapshotForConfig(liveSnapshot);
+              snapshotToSave = serializeSnapshotForConfig(liveSnapshot);
             }
           } catch {
-            // Non-fatal — quota bars won't update this cycle
+            // GetApiAccessRules failed — fall through to local tracking
           }
+        }
+        if (!snapshotToSave) {
+          snapshotToSave = serializeSnapshotForConfig(
+            buildLocallyTrackedSnapshot(updatedUsage),
+          );
         }
 
         const updatedConfig = mergeIntegrationConfig(latest.platform, latest.config, {
           syncState: {
             localApiUsage: updatedUsage,
-            ...(liveSnapshotSerialized ? { lastRateLimitSnapshot: liveSnapshotSerialized } : {}),
+            lastRateLimitSnapshot: snapshotToSave,
           },
         });
         await db.integration.update({
@@ -854,29 +860,26 @@ export async function runEbayTppSync(
           data: { config: updatedConfig as unknown as Prisma.InputJsonValue },
         });
 
-        // Propagate the live snapshot to sibling eBay integrations (same App ID)
-        if (liveSnapshotSerialized) {
-          try {
-            const siblings = await db.integration.findMany({
-              where: {
-                platform: { in: ["TPP_EBAY", "TT_EBAY"] as Platform[] },
-                id: { not: integration.id },
-                enabled: true,
-              },
-              select: { id: true, platform: true, config: true },
+        try {
+          const siblings = await db.integration.findMany({
+            where: {
+              platform: { in: ["TPP_EBAY", "TT_EBAY"] as Platform[] },
+              id: { not: integration.id },
+              enabled: true,
+            },
+            select: { id: true, platform: true, config: true },
+          });
+          for (const sib of siblings) {
+            const sibMerged = mergeIntegrationConfig(sib.platform, sib.config, {
+              syncState: { lastRateLimitSnapshot: snapshotToSave },
             });
-            for (const sib of siblings) {
-              const sibMerged = mergeIntegrationConfig(sib.platform, sib.config, {
-                syncState: { lastRateLimitSnapshot: liveSnapshotSerialized },
-              });
-              await db.integration.update({
-                where: { id: sib.id },
-                data: { config: sibMerged as unknown as Prisma.InputJsonValue },
-              });
-            }
-          } catch {
-            // Non-fatal — sibling quota bars won't update
+            await db.integration.update({
+              where: { id: sib.id },
+              data: { config: sibMerged as unknown as Prisma.InputJsonValue },
+            });
           }
+        } catch {
+          // Non-fatal — sibling quota bars won't update
         }
       }
     } catch (analyticsErr) {

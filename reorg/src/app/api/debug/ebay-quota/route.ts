@@ -8,6 +8,71 @@ import {
   deserializeSnapshotFromConfig,
 } from "@/lib/services/ebay-analytics";
 
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return !!v && typeof v === "object" && !Array.isArray(v);
+}
+
+async function getFreshAccessToken(config: Record<string, unknown>): Promise<string | null> {
+  const appId = typeof config.appId === "string" ? config.appId : null;
+  const certId = typeof config.certId === "string" ? config.certId : null;
+  const refreshToken = typeof config.refreshToken === "string" ? config.refreshToken : null;
+  if (!appId || !certId || !refreshToken) return null;
+
+  const basicAuth = Buffer.from(`${appId}:${certId}`).toString("base64");
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), 10_000);
+  try {
+    const resp = await fetch("https://api.ebay.com/identity/v1/oauth2/token", {
+      method: "POST",
+      headers: {
+        Authorization: `Basic ${basicAuth}`,
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: new URLSearchParams({
+        grant_type: "refresh_token",
+        refresh_token: refreshToken,
+      }),
+      signal: ac.signal,
+    });
+    clearTimeout(timer);
+    if (!resp.ok) return null;
+    const data = (await resp.json()) as { access_token?: string };
+    return data.access_token ?? null;
+  } catch {
+    clearTimeout(timer);
+    return null;
+  }
+}
+
+async function rawGetApiAccessRules(token: string, compatLevel: string) {
+  const body = `<?xml version="1.0" encoding="utf-8"?><GetApiAccessRulesRequest xmlns="urn:ebay:apis:eBLBaseComponents"></GetApiAccessRulesRequest>`;
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), 10_000);
+  try {
+    const resp = await fetch("https://api.ebay.com/ws/api.dll", {
+      method: "POST",
+      headers: {
+        "X-EBAY-API-IAF-TOKEN": token,
+        "X-EBAY-API-SITEID": "0",
+        "X-EBAY-API-COMPATIBILITY-LEVEL": compatLevel,
+        "X-EBAY-API-CALL-NAME": "GetApiAccessRules",
+        "Content-Type": "text/xml",
+      },
+      body,
+      signal: ac.signal,
+    });
+    const xml = await resp.text();
+    clearTimeout(timer);
+    return { httpStatus: resp.status, ok: resp.ok, responsePreview: xml.slice(0, 3000) };
+  } catch (e) {
+    clearTimeout(timer);
+    return { httpStatus: 0, ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
 export async function GET() {
   const results: Record<string, unknown>[] = [];
 
@@ -16,24 +81,13 @@ export async function GET() {
   });
 
   for (const integration of integrations) {
-    const config = integration.config as Record<string, unknown>;
+    const config = isRecord(integration.config) ? integration.config : {};
     const intConfig = getIntegrationConfig(integration);
     const entry: Record<string, unknown> = {
       platform: integration.platform,
       label: integration.label,
-      hasAppId: typeof config.appId === "string" && config.appId.length > 0,
-      hasCertId: typeof config.certId === "string" && config.certId.length > 0,
-      hasRefreshToken: typeof config.refreshToken === "string" && config.refreshToken.length > 0,
-      hasAccessToken: typeof config.accessToken === "string" && config.accessToken.length > 0,
-      accessTokenExpiresAt: typeof config.accessTokenExpiresAt === "number"
-        ? new Date(config.accessTokenExpiresAt as number).toISOString()
-        : null,
-      accessTokenExpired: typeof config.accessTokenExpiresAt === "number"
-        ? (config.accessTokenExpiresAt as number) < Date.now()
-        : "no expiry stored",
     };
 
-    // Test 1: Check saved snapshot in config
     const savedSnapshot = deserializeSnapshotFromConfig(
       intConfig.syncState?.lastRateLimitSnapshot,
     );
@@ -42,7 +96,6 @@ export async function GET() {
           fetchedAt: savedSnapshot.fetchedAt,
           isDegradedEstimate: savedSnapshot.isDegradedEstimate,
           isLocallyTracked: savedSnapshot.isLocallyTracked,
-          methodCount: savedSnapshot.methods.length,
           methods: savedSnapshot.methods.map((m) => ({
             name: m.name,
             count: m.count,
@@ -50,32 +103,17 @@ export async function GET() {
             remaining: m.remaining,
           })),
         }
-      : "none — no valid saved snapshot in config";
+      : "none — no valid saved snapshot";
 
-    // Test 2: Raw snapshot data in config
-    const rawSnapshot = intConfig.syncState?.lastRateLimitSnapshot;
-    entry.rawSnapshotPresent = rawSnapshot != null;
-    if (rawSnapshot && typeof rawSnapshot === "object") {
-      const raw = rawSnapshot as Record<string, unknown>;
-      entry.rawSnapshotFetchedAt = raw.fetchedAt;
-      entry.rawSnapshotIsLocallyTracked = raw.isLocallyTracked;
-      const age = typeof raw.fetchedAt === "string"
-        ? Date.now() - new Date(raw.fetchedAt).getTime()
-        : null;
-      entry.rawSnapshotAgeMinutes = age != null ? Math.round(age / 60_000) : null;
-      entry.rawSnapshotExpired = age != null ? age > 60 * 60 * 1000 : "unknown";
-    }
-
-    // Test 3: Try the GET handler's live fetch
+    // Test 1: Module-level fetch (what the sync page uses)
     try {
       const liveSnapshot = await getEbayTradingRateLimitSnapshotForIntegration(integration);
-      entry.liveFetch = liveSnapshot
+      entry.moduleFetch = liveSnapshot
         ? {
             fetchedAt: liveSnapshot.fetchedAt,
             isDegradedEstimate: liveSnapshot.isDegradedEstimate,
             isLocallyTracked: liveSnapshot.isLocallyTracked,
             degradedNote: liveSnapshot.degradedNote ?? null,
-            methodCount: liveSnapshot.methods.length,
             methods: liveSnapshot.methods.map((m) => ({
               name: m.name,
               count: m.count,
@@ -86,65 +124,51 @@ export async function GET() {
           }
         : "returned null";
     } catch (error) {
-      entry.liveFetch = `ERROR: ${error instanceof Error ? error.message : String(error)}`;
+      entry.moduleFetch = `ERROR: ${error instanceof Error ? error.message : String(error)}`;
     }
 
-    // Test 4: Try with stored access token directly
-    if (typeof config.accessToken === "string" && config.accessToken.length > 0) {
+    // Test 2: Get a fresh OAuth token and try GetApiAccessRules directly
+    const freshToken = await getFreshAccessToken(config);
+    entry.freshTokenObtained = !!freshToken;
+
+    if (freshToken) {
+      // Try with compat level 1199
+      entry.rawCall_1199 = await rawGetApiAccessRules(freshToken, "1199");
+
+      // Try with compat level 1113 (used by analytics module)
+      entry.rawCall_1113 = await rawGetApiAccessRules(freshToken, "1113");
+
+      // Try fetchRateLimitSnapshotWithToken with fresh token
       try {
-        const tokenSnapshot = await fetchRateLimitSnapshotWithToken(config.accessToken);
-        entry.tokenFetch = tokenSnapshot
+        const snap = await fetchRateLimitSnapshotWithToken(freshToken);
+        entry.freshTokenSnapshot = snap
           ? {
-              fetchedAt: tokenSnapshot.fetchedAt,
-              isDegradedEstimate: tokenSnapshot.isDegradedEstimate,
-              methodCount: tokenSnapshot.methods.length,
-              methods: tokenSnapshot.methods.map((m) => ({
+              fetchedAt: snap.fetchedAt,
+              isDegradedEstimate: snap.isDegradedEstimate,
+              methods: snap.methods.map((m) => ({
                 name: m.name,
                 count: m.count,
                 limit: m.limit,
                 remaining: m.remaining,
               })),
             }
-          : "returned null — GetApiAccessRules call failed or returned Ack=Failure";
+          : "returned null";
       } catch (error) {
-        entry.tokenFetch = `ERROR: ${error instanceof Error ? error.message : String(error)}`;
+        entry.freshTokenSnapshot = `ERROR: ${error instanceof Error ? error.message : String(error)}`;
       }
-    } else {
-      entry.tokenFetch = "skipped — no stored access token";
     }
 
-    // Test 5: Raw GetApiAccessRules call to see exact eBay response
-    if (typeof config.accessToken === "string" && config.accessToken.length > 0) {
-      try {
-        const ac = new AbortController();
-        const timer = setTimeout(() => ac.abort(), 10_000);
-        const xmlBody = `<?xml version="1.0" encoding="utf-8"?><GetApiAccessRulesRequest xmlns="urn:ebay:apis:eBLBaseComponents"></GetApiAccessRulesRequest>`;
-        const resp = await fetch("https://api.ebay.com/ws/api.dll", {
-          method: "POST",
-          headers: {
-            "X-EBAY-API-IAF-TOKEN": config.accessToken as string,
-            "X-EBAY-API-SITEID": "0",
-            "X-EBAY-API-COMPATIBILITY-LEVEL": "1199",
-            "X-EBAY-API-CALL-NAME": "GetApiAccessRules",
-            "Content-Type": "text/xml",
-          },
-          body: xmlBody,
-          signal: ac.signal,
-        });
-        const rawXml = await resp.text();
-        clearTimeout(timer);
-        entry.rawApiCall = {
-          httpStatus: resp.status,
-          ok: resp.ok,
-          responsePreview: rawXml.slice(0, 2000),
-        };
-      } catch (error) {
-        entry.rawApiCall = `ERROR: ${error instanceof Error ? `${error.name}: ${error.message}` : String(error)}`;
-      }
+    // Test 3: Try stored token too for comparison
+    const storedToken = typeof config.accessToken === "string" ? config.accessToken : null;
+    if (storedToken) {
+      entry.storedTokenRawCall = await rawGetApiAccessRules(storedToken, "1199");
     }
 
     results.push(entry);
   }
 
-  return NextResponse.json({ timestamp: new Date().toISOString(), integrations: results });
+  return NextResponse.json(
+    { timestamp: new Date().toISOString(), integrations: results },
+    { headers: { "Cache-Control": "no-store" } },
+  );
 }
