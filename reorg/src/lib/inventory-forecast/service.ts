@@ -84,8 +84,8 @@ export async function runInventoryForecast(input: {
       ? Math.round((stats.latest.getTime() - stats.earliest.getTime()) / (1000 * 60 * 60 * 24)) + 1
       : 0;
     platformCoverage.push({
-      platform: platform as Platform,
-      label: PLATFORM_LABELS[platform as Platform] ?? platform,
+      platform,
+      label: PLATFORM_LABELS[platform as keyof typeof PLATFORM_LABELS] ?? platform,
       lineCount: stats.lineCount,
       earliestDate: stats.earliest?.toISOString().slice(0, 10) ?? null,
       latestDate: stats.latest?.toISOString().slice(0, 10) ?? null,

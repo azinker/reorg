@@ -79,13 +79,13 @@ export interface SnapshotSignal {
 }
 
 export interface PlatformSalesBreakdown {
-  platform: Platform;
+  platform: string;
   label: string;
   units: number;
 }
 
 export interface PlatformCoverage {
-  platform: Platform;
+  platform: string;
   label: string;
   lineCount: number;
   earliestDate: string | null;
