@@ -439,7 +439,8 @@ function confidenceExplanation(line: ForecastLineResult) {
 function simpleOrderQty(line: ForecastLineResult, totalDays: number) {
   const demand = line.averageDailyDemand * totalDays;
   const net = Math.max(0, demand - line.currentInventory - line.openInTransitQty);
-  return Math.ceil(net);
+  if (net <= 0) return 0;
+  return Math.ceil(net / 5) * 5;
 }
 
 function lineValues(line: ForecastLineResult, totalDays: number, activePlatforms: string[]) {

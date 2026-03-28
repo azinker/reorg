@@ -447,7 +447,7 @@ function sumForecast(model: CandidateModel, series: number[], bucket: ForecastBu
 
 function roundOrderQuantity(value: number) {
   if (value <= 0) return 0;
-  return Math.ceil(value);
+  return Math.ceil(value / 5) * 5;
 }
 
 export function buildForecastResultLines(args: {
