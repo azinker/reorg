@@ -1144,8 +1144,8 @@ async function applyTtItem(
   }
 
   progress.itemsProcessed++;
-  progress.itemsCreated += upserted.created;
-  progress.itemsUpdated += upserted.updated;
+  if (upserted.created > 0) progress.itemsCreated++;
+  else if (upserted.updated > 0) progress.itemsUpdated++;
 }
 
 async function tryApplyIncrementalQuantityFirstTtItem(
