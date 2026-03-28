@@ -1013,72 +1013,80 @@ async function runFullSync(
     page++;
 
     for (const item of items) {
-      const itemId = str(item, "ItemID");
-      let itemForUpsert = item;
+      try {
+        const itemId = str(item, "ItemID");
+        let itemForUpsert = item;
 
-      const varNode = obj(item, "Variations");
-      const hasVariationsWithoutPictures =
-        varNode && arr(varNode, "Variation").length > 0 && !obj(varNode, "Pictures");
-      const needsUpcHydration = !upcHydrationDisabled && needsFullItemForUpc(item);
-      if (itemId && (needsUpcHydration || hasVariationsWithoutPictures) && !skipHydrateDueToLimit) {
-        if (hydrateCallsUsed >= hydrateBudget) {
-          if (!hydrateNoticePushed) {
-            hydrateNoticePushed = true;
-            progress.errors.push({
-              sku: "_global",
-              message:
-                `UPC hydration paused for the rest of this run after ${hydrateBudget} GetItem calls (daily quota pacing). ` +
-                `Listings still save from GetSellerList; run another sync later to backfill UPCs.`,
-            });
-          }
-        } else {
-          try {
-            itemForUpsert =
-              (await fetchFullItem(integrationId, ebayConfig, itemId)) ?? item;
-            hydrateCallsUsed += 1;
-            apiCalls.GetItem++;
-          } catch (error) {
-            if (isEbayUsageLimitError(error)) {
-              skipHydrateDueToLimit = true;
-              apiCalls.GetItem = 5000;
-              await recordRateLimitState(
-                integrationId,
-                error instanceof Error ? error.message : "eBay GetItem usage limit reached.",
-                [],
-                null,
-                analyticsSnapshot?.nextResetAt,
-              );
-              if (!hydrateNoticePushed) {
-                hydrateNoticePushed = true;
+        const varNode = obj(item, "Variations");
+        const hasVariationsWithoutPictures =
+          varNode && arr(varNode, "Variation").length > 0 && !obj(varNode, "Pictures");
+        const needsUpcHydration = !upcHydrationDisabled && needsFullItemForUpc(item);
+        if (itemId && (needsUpcHydration || hasVariationsWithoutPictures) && !skipHydrateDueToLimit) {
+          if (hydrateCallsUsed >= hydrateBudget) {
+            if (!hydrateNoticePushed) {
+              hydrateNoticePushed = true;
+              progress.errors.push({
+                sku: "_global",
+                message:
+                  `UPC hydration paused for the rest of this run after ${hydrateBudget} GetItem calls (daily quota pacing). ` +
+                  `Listings still save from GetSellerList; run another sync later to backfill UPCs.`,
+              });
+            }
+          } else {
+            try {
+              itemForUpsert =
+                (await fetchFullItem(integrationId, ebayConfig, itemId)) ?? item;
+              hydrateCallsUsed += 1;
+              apiCalls.GetItem++;
+            } catch (error) {
+              if (isEbayUsageLimitError(error)) {
+                skipHydrateDueToLimit = true;
+                apiCalls.GetItem = 5000;
+                await recordRateLimitState(
+                  integrationId,
+                  error instanceof Error ? error.message : "eBay GetItem usage limit reached.",
+                  [],
+                  null,
+                  analyticsSnapshot?.nextResetAt,
+                );
+                if (!hydrateNoticePushed) {
+                  hydrateNoticePushed = true;
+                  progress.errors.push({
+                    sku: "_global",
+                    message:
+                      "eBay blocked further GetItem calls (daily usage limit). Listings were saved from GetSellerList. " +
+                      "Wait for the cooldown on Sync, then run another pull to continue UPC hydration.",
+                  });
+                }
+              } else {
                 progress.errors.push({
-                  sku: "_global",
+                  sku: itemId,
                   message:
-                    "eBay blocked further GetItem calls (daily usage limit). Listings were saved from GetSellerList. " +
-                    "Wait for the cooldown on Sync, then run another pull to continue UPC hydration.",
+                    error instanceof Error
+                      ? `GetItem UPC hydrate failed: ${error.message}`
+                      : "GetItem UPC hydrate failed.",
                 });
               }
-            } else {
-              progress.errors.push({
-                sku: itemId,
-                message:
-                  error instanceof Error
-                    ? `GetItem UPC hydrate failed: ${error.message}`
-                    : "GetItem UPC hydrate failed.",
-              });
             }
           }
         }
-      }
 
-      const result = await withTimeout(
-        upsertEbayItem(itemForUpsert, integrationId, ebayConfig),
-        UPSERT_TIMEOUT_MS,
-        `upsertEbayItem(${itemId})`,
-      );
-      progress.itemsProcessed++;
-      if (result === "created") progress.itemsCreated++;
-      else if (result === "updated") progress.itemsUpdated++;
-      if (result === "variation_parent") progress.variationsFound++;
+        const result = await withTimeout(
+          upsertEbayItem(itemForUpsert, integrationId, ebayConfig),
+          UPSERT_TIMEOUT_MS,
+          `upsertEbayItem(${itemId})`,
+        );
+        progress.itemsProcessed++;
+        if (result === "created") progress.itemsCreated++;
+        else if (result === "updated") progress.itemsUpdated++;
+        if (result === "variation_parent") progress.variationsFound++;
+      } catch (itemError) {
+        const itemId = str(item, "ItemID") ?? "unknown";
+        progress.errors.push({
+          sku: itemId,
+          message: itemError instanceof Error ? itemError.message : `Failed to process item ${itemId}`,
+        });
+      }
     }
 
     await updateSyncJobProgress(syncJobId, progress);
