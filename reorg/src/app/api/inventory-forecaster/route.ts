@@ -5,7 +5,7 @@ import {
   runInventoryForecast,
 } from "@/lib/inventory-forecast/service";
 
-export const maxDuration = 300;
+export const maxDuration = 800;
 
 const runSchema = z.object({
   lookbackDays: z.number().int().min(1).max(365),

@@ -16,9 +16,10 @@ const FORECAST_HISTORY_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 const LOCAL_LIVE_FORECAST_HISTORY_LOOKBACK_LIMIT_DAYS = 30;
 const LOCAL_FORECAST_SYNC_TIMEOUT_MS = 15_000;
 const LOCAL_EBAY_FORECAST_SYNC_TIMEOUT_MS = 120_000;
-const DEPLOYED_EBAY_SYNC_TIMEOUT_MS = 180_000;
-const DEPLOYED_BIGCOMMERCE_SYNC_TIMEOUT_MS = 120_000;
-const DEPLOYED_OTHER_SYNC_TIMEOUT_MS = 60_000;
+// Fetch-only timeouts (DB upsert happens after, outside the abort window)
+const DEPLOYED_EBAY_SYNC_TIMEOUT_MS = 300_000;
+const DEPLOYED_BIGCOMMERCE_SYNC_TIMEOUT_MS = 180_000;
+const DEPLOYED_OTHER_SYNC_TIMEOUT_MS = 90_000;
 const LOCAL_CACHED_FORECAST_PLATFORMS = new Set<Platform>(["SHOPIFY", "BIGCOMMERCE"]);
 
 function uniquePlatforms(lines: ForecastSaleLine[]) {
@@ -179,7 +180,8 @@ export async function syncSalesHistoryForLookback(lookbackDays: number): Promise
 
   const liveTasks = syncTasks.filter((t) => !t.skip);
 
-  const results = await Promise.allSettled(
+  // Phase 1: fetch from all marketplaces in parallel (with per-platform abort timeouts)
+  const fetchResults = await Promise.allSettled(
     liveTasks.map(async ({ integration }) => {
       const isEbay = integration.platform === "TPP_EBAY" || integration.platform === "TT_EBAY";
       const isBigCommerce = integration.platform === "BIGCOMMERCE";
@@ -208,8 +210,10 @@ export async function syncSalesHistoryForLookback(lookbackDays: number): Promise
     }),
   );
 
-  for (let i = 0; i < results.length; i++) {
-    const settled = results[i];
+  // Phase 2: collect results, then upsert to DB outside the abort window
+  const linesToUpsert: ForecastSaleLine[] = [];
+  for (let i = 0; i < fetchResults.length; i++) {
+    const settled = fetchResults[i];
     const { integration } = liveTasks[i];
 
     if (settled.status === "fulfilled") {
@@ -219,7 +223,7 @@ export async function syncSalesHistoryForLookback(lookbackDays: number): Promise
         truncatedPlatforms.add(integration.platform);
       }
       totalLinesSynced += result.lines.length;
-      await upsertSalesHistoryLines(result.lines);
+      linesToUpsert.push(...result.lines);
     } else {
       const error = settled.reason;
       issues.push({
@@ -233,6 +237,11 @@ export async function syncSalesHistoryForLookback(lookbackDays: number): Promise
               : `Failed to sync ${integration.label} sales history.`,
       });
     }
+  }
+
+  // DB upsert runs after all fetches complete — no abort timeout applies here
+  if (linesToUpsert.length > 0) {
+    await upsertSalesHistoryLines(linesToUpsert);
   }
 
   await db.auditLog.create({
