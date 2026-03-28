@@ -17,9 +17,9 @@ const LOCAL_LIVE_FORECAST_HISTORY_LOOKBACK_LIMIT_DAYS = 30;
 const LOCAL_FORECAST_SYNC_TIMEOUT_MS = 15_000;
 const LOCAL_EBAY_FORECAST_SYNC_TIMEOUT_MS = 120_000;
 // Fetch-only timeouts — keep total function time under Vercel Pro's 300s limit.
-// Sync phase runs in parallel, so effective max is max(eBay, BC, Other) = 120s.
-// That leaves ~180s for DB upsert + forecast computation + response serialization.
-const DEPLOYED_EBAY_SYNC_TIMEOUT_MS = 120_000;
+// Sync phase runs in parallel, so effective max is max(eBay, BC, Other).
+// With 50K daily eBay calls, we give eBay generous time to complete.
+const DEPLOYED_EBAY_SYNC_TIMEOUT_MS = 180_000;
 const DEPLOYED_BIGCOMMERCE_SYNC_TIMEOUT_MS = 90_000;
 const DEPLOYED_OTHER_SYNC_TIMEOUT_MS = 60_000;
 const LOCAL_CACHED_FORECAST_PLATFORMS = new Set<Platform>(["SHOPIFY", "BIGCOMMERCE"]);
@@ -128,21 +128,22 @@ export async function syncSalesHistoryForLookback(lookbackDays: number): Promise
     appEnv === "local" && lookbackDays > LOCAL_LIVE_FORECAST_HISTORY_LOOKBACK_LIMIT_DAYS;
   const coverageByPlatform = await getCachedSalesCoverageByPlatform();
   const recentAudit = await getRecentForecastSalesSyncAudit();
-  // Warnings (e.g. a platform timeout) don't invalidate the cache — only errors do.
-  // This prevents a perpetual re-sync loop when one platform consistently times out.
-  const cacheHasNoIssues =
+  const cacheHasNoErrors =
     recentAudit?.issues.length === 0 ||
     recentAudit?.issues.every((issue) => issue.level !== "error");
-  // Cache is valid when: a recent audit exists, covers the requested lookback,
-  // is within TTL, and had no error-level issues.  We no longer require every
-  // platform to have data — if one platform always times out, the cache for the
-  // others is still valid.  Missing platforms show as "No data" in the UI.
+  // A platform that timed out will have zero records in the DB.
+  // Even if the audit only has warnings, we must re-sync to fill the gap.
+  const allPlatformsHaveData = integrations.every((integration) => {
+    const coverage = coverageByPlatform.get(integration.platform);
+    return coverage && coverage.lineCount > 0;
+  });
   if (
     recentAudit &&
     recentAudit.lookbackDays != null &&
     recentAudit.lookbackDays >= lookbackDays &&
     Date.now() - recentAudit.createdAt.getTime() <= FORECAST_HISTORY_CACHE_TTL_MS &&
-    cacheHasNoIssues
+    cacheHasNoErrors &&
+    allPlatformsHaveData
   ) {
     return {
       issues: [],

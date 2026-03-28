@@ -44,7 +44,7 @@ const parser = new XMLParser({
 });
 
 const EBAY_MAX_LOOKBACK_DAYS = 90;
-const EBAY_PAGE_CONCURRENCY = 4;
+const EBAY_PAGE_CONCURRENCY = 8;
 const SHOPIFY_PAGE_LIMIT = 250;
 const BIGCOMMERCE_PAGE_LIMIT = 250;
 const BIGCOMMERCE_MAX_RETRIES = 3;
@@ -359,7 +359,7 @@ async function fetchEbaySales(
           platformVariantId: readText(variation, "SKU") ?? readText(transaction, "SKU") ?? null,
           isCancelled,
           isReturn: false,
-          rawData: { order, transaction },
+          rawData: {},
         });
       }
     }
@@ -442,7 +442,7 @@ async function fetchShopifySales(
           platformVariantId: lineItem.variant_id != null ? String(lineItem.variant_id) : null,
           isCancelled,
           isReturn: false,
-          rawData: { order, lineItem },
+          rawData: {},
         });
       }
     }
@@ -578,7 +578,7 @@ async function fetchBigCommerceSales(
             platformVariantId: product.product_options != null ? String(product.variant_id ?? "") || null : null,
             isCancelled: entry.isCancelled,
             isReturn: false,
-            rawData: { order: entry.order, product },
+            rawData: {},
           });
         }
       }
