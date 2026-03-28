@@ -310,6 +310,7 @@ export async function runShopifySync(
 
   try {
     const seenListingIds = new Set<string>();
+    const seenProductIds = new Set<string>();
 
     while (hasMore) {
       const requestCursor = pageCursor;
@@ -364,7 +365,11 @@ export async function runShopifySync(
             if (upsertResult.status === "created") progress.itemsCreated++;
             if (upsertResult.status === "updated") progress.itemsUpdated++;
           }
-          progress.itemsProcessed++;
+          const productId = listing.platformItemId;
+          if (productId && !seenProductIds.has(productId)) {
+            seenProductIds.add(productId);
+            progress.itemsProcessed++;
+          }
         } catch (err) {
           progress.errors.push({
             sku: listing.sku || listing.platformItemId,
