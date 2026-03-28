@@ -25,10 +25,10 @@ function safeJson(v: unknown, maxLen = 500): unknown {
 }
 
 export async function GET() {
-  const ebayPlatforms: Platform[] = ["TPP_EBAY", "TT_EBAY"];
+  const allPlatforms: Platform[] = ["TPP_EBAY", "TT_EBAY", "SHOPIFY", "BIGCOMMERCE"];
 
   const integrations = await db.integration.findMany({
-    where: { platform: { in: ebayPlatforms }, enabled: true },
+    where: { platform: { in: allPlatforms }, enabled: true },
     select: { id: true, platform: true, label: true, config: true, enabled: true },
   });
 
