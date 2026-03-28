@@ -2,15 +2,12 @@ import { NextResponse } from "next/server";
 import { Platform, Prisma, type Integration } from "@prisma/client";
 import { db } from "@/lib/db";
 import { getGridRowById } from "@/lib/grid-query";
-import { startIntegrationSync } from "@/lib/services/sync-control";
+import { refreshEbayItemsDirect } from "@/lib/services/ebay-tpp-sync";
+import { refreshEbayTtItemsDirect } from "@/lib/services/ebay-tt-sync";
 import { runBigCommerceWebhookReconcile } from "@/lib/services/bigcommerce-sync";
 import { runShopifyWebhookReconcile } from "@/lib/services/shopify-sync";
-import {
-  getEbayTradingRateLimitSnapshotForIntegration,
-  getEbayCooldownUntilFromSnapshot,
-} from "@/lib/services/ebay-analytics";
 
-export const maxDuration = 60;
+export const maxDuration = 45;
 
 type RefreshablePlatform = "TPP_EBAY" | "TT_EBAY" | "BIGCOMMERCE" | "SHOPIFY";
 
@@ -20,21 +17,13 @@ type RefreshBucket = {
   itemIds: Set<string>;
 };
 
-type RefreshResult =
-  | {
-      platform: RefreshablePlatform;
-      status: "COMPLETED" | "STARTED" | "ALREADY_RUNNING";
-      message: string;
-      jobId: string | null;
-    }
-  | {
-      platform: RefreshablePlatform;
-      status: "FAILED";
-      message: string;
-      jobId: string | null;
-    };
+type RefreshResult = {
+  platform: RefreshablePlatform;
+  status: "COMPLETED" | "FAILED";
+  message: string;
+};
 
-const PLATFORM_REFRESH_TIMEOUT_MS = 45_000;
+const PLATFORM_REFRESH_TIMEOUT_MS = 20_000;
 
 const PLATFORM_SHORT: Record<string, string> = {
   TPP_EBAY: "eBay TPP",
@@ -54,21 +43,11 @@ const masterRowSelect = Prisma.validator<Prisma.MasterRowDefaultArgs>()({
     listings: {
       select: {
         platformItemId: true,
-        integration: {
-          select: {
-            id: true,
-            platform: true,
-          },
-        },
+        integration: { select: { id: true, platform: true } },
         childListings: {
           select: {
             platformItemId: true,
-            integration: {
-              select: {
-                id: true,
-                platform: true,
-              },
-            },
+            integration: { select: { id: true, platform: true } },
           },
         },
       },
@@ -78,43 +57,34 @@ const masterRowSelect = Prisma.validator<Prisma.MasterRowDefaultArgs>()({
 
 type SelectedMasterRow = Prisma.MasterRowGetPayload<typeof masterRowSelect>;
 
-function normalizeRowId(rowId: string) {
+function parseRowId(rowId: string): {
+  masterRowIds: string[];
+  includeChildListings: boolean;
+} {
   if (rowId.startsWith("child-")) {
     return {
-      dbRowId: rowId.slice("child-".length),
+      masterRowIds: [rowId.slice("child-".length)],
       includeChildListings: false,
     };
   }
 
   if (rowId.startsWith("variation-parent:")) {
     const familyKey = rowId.slice("variation-parent:".length);
+    const childIds = familyKey
+      .split("|")
+      .filter((seg) => seg.startsWith("child-"))
+      .map((seg) => seg.slice("child-".length));
 
-    if (familyKey.startsWith("child-")) {
-      const firstChildMasterRowId = familyKey.split("|")[0].slice("child-".length);
-      return {
-        dbRowId: firstChildMasterRowId,
-        includeChildListings: true,
-      };
+    if (childIds.length > 0) {
+      return { masterRowIds: childIds, includeChildListings: true };
     }
 
     const titleSep = familyKey.indexOf("::");
-    if (titleSep !== -1) {
-      return {
-        dbRowId: familyKey,
-        includeChildListings: true,
-      };
-    }
-
-    return {
-      dbRowId: familyKey,
-      includeChildListings: true,
-    };
+    const rawKey = titleSep !== -1 ? familyKey : familyKey;
+    return { masterRowIds: [rawKey], includeChildListings: true };
   }
 
-  return {
-    dbRowId: rowId,
-    includeChildListings: true,
-  };
+  return { masterRowIds: [rowId], includeChildListings: true };
 }
 
 function isRefreshablePlatform(platform: Platform): platform is RefreshablePlatform {
@@ -126,51 +96,29 @@ function isRefreshablePlatform(platform: Platform): platform is RefreshablePlatf
   );
 }
 
-function collectRefreshBuckets(
-  masterRow: SelectedMasterRow,
-  includeChildListings: boolean,
+function collectBuckets(
+  rows: SelectedMasterRow[],
+  includeChildren: boolean,
 ): Map<RefreshablePlatform, RefreshBucket> {
   const buckets = new Map<RefreshablePlatform, RefreshBucket>();
 
-  function appendListing(
-    integrationId: string,
-    platform: Platform,
-    platformItemId: string,
-  ) {
-    if (!isRefreshablePlatform(platform) || !platformItemId.trim()) {
-      return;
-    }
-
+  function add(integrationId: string, platform: Platform, platformItemId: string) {
+    if (!isRefreshablePlatform(platform) || !platformItemId.trim()) return;
     const existing = buckets.get(platform);
     if (existing) {
       existing.itemIds.add(platformItemId);
       return;
     }
-
-    buckets.set(platform, {
-      integrationId,
-      platform,
-      itemIds: new Set([platformItemId]),
-    });
+    buckets.set(platform, { integrationId, platform, itemIds: new Set([platformItemId]) });
   }
 
-  for (const listing of masterRow.listings) {
-    appendListing(
-      listing.integration.id,
-      listing.integration.platform,
-      listing.platformItemId,
-    );
-
-    if (!includeChildListings) {
-      continue;
-    }
-
-    for (const childListing of listing.childListings) {
-      appendListing(
-        childListing.integration.id,
-        childListing.integration.platform,
-        childListing.platformItemId,
-      );
+  for (const row of rows) {
+    for (const listing of row.listings) {
+      add(listing.integration.id, listing.integration.platform, listing.platformItemId);
+      if (!includeChildren) continue;
+      for (const child of listing.childListings) {
+        add(child.integration.id, child.integration.platform, child.platformItemId);
+      }
     }
   }
 
@@ -181,256 +129,172 @@ async function refreshBucket(
   integration: Integration,
   bucket: RefreshBucket,
 ): Promise<RefreshResult> {
-  const targetedPlatformItemIds = [...bucket.itemIds];
+  const itemIds = [...bucket.itemIds];
 
-  try {
-    switch (bucket.platform) {
-      case Platform.TPP_EBAY:
-      case Platform.TT_EBAY: {
-        const result = await startIntegrationSync(
-          integration,
-          {
-            requestedMode: "incremental",
-            targetedPlatformItemIds,
-            triggerSource: "manual",
-            triggeredBy: "manual:row_refresh",
-            skipHeavyOperations: true,
-          },
-          "inline",
-        );
-
-        return {
-          platform: bucket.platform,
-          status: result.status === "UNSUPPORTED" ? "FAILED" : result.status,
-          message: result.message,
-          jobId: result.jobId,
-        };
+  switch (bucket.platform) {
+    case Platform.TPP_EBAY: {
+      const result = await refreshEbayItemsDirect(
+        { id: integration.id, platform: integration.platform, config: integration.config as Record<string, unknown> },
+        itemIds,
+      );
+      if (result.errors.length > 0 && result.updated === 0) {
+        return { platform: bucket.platform, status: "FAILED", message: result.errors[0] };
       }
-      case Platform.BIGCOMMERCE: {
-        const result = await runBigCommerceWebhookReconcile(
-          { productIds: targetedPlatformItemIds },
-          {
-            requestedMode: "incremental",
-            effectiveMode: "incremental",
-            triggerSource: "manual",
-            triggeredBy: "manual:row_refresh",
-            skipHeavyOperations: true,
-          },
-        );
-
-        const bcError = result.errors?.[0];
-        return {
-          platform: bucket.platform,
-          status: result.status === "completed" ? "COMPLETED" : "FAILED",
-          message:
-            result.status === "completed"
-              ? `${integration.label} row refresh completed.`
-              : bcError
-                ? `${shortPlatform(bucket.platform)}: ${bcError}`
-                : `${integration.label} row refresh failed.`,
-          jobId: result.syncJobId,
-        };
-      }
-      case Platform.SHOPIFY: {
-        const result = await runShopifyWebhookReconcile(
-          { productIds: targetedPlatformItemIds },
-          {
-            requestedMode: "incremental",
-            effectiveMode: "incremental",
-            triggerSource: "manual",
-            triggeredBy: "manual:row_refresh",
-            skipHeavyOperations: true,
-          },
-        );
-
-        const shpfyError = result.errors?.[0]?.message;
-        return {
-          platform: bucket.platform,
-          status: result.status === "COMPLETED" ? "COMPLETED" : "FAILED",
-          message:
-            result.status === "COMPLETED"
-              ? `${integration.label} row refresh completed.`
-              : shpfyError
-                ? `${shortPlatform(bucket.platform)}: ${shpfyError}`
-                : `${integration.label} row refresh failed.`,
-          jobId: result.jobId,
-        };
-      }
-      default:
-        return {
-          platform: bucket.platform,
-          status: "FAILED",
-          message: `${bucket.platform} row refresh is not implemented.`,
-          jobId: null,
-        };
+      return {
+        platform: bucket.platform,
+        status: "COMPLETED",
+        message: result.errors.length > 0
+          ? `${result.updated} updated, ${result.errors.length} failed`
+          : `${shortPlatform(bucket.platform)}: refreshed`,
+      };
     }
-  } catch (error) {
-    return {
-      platform: bucket.platform,
-      status: "FAILED",
-      message: error instanceof Error ? error.message : "Row refresh failed",
-      jobId: null,
-    };
+    case Platform.TT_EBAY: {
+      const result = await refreshEbayTtItemsDirect(
+        { id: integration.id, platform: integration.platform, config: integration.config as Record<string, unknown> },
+        itemIds,
+      );
+      if (result.errors.length > 0 && result.updated === 0) {
+        return { platform: bucket.platform, status: "FAILED", message: result.errors[0] };
+      }
+      return {
+        platform: bucket.platform,
+        status: "COMPLETED",
+        message: result.errors.length > 0
+          ? `${result.updated} updated, ${result.errors.length} failed`
+          : `${shortPlatform(bucket.platform)}: refreshed`,
+      };
+    }
+    case Platform.BIGCOMMERCE: {
+      const result = await runBigCommerceWebhookReconcile(
+        { productIds: itemIds },
+        {
+          requestedMode: "incremental",
+          effectiveMode: "incremental",
+          triggerSource: "manual",
+          triggeredBy: "manual:row_refresh",
+          skipHeavyOperations: true,
+        },
+      );
+      const err = result.errors?.[0];
+      return {
+        platform: bucket.platform,
+        status: result.status === "completed" ? "COMPLETED" : "FAILED",
+        message: result.status === "completed"
+          ? `${shortPlatform(bucket.platform)}: refreshed`
+          : err ? `${shortPlatform(bucket.platform)}: ${err}` : `${shortPlatform(bucket.platform)}: failed`,
+      };
+    }
+    case Platform.SHOPIFY: {
+      const result = await runShopifyWebhookReconcile(
+        { productIds: itemIds },
+        {
+          requestedMode: "incremental",
+          effectiveMode: "incremental",
+          triggerSource: "manual",
+          triggeredBy: "manual:row_refresh",
+          skipHeavyOperations: true,
+        },
+      );
+      const err = result.errors?.[0]?.message;
+      return {
+        platform: bucket.platform,
+        status: result.status === "COMPLETED" ? "COMPLETED" : "FAILED",
+        message: result.status === "COMPLETED"
+          ? `${shortPlatform(bucket.platform)}: refreshed`
+          : err ? `${shortPlatform(bucket.platform)}: ${err}` : `${shortPlatform(bucket.platform)}: failed`,
+      };
+    }
+    default:
+      return { platform: bucket.platform, status: "FAILED", message: `${bucket.platform} not supported` };
   }
 }
 
-function refreshBucketWithTimeout(
-  integration: Integration,
-  bucket: RefreshBucket,
-): Promise<RefreshResult> {
-  const timeoutResult: RefreshResult = {
-    platform: bucket.platform,
-    status: "FAILED",
-    message: `Timed out after ${PLATFORM_REFRESH_TIMEOUT_MS / 1000}s — try again later.`,
-    jobId: null,
-  };
-
+function withTimeout(bucket: RefreshBucket, promise: Promise<RefreshResult>): Promise<RefreshResult> {
   return Promise.race([
-    refreshBucket(integration, bucket),
+    promise,
     new Promise<RefreshResult>((resolve) =>
-      setTimeout(() => resolve(timeoutResult), PLATFORM_REFRESH_TIMEOUT_MS),
+      setTimeout(
+        () => resolve({
+          platform: bucket.platform,
+          status: "FAILED",
+          message: `${shortPlatform(bucket.platform)}: timed out (${PLATFORM_REFRESH_TIMEOUT_MS / 1000}s)`,
+        }),
+        PLATFORM_REFRESH_TIMEOUT_MS,
+      ),
     ),
   ]);
-}
-
-function summarizeMessage(msg: string, maxLen = 80): string {
-  const trimmed = msg.trim();
-  if (trimmed.length <= maxLen) return trimmed;
-  return trimmed.slice(0, maxLen - 1) + "…";
 }
 
 export async function POST(
   _request: Request,
   { params }: { params: Promise<{ rowId: string }> },
 ) {
+  const startedAt = Date.now();
   try {
-    const startedAt = Date.now();
     const { rowId } = await params;
-    const { dbRowId, includeChildListings } = normalizeRowId(rowId);
+    const { masterRowIds, includeChildListings } = parseRowId(rowId);
 
-    const masterRow = await db.masterRow.findUnique({
-      where: { id: dbRowId },
+    const masterRows = await db.masterRow.findMany({
+      where: { id: { in: masterRowIds } },
       ...masterRowSelect,
     });
 
-    if (!masterRow) {
-      return NextResponse.json(
-        { error: `Row "${rowId}" not found` },
-        { status: 404 },
-      );
+    if (masterRows.length === 0) {
+      return NextResponse.json({ error: `Row not found` }, { status: 404 });
     }
 
-    const buckets = collectRefreshBuckets(masterRow, includeChildListings);
+    const buckets = collectBuckets(masterRows, includeChildListings);
     if (buckets.size === 0) {
-      const currentRow = await getGridRowById(rowId);
+      const currentRow = await getGridRowById(rowId).catch(() => null);
       return NextResponse.json({
         data: {
           rowId,
-          sku: masterRow.sku,
+          sku: masterRows[0].sku,
           row: currentRow,
-          results: [] as RefreshResult[],
-          message: "No marketplace listings linked to this row — nothing to refresh.",
+          results: [],
+          message: "No marketplace listings linked — nothing to refresh.",
         },
       });
     }
 
-    const integrations = await db.integration.findMany({
-      where: {
-        id: {
-          in: [...new Set([...buckets.values()].map((bucket) => bucket.integrationId))],
-        },
-      },
-    });
-    const integrationById = new Map(integrations.map((integration) => [integration.id, integration]));
-
-    // Best-effort eBay rate limit pre-check with a tight timeout.
-    // A single-row refresh uses ~1 API call, so the pre-check overhead
-    // should never exceed 4 seconds. If it takes longer, skip it.
-    const RATE_LIMIT_CHECK_TIMEOUT_MS = 4_000;
-    const ebayRateLimitedPlatforms = new Set<RefreshablePlatform>();
-    const ebayRateLimitMessages = new Map<RefreshablePlatform, string>();
-    const ebayBuckets = [...buckets.values()].filter(
-      (b) => b.platform === Platform.TPP_EBAY || b.platform === Platform.TT_EBAY,
-    );
-    if (ebayBuckets.length > 0) {
-      try {
-        await Promise.race([
-          Promise.all(
-            ebayBuckets.map(async (bucket) => {
-              const integration = integrationById.get(bucket.integrationId);
-              if (!integration?.enabled) return;
-              try {
-                const snapshot = await getEbayTradingRateLimitSnapshotForIntegration(integration);
-                const cooldownUntil = getEbayCooldownUntilFromSnapshot(snapshot, "GetItem");
-                if (cooldownUntil && cooldownUntil.getTime() > Date.now()) {
-                  ebayRateLimitedPlatforms.add(bucket.platform);
-                  const resetLabel = cooldownUntil.toLocaleTimeString("en-US", {
-                    hour: "numeric",
-                    minute: "2-digit",
-                    timeZone: "America/New_York",
-                  });
-                  ebayRateLimitMessages.set(
-                    bucket.platform,
-                    `Daily API limit reached — resets around ${resetLabel} ET.`,
-                  );
-                }
-              } catch {
-                // Individual check failed — proceed without blocking
-              }
-            }),
-          ),
-          new Promise<void>((resolve) => setTimeout(resolve, RATE_LIMIT_CHECK_TIMEOUT_MS)),
-        ]);
-      } catch {
-        // Entire pre-check failed — proceed with refresh anyway
-      }
-    }
+    const integrationIds = [...new Set([...buckets.values()].map((b) => b.integrationId))];
+    const integrations = await db.integration.findMany({ where: { id: { in: integrationIds } } });
+    const integrationById = new Map(integrations.map((i) => [i.id, i]));
 
     const results = await Promise.all(
-      [...buckets.values()].map(async (bucket) => {
+      [...buckets.values()].map((bucket) => {
         const integration = integrationById.get(bucket.integrationId);
         if (!integration?.enabled) {
-          return {
+          return Promise.resolve<RefreshResult>({
             platform: bucket.platform,
             status: "FAILED",
             message: `${shortPlatform(bucket.platform)} is not connected.`,
-            jobId: null,
-          } satisfies RefreshResult;
+          });
         }
-
-        if (ebayRateLimitedPlatforms.has(bucket.platform)) {
-          return {
-            platform: bucket.platform,
-            status: "FAILED",
-            message: ebayRateLimitMessages.get(bucket.platform) ?? "Daily API limit reached.",
-            jobId: null,
-          } satisfies RefreshResult;
-        }
-
-        return refreshBucketWithTimeout(integration, bucket);
+        return withTimeout(bucket, refreshBucket(integration, bucket).catch((err): RefreshResult => ({
+          platform: bucket.platform,
+          status: "FAILED",
+          message: err instanceof Error ? err.message.slice(0, 100) : "Refresh failed",
+        })));
       }),
     );
 
     const completedCount = results.filter((r) => r.status === "COMPLETED").length;
     const failedCount = results.filter((r) => r.status === "FAILED").length;
 
-    let refreshedRow;
+    let refreshedRow = null;
     try {
       refreshedRow = await getGridRowById(rowId);
-    } catch (rowError) {
-      const msg = rowError instanceof Error ? rowError.message : String(rowError);
-      console.error("[grid-row-refresh] getGridRowById failed", msg, rowError);
-      refreshedRow = null;
+    } catch {
+      if (masterRowIds.length === 1) {
+        refreshedRow = await getGridRowById(masterRowIds[0]).catch(() => null);
+      }
     }
 
-    // Build a user-friendly per-platform breakdown
     const perPlatformLines = results.map((r) => {
       const label = shortPlatform(r.platform);
-      if (r.status === "COMPLETED") return `${label}: ✓`;
-      if (r.status === "ALREADY_RUNNING") return `${label}: sync already running`;
-      return `${label}: ${summarizeMessage(r.message)}`;
+      return r.status === "COMPLETED" ? `${label}: ✓` : `${label}: ${r.message.slice(0, 80)}`;
     });
-
     const breakdown = perPlatformLines.join(" · ");
     const message =
       failedCount === 0
@@ -442,22 +306,16 @@ export async function POST(
     return NextResponse.json({
       data: {
         rowId,
-        sku: masterRow.sku,
+        sku: masterRows[0].sku,
         row: refreshedRow,
         results,
         message,
-        timings: {
-          totalMs: Date.now() - startedAt,
-        },
+        timings: { totalMs: Date.now() - startedAt },
       },
     });
   } catch (error) {
-    const errorType = error instanceof Error ? error.constructor.name : typeof error;
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    console.error(`[grid-row-refresh] failed [${errorType}]`, errorMessage, error);
-    return NextResponse.json(
-      { error: `[${errorType}] ${errorMessage}` },
-      { status: 500 },
-    );
+    const msg = error instanceof Error ? error.message : String(error);
+    console.error(`[grid-row-refresh] ${msg}`, error);
+    return NextResponse.json({ error: msg.slice(0, 200) }, { status: 500 });
   }
 }

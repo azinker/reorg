@@ -1223,6 +1223,29 @@ export async function getGridChildRows(parentRowId: string): Promise<GridRow[]> 
 
 export async function getGridRowById(rowId: string): Promise<GridRow | null> {
   const isChildRow = rowId.startsWith("child-");
+
+  if (rowId.startsWith("variation-parent:")) {
+    const familyKey = rowId.slice("variation-parent:".length);
+    const childSegments = familyKey
+      .split("|")
+      .filter((seg) => seg.startsWith("child-"));
+    const firstChildId = childSegments.length > 0
+      ? childSegments[0].slice("child-".length)
+      : familyKey;
+
+    const parentListing = await db.marketplaceListing.findFirst({
+      where: { masterRowId: firstChildId, parentListingId: { not: null } },
+      select: { parentListing: { select: { masterRowId: true } } },
+    });
+
+    const parentMasterRowId = parentListing?.parentListing?.masterRowId;
+    if (parentMasterRowId) {
+      return getGridRowById(parentMasterRowId);
+    }
+
+    return getGridRowById(firstChildId);
+  }
+
   const normalizedRowId = isChildRow ? rowId.slice("child-".length) : rowId;
 
   const [shippingRateMap, feeRateSetting] = await Promise.all([

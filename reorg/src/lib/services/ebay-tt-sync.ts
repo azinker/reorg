@@ -1962,3 +1962,66 @@ function needsFullItemForUpc(item: unknown): boolean {
 
   return variationList.some((variation) => !extractVariationUpc(variation));
 }
+
+/**
+ * Lightweight single-item refresh — calls GetItem directly and upserts.
+ * Bypasses the full sync pipeline (no sync job, no cursor, no quota bookkeeping).
+ * Designed for the row-refresh button on the dashboard.
+ */
+export async function refreshEbayTtItemsDirect(
+  integration: { id: string; platform: string; config: Record<string, unknown> },
+  itemIds: string[],
+): Promise<{ updated: number; errors: string[] }> {
+  const config = integration.config;
+  const appId = config.appId as string;
+  const certId = config.certId as string;
+  const refreshToken = config.refreshToken as string;
+  if (!appId || !certId || !refreshToken) {
+    return { updated: 0, errors: ["eBay credentials missing from integration config"] };
+  }
+
+  const ebayConfig: EbayConfig = {
+    appId,
+    certId,
+    refreshToken,
+    accessToken: config.accessToken as string | undefined,
+    accountUserId:
+      typeof config.accountUserId === "string" ? config.accountUserId : null,
+    accessTokenExpiresAt: config.accessTokenExpiresAt as number | undefined,
+  };
+
+  const dummyProgress: SyncProgress = {
+    jobId: "",
+    status: "RUNNING",
+    message: "",
+    itemsProcessed: 0,
+    itemsCreated: 0,
+    itemsUpdated: 0,
+    errors: [],
+  };
+
+  const errors: string[] = [];
+  let updated = 0;
+  const unique = [...new Set(itemIds)];
+
+  for (const itemId of unique) {
+    try {
+      const item = await fetchFullItem(integration.id, ebayConfig, itemId);
+      if (!item) {
+        errors.push(`${itemId}: GetItem returned no data`);
+        continue;
+      }
+      await applyTtItem(item, integration.id, ebayConfig, dummyProgress);
+      updated++;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes("usage limit") || msg.includes("518")) {
+        errors.push(`Daily API limit reached`);
+        break;
+      }
+      errors.push(`${itemId}: ${msg.slice(0, 120)}`);
+    }
+  }
+
+  return { updated, errors };
+}
