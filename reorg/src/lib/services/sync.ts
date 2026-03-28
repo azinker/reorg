@@ -127,6 +127,7 @@ export async function runSync(
   let totalCreated = priorCreated;
   let totalUpdated = priorUpdated;
   let totalUnmatched = 0;
+  const seenProductIds = new Set<string>();
 
   const chunkStartedAt = Date.now();
   const overBudget = () => Date.now() - chunkStartedAt >= CATALOG_SYNC_CHUNK_BUDGET_MS;
@@ -154,7 +155,13 @@ export async function runSync(
       await saveUnmatchedListings(matchResult.unmatched, integrationId);
     }
 
-    totalProcessed += batch.length;
+    for (const listing of batch) {
+      const productId = listing.platformItemId;
+      if (productId && !seenProductIds.has(productId)) {
+        seenProductIds.add(productId);
+        totalProcessed++;
+      }
+    }
     totalCreated += upsertResult.created;
     totalUpdated += upsertResult.updated;
     totalUnmatched += matchResult.stats.unmatched;
