@@ -4003,6 +4003,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
                           rowId={row.id}
                           upc={row.upc}
                           liveFetchRevision={upcLiveRefreshRevisions[row.id] ?? 0}
+                          isVariationParent={row.isParent}
                           disableLiveFetch={row.isParent && row.id.startsWith("variation-parent:")}
                           stagedUpc={row.stagedUpc}
                           localOnlyPlatforms={row.localOnlyUpcPlatforms}

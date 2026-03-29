@@ -112,6 +112,8 @@ interface UpcCellProps {
     mode: "stage" | "push" | "fastPush",
     options?: { allowSingleSource?: boolean },
   ) => void;
+  /** Variation parent row: UPCs live on expanded child rows — show guidance instead of “no UPC”. */
+  isVariationParent?: boolean;
 }
 
 function CopyNotice({ show }: { show: boolean }) {
@@ -188,6 +190,7 @@ export function UpcCell({
   onDiscardTarget,
   onMatchUpc,
   onSaveUpcLocalOnly,
+  isVariationParent = false,
 }: UpcCellProps) {
   const cachedUiState = upcUiStateCache.get(rowId);
   const svgRef = useRef<SVGSVGElement>(null);
@@ -383,12 +386,21 @@ export function UpcCell({
     if (!displayedUpc) {
       const svg = svgRef.current;
       svg.setAttribute("viewBox", "0 0 160 55");
-      svg.innerHTML = `
+      if (isVariationParent) {
+        svg.innerHTML = `
+        <rect width="160" height="55" fill="transparent"/>
+        <line x1="10" y1="28" x2="150" y2="28" stroke="currentColor" stroke-width="1.5" opacity="0.28"/>
+        <text x="80" y="20" text-anchor="middle" fill="currentColor" font-size="10" font-family="system-ui, -apple-system, sans-serif" font-weight="600" opacity="0.82">See child rows</text>
+        <text x="80" y="36" text-anchor="middle" fill="currentColor" font-size="9" font-family="system-ui, -apple-system, sans-serif" opacity="0.72">for UPC codes</text>
+      `;
+      } else {
+        svg.innerHTML = `
         <rect width="160" height="55" fill="transparent"/>
         <line x1="10" y1="28" x2="150" y2="28" stroke="currentColor" stroke-width="1.5" opacity="0.3"/>
         <text x="80" y="22" text-anchor="middle" fill="currentColor" font-size="12" font-family="monospace" opacity="0.5">NO UPC</text>
         <text x="80" y="42" text-anchor="middle" fill="currentColor" font-size="9" font-family="monospace" opacity="0.35">AVAILABLE</text>
       `;
+      }
       return;
     }
 
@@ -414,7 +426,7 @@ export function UpcCell({
         if (svgRef.current) svgRef.current.innerHTML = "";
       }
     }
-  }, [displayedUpc, editing]);
+  }, [displayedUpc, editing, isVariationParent]);
 
   function handleCopy(value: string | null) {
     if (!value) return;
@@ -1368,7 +1380,13 @@ export function UpcCell({
           void handleCopyImage();
         }}
         role="img"
-        aria-label={displayedUpc ? `UPC barcode: ${displayedUpc}` : "No UPC available"}
+        aria-label={
+          displayedUpc
+            ? `UPC barcode: ${displayedUpc}`
+            : isVariationParent
+              ? "UPC codes are on child variant rows — expand a row below"
+              : "No UPC available"
+        }
       />
 
       <div className="w-full">
@@ -1378,7 +1396,7 @@ export function UpcCell({
           renderMatchSelector()
         ) : liveLines.length > 0 ? (
           renderLiveLines()
-        ) : displayedUpc ? null : (
+        ) : displayedUpc ? null : isVariationParent ? null : (
           <span className="text-[10px] font-medium text-muted-foreground/40 italic">No UPC</span>
         )}
       </div>
