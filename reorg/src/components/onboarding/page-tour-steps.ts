@@ -543,36 +543,6 @@ export const PAGE_TOUR_STEPS: Record<OnboardingPageKey, TourStep[]> = {
   ],
 
   /* ================================================================
-   * SETUP
-   * ================================================================ */
-  setup: [
-    {
-      id: "setup-1",
-      target: "setup-header",
-      title: "Welcome to Setup",
-      body: "This is your go-live readiness checklist. It tracks what's fully configured, what still needs work, and what might block operations. Think of it as a preflight checklist before you start pushing changes to your stores. Example: if the checklist shows 'Integrations: 3 of 4 connected,' you know one store still needs to be set up.",
-    },
-    {
-      id: "setup-2",
-      target: "setup-steps",
-      title: "Status Indicators",
-      body: "Each checklist item has a status: Complete (green), In Progress (yellow), or Needs Attention (red). Work through 'Needs Attention' items first — they may block important features. Example: 'Shipping rates: Needs Attention' means your profit calculations might be wrong until you configure the rate table.",
-    },
-    {
-      id: "setup-3",
-      target: "setup-steps",
-      title: "Use as a Release Gate",
-      body: "Before doing imports, large pushes, or handing off to a team member, scan this checklist. It's the quickest way to catch problems with connectivity, safety settings, or data quality. Example: before your first big price push, make sure every item is green — that means all stores are connected, write locks are configured, and data is flowing.",
-    },
-    {
-      id: "setup-4",
-      target: "setup-steps",
-      title: "Revisit After Changes",
-      body: "This isn't just for initial setup. Come back after major changes — reconnecting a store, updating credentials, changing the master store — to verify everything is still in good shape. Example: after rotating your eBay API token, check this page to confirm the connection still shows 'Complete.'",
-    },
-  ],
-
-  /* ================================================================
    * USERS
    * ================================================================ */
   users: [

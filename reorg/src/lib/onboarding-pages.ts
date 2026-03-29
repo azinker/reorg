@@ -10,7 +10,6 @@ export const ONBOARDING_PAGES = [
   "import",
   "shippingRates",
   "backups",
-  "setup",
   "users",
   "settings",
 ] as const;
@@ -29,7 +28,6 @@ export const PATH_TO_ONBOARDING_PAGE: Record<string, OnboardingPageKey> = {
   "/import": "import",
   "/shipping-rates": "shippingRates",
   "/backups": "backups",
-  "/setup": "setup",
   "/users": "users",
   "/settings": "settings",
 };

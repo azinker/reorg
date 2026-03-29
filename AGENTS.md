@@ -208,7 +208,6 @@ Architecture supports an Operator role later (can use table, edit, stage, push i
 /import             Import wizard
 /shipping-rates     Shipping rate table editor
 /backups            Backup management + download
-/setup              Setup checklist (dynamic state)
 /settings           User/app preferences, density, timezone, theme, write safety
 ```
 
