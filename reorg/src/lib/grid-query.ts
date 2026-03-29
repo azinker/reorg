@@ -618,7 +618,9 @@ function buildFullChildRows(
       };
     });
 
-    const childInv = allListings.find((l) => l.inventory != null)?.inventory ?? null;
+    const masterChildListing = allListings.find((l) => l.integration.platform === "TPP_EBAY" && l.inventory != null);
+    const fallbackChildListing = allListings.find((l) => l.inventory != null);
+    const childInv = masterChildListing?.inventory ?? fallbackChildListing?.inventory ?? null;
     const variationAttributes = variationAttrsMap?.get(cm.id);
 
     rows.push({
@@ -770,7 +772,10 @@ function buildGridRow(
 
   let inventory: number | null;
   if (isVariationParent) {
-    const childListings = parentListings.flatMap((p: DBListing) => p.childListings ?? []);
+    const masterParent = parentListings.find((p: DBListing) => p.integration.platform === "TPP_EBAY");
+    const fallbackParent = parentListings[0];
+    const chosenParent = masterParent ?? fallbackParent;
+    const childListings = chosenParent?.childListings ?? [];
     const childInvValues = childListings.map((cl) => cl.inventory).filter((v): v is number => v != null);
     inventory = childInvValues.length > 0 ? childInvValues.reduce((a: number, b: number) => a + b, 0) : null;
   } else {
