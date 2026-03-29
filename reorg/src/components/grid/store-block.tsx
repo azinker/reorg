@@ -39,7 +39,7 @@ function CopyButton({ text }: { text: string }) {
       title="Copy to clipboard"
     >
       {copied ? (
-        <Check className="h-3 w-3 text-emerald-400" />
+        <Check className="h-3 w-3 text-emerald-600 dark:text-emerald-400" />
       ) : (
         <Copy className="h-3 w-3" />
       )}
@@ -97,13 +97,13 @@ export function StoreBlock({
       <div className="min-w-0 flex-1">
         {hasStaged ? (
           <>
-            <span className={cn("flex items-center gap-1 font-semibold leading-tight whitespace-nowrap", isNegative(item.stagedValue) ? "text-red-400" : "text-emerald-400")}>
+            <span className={cn("flex items-center gap-1 font-semibold leading-tight whitespace-nowrap", isNegative(item.stagedValue) ? "text-red-600 dark:text-red-400" : "text-emerald-700 dark:text-emerald-400")}>
               {fmt(item.stagedValue!)}
               <span className="inline-flex shrink-0 items-center rounded-sm bg-[var(--staged)] px-1 py-px text-[9px] font-bold text-[var(--staged-foreground)]">
                 STAGED
               </span>
             </span>
-            <span className={cn("mt-1 flex items-center gap-1 font-semibold leading-tight whitespace-nowrap", isNegative(item.value) ? "text-red-400" : "text-emerald-400")}>
+            <span className={cn("mt-1 flex items-center gap-1 font-semibold leading-tight whitespace-nowrap", isNegative(item.value) ? "text-red-600 dark:text-red-400" : "text-emerald-700 dark:text-emerald-400")}>
               {fmt(item.value)}
               <span className="inline-flex shrink-0 items-center rounded-sm bg-emerald-500 px-1 py-px text-[9px] font-bold text-white">
                 LIVE
@@ -111,7 +111,7 @@ export function StoreBlock({
             </span>
           </>
         ) : (
-          <span className={cn("font-medium leading-tight", valNeg ? "text-red-400" : "text-emerald-400")}>{fmt(item.value)}</span>
+          <span className={cn("font-medium leading-tight", valNeg ? "text-red-600 dark:text-red-400" : "text-emerald-700 dark:text-emerald-400")}>{fmt(item.value)}</span>
         )}
       </div>
       <CopyButton text={displayVal} />
@@ -452,7 +452,7 @@ function EditableStoreBlock({
             disabled={!hasMeaningfulLiveChange}
             className={cn(
               "rounded p-0.5 cursor-pointer",
-              hasMeaningfulLiveChange ? "text-emerald-400 hover:text-emerald-300" : "text-muted-foreground/30 cursor-not-allowed",
+              hasMeaningfulLiveChange ? "text-emerald-600 hover:text-emerald-500 dark:text-emerald-400 dark:hover:text-emerald-300" : "text-muted-foreground/30 cursor-not-allowed",
             )}
             title="Confirm"
           >
@@ -507,7 +507,7 @@ function EditableStoreBlock({
       <div className="min-w-0 flex-1 self-stretch">
         {hasStaged ? (
           <>
-            <span className={cn("flex items-center gap-1 font-semibold leading-tight whitespace-nowrap", isNegative(item.stagedValue) ? "text-red-400" : "text-emerald-400")}>
+            <span className={cn("flex items-center gap-1 font-semibold leading-tight whitespace-nowrap", isNegative(item.stagedValue) ? "text-red-600 dark:text-red-400" : "text-emerald-700 dark:text-emerald-400")}>
               {fmt(item.stagedValue!)}
               <span
                 className={cn(
@@ -521,7 +521,7 @@ function EditableStoreBlock({
                 {hasFailedStage ? "FAILED" : "STAGED"}
               </span>
             </span>
-            <span className={cn("mt-1 flex items-center gap-1 font-semibold leading-tight whitespace-nowrap", isNegative(item.value) ? "text-red-400" : "text-emerald-400")}>
+            <span className={cn("mt-1 flex items-center gap-1 font-semibold leading-tight whitespace-nowrap", isNegative(item.value) ? "text-red-600 dark:text-red-400" : "text-emerald-700 dark:text-emerald-400")}>
               {fmt(item.value)}
               <span className="inline-flex shrink-0 items-center rounded-sm bg-emerald-500 px-1 py-px text-[9px] font-bold text-white">
                 LIVE
@@ -529,11 +529,11 @@ function EditableStoreBlock({
             </span>
             {hasFailedStage ? (
               <div className="mt-1 w-full min-w-0 space-y-0.5">
-                <p className="break-words text-[9px] font-medium leading-snug text-red-300">
+                <p className="break-words text-[9px] font-medium leading-snug text-red-600 dark:text-red-300">
                   {failedPushState?.summary ?? "Fast push failed"}
                 </p>
                 {failedPushState?.error ? (
-                  <p className="break-words text-[8px] leading-snug text-red-300/85">{failedPushState.error}</p>
+                  <p className="break-words text-[8px] leading-snug text-red-600/85 dark:text-red-300/85">{failedPushState.error}</p>
                 ) : null}
               </div>
             ) : null}
@@ -563,7 +563,7 @@ function EditableStoreBlock({
                   </div>
                 )}
                 {fastPushRetry && quickPushState?.detail ? (
-                  <p className="break-words text-[9px] leading-snug text-red-300/90">{quickPushState.detail}</p>
+                  <p className="break-words text-[9px] leading-snug text-red-600/90 dark:text-red-300/90">{quickPushState.detail}</p>
                 ) : null}
               </div>
             ) : (
@@ -594,7 +594,7 @@ function EditableStoreBlock({
           </>
         ) : quickPhase !== "idle" ? (
           <div className="flex w-full min-w-0 flex-col items-stretch gap-1">
-            <span className={cn("font-medium leading-tight", isNegative(item.value) ? "text-red-400" : "text-emerald-400")}>{fmt(item.value)}</span>
+            <span className={cn("font-medium leading-tight", isNegative(item.value) ? "text-red-600 dark:text-red-400" : "text-emerald-700 dark:text-emerald-400")}>{fmt(item.value)}</span>
             {fastPushRetry ? (
               <button
                 type="button"
@@ -619,11 +619,11 @@ function EditableStoreBlock({
               </div>
             )}
             {fastPushRetry && quickPushState?.detail ? (
-              <p className="break-words text-[8px] leading-snug text-red-300/90">{quickPushState.detail}</p>
+              <p className="break-words text-[8px] leading-snug text-red-600/90 dark:text-red-300/90">{quickPushState.detail}</p>
             ) : null}
           </div>
         ) : (
-          <span className={cn("font-medium leading-tight", isNegative(item.value) ? "text-red-400" : "text-emerald-400")}>{fmt(item.value)}</span>
+          <span className={cn("font-medium leading-tight", isNegative(item.value) ? "text-red-600 dark:text-red-400" : "text-emerald-700 dark:text-emerald-400")}>{fmt(item.value)}</span>
         )}
       </div>
       <button
@@ -780,7 +780,7 @@ export function EditableStoreBlockGroup({
                 >
                   <PlatformIcon platform={item.platform} className="h-3 w-3 shrink-0" />
                   <span className="font-extrabold uppercase">{label}</span>
-                  <span className="text-emerald-400 tabular-nums">${price.toFixed(2)}</span>
+                  <span className="text-emerald-700 dark:text-emerald-400 tabular-nums">${price.toFixed(2)}</span>
                 </button>
               );
             })}
@@ -810,7 +810,7 @@ export function EditableStoreBlockGroup({
                 onClick={() => { if (bulkCents > 0) setBulkShowActions(true); }}
                 className={cn(
                   "rounded p-0.5 cursor-pointer",
-                  bulkCents > 0 ? "text-emerald-400 hover:text-emerald-300" : "text-muted-foreground/30 cursor-not-allowed"
+                  bulkCents > 0 ? "text-emerald-600 hover:text-emerald-500 dark:text-emerald-400 dark:hover:text-emerald-300" : "text-muted-foreground/30 cursor-not-allowed"
                 )}
                 title="Confirm"
                 disabled={bulkCents <= 0}
@@ -1105,7 +1105,7 @@ function EditableAdRateBlock({
             disabled={!hasMeaningfulLiveChange}
             className={cn(
               "shrink-0 rounded p-0.5 cursor-pointer",
-              hasMeaningfulLiveChange ? "text-emerald-400 hover:text-emerald-300" : "text-muted-foreground/30 cursor-not-allowed",
+              hasMeaningfulLiveChange ? "text-emerald-600 hover:text-emerald-500 dark:text-emerald-400 dark:hover:text-emerald-300" : "text-muted-foreground/30 cursor-not-allowed",
             )}
             title="Confirm"
           >
@@ -1166,7 +1166,7 @@ function EditableAdRateBlock({
       <div className="min-w-0 flex-1 self-stretch">
         {hasStaged ? (
           <>
-            <span className="flex items-center gap-1 font-semibold leading-tight whitespace-nowrap text-emerald-400">
+            <span className="flex items-center gap-1 font-semibold leading-tight whitespace-nowrap text-emerald-700 dark:text-emerald-400">
               {fmtPercent(item.stagedValue!)}
               <span
                 className={cn(
@@ -1180,17 +1180,17 @@ function EditableAdRateBlock({
                 {hasFailedStage ? "FAILED" : "STAGED"}
               </span>
             </span>
-            <span className="mt-1 flex items-center gap-1 font-semibold leading-tight whitespace-nowrap text-emerald-400">
+            <span className="mt-1 flex items-center gap-1 font-semibold leading-tight whitespace-nowrap text-emerald-700 dark:text-emerald-400">
               {fmtPercent(item.value)}
               <span className="inline-flex shrink-0 items-center rounded-sm bg-emerald-500 px-1 py-px text-[9px] font-bold text-white">LIVE</span>
             </span>
             {hasFailedStage ? (
               <div className="mt-1 w-full min-w-0 space-y-0.5">
-                <p className="break-words text-[9px] font-medium leading-snug text-red-300">
+                <p className="break-words text-[9px] font-medium leading-snug text-red-600 dark:text-red-300">
                   {failedPushState?.summary ?? "Fast push failed"}
                 </p>
                 {failedPushState?.error ? (
-                  <p className="break-words text-[8px] leading-snug text-red-300/85">{failedPushState.error}</p>
+                  <p className="break-words text-[8px] leading-snug text-red-600/85 dark:text-red-300/85">{failedPushState.error}</p>
                 ) : null}
               </div>
             ) : null}
@@ -1220,7 +1220,7 @@ function EditableAdRateBlock({
                   </div>
                 )}
                 {fastPushRetry && quickPushState?.detail ? (
-                  <p className="break-words text-[9px] leading-snug text-red-300/90">{quickPushState.detail}</p>
+                  <p className="break-words text-[9px] leading-snug text-red-600/90 dark:text-red-300/90">{quickPushState.detail}</p>
                 ) : null}
               </div>
             ) : (
@@ -1251,7 +1251,7 @@ function EditableAdRateBlock({
           </>
         ) : quickPhase !== "idle" ? (
           <div className="flex w-full min-w-0 flex-col items-stretch gap-1">
-            <span className="font-medium leading-tight text-emerald-400">{fmtPercent(item.value)}</span>
+            <span className="font-medium leading-tight text-emerald-700 dark:text-emerald-400">{fmtPercent(item.value)}</span>
             {fastPushRetry ? (
               <button
                 type="button"
@@ -1276,11 +1276,11 @@ function EditableAdRateBlock({
               </div>
             )}
             {fastPushRetry && quickPushState?.detail ? (
-              <p className="break-words text-[8px] leading-snug text-red-300/90">{quickPushState.detail}</p>
+              <p className="break-words text-[8px] leading-snug text-red-600/90 dark:text-red-300/90">{quickPushState.detail}</p>
             ) : null}
           </div>
         ) : (
-          <span className="font-medium leading-tight text-emerald-400">{fmtPercent(item.value)}</span>
+          <span className="font-medium leading-tight text-emerald-700 dark:text-emerald-400">{fmtPercent(item.value)}</span>
         )}
       </div>
       <button

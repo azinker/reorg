@@ -3627,7 +3627,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
                 void loadFailedPushes();
                 setFailedPushesOpen(true);
               }}
-              className="flex items-center gap-1 rounded border border-red-500/30 bg-red-500/10 px-2.5 py-1 text-xs font-medium text-red-300 transition-colors hover:bg-red-500/20 cursor-pointer"
+              className="flex items-center gap-1 rounded border border-red-300 bg-red-50 text-red-700 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-300 px-2.5 py-1 text-xs font-medium transition-colors hover:bg-red-100 dark:hover:bg-red-500/20 cursor-pointer"
             >
               <AlertTriangle className="h-3 w-3" />
               Push Alerts ({failedPushCount})
@@ -3636,7 +3636,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
           {stagedCount > 0 && (
             <button
               onClick={reviewAllStagedValues}
-              className="flex items-center gap-1 rounded border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 text-xs font-medium text-emerald-300 transition-colors hover:bg-emerald-500/20 cursor-pointer"
+              className="flex items-center gap-1 rounded border border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-300 px-2.5 py-1 text-xs font-medium transition-colors hover:bg-emerald-100 dark:hover:bg-emerald-500/20 cursor-pointer"
             >
               <Check className="h-3 w-3" />
               Push Staged Values ({stagedCount})
@@ -3644,7 +3644,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
           )}
           <button
             onClick={() => void openBulkUpcModal()}
-            className="flex items-center gap-1 rounded border border-violet-500/30 bg-violet-500/10 px-2.5 py-1 text-xs font-medium text-violet-300 transition-colors hover:bg-violet-500/20 cursor-pointer"
+            className="flex items-center gap-1 rounded border border-violet-300 bg-violet-50 text-violet-700 dark:border-violet-500/30 dark:bg-violet-500/10 dark:text-violet-300 px-2.5 py-1 text-xs font-medium transition-colors hover:bg-violet-100 dark:hover:bg-violet-500/20 cursor-pointer"
           >
             <ArrowRight className="h-3 w-3" />
             Bulk Match UPCs
@@ -3652,7 +3652,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
           <button
             data-tour="dashboard-global-price"
             onClick={() => { setGpSource(null); setGpDest(new Set()); setGpMode(null); setGlobalPriceOpen(true); }}
-            className="flex items-center gap-1 rounded border border-violet-500/30 bg-violet-500/10 px-2.5 py-1 text-xs font-medium text-violet-300 transition-colors hover:bg-violet-500/20 cursor-pointer"
+            className="flex items-center gap-1 rounded border border-violet-300 bg-violet-50 text-violet-700 dark:border-violet-500/30 dark:bg-violet-500/10 dark:text-violet-300 px-2.5 py-1 text-xs font-medium transition-colors hover:bg-violet-100 dark:hover:bg-violet-500/20 cursor-pointer"
           >
             <RefreshCw className="h-3 w-3" />
             Global Price Update
@@ -3661,7 +3661,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
             {stagedCount > 0 && (
               <button
                 onClick={() => { setClearStagedInput(""); setClearStagedOpen(true); }}
-                className="flex items-center gap-1 rounded border border-amber-500/30 bg-amber-500/10 px-2.5 py-1 text-xs font-medium text-amber-400 transition-colors hover:bg-amber-500/20 cursor-pointer"
+                className="flex items-center gap-1 rounded border border-amber-300 bg-amber-50 text-amber-700 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-400 px-2.5 py-1 text-xs font-medium transition-colors hover:bg-amber-100 dark:hover:bg-amber-500/20 cursor-pointer"
               >
                 <Trash2 className="h-3 w-3" />
                 Clear Staged ({stagedCount})
@@ -3844,7 +3844,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
                 {/* Frozen Columns — no extra padding on container so child row columns stay aligned with parent */}
                 <div className={cn(
                   "sticky left-0 z-10 flex shrink-0 bg-inherit shadow-[2px_0_8px_-2px_rgba(0,0,0,0.1)]",
-                  isChild && "pl-10 border-l-[3px] border-l-emerald-400/50"
+                  isChild && "pl-10 border-l-[3px] border-l-emerald-600/50 dark:border-l-emerald-400/50"
                 )}>
                   {/* Expand / Collapse — indent and hierarchy bar only in this column for children */}
                   <div className={cn(
@@ -3883,7 +3883,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
                       </button>
                     )}
                     {isChild && (
-                      <span className="text-base font-semibold text-emerald-400">↳</span>
+                      <span className="text-base font-semibold text-emerald-600 dark:text-emerald-400">↳</span>
                     )}
                     </div>
                     {!isChild && (
@@ -3900,17 +3900,17 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
                                 className={cn(
                                   "flex h-7 w-7 items-center justify-center rounded-md border transition-colors cursor-pointer",
                                   phase === "success"
-                                    ? "border-emerald-500/40 bg-emerald-500/15 text-emerald-300"
+                                    ? "border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-500/40 dark:bg-emerald-500/15 dark:text-emerald-300"
                                     : phase === "error"
-                                      ? "border-amber-500/50 bg-amber-500/15 text-amber-300"
-                                      : "border-violet-500/35 bg-violet-500/15 text-violet-300",
+                                      ? "border-amber-300 bg-amber-50 text-amber-700 dark:border-amber-500/50 dark:bg-amber-500/15 dark:text-amber-300"
+                                      : "border-violet-300 bg-violet-50 text-violet-700 dark:border-violet-500/35 dark:bg-violet-500/15 dark:text-violet-300",
                                   phase === "loading"
                                     ? "cursor-wait opacity-80"
                                     : phase === "success"
-                                      ? "hover:border-emerald-500/50 hover:bg-emerald-500/20 hover:text-emerald-200"
+                                      ? "hover:border-emerald-400 hover:bg-emerald-100 hover:text-emerald-800 dark:hover:border-emerald-500/50 dark:hover:bg-emerald-500/20 dark:hover:text-emerald-200"
                                       : phase === "error"
-                                        ? "hover:border-amber-500/70 hover:bg-amber-500/25 hover:text-amber-200"
-                                        : "hover:border-violet-400/60 hover:bg-violet-500/25 hover:text-violet-200"
+                                        ? "hover:border-amber-400 hover:bg-amber-100 hover:text-amber-800 dark:hover:border-amber-500/70 dark:hover:bg-amber-500/25 dark:hover:text-amber-200"
+                                        : "hover:border-violet-400 hover:bg-violet-100 hover:text-violet-800 dark:hover:border-violet-400/60 dark:hover:bg-violet-500/25 dark:hover:text-violet-200"
                                 )}
                                 title={
                                   phase === "success"
@@ -4044,12 +4044,12 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
                         <>
                         <button
                           onClick={() => void toggleExpand(row.id)}
-                          className="inline-flex items-center gap-1.5 rounded-md bg-emerald-500/15 px-2 py-0.5 text-[11px] font-semibold text-emerald-400 transition-colors hover:bg-emerald-500/20 cursor-pointer"
+                          className="inline-flex items-center gap-1.5 rounded-md bg-emerald-100 dark:bg-emerald-500/15 px-2 py-0.5 text-[11px] font-semibold text-emerald-700 dark:text-emerald-400 transition-colors hover:bg-emerald-200 dark:hover:bg-emerald-500/20 cursor-pointer"
                           title={isExpanded ? "Collapse variation listing" : "Expand variation listing"}
                         >
                           <span>Variation Parent</span>
                           {row.childRows && (
-                            <span className="rounded bg-emerald-500/20 px-1 text-[10px] tabular-nums">
+                            <span className="rounded bg-emerald-200 dark:bg-emerald-500/20 px-1 text-[10px] tabular-nums">
                               {row.childRows.length}
                             </span>
                           )}
@@ -4058,7 +4058,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
                           )}
                         </button>
                         {row.variationDimensions && row.variationDimensions.length > 0 && (
-                          <span className="mt-0.5 text-[10px] leading-tight text-emerald-500/60 font-medium">
+                          <span className="mt-0.5 text-[10px] leading-tight text-emerald-700/60 dark:text-emerald-500/60 font-medium">
                             {row.variationDimensions.join(" / ")}
                           </span>
                         )}

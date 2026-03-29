@@ -29,10 +29,10 @@ export const PLATFORM_FULL: Record<Platform, string> = {
 };
 
 export const PLATFORM_COLORS: Record<Platform, string> = {
-  TPP_EBAY: "bg-blue-500/15 text-blue-400 border-blue-500/30",
-  TT_EBAY: "bg-emerald-500/15 text-emerald-400 border-emerald-500/30",
-  BIGCOMMERCE: "bg-orange-500/15 text-orange-400 border-orange-500/30",
-  SHOPIFY: "bg-lime-500/15 text-lime-400 border-lime-500/30",
+  TPP_EBAY: "bg-blue-50 dark:bg-blue-500/15 text-blue-700 dark:text-blue-400 border-blue-200 dark:border-blue-500/30",
+  TT_EBAY: "bg-emerald-50 dark:bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-500/30",
+  BIGCOMMERCE: "bg-orange-50 dark:bg-orange-500/15 text-orange-700 dark:text-orange-400 border-orange-200 dark:border-orange-500/30",
+  SHOPIFY: "bg-lime-50 dark:bg-lime-500/15 text-lime-700 dark:text-lime-400 border-lime-200 dark:border-lime-500/30",
 };
 
 export const PLATFORM_COLORS_LIGHT: Record<Platform, string> = {

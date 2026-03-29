@@ -105,13 +105,13 @@ export function getEbayPullWindow(date: Date, timeZone: string): EbayPullWindow 
 
 export function getEbayAutoSyncIntervalMinutes(date: Date, timeZone: string) {
   const window = getEbayPullWindow(date, timeZone);
-  if (window === "peak") return 15;
-  if (window === "shoulder") return 30;
+  if (window === "peak") return 720;
+  if (window === "shoulder") return 720;
   return null;
 }
 
 export function formatEbayAutoSyncSchedule() {
-  return "Every 15m from 9:00-16:00, every 30m from 16:00-22:00, paused overnight";
+  return "Twice daily (every 12h) during business hours (9:00-22:00), paused overnight";
 }
 
 export function getNextEbayAutoSyncAt(now: Date, timeZone: string) {

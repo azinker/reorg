@@ -1271,7 +1271,6 @@ async function tryApplyIncrementalQuantityFirstTtItem(
       lastSyncedAt: now,
       rawData: JSON.parse(
         JSON.stringify({
-          item,
           variation,
           parentItemId: itemId,
         }),
@@ -1370,7 +1369,6 @@ function extractListingsFromItem(item: unknown): RawListing[] {
       upc: extractVariationUpc(variation) ?? undefined,
       rawData: JSON.parse(
         JSON.stringify({
-          item,
           variation,
           parentItemId: itemId,
         }),
