@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "reorG Dashboard Link",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Open the current marketplace listing in reorG (scroll to row on the dashboard).",
   "permissions": ["tabs", "storage"],
   "host_permissions": [
@@ -26,18 +26,27 @@
   },
   "content_scripts": [
     {
+      "matches": [
+        "https://reorg.theperfectpart.net/*",
+        "http://localhost/*",
+        "http://127.0.0.1/*"
+      ],
+      "js": ["reorg-tab-bridge.js"],
+      "run_at": "document_idle"
+    },
+    {
       "matches": ["https://www.ebay.com/*", "https://ebay.com/*"],
-      "js": ["content-ebay.js"],
+      "js": ["content-ebay.js", "listing-widget.js"],
       "run_at": "document_idle"
     },
     {
       "matches": ["https://admin.shopify.com/*"],
-      "js": ["content-shopify.js"],
+      "js": ["content-shopify.js", "listing-widget.js"],
       "run_at": "document_idle"
     },
     {
       "matches": ["https://*.mybigcommerce.com/*"],
-      "js": ["content-bc.js"],
+      "js": ["content-bc.js", "listing-widget.js"],
       "run_at": "document_idle"
     }
   ]

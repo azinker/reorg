@@ -1,6 +1,12 @@
 # reorG Dashboard Link (Chrome extension)
 
-Opens the reorG dashboard and scrolls to the row for the marketplace listing you are viewing. If a reorG tab is already open (same base URL), that tab is focused and navigated; otherwise a new tab opens.
+Opens the reorG dashboard and scrolls to the row for the marketplace listing you are viewing.
+
+- **Existing reorG tab on `/dashboard`:** the extension focuses that tab and scrolls to the row **without reloading** the page (in-page messaging).
+- **Existing reorG tab on another route** (e.g. Settings): the tab navigates to the dashboard with query params (one load).
+- **No reorG tab:** a new tab opens on the dashboard with query params.
+
+On eBay, Shopify admin, and BigCommerce admin listing pages, a small **floating “Open in reorG”** button appears in the bottom-right corner (same behavior as the popup).
 
 ## Install (load unpacked)
 

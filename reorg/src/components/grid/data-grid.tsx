@@ -644,6 +644,8 @@ export function DataGrid({
   const [gridRows, setGridRows] = useState<GridRow[]>(() =>
     normalizeGridRows(structuredClone(initialRows))
   );
+  const gridRowsRef = useRef<GridRow[]>(gridRows);
+  gridRowsRef.current = gridRows;
   const [upcLiveRefreshRevisions, setUpcLiveRefreshRevisions] = useState<Record<string, number>>({});
   const [activeGridInteractionIds, setActiveGridInteractionIds] = useState<Set<string>>(() => new Set());
   const pendingInitialRowsRef = useRef<GridRow[] | null>(null);
@@ -819,6 +821,10 @@ export function DataGrid({
   const rowRefreshTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const childRowsLoadRef = useRef<Partial<Record<string, Promise<boolean>>>>({});
   const parentRef = useRef<HTMLDivElement>(null);
+  const scrollToRowRef = useRef<(rowId: string) => Promise<void>>(async () => {});
+  const resolveItemIdToRowAndScrollRef = useRef<
+    ((itemId: string, platform?: Platform) => Promise<void>) | null
+  >(null);
 
   const toastClearTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -3375,11 +3381,45 @@ export function DataGrid({
     }
   }
 
+  scrollToRowRef.current = scrollToRow;
+
+  async function resolveItemIdToRowAndScroll(itemId: string, platform?: Platform) {
+    const rows = gridRowsRef.current;
+    if (rows.length === 0) {
+      showToast("Grid is still loading. Try again in a moment.", 4500, true);
+      return;
+    }
+    let rowId: string | null = findRowIdByPlatformItemId(rows, itemId, platform);
+    if (!rowId) {
+      try {
+        const params = new URLSearchParams({ platformItemId: itemId });
+        if (platform) params.set("platform", platform);
+        const res = await fetch(`/api/grid/lookup-item?${params.toString()}`, {
+          credentials: "include",
+          cache: "no-store",
+        });
+        if (res.ok) {
+          const json = (await res.json()) as { data?: { rowId?: string } };
+          rowId = json.data?.rowId ?? null;
+        }
+      } catch {
+        /* keep null */
+      }
+    }
+    if (!rowId) {
+      showToast("Listing not found in reorg", 5000, true);
+      return;
+    }
+    await scrollToRowRef.current(rowId);
+  }
+
+  resolveItemIdToRowAndScrollRef.current = resolveItemIdToRowAndScroll;
+
   useEffect(() => {
     const trimmed = deepLinkItemId?.trim();
     if (!trimmed || gridRows.length === 0) return;
-    const itemId = trimmed;
 
+    const itemId = trimmed;
     const plat = deepLinkPlatform ?? undefined;
     const key = `${itemId}:${plat ?? ""}`;
     if (deepLinkProcessedKeyRef.current === key) return;
@@ -3387,31 +3427,9 @@ export function DataGrid({
     let cancelled = false;
 
     async function run() {
-      // Prefer client-side match first so consolidated variation-parent rows resolve correctly.
-      let rowId: string | null = findRowIdByPlatformItemId(gridRows, itemId, plat);
-      if (!rowId) {
-        try {
-          const params = new URLSearchParams({ platformItemId: itemId });
-          if (plat) params.set("platform", plat);
-          const res = await fetch(`/api/grid/lookup-item?${params.toString()}`, {
-            credentials: "include",
-            cache: "no-store",
-          });
-          if (res.ok) {
-            const json = (await res.json()) as { data?: { rowId?: string } };
-            rowId = json.data?.rowId ?? null;
-          }
-        } catch {
-          /* already null */
-        }
-      }
+      await resolveItemIdToRowAndScroll(itemId, plat);
       if (cancelled) return;
       deepLinkProcessedKeyRef.current = key;
-      if (!rowId) {
-        showToast("Listing not found in reorg", 5000, true);
-      } else {
-        await scrollToRow(rowId);
-      }
       onDeepLinkConsumed?.();
     }
 
@@ -3419,9 +3437,24 @@ export function DataGrid({
     return () => {
       cancelled = true;
     };
-    // scrollToRow is stable enough for this one-shot deep link; omit to avoid re-running
     // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional: run when link params + grid data are ready
   }, [deepLinkItemId, deepLinkPlatform, gridRows, onDeepLinkConsumed]);
+
+  useEffect(() => {
+    function onExtensionDeepLink(e: Event) {
+      const ev = e as CustomEvent<{ itemId?: string; platform?: string }>;
+      const id = ev.detail?.itemId?.trim();
+      if (!id) return;
+      const rawPlat = ev.detail?.platform;
+      const plat =
+        rawPlat == null || rawPlat === ""
+          ? undefined
+          : (rawPlat as Platform);
+      void resolveItemIdToRowAndScrollRef.current?.(id, plat);
+    }
+    window.addEventListener("reorg-extension-deep-link", onExtensionDeepLink as EventListener);
+    return () => window.removeEventListener("reorg-extension-deep-link", onExtensionDeepLink as EventListener);
+  }, []);
 
   function isColVisible(id: string) {
     return columns.find((c) => c.id === id)?.visible ?? true;

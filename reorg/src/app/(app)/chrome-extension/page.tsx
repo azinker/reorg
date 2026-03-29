@@ -224,11 +224,17 @@ export default function ChromeExtensionPage() {
             <li>
               Open a listing on eBay, Shopify admin, or BigCommerce admin (product edit page).
             </li>
-            <li>Click the extension icon and choose <strong className="text-foreground">Open in reorG</strong>.</li>
             <li>
-              Stay logged into reorG in Chrome; the app opens (or focuses) the dashboard and scrolls
-              to the matching row.
+              Use the purple <strong className="text-foreground">Open in reorG</strong> floating button
+              (bottom-right on the listing page), or open the extension popup and click the same label.
             </li>
+            <li>
+              If you already have a tab on the <strong className="text-foreground">dashboard</strong>, that
+              tab is focused and the grid scrolls to the row <strong className="text-foreground">without
+              reloading</strong> the dashboard. If the reorG tab was on another page, it navigates to the
+              dashboard once.
+            </li>
+            <li>Stay logged into reorG in Chrome.</li>
           </ul>
         </section>
 

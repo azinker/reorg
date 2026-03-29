@@ -15,29 +15,64 @@ async function getSettings() {
   return { ...DEFAULTS, ...sync };
 }
 
+function isDashboardUrl(fullUrl) {
+  try {
+    const p = new URL(fullUrl).pathname;
+    return p === "/dashboard" || p.startsWith("/dashboard/");
+  } catch {
+    return false;
+  }
+}
+
 /**
  * @param {{ itemId: string, platform?: string | null }} params
  */
 async function openOrFocusReorg(params) {
   const { reorgBaseUrl } = await getSettings();
   const base = normalizeBase(reorgBaseUrl);
+  const allTabs = await chrome.tabs.query({});
+  const existing = allTabs.filter((t) => t.url && t.url.startsWith(base));
+
+  const payload = {
+    itemId: params.itemId,
+    platform: params.platform || null,
+  };
+
   const q = new URLSearchParams();
   q.set("itemId", params.itemId);
   if (params.platform) q.set("platform", params.platform);
-  const targetUrl = `${base}/dashboard?${q.toString()}`;
+  const dashboardWithQuery = `${base}/dashboard?${q.toString()}`;
 
-  const allTabs = await chrome.tabs.query({});
-  const existing = allTabs.filter((t) => t.url && t.url.startsWith(base));
   if (existing.length > 0) {
     const tab = existing[0];
-    await chrome.tabs.update(tab.id, { url: targetUrl, active: true });
-    if (tab.windowId != null) {
-      await chrome.windows.update(tab.windowId, { focused: true });
+    const tabUrl = tab.url || "";
+
+    if (tab.id != null && isDashboardUrl(tabUrl)) {
+      try {
+        await chrome.tabs.sendMessage(tab.id, {
+          type: "SCROLL_TO_ITEM_IN_REORG",
+          payload,
+        });
+        await chrome.tabs.update(tab.id, { active: true });
+        if (tab.windowId != null) {
+          await chrome.windows.update(tab.windowId, { focused: true });
+        }
+        return { ok: true, action: "messaged" };
+      } catch {
+        /* content script missing or page not ready — fall through to navigation */
+      }
     }
-    return { ok: true, action: "focused" };
+
+    if (tab.id != null) {
+      await chrome.tabs.update(tab.id, { url: dashboardWithQuery, active: true });
+      if (tab.windowId != null) {
+        await chrome.windows.update(tab.windowId, { focused: true });
+      }
+      return { ok: true, action: "navigated" };
+    }
   }
 
-  await chrome.tabs.create({ url: targetUrl, active: true });
+  await chrome.tabs.create({ url: dashboardWithQuery, active: true });
   return { ok: true, action: "created" };
 }
 
