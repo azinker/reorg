@@ -3566,6 +3566,8 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
     ? flatRows.find((r) => r.id === expandedPhotoId)
     : null;
 
+  /** Settings → Freeze key columns; column defs still mark which are “key” for width math. */
+  const freezeKeyColumns = settings.frozenColumns;
   const frozenCols = columns.filter((c) => c.frozen && c.visible);
   const scrollCols = columns.filter((c) => !c.frozen && c.visible);
 
@@ -3692,7 +3694,11 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
           {/* Frozen headers */}
           <div
             data-tour="dashboard-header-frozen"
-            className="sticky left-0 z-30 flex shrink-0 bg-card shadow-[2px_0_8px_-2px_rgba(0,0,0,0.15)]"
+            className={cn(
+              "flex shrink-0 bg-card",
+              freezeKeyColumns &&
+                "sticky left-0 z-30 shadow-[2px_0_8px_-2px_rgba(0,0,0,0.15)]",
+            )}
           >
             {/* Expand/collapse column — always visible, no header text */}
             <div
@@ -3842,10 +3848,14 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
                 }}
               >
                 {/* Frozen Columns — no extra padding on container so child row columns stay aligned with parent */}
-                <div className={cn(
-                  "sticky left-0 z-10 flex shrink-0 bg-inherit shadow-[2px_0_8px_-2px_rgba(0,0,0,0.1)]",
-                  isChild && "pl-10 border-l-[3px] border-l-emerald-600/50 dark:border-l-emerald-400/50"
-                )}>
+                <div
+                  className={cn(
+                    "flex shrink-0 bg-inherit",
+                    freezeKeyColumns &&
+                      "sticky left-0 z-10 shadow-[2px_0_8px_-2px_rgba(0,0,0,0.1)]",
+                    isChild && "pl-10 border-l-[3px] border-l-emerald-600/50 dark:border-l-emerald-400/50",
+                  )}
+                >
                   {/* Expand / Collapse — indent and hierarchy bar only in this column for children */}
                   <div className={cn(
                     COL_WIDTHS.expand,
