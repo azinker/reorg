@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { getSupplierOrderForDownload } from "@/lib/inventory-forecast/service";
+import { getOrderExportData } from "@/lib/inventory-forecast/service";
 
 export async function GET(
   _request: NextRequest,
@@ -7,38 +7,20 @@ export async function GET(
 ) {
   try {
     const { orderId } = await context.params;
-    const order = await getSupplierOrderForDownload(orderId);
+    const result = await getOrderExportData(orderId);
 
-    const totalUnits = order.lines.reduce((t, l) => t + l.finalQty, 0);
-    const hasAnyCost = order.lines.some((l) => l.supplierCost != null);
-    const totalCost = hasAnyCost
-      ? order.lines.reduce((t, l) => t + l.finalQty * (l.supplierCost ?? 0), 0)
-      : null;
+    if (!result) {
+      return NextResponse.json(
+        { error: "This order has no linked forecast run. The export requires a saved forecast to include images, UPC barcodes, and full forecast details." },
+        { status: 404 },
+      );
+    }
 
-    return NextResponse.json({
-      data: {
-        id: order.id,
-        orderName: order.orderName,
-        supplier: order.supplier,
-        status: order.status,
-        eta: order.eta.toISOString(),
-        notes: order.notes,
-        createdAt: order.createdAt.toISOString(),
-        totalUnits,
-        totalCost,
-        lines: order.lines.map((l) => ({
-          sku: l.sku,
-          title: l.title,
-          supplierCost: l.supplierCost,
-          qty: l.finalQty,
-          lineCost: l.supplierCost != null ? l.finalQty * l.supplierCost : null,
-        })),
-      },
-    });
+    return NextResponse.json({ data: result });
   } catch (error) {
     console.error("[inventory-forecaster/order/:orderId/download] GET failed", error);
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Failed to load order" },
+      { error: error instanceof Error ? error.message : "Failed to load order export data" },
       { status: 500 },
     );
   }

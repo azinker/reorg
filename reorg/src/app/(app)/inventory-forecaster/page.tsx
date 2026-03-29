@@ -545,49 +545,23 @@ export default function InventoryForecasterPage() {
       const response = await fetch(`/api/inventory-forecaster/order/${orderId}/download`);
       const json = await response.json();
       if (!response.ok) throw new Error(json.error ?? "Failed to load order");
-      const d = json.data;
-      const lines = d.lines as Array<{ sku: string; title: string | null; supplierCost: number | null; qty: number; lineCost: number | null }>;
 
-      const rows = [
-        ["Supplier Order Export"],
-        [],
-        ["Order Name", d.orderName ?? "-"],
-        ["Order ID", d.id],
-        ["Supplier", d.supplier ?? "-"],
-        ["Status", d.status.replace(/_/g, " ")],
-        ["Expected Arrival", d.eta ? new Date(d.eta).toLocaleDateString("en-US", { month: "short", day: "2-digit", year: "numeric" }) : "-"],
-        ["Created", new Date(d.createdAt).toLocaleString("en-US", { month: "short", day: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" })],
-        ["Notes", d.notes ?? "-"],
-        [],
-        ["Total SKUs", String(lines.length)],
-        ["Total Units", String(d.totalUnits)],
-        ["Total Cost", d.totalCost != null ? `$${d.totalCost.toFixed(2)}` : "N/A"],
-        [],
-        ["SKU", "Title", "Supplier Cost", "Qty", "Line Cost"],
-        ...lines.map((l) => [
-          l.sku,
-          l.title ?? "",
-          l.supplierCost != null ? `$${l.supplierCost.toFixed(2)}` : "",
-          String(l.qty),
-          l.lineCost != null ? `$${l.lineCost.toFixed(2)}` : "",
-        ]),
-      ];
+      const forecastResult = json.data as ForecastResult;
 
-      const csvContent = rows.map((row) =>
-        row.map((cell) => {
-          const str = String(cell);
-          return str.includes(",") || str.includes('"') || str.includes("\n")
-            ? `"${str.replace(/"/g, '""')}"`
-            : str;
-        }).join(","),
-      ).join("\n");
+      const blob = await buildForecastWorkbookOnClient(
+        forecastResult,
+        (p) => {
+          if (p.phase === "error") {
+            setStatusMessage({ text: p.errorDetail ?? "Export failed.", type: "error" });
+          }
+        },
+      );
 
-      const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement("a");
       anchor.href = url;
-      const safeName = (d.orderName || d.supplier || "order").replace(/[^a-zA-Z0-9_-]/g, "_");
-      anchor.download = `Supplier_Order_${safeName}_${d.id.slice(-6)}.csv`;
+      const dateStr = new Date().toISOString().slice(0, 10);
+      anchor.download = `Supplier_Order_${dateStr}.xlsx`;
       document.body.appendChild(anchor);
       anchor.click();
       anchor.remove();

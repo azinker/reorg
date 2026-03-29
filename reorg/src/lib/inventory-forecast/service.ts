@@ -444,6 +444,96 @@ export async function getSupplierOrderForDownload(orderId: string) {
   return getSupplierOrderWithLines(orderId);
 }
 
+export async function getOrderExportData(orderId: string): Promise<ForecastResult | null> {
+  const order = await db.supplierOrder.findUnique({
+    where: { id: orderId },
+    select: {
+      forecastRunId: true,
+      orderName: true,
+      supplier: true,
+      lines: { select: { masterRowId: true, finalQty: true } },
+    },
+  });
+  if (!order?.forecastRunId) return null;
+
+  const run = await db.forecastRun.findUnique({
+    where: { id: order.forecastRunId },
+    include: { lines: true },
+  });
+  if (!run) return null;
+
+  const orderSkuSet = new Set(order.lines.map((l) => l.masterRowId));
+  const orderQtyMap = new Map(order.lines.map((l) => [l.masterRowId, l.finalQty]));
+
+  const summary = (run.summary ?? {}) as Record<string, unknown>;
+  const salesSync = (summary.salesSync ?? {
+    fetchedAt: null,
+    earliestCoveredAt: null,
+    latestCoveredAt: null,
+    issues: [],
+  }) as ForecastResult["salesSync"];
+
+  const filteredLines: ForecastLineResult[] = run.lines
+    .filter((l) => orderSkuSet.has(l.masterRowId))
+    .map((l) => ({
+      masterRowId: l.masterRowId,
+      sku: l.sku,
+      title: l.title ?? "",
+      upc: l.upc,
+      imageUrl: l.imageUrl,
+      supplierCost: l.supplierCost,
+      currentInventory: l.currentInventory,
+      salesTotalUnits: l.salesTotalUnits,
+      salesHistoryDays: l.salesHistoryDays,
+      averageDailyDemand: l.averageDailyDemand,
+      salesHistorySummary: `${l.salesTotalUnits} sold in ${l.salesHistoryDays}d`,
+      salesByPlatform: [],
+      transitDemand: l.transitDemand,
+      postArrivalDemand: l.postArrivalDemand,
+      safetyBuffer: l.safetyBuffer,
+      grossRequiredQty: l.grossRequiredQty,
+      openInTransitQty: l.openInTransitQty,
+      openInTransitEta: l.openInTransitEta?.toISOString() ?? null,
+      projectedStockOnArrival: l.projectedStockOnArrival,
+      recommendedQty: l.recommendedQty,
+      overrideQty: l.overrideQty,
+      finalQty: orderQtyMap.get(l.masterRowId) ?? l.finalQty,
+      demandPattern: l.demandPattern as ForecastLineResult["demandPattern"],
+      modelUsed: l.modelUsed,
+      confidence: l.confidence as ForecastLineResult["confidence"],
+      confidenceNote: l.confidenceNote ?? "",
+      warningFlags: (l.warningFlags ?? []) as ForecastLineResult["warningFlags"],
+      backtestError: l.backtestError,
+      suspectedStockout: l.suspectedStockout,
+      limitedHistory: l.limitedHistory,
+      hasInbound: l.hasInbound,
+      bucketSeries: [],
+    }));
+
+  return {
+    controls: {
+      lookbackDays: run.lookbackDays,
+      forecastBucket: run.forecastBucket,
+      transitDays: run.transitDays,
+      desiredCoverageDays: run.desiredCoverageDays,
+      useOpenInTransit: run.useOpenInTransit,
+      reorderRelevantOnly: false,
+      mode: run.mode as ForecastResult["controls"]["mode"],
+    },
+    effectiveLookbackDays: (summary.effectiveLookbackDays as number) ?? run.lookbackDays,
+    inventorySource: run.inventorySource as ForecastResult["inventorySource"],
+    runDateTime: run.createdAt.toISOString(),
+    confidenceLegend: (summary.confidenceLegend ?? {
+      HIGH: "Strong history and model fit.",
+      MEDIUM: "Usable but could improve with more data.",
+      LOW: "Thin history or fallback logic.",
+    }) as ForecastResult["confidenceLegend"],
+    lines: filteredLines,
+    salesSync,
+    platformCoverage: (summary.platformCoverage as ForecastResult["platformCoverage"]) ?? [],
+  };
+}
+
 export async function deleteSupplierOrder(orderId: string) {
   return deleteSupplierOrderRecord(orderId);
 }
