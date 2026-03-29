@@ -774,8 +774,9 @@ function buildGridRow(
     const childInvValues = childListings.map((cl) => cl.inventory).filter((v): v is number => v != null);
     inventory = childInvValues.length > 0 ? childInvValues.reduce((a: number, b: number) => a + b, 0) : null;
   } else {
-    const firstListing = parentListings.find((l: DBListing) => l.inventory != null);
-    inventory = firstListing?.inventory ?? null;
+    const masterListing = parentListings.find((l: DBListing) => l.integration.platform === "TPP_EBAY" && l.inventory != null);
+    const fallbackListing = parentListings.find((l: DBListing) => l.inventory != null);
+    inventory = masterListing?.inventory ?? fallbackListing?.inventory ?? null;
   }
 
   const alternateTitles: { title: string; platform: Platform; listingId: string }[] = [];
