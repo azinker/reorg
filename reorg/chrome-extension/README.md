@@ -1,0 +1,61 @@
+# reorG Dashboard Link (Chrome extension)
+
+Opens the reorG dashboard and scrolls to the row for the marketplace listing you are viewing. If a reorG tab is already open (same base URL), that tab is focused and navigated; otherwise a new tab opens.
+
+## Install (load unpacked)
+
+1. Open Chrome → **Extensions** (`chrome://extensions`).
+2. Enable **Developer mode**.
+3. Click **Load unpacked** and select this folder: `reorg/chrome-extension` (the folder that contains `manifest.json`).
+4. Pin the extension if you want quick access.
+
+## Options
+
+Right-click the extension icon → **Options** (or open from the popup link).
+
+| Setting | Purpose |
+|--------|---------|
+| **reorG base URL** | Production: `https://reorg.theperfectpart.net`. Local dev: e.g. `http://localhost:3000` (no trailing slash). |
+| **Default eBay platform hint** | Public eBay URLs do not indicate TPP vs TT. Chooses which `platform` query param is sent: `TPP_EBAY` or `TT_EBAY`. |
+| **BigCommerce admin hostname** | Optional. If set, only that host (e.g. `store-xxxxx.mybigcommerce.com`) is used when parsing BC product edit URLs. If empty, any `*.mybigcommerce.com` admin product URL is accepted. |
+
+## Usage
+
+1. Open a supported listing page (see below).
+2. Click the extension icon.
+3. Click **Open in reorG**.
+
+You must be logged into reorG in the browser session (same as a normal tab).
+
+## Supported pages
+
+| Marketplace | Example URL shape |
+|-------------|-------------------|
+| eBay | `https://www.ebay.com/itm/123456789012` |
+| Shopify admin | `https://admin.shopify.com/store/.../products/123456789` |
+| BigCommerce admin | `https://<store>.mybigcommerce.com/manage/products/edit/123` |
+
+## Deep link URL contract (web app)
+
+The extension navigates to:
+
+```text
+{reorgBaseUrl}/dashboard?itemId={id}&platform={PLATFORM}
+```
+
+- `itemId`: marketplace item / product id (digits only for eBay and Shopify admin; BC numeric id — the server adds `SH-` / `BC-` prefixes when matching).
+- `platform` (optional but recommended): `TPP_EBAY`, `TT_EBAY`, `BIGCOMMERCE`, or `SHOPIFY`.
+
+Alias: `platformItemId` is accepted by the dashboard as a synonym for `itemId`.
+
+The dashboard resolves the row (client-side grid match first, then `GET /api/grid/lookup-item` if needed), scrolls and highlights the row, then removes the query string from the URL.
+
+## Permissions
+
+- **tabs**: find or create the reorG tab and focus it.
+- **storage**: save options (base URL, eBay default, BC host).
+- **host_permissions**: reorG origin, localhost, eBay, Shopify admin, BigCommerce `*.mybigcommerce.com`.
+
+## Development
+
+After changing `manifest.json`, reload the extension on `chrome://extensions`. Content scripts and the background service worker reload when you click **Update** or reload the extension.

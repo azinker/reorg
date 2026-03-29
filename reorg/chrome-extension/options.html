@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>reorG extension — Options</title>
+    <link rel="stylesheet" href="options.css" />
+  </head>
+  <body>
+    <h1>reorG Dashboard Link</h1>
+    <p class="lead">
+      Configure where reorG opens and how eBay / BigCommerce URLs are interpreted.
+    </p>
+
+    <form id="form">
+      <label>
+        <span class="label">reorG base URL</span>
+        <input type="url" id="reorgBaseUrl" name="reorgBaseUrl" placeholder="https://reorg.theperfectpart.net" />
+        <span class="help">Use <code>http://localhost:3000</code> for local dev (no trailing slash).</span>
+      </label>
+
+      <label>
+        <span class="label">Default eBay platform hint</span>
+        <select id="defaultEbayPlatform" name="defaultEbayPlatform">
+          <option value="TPP_EBAY">TPP eBay (The Perfect Part)</option>
+          <option value="TT_EBAY">TT eBay (Telitetech)</option>
+        </select>
+        <span class="help">Public eBay listing URLs do not say which store; this chooses which integration to filter in reorG.</span>
+      </label>
+
+      <label>
+        <span class="label">BigCommerce admin hostname (optional)</span>
+        <input type="text" id="bigcommerceHost" name="bigcommerceHost" placeholder="store-xxxxx.mybigcommerce.com" />
+        <span class="help">If set, only this host is treated as your BC admin. Leave empty to allow any <code>*.mybigcommerce.com</code> product edit URL.</span>
+      </label>
+
+      <p id="saved" class="saved hidden">Saved.</p>
+      <button type="submit">Save</button>
+    </form>
+
+    <script src="options.js"></script>
+  </body>
+</html>

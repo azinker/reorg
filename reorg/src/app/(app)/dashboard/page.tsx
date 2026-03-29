@@ -1,6 +1,7 @@
 "use client";
 
-import { Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { DataGrid } from "@/components/grid/data-grid";
 import { PageTour } from "@/components/onboarding/page-tour";
 import { PAGE_TOUR_STEPS } from "@/components/onboarding/page-tour-steps";
@@ -8,6 +9,32 @@ import { useDashboardConnection } from "@/contexts/dashboard-connection-context"
 import type { GridRow, Platform } from "@/lib/grid-types";
 import { usePageVisibility } from "@/lib/use-page-visibility";
 import { Loader2, RefreshCw } from "lucide-react";
+
+const VALID_DEEP_LINK_PLATFORMS = new Set<string>(["TPP_EBAY", "TT_EBAY", "BIGCOMMERCE", "SHOPIFY"]);
+
+function DashboardGridArea({ rows }: { rows: GridRow[] }) {
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const itemId = searchParams.get("itemId") ?? searchParams.get("platformItemId");
+  const platformRaw = searchParams.get("platform");
+  const deepLinkPlatform =
+    platformRaw && VALID_DEEP_LINK_PLATFORMS.has(platformRaw) ? (platformRaw as Platform) : null;
+
+  const onDeepLinkConsumed = useCallback(() => {
+    router.replace("/dashboard", { scroll: false });
+  }, [router]);
+
+  return (
+    <div className="min-h-0 min-w-0 flex-1 overflow-hidden">
+      <DataGrid
+        rows={rows}
+        deepLinkItemId={itemId}
+        deepLinkPlatform={deepLinkPlatform}
+        onDeepLinkConsumed={onDeepLinkConsumed}
+      />
+    </div>
+  );
+}
 
 const GRID_VERSION_POLL_MS = 60_000;
 const SCHEDULER_HEALTH_POLL_MS = 120_000;
@@ -343,9 +370,15 @@ export default function DashboardPage() {
           </div>
         </div>
       )}
-      <div className="min-h-0 min-w-0 flex-1 overflow-hidden">
-        <DataGrid rows={rows} />
-      </div>
+      <Suspense
+        fallback={
+          <div className="min-h-0 min-w-0 flex-1 overflow-hidden">
+            <DataGrid rows={rows} />
+          </div>
+        }
+      >
+        <DashboardGridArea rows={rows} />
+      </Suspense>
       <Suspense fallback={null}>
         <PageTour page="dashboard" steps={PAGE_TOUR_STEPS.dashboard} ready />
       </Suspense>

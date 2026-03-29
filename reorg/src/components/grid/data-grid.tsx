@@ -4,6 +4,7 @@ import { useState, useMemo, useRef, useEffect, useCallback } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { cn } from "@/lib/utils";
 import type { GridRow, FilterState, ColumnConfig, StoreValue, Platform, UpcPushTarget } from "@/lib/grid-types";
+import { findRowIdByPlatformItemId } from "@/lib/grid-deep-link";
 import { DEFAULT_COLUMNS, PLATFORM_SHORT, PLATFORM_FULL, PLATFORM_COLORS, calcProfit, calcFee } from "@/lib/grid-types";
 import { StickySearch } from "@/components/grid/sticky-search";
 import { FilterBar } from "@/components/grid/filter-bar";
@@ -55,6 +56,12 @@ import {
 
 interface DataGridProps {
   rows: GridRow[];
+  /** Opened from extension / shared link: marketplace item id to scroll to after grid loads */
+  deepLinkItemId?: string | null;
+  /** When set, disambiguates TPP vs TT eBay or other platforms */
+  deepLinkPlatform?: Platform | null;
+  /** Called after deep link scroll attempt so the page can strip query params */
+  onDeepLinkConsumed?: () => void;
 }
 
 type PushField = "salePrice" | "adRate" | "upc";
@@ -623,7 +630,12 @@ function PlatformFeeHeader({ feeRate, onSave }: { feeRate: number; onSave: (rate
   );
 }
 
-export function DataGrid({ rows: initialRows }: DataGridProps) {
+export function DataGrid({
+  rows: initialRows,
+  deepLinkItemId = null,
+  deepLinkPlatform = null,
+  onDeepLinkConsumed,
+}: DataGridProps) {
   const { lookupShippingCost } = useShippingRates();
   const { settings } = useSettings();
   const { feeRate: globalFeeRate, setFeeRate: setGlobalFeeRate } = usePlatformFee();
@@ -799,6 +811,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
   const [rowRefreshStates, setRowRefreshStates] = useState<Record<string, RowRefreshPhase>>({});
   const [rowRefreshErrors, setRowRefreshErrors] = useState<Record<string, string>>({});
   const [pendingScrollRowId, setPendingScrollRowId] = useState<string | null>(null);
+  const deepLinkProcessedKeyRef = useRef<string | null>(null);
   const [selectedRowIds, setSelectedRowIds] = useState<Set<string>>(() => new Set());
   const [bulkEditOpen, setBulkEditOpen] = useState(false);
   const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -3361,6 +3374,54 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
       }
     }
   }
+
+  useEffect(() => {
+    const trimmed = deepLinkItemId?.trim();
+    if (!trimmed || gridRows.length === 0) return;
+    const itemId = trimmed;
+
+    const plat = deepLinkPlatform ?? undefined;
+    const key = `${itemId}:${plat ?? ""}`;
+    if (deepLinkProcessedKeyRef.current === key) return;
+
+    let cancelled = false;
+
+    async function run() {
+      // Prefer client-side match first so consolidated variation-parent rows resolve correctly.
+      let rowId: string | null = findRowIdByPlatformItemId(gridRows, itemId, plat);
+      if (!rowId) {
+        try {
+          const params = new URLSearchParams({ platformItemId: itemId });
+          if (plat) params.set("platform", plat);
+          const res = await fetch(`/api/grid/lookup-item?${params.toString()}`, {
+            credentials: "include",
+            cache: "no-store",
+          });
+          if (res.ok) {
+            const json = (await res.json()) as { data?: { rowId?: string } };
+            rowId = json.data?.rowId ?? null;
+          }
+        } catch {
+          /* already null */
+        }
+      }
+      if (cancelled) return;
+      deepLinkProcessedKeyRef.current = key;
+      if (!rowId) {
+        showToast("Listing not found in reorg", 5000, true);
+      } else {
+        await scrollToRow(rowId);
+      }
+      onDeepLinkConsumed?.();
+    }
+
+    void run();
+    return () => {
+      cancelled = true;
+    };
+    // scrollToRow is stable enough for this one-shot deep link; omit to avoid re-running
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional: run when link params + grid data are ready
+  }, [deepLinkItemId, deepLinkPlatform, gridRows, onDeepLinkConsumed]);
 
   function isColVisible(id: string) {
     return columns.find((c) => c.id === id)?.visible ?? true;
