@@ -3934,7 +3934,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
                                 )}
                               </button>
                               {phase === "error" && (
-                                <span className="max-w-[34px] break-words text-center text-[8px] font-semibold leading-tight text-amber-400/90">
+                                <span className="max-w-[34px] break-words text-center text-[8px] font-semibold leading-tight text-amber-600/90 dark:text-amber-400/90">
                                   {errorMsg ? getRefreshErrorLabel(errorMsg) : "Failed"}
                                 </span>
                               )}
@@ -3961,7 +3961,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
                               setRematchNewSku(row.sku);
                               setRematchError(null);
                             }}
-                            className="flex h-6 w-6 items-center justify-center rounded-md border border-violet-500/40 bg-violet-500/15 text-violet-300 transition-colors hover:border-violet-400/70 hover:bg-violet-500/30 hover:text-violet-200 cursor-pointer"
+                            className="flex h-6 w-6 items-center justify-center rounded-md border border-violet-300 bg-violet-50 text-violet-700 dark:border-violet-500/40 dark:bg-violet-500/15 dark:text-violet-300 transition-colors hover:border-violet-400 hover:bg-violet-100 hover:text-violet-800 dark:hover:border-violet-400/70 dark:hover:bg-violet-500/30 dark:hover:text-violet-200 cursor-pointer"
                             title="Rematch listing to a different master SKU"
                           >
                             <Link2 className="h-3 w-3" strokeWidth={2.4} />
@@ -4102,7 +4102,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
                           <button
                             onClick={() => void toggleExpand(row.id)}
                             className={cn(
-                              "inline-flex items-center gap-1 mt-0.5 text-[10px] cursor-pointer text-left hover:text-emerald-400",
+                              "inline-flex items-center gap-1 mt-0.5 text-[10px] cursor-pointer text-left hover:text-emerald-600 dark:hover:text-emerald-400",
                               isExpanded ? "text-emerald-500" : "text-muted-foreground"
                             )}
                             title={isExpanded ? "Collapse variation listing" : "Expand variation listing"}
@@ -4121,7 +4121,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
                               </span>
                             </div>
                             {row.alternateTitles.map((alt, i) => (
-                              <div key={i} className="flex items-start gap-1 rounded bg-amber-500/10 px-1.5 py-1 text-[10px] text-amber-400 leading-tight">
+                              <div key={i} className="flex items-start gap-1 rounded bg-amber-50 dark:bg-amber-500/10 px-1.5 py-1 text-[10px] text-amber-700 dark:text-amber-400 leading-tight">
                                 <img
                                   src={alt.platform === "BIGCOMMERCE" ? "/logos/bigcommerce.svg" : alt.platform === "SHOPIFY" ? "/logos/shopify.svg" : "/logos/ebay.svg"}
                                   alt="" width={12} height={12} className="mt-px shrink-0" style={{ width: 12, height: 12 }}
@@ -4153,8 +4153,8 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
                             : row.inventory < 5
                               ? "text-red-500"
                               : row.inventory < 25
-                                ? "text-amber-400"
-                                : "text-emerald-500"
+                                ? "text-amber-600 dark:text-amber-400"
+                                : "text-emerald-600 dark:text-emerald-500"
                         )}>
                           {row.inventory == null ? "—" : row.inventory}
                           {isParent && row.inventory != null && (
@@ -4354,7 +4354,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
           <div className="w-full max-w-sm rounded-xl border border-border bg-card p-6 shadow-2xl">
             <h3 className="text-base font-bold text-foreground">Clear All Staged Values</h3>
             <p className="mt-2 text-sm text-muted-foreground">
-              There {stagedCount === 1 ? "is" : "are"} <span className="font-bold text-amber-400">{stagedCount}</span> staged
+              There {stagedCount === 1 ? "is" : "are"} <span className="font-bold text-amber-600 dark:text-amber-400">{stagedCount}</span> staged
               {stagedCount === 1 ? " value" : " values"}. Clearing will discard all staged values and restore live values.
             </p>
             <p className="mt-3 text-sm text-muted-foreground">
@@ -4595,15 +4595,15 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
                                 return next;
                               })
                             }
-                            className="mt-1 h-4 w-4 rounded border-border bg-background text-violet-400"
+                            className="mt-1 h-4 w-4 rounded border-border bg-background text-violet-600 dark:text-violet-400"
                           />
                           <div className="min-w-0 flex-1">
                             <div className="flex flex-wrap items-center gap-2">
                               <span className="font-mono text-sm font-semibold text-foreground">{candidate.sku}</span>
-                              <span className="rounded bg-violet-500/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-violet-300">
+                              <span className="rounded bg-violet-100 dark:bg-violet-500/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-violet-700 dark:text-violet-300">
                                 {candidate.modeLabel}
                               </span>
-                              <span className="rounded bg-emerald-500/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-emerald-300">
+                              <span className="rounded bg-emerald-100 dark:bg-emerald-500/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-emerald-700 dark:text-emerald-300">
                                 {candidate.majorityUpc}
                               </span>
                             </div>
@@ -4644,7 +4644,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
                                       <PlatformIcon platform={choice.platform} size={12} />
                                       <span>{choice.label}</span>
                                     </span>
-                                    <span className={choice.editable ? "text-emerald-300" : "text-amber-300"}>
+                                    <span className={choice.editable ? "text-emerald-700 dark:text-emerald-300" : "text-amber-600 dark:text-amber-300"}>
                                       {choice.editable ? "Selected" : "Locked now"}
                                     </span>
                                   </div>
@@ -4760,13 +4760,13 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
                           "flex items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-bold transition-all cursor-pointer",
                           PLATFORM_COLORS[p],
                           isSelected
-                            ? "ring-2 ring-emerald-400 shadow-md scale-105"
+                            ? "ring-2 ring-emerald-500 dark:ring-emerald-400 shadow-md scale-105"
                             : "opacity-50 hover:opacity-100"
                         )}
                       >
                         <PlatformIcon platform={p} className="h-4 w-4 shrink-0" />
                         <span className="font-extrabold uppercase">{PLATFORM_SHORT[p]}</span>
-                        {isSelected && <span className="text-emerald-400 text-[10px]">✓</span>}
+                        {isSelected && <span className="text-emerald-600 dark:text-emerald-400 text-[10px]">✓</span>}
                       </button>
                     );
                   })}
@@ -4862,8 +4862,8 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
                         className={cn(
                           "flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs font-semibold transition-colors cursor-pointer",
                           rematchListingId === sv.marketplaceListingId
-                            ? "border-violet-500/60 bg-violet-500/20 text-violet-200"
-                            : "border-border bg-background text-muted-foreground hover:border-violet-500/40 hover:text-violet-300",
+                            ? "border-violet-400 bg-violet-100 text-violet-800 dark:border-violet-500/60 dark:bg-violet-500/20 dark:text-violet-200"
+                            : "border-border bg-background text-muted-foreground hover:border-violet-400 hover:text-violet-700 dark:hover:border-violet-500/40 dark:hover:text-violet-300",
                         )}
                       >
                         <PlatformIcon platform={sv.platform} className="h-3 w-3" />
@@ -4917,10 +4917,10 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
                   )}
                 </div>
                 {rematchError && (
-                  <p className="mt-1.5 text-xs text-amber-400">{rematchError}</p>
+                  <p className="mt-1.5 text-xs text-amber-600 dark:text-amber-400">{rematchError}</p>
                 )}
                 {isSameAsSource && rematchNewSku.trim() && (
-                  <p className="mt-1.5 text-xs text-amber-400">This is the same SKU as the current row.</p>
+                  <p className="mt-1.5 text-xs text-amber-600 dark:text-amber-400">This is the same SKU as the current row.</p>
                 )}
               </div>
 
@@ -4951,7 +4951,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
                       >
                         <div className="flex items-center gap-2">
                           <span className="text-sm font-bold text-foreground">{result.sku}</span>
-                          {isSource && <span className="text-[10px] font-semibold uppercase text-amber-400">(current row)</span>}
+                          {isSource && <span className="text-[10px] font-semibold uppercase text-amber-600 dark:text-amber-400">(current row)</span>}
                         </div>
                         {result.title && (
                           <span className="line-clamp-1 text-xs text-muted-foreground">{result.title}</span>
@@ -4980,7 +4980,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
                   {targetPreview ? (
                     <div className="flex flex-col gap-1">
                       <div className="flex items-center justify-between">
-                        <span className="text-[10px] font-semibold uppercase text-emerald-400">Existing row</span>
+                        <span className="text-[10px] font-semibold uppercase text-emerald-700 dark:text-emerald-400">Existing row</span>
                         <span className="text-[10px] text-muted-foreground/60">
                           {targetPreview.stores.length} listing{targetPreview.stores.length !== 1 ? "s" : ""} linked
                         </span>
@@ -5014,8 +5014,8 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
                     </div>
                   ) : (
                     <div className="flex items-center gap-2">
-                      <Plus className="h-3.5 w-3.5 text-violet-400" />
-                      <span className="text-xs font-medium text-violet-300">
+                      <Plus className="h-3.5 w-3.5 text-violet-600 dark:text-violet-400" />
+                      <span className="text-xs font-medium text-violet-700 dark:text-violet-300">
                         New row will be created for <span className="font-bold text-foreground">{rematchNewSku.trim()}</span>
                       </span>
                     </div>
@@ -5077,12 +5077,12 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
           className={cn(
             "fixed bottom-5 right-5 z-[300] flex max-w-[min(28rem,calc(100vw-2.5rem))] animate-in fade-in slide-in-from-bottom-2 items-start gap-2.5 rounded-lg border bg-card px-5 py-3 text-sm font-medium shadow-xl",
             toast.isError
-              ? "border-amber-500/50 border-l-[3px] border-l-amber-400 text-amber-100"
+              ? "border-amber-300 border-l-[3px] border-l-amber-500 text-amber-800 dark:border-amber-500/50 dark:border-l-amber-400 dark:text-amber-100"
               : "border-border text-foreground",
           )}
         >
           {toast.isError && (
-            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" />
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
           )}
           <span>{toast.message}</span>
         </div>
