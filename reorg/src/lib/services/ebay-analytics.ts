@@ -11,7 +11,7 @@ export const MONITORED_EBAY_METHODS = [
 export type MonitoredEbayMethod = (typeof MONITORED_EBAY_METHODS)[number];
 
 export const EBAY_LOCAL_QUOTA_BAR_EXPLANATION =
-  "These counts are tracked by reorG, not eBay. They show calls made through this app today.";
+  "These counts are tracked by reorG, not eBay. They show calls made through this app in the current eBay Trading API day (resets at 3:00 AM Eastern Time). Each method has its own 50,000-call daily cap.";
 
 export interface EbayMethodRateLimit {
   name: string;
@@ -36,6 +36,10 @@ export interface EbayTradingRateLimitSnapshot {
 }
 
 export interface LocalEbayApiUsage {
+  /**
+   * eBay Trading API "day" id: calendar date (YYYY-MM-DD) in America/New_York of the
+   * 3:00 AM instant that started this quota window (same boundary eBay uses for daily limits).
+   */
   date: string;
   GetItem: number;
   GetSellerList: number;
@@ -688,23 +692,130 @@ export function getEbayCooldownUntilFromSnapshot(
 }
 
 const EBAY_DAILY_LIMIT = 50_000;
+const EBAY_QUOTA_TIMEZONE = "America/New_York";
+
+const nyWallClockFormatter = new Intl.DateTimeFormat("en-US", {
+  timeZone: EBAY_QUOTA_TIMEZONE,
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+  second: "2-digit",
+  hour12: false,
+});
+
+function readAmericaNewYorkWallParts(date: Date) {
+  const o: Record<string, number> = {};
+  for (const { type, value } of nyWallClockFormatter.formatToParts(date)) {
+    if (type !== "literal") o[type] = Number(value);
+  }
+  return {
+    y: o.year,
+    mo: o.month,
+    d: o.day,
+    h: o.hour,
+    mi: o.minute,
+    s: o.second,
+  };
+}
+
+function addOneCalendarDay(y: number, mo: number, d: number) {
+  const dt = new Date(Date.UTC(y, mo - 1, d));
+  dt.setUTCDate(dt.getUTCDate() + 1);
+  return { y: dt.getUTCFullYear(), mo: dt.getUTCMonth() + 1, d: dt.getUTCDate() };
+}
+
+function subtractOneCalendarDay(y: number, mo: number, d: number) {
+  const dt = new Date(Date.UTC(y, mo - 1, d));
+  dt.setUTCDate(dt.getUTCDate() - 1);
+  return { y: dt.getUTCFullYear(), mo: dt.getUTCMonth() + 1, d: dt.getUTCDate() };
+}
+
+function wallRank(p: { y: number; mo: number; d: number; h: number; mi: number; s: number }) {
+  return (
+    p.y * 1e12 +
+    p.mo * 1e10 +
+    p.d * 1e8 +
+    p.h * 1e6 +
+    p.mi * 1e3 +
+    p.s
+  );
+}
+
+/**
+ * UTC instant when the America/New_York wall clock shows the given date/time.
+ */
+function utcInstantForAmericaNewYorkWall(
+  year: number,
+  month: number,
+  day: number,
+  hour: number,
+  minute: number,
+  second: number,
+): Date {
+  const target = wallRank({ y: year, mo: month, d: day, h: hour, mi: minute, s: second });
+  let lo = Date.UTC(year, month - 1, day - 1, 12, 0, 0);
+  let hi = Date.UTC(year, month - 1, day + 2, 12, 0, 0);
+  while (lo < hi) {
+    const mid = Math.floor((lo + hi) / 2);
+    const r = wallRank(readAmericaNewYorkWallParts(new Date(mid)));
+    if (r < target) lo = mid + 1;
+    else hi = mid;
+  }
+  const candidate = new Date(lo);
+  const p = readAmericaNewYorkWallParts(candidate);
+  if (
+    p.y === year &&
+    p.mo === month &&
+    p.d === day &&
+    p.h === hour &&
+    p.mi === minute &&
+    p.s === second
+  ) {
+    return candidate;
+  }
+  return candidate;
+}
+
+/**
+ * Stable id for the current eBay Trading API daily window: each window runs from
+ * 3:00 AM to 3:00 AM America/New_York (handles EST/EDT).
+ * `date` string is YYYY-MM-DD of the window start (the calendar day of that 3:00 AM).
+ */
+export function getEbayQuotaPeriodKey(now = new Date()): string {
+  const { y, mo, d, h } = readAmericaNewYorkWallParts(now);
+  const start =
+    h < 3 ? subtractOneCalendarDay(y, mo, d) : { y, mo, d };
+  return `${start.y}-${String(start.mo).padStart(2, "0")}-${String(start.d).padStart(2, "0")}`;
+}
+
+/**
+ * Next 3:00 AM America/New_York boundary after `now` (when eBay's daily per-method caps roll over).
+ */
+export function getNextEbayTradingQuotaResetUtc(now = new Date()): Date {
+  const { y, mo, d, h } = readAmericaNewYorkWallParts(now);
+  if (h < 3) {
+    return utcInstantForAmericaNewYorkWall(y, mo, d, 3, 0, 0);
+  }
+  const next = addOneCalendarDay(y, mo, d);
+  return utcInstantForAmericaNewYorkWall(next.y, next.mo, next.d, 3, 0, 0);
+}
 
 /**
  * Merge the current sync's API call counts into the cumulative daily tracker.
- * Resets to zero when the date (America/New_York) changes.
+ * Resets to zero when the eBay quota day changes (3:00 AM America/New_York).
  */
 export function mergeSyncCallsIntoLocalUsage(
   existing: LocalEbayApiUsage | null | undefined,
   delta: Partial<Record<MonitoredEbayMethod, number>>,
 ): LocalEbayApiUsage {
-  const todayET = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "America/New_York",
-  }).format(new Date());
+  const periodKey = getEbayQuotaPeriodKey(new Date());
 
   const base: LocalEbayApiUsage =
-    existing && existing.date === todayET
+    existing && existing.date === periodKey
       ? { ...existing }
-      : { date: todayET, GetItem: 0, GetSellerList: 0, GetSellerEvents: 0, ReviseFixedPriceItem: 0 };
+      : { date: periodKey, GetItem: 0, GetSellerList: 0, GetSellerEvents: 0, ReviseFixedPriceItem: 0 };
 
   for (const [key, value] of Object.entries(delta)) {
     if (key in base && typeof value === "number") {
@@ -721,21 +832,31 @@ export function mergeSyncCallsIntoLocalUsage(
  */
 export function buildLocallyTrackedSnapshot(
   usage: LocalEbayApiUsage,
+  now = new Date(),
 ): EbayTradingRateLimitSnapshot {
+  const nextResetAt = getNextEbayTradingQuotaResetUtc(now).toISOString();
   const methods: EbayMethodRateLimit[] = MONITORED_EBAY_METHODS.map((name) => {
     const count = usage[name] ?? 0;
     const remaining = Math.max(0, EBAY_DAILY_LIMIT - count);
     let status: EbayMethodRateLimit["status"] = "healthy";
     if (remaining === 0) status = "exhausted";
     else if (remaining < EBAY_DAILY_LIMIT * 0.1) status = "tight";
-    return { name, count, limit: EBAY_DAILY_LIMIT, remaining, reset: null, timeWindowSeconds: 86400, status };
+    return {
+      name,
+      count,
+      limit: EBAY_DAILY_LIMIT,
+      remaining,
+      reset: nextResetAt,
+      timeWindowSeconds: 86400,
+      status,
+    };
   });
 
   return {
-    fetchedAt: new Date().toISOString(),
+    fetchedAt: now.toISOString(),
     methods,
     exhaustedMethods: methods.filter((m) => m.status === "exhausted").map((m) => m.name),
-    nextResetAt: null,
+    nextResetAt,
     isDegradedEstimate: true,
     isLocallyTracked: true,
     degradedNote: EBAY_LOCAL_QUOTA_BAR_EXPLANATION,

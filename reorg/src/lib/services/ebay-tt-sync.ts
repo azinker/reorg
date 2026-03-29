@@ -12,6 +12,7 @@ import {
   buildLocallyTrackedSnapshot,
   fetchRateLimitSnapshotWithToken,
   getEbayMethodRate,
+  getEbayQuotaPeriodKey,
   getEbayTradingRateLimitSnapshotForIntegration,
   mergeSyncCallsIntoLocalUsage,
   serializeSnapshotForConfig,
@@ -393,8 +394,8 @@ export async function runEbayTtSync(
   const seedUsage = (() => {
     const cfg = getIntegrationConfig(integration);
     const saved = cfg.syncState?.localApiUsage as LocalEbayApiUsage | undefined;
-    const todayET = new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" }).format(new Date());
-    if (saved && saved.date === todayET) return saved;
+    const periodKey = getEbayQuotaPeriodKey(new Date());
+    if (saved && saved.date === periodKey) return saved;
     return null;
   })();
   const apiCalls: Record<MonitoredEbayMethod, number> = {
