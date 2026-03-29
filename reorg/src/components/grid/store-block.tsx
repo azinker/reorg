@@ -264,7 +264,7 @@ export function StoreBlockGroup({
 interface EditableStoreBlockProps {
   item: StoreValue;
   rowId: string;
-  onSave: (rowId: string, platform: string, listingId: string, newPrice: number, mode: "stage" | "push" | "fastPush") => void;
+  onSave: (rowId: string, platform: string, listingId: string, newPrice: number, mode: "stage" | "push" | "fastPush", identity?: { variantId?: string; marketplaceListingId?: string | null }) => void;
   onPush: (rowId: string, platform: string, listingId: string, mode?: "review" | "fast") => void;
   onDiscard: (rowId: string, platform: string, listingId: string) => void;
   quickPushState?: QuickPushState;
@@ -337,13 +337,15 @@ function EditableStoreBlock({
 
   const handleValue = useCallback((c: number) => setDraftCents(c), []);
 
+  const storeIdentity = { variantId: item.variantId, marketplaceListingId: item.marketplaceListingId };
+
   function confirmStage() {
     const num = draftCents / 100;
     if (num < 0 || !hasDraftChange) {
       cancelEdit();
       return;
     }
-    onSave(rowId, item.platform, item.listingId, num, "stage");
+    onSave(rowId, item.platform, item.listingId, num, "stage", storeIdentity);
     setEditing(false);
     setShowActions(false);
   }
@@ -354,7 +356,7 @@ function EditableStoreBlock({
       cancelEdit();
       return;
     }
-    onSave(rowId, item.platform, item.listingId, num, "push");
+    onSave(rowId, item.platform, item.listingId, num, "push", storeIdentity);
     setEditing(false);
     setShowActions(false);
   }
@@ -365,7 +367,7 @@ function EditableStoreBlock({
       cancelEdit();
       return;
     }
-    onSave(rowId, item.platform, item.listingId, num, "fastPush");
+    onSave(rowId, item.platform, item.listingId, num, "fastPush", storeIdentity);
     setEditing(false);
     setShowActions(false);
   }
@@ -644,7 +646,7 @@ function EditableStoreBlock({
 interface EditableStoreBlockGroupProps {
   items: StoreValue[];
   rowId: string;
-  onSave: (rowId: string, platform: string, listingId: string, newPrice: number, mode: "stage" | "push" | "fastPush") => void;
+  onSave: (rowId: string, platform: string, listingId: string, newPrice: number, mode: "stage" | "push" | "fastPush", identity?: { variantId?: string; marketplaceListingId?: string | null }) => void;
   onBulkSave?: (rowId: string, newPrice: number, mode: "stage" | "push") => void;
   onPush: (rowId: string, platform: string, listingId: string, mode?: "review" | "fast") => void;
   onDiscard: (rowId: string, platform: string, listingId: string) => void;
@@ -711,7 +713,7 @@ export function EditableStoreBlockGroup({
       return;
     }
     for (const item of items) {
-      onSave(rowId, item.platform, item.listingId, price, mode);
+      onSave(rowId, item.platform, item.listingId, price, mode, { variantId: item.variantId, marketplaceListingId: item.marketplaceListingId });
     }
     closeBulk();
   }
@@ -880,7 +882,7 @@ const NON_AD_RATE_PLATFORMS: string[] = ["SHOPIFY", "BIGCOMMERCE"];
 interface EditableAdRateBlockProps {
   item: StoreValue;
   rowId: string;
-  onSave: (rowId: string, platform: string, listingId: string, newRate: number, mode: "stage" | "push" | "fastPush") => void;
+  onSave: (rowId: string, platform: string, listingId: string, newRate: number, mode: "stage" | "push" | "fastPush", identity?: { variantId?: string; marketplaceListingId?: string | null }) => void;
   onPush: (rowId: string, platform: string, listingId: string, mode?: "review" | "fast") => void;
   onDiscard: (rowId: string, platform: string, listingId: string) => void;
   quickPushState?: QuickPushState;
@@ -1034,6 +1036,8 @@ function EditableAdRateBlock({
     setShowActions(false);
   }
 
+  const adRateIdentity = { variantId: item.variantId, marketplaceListingId: item.marketplaceListingId };
+
   function handleSave(mode: "stage" | "push") {
     const normalizedPercent = parseDraftPercentValue(draftPercent);
     if (normalizedPercent == null || normalizedPercent === effectivePercentValue) {
@@ -1041,7 +1045,7 @@ function EditableAdRateBlock({
       return;
     }
     const rate = normalizedPercent / 100;
-    onSave(rowId, item.platform, item.listingId, rate, mode);
+    onSave(rowId, item.platform, item.listingId, rate, mode, adRateIdentity);
     setEditing(false);
     setShowActions(false);
   }
@@ -1053,7 +1057,7 @@ function EditableAdRateBlock({
       return;
     }
     const rate = normalizedPercent / 100;
-    onSave(rowId, item.platform, item.listingId, rate, "fastPush");
+    onSave(rowId, item.platform, item.listingId, rate, "fastPush", adRateIdentity);
     setEditing(false);
     setShowActions(false);
   }
@@ -1300,7 +1304,7 @@ function EditableAdRateBlock({
 interface EditableAdRateBlockGroupProps {
   items: StoreValue[];
   rowId: string;
-  onSave: (rowId: string, platform: string, listingId: string, newRate: number, mode: "stage" | "push" | "fastPush") => void;
+  onSave: (rowId: string, platform: string, listingId: string, newRate: number, mode: "stage" | "push" | "fastPush", identity?: { variantId?: string; marketplaceListingId?: string | null }) => void;
   onPush: (rowId: string, platform: string, listingId: string, mode?: "review" | "fast") => void;
   onDiscard: (rowId: string, platform: string, listingId: string) => void;
   quickPushStates?: Record<string, QuickPushState>;

@@ -18,6 +18,7 @@ import {
   type FailedPushState,
 } from "@/components/grid/store-block";
 import { PlatformIcon } from "@/components/grid/platform-icon";
+import { BulkEditPanel, type BulkEditApplyParams } from "@/components/grid/bulk-edit-panel";
 import { CopyValue } from "@/components/grid/copy-value";
 import { ColumnManager } from "@/components/grid/column-manager";
 import { EditableCurrencyCell } from "@/components/grid/cells/editable-currency-cell";
@@ -798,6 +799,8 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
   const [rowRefreshStates, setRowRefreshStates] = useState<Record<string, RowRefreshPhase>>({});
   const [rowRefreshErrors, setRowRefreshErrors] = useState<Record<string, string>>({});
   const [pendingScrollRowId, setPendingScrollRowId] = useState<string | null>(null);
+  const [selectedRowIds, setSelectedRowIds] = useState<Set<string>>(() => new Set());
+  const [bulkEditOpen, setBulkEditOpen] = useState(false);
   const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const quickPushTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const rowRefreshTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
@@ -2060,6 +2063,21 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
     );
   }
 
+  /* ──── Row Selection ──── */
+
+  const toggleRowSelection = useCallback((rowId: string) => {
+    setSelectedRowIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(rowId)) next.delete(rowId);
+      else next.add(rowId);
+      return next;
+    });
+  }, []);
+
+  const clearSelection = useCallback(() => {
+    setSelectedRowIds(new Set());
+  }, []);
+
   function findRow(rowId: string): GridRow | undefined {
     for (const r of gridRows) {
       if (r.id === rowId) return r;
@@ -2146,12 +2164,38 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
     action: string,
     newPrice?: number,
     field?: PushField,
+    identity?: { variantId?: string; marketplaceListingId?: string | null },
   ) {
     return fetch("/api/grid/stage", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action, sku, platform, listingId, newPrice, field }),
+      body: JSON.stringify({
+        action,
+        sku,
+        platform,
+        listingId,
+        newPrice,
+        field,
+        marketplaceListingId: identity?.marketplaceListingId ?? undefined,
+      }),
     }).catch((err) => console.error("Failed to persist stage action:", err));
+  }
+
+  /** Match a StoreValue by platform + listingId, narrowed by marketplaceListingId or variantId when available. */
+  function matchStoreValue(
+    sp: StoreValue,
+    platform: string,
+    listingId: string,
+    identity?: { variantId?: string; marketplaceListingId?: string | null },
+  ): boolean {
+    if (sp.platform !== platform || sp.listingId !== listingId) return false;
+    if (identity?.marketplaceListingId && sp.marketplaceListingId) {
+      return sp.marketplaceListingId === identity.marketplaceListingId;
+    }
+    if (identity?.variantId != null && sp.variantId != null) {
+      return sp.variantId === identity.variantId;
+    }
+    return true;
   }
 
   function handleWeightSave(rowId: string, weight: string) {
@@ -2179,11 +2223,11 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
     showToast(`${label} Updated — SKU ${sku} from ${oldVal} to ${fmtDollar(value)}`);
   }
 
-  function handleSalePriceEdit(rowId: string, platform: string, listingId: string, newPrice: number, mode: "stage" | "push" | "fastPush") {
+  function handleSalePriceEdit(rowId: string, platform: string, listingId: string, newPrice: number, mode: "stage" | "push" | "fastPush", identity?: { variantId?: string; marketplaceListingId?: string | null }) {
     const row = findRow(rowId);
     const sku = row?.sku ?? rowId;
     const platLabel = PLATFORM_SHORT[platform as keyof typeof PLATFORM_SHORT] ?? platform;
-    const oldSp = row?.salePrices.find((sp) => sp.platform === platform && sp.listingId === listingId);
+    const oldSp = row?.salePrices.find((sp) => matchStoreValue(sp, platform, listingId, identity));
     const liveValue = oldSp?.value != null ? Number(oldSp.value) : null;
     const effectiveValue = oldSp?.stagedValue != null ? Number(oldSp.stagedValue) : liveValue;
     const oldVal = oldSp ? fmtDollar(Number(oldSp.stagedValue ?? oldSp.value)) : "—";
@@ -2196,14 +2240,14 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
     if (valuesMatch(liveValue, newPrice)) {
       updateRowById(rowId, (r) => {
         const newSalePrices = r.salePrices.map((sp) =>
-          sp.platform === platform && sp.listingId === listingId
+          matchStoreValue(sp, platform, listingId, identity)
             ? { ...sp, stagedValue: undefined }
             : sp,
         );
         const updated = { ...r, salePrices: newSalePrices };
         return recalcRow(updated);
       });
-      void persistStageAction(sku, platform, listingId, "discard");
+      void persistStageAction(sku, platform, listingId, "discard", undefined, undefined, identity);
       showToast(`No staging needed - SKU ${sku} (${platLabel}) already matches the live price ${fmtDollar(newPrice)}`);
       return;
     }
@@ -2211,14 +2255,14 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
     if (mode === "fastPush") {
       updateRowById(rowId, (r) => {
         const newSalePrices = r.salePrices.map((sp) =>
-          sp.platform === platform && sp.listingId === listingId
+          matchStoreValue(sp, platform, listingId, identity)
             ? { ...sp, stagedValue: newPrice }
             : sp,
         );
         const updated = { ...r, salePrices: newSalePrices };
         return recalcRow(updated);
       });
-      void persistStageAction(sku, platform, listingId, "stage", newPrice);
+      void persistStageAction(sku, platform, listingId, "stage", newPrice, undefined, identity);
       clearQuickPushState(getQuickPushKey(rowId, platform, listingId, "salePrice"));
       void startInlineFastPush(rowId, platform, listingId, "salePrice", newPrice);
       showToast(`Fast push started - SKU ${sku} (${platLabel}) from ${oldVal} to ${fmtDollar(newPrice)}`);
@@ -2227,7 +2271,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
 
     updateRowById(rowId, (r) => {
       const newSalePrices = r.salePrices.map((sp) => {
-        if (sp.platform === platform && sp.listingId === listingId) {
+        if (matchStoreValue(sp, platform, listingId, identity)) {
           return { ...sp, stagedValue: newPrice };
         }
         return sp;
@@ -2235,7 +2279,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
       const updated = { ...r, salePrices: newSalePrices };
       return recalcRow(updated);
     });
-    void persistStageAction(sku, platform, listingId, "stage", newPrice);
+    void persistStageAction(sku, platform, listingId, "stage", newPrice, undefined, identity);
 
     if (mode === "push") {
       clearQuickPushState(getQuickPushKey(rowId, platform, listingId, "salePrice"));
@@ -2258,8 +2302,8 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
 
     const sku = row.sku;
     const actionableEntries = row.salePrices.filter((entry) => !valuesMatch(entry.value, newPrice));
-    const stageWrites: Array<{ platform: string; listingId: string; newPrice: number }> = [];
-    const discardWrites: Array<{ platform: string; listingId: string }> = [];
+    const stageWrites: Array<{ platform: string; listingId: string; newPrice: number; mlId?: string | null }> = [];
+    const discardWrites: Array<{ platform: string; listingId: string; mlId?: string | null }> = [];
 
     updateRowById(rowId, (current) => {
       const nextSalePrices = current.salePrices.map((entry) => {
@@ -2268,14 +2312,14 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
 
         if (valuesMatch(liveValue, newPrice)) {
           if (stagedValue != null && !valuesMatch(stagedValue, liveValue)) {
-            discardWrites.push({ platform: entry.platform, listingId: entry.listingId });
+            discardWrites.push({ platform: entry.platform, listingId: entry.listingId, mlId: entry.marketplaceListingId });
             return { ...entry, stagedValue: undefined };
           }
           return entry;
         }
 
         if (!valuesMatch(stagedValue, newPrice)) {
-          stageWrites.push({ platform: entry.platform, listingId: entry.listingId, newPrice });
+          stageWrites.push({ platform: entry.platform, listingId: entry.listingId, newPrice, mlId: entry.marketplaceListingId });
         }
 
         return { ...entry, stagedValue: newPrice };
@@ -2286,10 +2330,10 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
 
     void Promise.allSettled([
       ...stageWrites.map((item) =>
-        persistStageAction(sku, item.platform, item.listingId, "stage", item.newPrice),
+        persistStageAction(sku, item.platform, item.listingId, "stage", item.newPrice, undefined, { marketplaceListingId: item.mlId }),
       ),
       ...discardWrites.map((item) =>
-        persistStageAction(sku, item.platform, item.listingId, "discard"),
+        persistStageAction(sku, item.platform, item.listingId, "discard", undefined, undefined, { marketplaceListingId: item.mlId }),
       ),
     ]);
 
@@ -2315,11 +2359,11 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
     );
   }
 
-  function handleAdRateEdit(rowId: string, platform: string, listingId: string, newRate: number, mode: "stage" | "push" | "fastPush") {
+  function handleAdRateEdit(rowId: string, platform: string, listingId: string, newRate: number, mode: "stage" | "push" | "fastPush", identity?: { variantId?: string; marketplaceListingId?: string | null }) {
     const row = findRow(rowId);
     const sku = row?.sku ?? rowId;
     const platLabel = PLATFORM_SHORT[platform as keyof typeof PLATFORM_SHORT] ?? platform;
-    const oldAr = row?.adRates.find((a) => a.platform === platform && a.listingId === listingId);
+    const oldAr = row?.adRates.find((a) => matchStoreValue(a, platform, listingId, identity));
     const liveValue = oldAr?.value != null ? Number(oldAr.value) : null;
     const effectiveValue = oldAr?.stagedValue != null ? Number(oldAr.stagedValue) : liveValue;
     const fmtPct = (v: number | null | undefined) => v != null ? `${(Number(v) * 100).toFixed(1)}%` : "N/A";
@@ -2333,14 +2377,14 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
     if (valuesMatch(liveValue, newRate)) {
       updateRowById(rowId, (r) => {
         const newAdRates = r.adRates.map((ar) =>
-          ar.platform === platform && ar.listingId === listingId
+          matchStoreValue(ar, platform, listingId, identity)
             ? { ...ar, stagedValue: undefined }
             : ar,
         );
         const updated = { ...r, adRates: newAdRates };
         return recalcRow(updated);
       });
-      void persistAdRateAction(sku, platform, listingId, "discard");
+      void persistAdRateAction(sku, platform, listingId, "discard", undefined, identity);
       showToast(`No staging needed - SKU ${sku} (${platLabel}) already matches the live ad rate ${fmtPct(newRate)}`);
       return;
     }
@@ -2348,14 +2392,14 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
     if (mode === "fastPush") {
       updateRowById(rowId, (r) => {
         const newAdRates = r.adRates.map((ar) =>
-          ar.platform === platform && ar.listingId === listingId
+          matchStoreValue(ar, platform, listingId, identity)
             ? { ...ar, stagedValue: newRate }
             : ar,
         );
         const updated = { ...r, adRates: newAdRates };
         return recalcRow(updated);
       });
-      void persistAdRateAction(sku, platform, listingId, "stage", newRate);
+      void persistAdRateAction(sku, platform, listingId, "stage", newRate, identity);
       clearQuickPushState(getQuickPushKey(rowId, platform, listingId, "adRate"));
       void startInlineFastPush(rowId, platform, listingId, "adRate", newRate);
       showToast(`Fast push started - SKU ${sku} (${platLabel}) from ${oldVal} to ${fmtPct(newRate)}`);
@@ -2364,7 +2408,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
 
     updateRowById(rowId, (r) => {
       const newAdRates = r.adRates.map((ar) => {
-        if (ar.platform === platform && ar.listingId === listingId) {
+        if (matchStoreValue(ar, platform, listingId, identity)) {
           return { ...ar, stagedValue: newRate };
         }
         return ar;
@@ -2372,7 +2416,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
       const updated = { ...r, adRates: newAdRates };
       return recalcRow(updated);
     });
-    void persistAdRateAction(sku, platform, listingId, "stage", newRate);
+    void persistAdRateAction(sku, platform, listingId, "stage", newRate, identity);
 
     if (mode === "push") {
       clearQuickPushState(getQuickPushKey(rowId, platform, listingId, "adRate"));
@@ -2440,13 +2484,65 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
     showToast(`Staged Ad Rate Discarded — SKU ${sku} (${platLabel}) reverted from ${stagedVal} to ${liveVal}`);
   }
 
-  function persistAdRateAction(sku: string, platform: string, listingId: string, action: string, newRate?: number) {
+  function persistAdRateAction(sku: string, platform: string, listingId: string, action: string, newRate?: number, identity?: { variantId?: string; marketplaceListingId?: string | null }) {
     return fetch("/api/grid/stage", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action, sku, platform, listingId, newPrice: newRate, field: "adRate" }),
+      body: JSON.stringify({
+        action,
+        sku,
+        platform,
+        listingId,
+        newPrice: newRate,
+        field: "adRate",
+        marketplaceListingId: identity?.marketplaceListingId ?? undefined,
+      }),
     }).catch((err) => console.error("Failed to persist ad rate action:", err));
   }
+
+  function handleBulkEditApply(params: BulkEditApplyParams) {
+    const { field, platform: targetPlatform, value, mode, rowIds } = params;
+
+    for (const rowId of rowIds) {
+      const row = findRow(rowId);
+      if (!row) continue;
+
+      if (field === "salePrice" && targetPlatform) {
+        const matchingListings = row.salePrices.filter((sp) => sp.platform === targetPlatform);
+        for (const sp of matchingListings) {
+          handleSalePriceEdit(rowId, sp.platform, sp.listingId, value, mode, {
+            variantId: sp.variantId,
+            marketplaceListingId: sp.marketplaceListingId,
+          });
+        }
+      } else if (field === "adRate" && targetPlatform) {
+        const matchingListings = row.adRates.filter((ar) => ar.platform === targetPlatform);
+        for (const ar of matchingListings) {
+          handleAdRateEdit(rowId, ar.platform, ar.listingId, value, mode, {
+            variantId: ar.variantId,
+            marketplaceListingId: ar.marketplaceListingId,
+          });
+        }
+      } else if (field === "weight") {
+        handleWeightSave(rowId, String(value));
+      } else if (field === "supplierCost") {
+        handleCellSave(rowId, "supplierCost", value);
+      } else if (field === "supplierShipping") {
+        handleCellSave(rowId, "supplierShipping", value);
+      }
+    }
+
+    clearSelection();
+    showToast(`Bulk ${FIELD_LABELS[field]} updated across ${rowIds.length} row${rowIds.length !== 1 ? "s" : ""}`);
+  }
+
+  const FIELD_LABELS: Record<string, string> = {
+    salePrice: "Sale Price",
+    adRate: "Ad Rate",
+    weight: "Weight",
+    supplierCost: "Supplier Cost",
+    supplierShipping: "Supplier Shipping",
+  };
 
   function handlePushStaged(rowId: string, platform: string, listingId: string, launchMode: PushLaunchMode = "review") {
     const row = findRow(rowId);
@@ -2519,6 +2615,22 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
     () => flattenForRender(sortedRows, expandedRows, filters.stockStatus, filters.stagedOnly, filters.localOnlyOnly),
     [sortedRows, expandedRows, filters.stockStatus, filters.stagedOnly, filters.localOnlyOnly]
   );
+
+  const selectableRowIds = useMemo(
+    () => flatRows.filter((r) => !r.isParent).map((r) => r.id),
+    [flatRows],
+  );
+
+  const allSelectableSelected = selectableRowIds.length > 0 && selectableRowIds.every((id) => selectedRowIds.has(id));
+  const someSelectableSelected = selectableRowIds.some((id) => selectedRowIds.has(id));
+
+  const toggleSelectAll = useCallback(() => {
+    if (allSelectableSelected) {
+      clearSelection();
+    } else {
+      setSelectedRowIds(new Set(selectableRowIds));
+    }
+  }, [allSelectableSelected, selectableRowIds, clearSelection]);
 
   function collectBulkUpcRows(rows: GridRow[]): GridRow[] {
     const collected: GridRow[] = [];
@@ -3609,6 +3721,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
           filters={filters}
           onChange={(f) => {
             setFilters(f);
+            clearSelection();
             parentRef.current?.scrollTo({ top: 0 });
           }}
         />
@@ -3623,6 +3736,15 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
           {flatRows.length !== gridRows.length && ` (${gridRows.length} total)`}
         </span>
         <div className="flex items-center gap-2">
+          {selectedRowIds.size > 0 && (
+            <button
+              onClick={() => setBulkEditOpen(true)}
+              className="flex items-center gap-1 rounded border border-violet-400 bg-violet-100 text-violet-800 dark:border-violet-500/50 dark:bg-violet-600/20 dark:text-violet-200 px-2.5 py-1 text-xs font-semibold transition-colors hover:bg-violet-200 dark:hover:bg-violet-600/30 cursor-pointer"
+            >
+              <Check className="h-3 w-3" />
+              Selected ({selectedRowIds.size})
+            </button>
+          )}
           {failedPushCount > 0 && (
             <button
               onClick={() => {
@@ -3700,11 +3822,32 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
                 "sticky left-0 z-30 shadow-[2px_0_8px_-2px_rgba(0,0,0,0.15)]",
             )}
           >
-            {/* Expand/collapse column — always visible, no header text */}
+            {/* Expand/collapse column — always visible, with select-all checkbox */}
             <div
               data-tour="dashboard-header-expand"
               className={cn(COL_WIDTHS.expand, "flex items-center justify-center py-3")}
-            />
+            >
+              {selectableRowIds.length > 0 && (
+                <button
+                  onClick={toggleSelectAll}
+                  className={cn(
+                    "flex h-4.5 w-4.5 items-center justify-center rounded border transition-colors cursor-pointer",
+                    allSelectableSelected
+                      ? "border-violet-500 bg-violet-600 text-white"
+                      : someSelectableSelected
+                        ? "border-violet-400 bg-violet-500/30 text-violet-200"
+                        : "border-zinc-400 bg-zinc-100 dark:border-zinc-500 dark:bg-zinc-700",
+                  )}
+                  title={allSelectableSelected ? "Deselect all" : "Select all visible rows"}
+                >
+                  {allSelectableSelected ? (
+                    <Check className="h-3 w-3" strokeWidth={3} />
+                  ) : someSelectableSelected ? (
+                    <Minus className="h-3 w-3" strokeWidth={3} />
+                  ) : null}
+                </button>
+              )}
+            </div>
             {isColVisible("photo") && (
               <div className={cn(COL_WIDTHS.photo, "flex items-center gap-0.5 px-2 py-3")}>
                 <span>Photo</span>
@@ -3838,6 +3981,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
                   "absolute left-0 right-0 flex border-b border-border transition-colors grid-row-data",
                   virtualRow.index % 2 === 0 ? "bg-background" : "bg-card",
                   isChild && "bg-muted",
+                  selectedRowIds.has(row.id) && "ring-1 ring-inset ring-violet-500/50 bg-violet-50/30 dark:bg-violet-950/20",
                   row.hasStagedChanges && "border-l-2 border-l-[var(--staged)]",
                   highlightedRowId === row.id && "row-highlight"
                 )}
@@ -3862,8 +4006,8 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
                     "grid grid-cols-[28px_1fr] items-center gap-1 px-1.5",
                     cellPy
                   )}>
-                    <div className="flex items-center justify-center">
-                      {isParent && (
+                    <div className="flex items-center justify-center gap-1">
+                      {isParent ? (
                       <button
                         onClick={() => toggleExpand(row.id)}
                         disabled={isChildLoading}
@@ -3890,6 +4034,19 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
                         ) : (
                           <Plus className="h-3.5 w-3.5" strokeWidth={3} />
                         )}
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => toggleRowSelection(row.id)}
+                        className={cn(
+                          "flex h-4 w-4 items-center justify-center rounded border transition-colors cursor-pointer",
+                          selectedRowIds.has(row.id)
+                            ? "border-violet-500 bg-violet-600 text-white"
+                            : "border-zinc-400 bg-zinc-100 hover:border-violet-400 dark:border-zinc-500 dark:bg-zinc-700 dark:hover:border-violet-400",
+                        )}
+                        title={selectedRowIds.has(row.id) ? "Deselect row" : "Select row"}
+                      >
+                        {selectedRowIds.has(row.id) && <Check className="h-3 w-3" strokeWidth={3} />}
                       </button>
                     )}
                     {isChild && (
@@ -5065,6 +5222,15 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
           </div>
         );
       })()}
+
+      {bulkEditOpen && (
+        <BulkEditPanel
+          selectedRowIds={selectedRowIds}
+          findRow={findRow}
+          onClose={() => setBulkEditOpen(false)}
+          onApply={handleBulkEditApply}
+        />
+      )}
 
       <PushConfirmModal
         open={pushModalOpen}

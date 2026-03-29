@@ -13,6 +13,8 @@ const stageSchema = z.object({
   newValue: z.string().optional(),
   rejectionReason: z.string().optional(),
   field: z.enum(["salePrice", "adRate", "upc"]).optional(),
+  /** DB primary key of the MarketplaceListing — when provided, bypasses the ambiguous findFirst by platformItemId. */
+  marketplaceListingId: z.string().optional(),
 });
 
 export async function POST(request: NextRequest) {
@@ -27,7 +29,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { action, sku, platform, listingId, newPrice, newValue, rejectionReason, field: stageField } = parsed.data;
+    const { action, sku, platform, listingId, newPrice, newValue, rejectionReason, field: stageField, marketplaceListingId: directMlId } = parsed.data;
     const targetField = stageField ?? "salePrice";
 
     if (action === "clear_all") {
@@ -485,13 +487,17 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Invalid UPC action" }, { status: 400 });
     }
 
-    const listing = await db.marketplaceListing.findFirst({
-      where: {
-        masterRowId: master.id,
-        platformItemId: listingId,
-        integration: { platform: platform as never },
-      },
-    });
+    const listing = directMlId
+      ? await db.marketplaceListing.findFirst({
+          where: { id: directMlId, masterRowId: master.id },
+        })
+      : await db.marketplaceListing.findFirst({
+          where: {
+            masterRowId: master.id,
+            platformItemId: listingId,
+            integration: { platform: platform as never },
+          },
+        });
 
     if (!listing) {
       return NextResponse.json({ error: "Listing not found" }, { status: 404 });
