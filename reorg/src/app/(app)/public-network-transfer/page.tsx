@@ -63,6 +63,42 @@ function formatNyTime(iso: string, bucket: "hour" | "day"): string {
   }).format(d);
 }
 
+/** Recharts default Brush traveller draws white lines on a stroke-colored rect — theme-aware handles. */
+function NetworkBrushTraveller(props: { x: number; y: number; width: number; height: number }) {
+  const { x, y, width, height } = props;
+  const lineY = Math.floor(y + height / 2) - 1;
+  return (
+    <g>
+      <rect
+        x={x}
+        y={y}
+        width={width}
+        height={height}
+        fill="var(--card)"
+        stroke="var(--border)"
+        strokeWidth={1}
+        rx={3}
+      />
+      <line
+        x1={x + 2}
+        y1={lineY}
+        x2={x + width - 2}
+        y2={lineY}
+        stroke="var(--muted-foreground)"
+        strokeWidth={1.5}
+      />
+      <line
+        x1={x + 2}
+        y1={lineY + 2}
+        x2={x + width - 2}
+        y2={lineY + 2}
+        stroke="var(--muted-foreground)"
+        strokeWidth={1.5}
+      />
+    </g>
+  );
+}
+
 type RangePreset = "24h" | "7d" | "30d";
 
 type ApiPayload = {
@@ -264,19 +300,34 @@ export default function PublicNetworkTransferPage() {
               Estimated bytes by time bucket
             </h2>
             <p className="mb-4 text-xs text-muted-foreground">
-              Stacked areas — drag the brush below to zoom the time range. Hover for exact values.
+              {chartData.length >= 2
+                ? "Stacked areas — use the slim range bar under the chart to zoom (theme-colored, not white). Hover points for details."
+                : "Only one time bucket in this range so far — the chart will fill in as more activity is recorded. Hover the point for details."}
             </p>
-            <div className="h-[380px] w-full min-w-0">
+            <div className="h-[400px] w-full min-w-0 [&_.recharts-cartesian-axis-tick_text]:fill-muted-foreground [&_.recharts-legend-item-text]:fill-muted-foreground">
               <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={chartData} margin={{ top: 8, right: 16, left: 0, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
+                <AreaChart
+                  data={chartData}
+                  margin={{ top: 8, right: 16, left: 4, bottom: chartData.length >= 2 ? 4 : 8 }}
+                >
+                  <CartesianGrid
+                    strokeDasharray="3 3"
+                    stroke="var(--border)"
+                    strokeOpacity={0.45}
+                    vertical={false}
+                  />
                   <XAxis
                     dataKey="labelNy"
-                    tick={{ fontSize: 11 }}
+                    tick={{ fontSize: 11, fill: "var(--muted-foreground)" }}
                     interval="preserveStartEnd"
-                    minTickGap={24}
+                    minTickGap={28}
+                    padding={{ left: 24, right: 24 }}
                   />
-                  <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => formatBytes(Number(v))} width={72} />
+                  <YAxis
+                    tick={{ fontSize: 11, fill: "var(--muted-foreground)" }}
+                    tickFormatter={(v) => formatBytes(Number(v))}
+                    width={72}
+                  />
                   <Tooltip
                     content={({ active, payload, label }) => {
                       if (!active || !payload?.length) return null;
@@ -309,7 +360,7 @@ export default function PublicNetworkTransferPage() {
                     }}
                   />
                   <Legend
-                    wrapperStyle={{ fontSize: 11 }}
+                    wrapperStyle={{ fontSize: 11, color: "var(--muted-foreground)" }}
                     formatter={(value) => CHANNEL_LABEL[value as (typeof CHANNEL_KEYS)[number]] ?? value}
                   />
                   {CHANNEL_KEYS.map((k, i) => (
@@ -322,10 +373,27 @@ export default function PublicNetworkTransferPage() {
                       fill={CHANNEL_STROKE[k]}
                       fillOpacity={0.35 - i * 0.04}
                       name={k}
-                      isAnimationActive={chartData.length < 80}
+                      isAnimationActive={chartData.length < 80 && chartData.length > 1}
+                      dot={
+                        chartData.length <= 8
+                          ? { r: 3, strokeWidth: 1, stroke: CHANNEL_STROKE[k], fill: CHANNEL_STROKE[k] }
+                          : false
+                      }
+                      activeDot={{ r: 5 }}
                     />
                   ))}
-                  <Brush dataKey="labelNy" height={28} stroke="hsl(var(--border))" travellerWidth={8} />
+                  {chartData.length >= 2 ? (
+                    <Brush
+                      dataKey="labelNy"
+                      height={22}
+                      stroke="var(--primary)"
+                      fill="var(--muted)"
+                      travellerWidth={9}
+                      traveller={NetworkBrushTraveller}
+                      tickFormatter={() => ""}
+                      ariaLabel="Zoom chart time range"
+                    />
+                  ) : null}
                 </AreaChart>
               </ResponsiveContainer>
             </div>
