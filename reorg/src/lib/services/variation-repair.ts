@@ -156,7 +156,6 @@ async function ensureParentListing(args: {
     title: firstChild?.title ?? null,
     imageUrl: firstChild?.imageUrl ?? null,
     salePrice: null,
-    adRate: null,
     inventory:
       childInventoryValues.length > 0
         ? childInventoryValues.reduce((sum, value) => sum + value, 0)
@@ -182,7 +181,6 @@ async function ensureParentListing(args: {
     title: firstChild?.title ?? null,
     imageUrl: firstChild?.imageUrl ?? null,
     salePrice: null,
-    adRate: null,
     inventory:
       childInventoryValues.length > 0
         ? childInventoryValues.reduce((sum, value) => sum + value, 0)

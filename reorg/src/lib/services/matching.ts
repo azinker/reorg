@@ -165,7 +165,6 @@ async function ensureVariationParentListing(args: {
     title: args.title,
     imageUrl: args.imageUrl,
     salePrice: null,
-    adRate: null,
     inventory: args.childInventoryTotal,
     status: args.hasActiveChildren ? "ACTIVE" : "OUT_OF_STOCK",
     isVariation: true,
@@ -183,7 +182,6 @@ async function ensureVariationParentListing(args: {
     title: args.title,
     imageUrl: args.imageUrl,
     salePrice: null,
-    adRate: null,
     inventory: args.childInventoryTotal,
     status: args.hasActiveChildren ? "ACTIVE" : "OUT_OF_STOCK",
     isVariation: true,
@@ -270,7 +268,7 @@ async function upsertVariationFamily(
       select: { id: true },
     });
 
-    const data: Prisma.MarketplaceListingUncheckedCreateInput = {
+    const baseData = {
       masterRowId,
       integrationId,
       platformItemId: listing.platformItemId,
@@ -279,9 +277,8 @@ async function upsertVariationFamily(
       title: listing.title,
       imageUrl: listing.imageUrl,
       salePrice: listing.salePrice ?? null,
-      adRate: listing.adRate ?? null,
       inventory: listing.inventory ?? null,
-      status: listing.status === "active" ? "ACTIVE" : "OUT_OF_STOCK",
+      status: listing.status === "active" ? "ACTIVE" as const : "OUT_OF_STOCK" as const,
       isVariation: true,
       parentListingId,
       rawData: JSON.parse(JSON.stringify(listing.rawData ?? {})) as Prisma.InputJsonValue,
@@ -291,11 +288,16 @@ async function upsertVariationFamily(
     if (existing) {
       await db.marketplaceListing.update({
         where: { id: existing.id },
-        data,
+        data: {
+          ...baseData,
+          ...(listing.adRate !== undefined ? { adRate: listing.adRate } : {}),
+        },
       });
       updated++;
     } else {
-      await db.marketplaceListing.create({ data });
+      await db.marketplaceListing.create({
+        data: { ...baseData, adRate: listing.adRate ?? null },
+      });
       created++;
     }
   }
