@@ -52,10 +52,10 @@ const upcUiStateCache = new Map<
 >();
 
 const PLATFORM_TEXT_COLORS: Record<Platform, string> = {
-  TPP_EBAY: "text-blue-400",
-  TT_EBAY: "text-emerald-400",
-  BIGCOMMERCE: "text-orange-400",
-  SHOPIFY: "text-lime-400",
+  TPP_EBAY: "text-blue-900 dark:text-blue-400",
+  TT_EBAY: "text-emerald-900 dark:text-emerald-400",
+  BIGCOMMERCE: "text-orange-900 dark:text-orange-400",
+  SHOPIFY: "text-lime-900 dark:text-lime-400",
 };
 
 const PLATFORM_INPUT_BORDERS: Record<Platform, string> = {
@@ -588,10 +588,10 @@ export function UpcCell({
     return (
       <button
         onClick={() => handleCopy(value)}
-        className="shrink-0 rounded p-0.5 text-muted-foreground/40 transition-colors hover:text-foreground cursor-pointer"
+        className="shrink-0 rounded p-0.5 text-muted-foreground transition-colors hover:text-foreground dark:text-muted-foreground/50 cursor-pointer"
         title={`Copy ${label}`}
       >
-        {copied ? <Check className="h-3 w-3 text-emerald-400" /> : <Copy className="h-3 w-3" />}
+        {copied ? <Check className="h-3 w-3 text-emerald-700 dark:text-emerald-400" /> : <Copy className="h-3 w-3" />}
       </button>
     );
   }
@@ -1260,7 +1260,9 @@ export function UpcCell({
             disabled={!valid}
             className={cn(
               "rounded p-0.5",
-              valid ? "cursor-pointer text-emerald-400 hover:text-emerald-300" : "cursor-not-allowed text-muted-foreground/30",
+              valid
+                ? "cursor-pointer text-emerald-800 hover:text-emerald-900 dark:text-emerald-400 dark:hover:text-emerald-300"
+                : "cursor-not-allowed text-muted-foreground/45 dark:text-muted-foreground/30",
             )}
             title="Confirm"
           >

@@ -4054,12 +4054,12 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
                         <>
                         <button
                           onClick={() => void toggleExpand(row.id)}
-                          className="inline-flex items-center gap-1.5 rounded-md bg-emerald-100 dark:bg-emerald-500/15 px-2 py-0.5 text-[11px] font-semibold text-emerald-700 dark:text-emerald-400 transition-colors hover:bg-emerald-200 dark:hover:bg-emerald-500/20 cursor-pointer"
+                          className="inline-flex items-center gap-1.5 rounded-md bg-emerald-200/95 dark:bg-emerald-500/15 px-2 py-0.5 text-[11px] font-semibold text-emerald-950 dark:text-emerald-400 transition-colors hover:bg-emerald-300/90 dark:hover:bg-emerald-500/20 cursor-pointer"
                           title={isExpanded ? "Collapse variation listing" : "Expand variation listing"}
                         >
                           <span>Variation Parent</span>
                           {row.childRows && (
-                            <span className="rounded bg-emerald-200 dark:bg-emerald-500/20 px-1 text-[10px] tabular-nums">
+                            <span className="rounded bg-emerald-300/90 dark:bg-emerald-500/20 px-1 text-[10px] tabular-nums text-emerald-950 dark:text-emerald-200">
                               {row.childRows.length}
                             </span>
                           )}
@@ -4068,7 +4068,7 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
                           )}
                         </button>
                         {row.variationDimensions && row.variationDimensions.length > 0 && (
-                          <span className="mt-0.5 text-[10px] leading-tight text-emerald-700/60 dark:text-emerald-500/60 font-medium">
+                          <span className="mt-0.5 text-[10px] leading-tight text-emerald-900/90 dark:text-emerald-500/60 font-medium">
                             {row.variationDimensions.join(" / ")}
                           </span>
                         )}
@@ -4085,10 +4085,10 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
                               {row.variationAttributes.map((attr) => (
                                 <span
                                   key={attr.name}
-                                  className="inline-flex items-center gap-0.5 rounded bg-purple-500/15 px-1.5 py-0.5 text-[10px] leading-tight text-purple-300 border border-purple-500/20"
+                                  className="inline-flex items-center gap-0.5 rounded border border-purple-400/70 bg-purple-200/90 px-1.5 py-0.5 text-[10px] leading-tight text-purple-950 dark:border-purple-500/25 dark:bg-purple-500/15 dark:text-purple-200"
                                   title={`${attr.name}: ${attr.value}`}
                                 >
-                                  <span className="font-medium text-purple-400/70">{attr.name}:</span>
+                                  <span className="font-medium text-purple-900 dark:text-purple-400/80">{attr.name}:</span>
                                   <span className="font-semibold">{attr.value}</span>
                                 </span>
                               ))}
@@ -4112,14 +4112,16 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
                           <button
                             onClick={() => void toggleExpand(row.id)}
                             className={cn(
-                              "inline-flex items-center gap-1 mt-0.5 text-[10px] cursor-pointer text-left hover:text-emerald-600 dark:hover:text-emerald-400",
-                              isExpanded ? "text-emerald-500" : "text-muted-foreground"
+                              "inline-flex items-center gap-1 mt-0.5 text-[10px] cursor-pointer text-left hover:text-emerald-800 dark:hover:text-emerald-400",
+                              isExpanded ? "text-emerald-800 dark:text-emerald-500" : "text-foreground/80 dark:text-muted-foreground"
                             )}
                             title={isExpanded ? "Collapse variation listing" : "Expand variation listing"}
                           >
                             <span className="font-semibold">Variation Listing</span>
                             {row.childRows ? ` · ${row.childRows.length} SKUs` : ""}
-                            {!isExpanded && <span className="text-emerald-500 font-medium ml-0.5">(click + to expand)</span>}
+                            {!isExpanded && (
+                              <span className="ml-0.5 font-medium text-emerald-800 dark:text-emerald-500">(click + to expand)</span>
+                            )}
                           </button>
                         )}
                         {settings.showAlternateTitles && row.alternateTitles && row.alternateTitles.length > 0 && (

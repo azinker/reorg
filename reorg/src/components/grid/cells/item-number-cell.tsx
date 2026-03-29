@@ -25,10 +25,10 @@ const LISTING_URL_TEMPLATES: Record<Platform, (id: string) => string> = {
 };
 
 const PLATFORM_TEXT_COLORS: Record<Platform, string> = {
-  TPP_EBAY: "text-blue-400",
-  TT_EBAY: "text-emerald-400",
-  BIGCOMMERCE: "text-orange-400",
-  SHOPIFY: "text-lime-400",
+  TPP_EBAY: "text-blue-900 dark:text-blue-400",
+  TT_EBAY: "text-emerald-900 dark:text-emerald-400",
+  BIGCOMMERCE: "text-orange-900 dark:text-orange-400",
+  SHOPIFY: "text-lime-900 dark:text-lime-400",
 };
 
 function buildListingUrl(platform: Platform, listingId: string, explicitUrl?: string): string {
@@ -109,18 +109,18 @@ function ItemRow({ item }: { item: StoreValue }) {
         )}
 
         {item.platform === "TT_EBAY" ? (
-          <EyeOff className="h-2.5 w-2.5 shrink-0 opacity-50" />
+          <EyeOff className="h-2.5 w-2.5 shrink-0 text-muted-foreground opacity-80 dark:opacity-50" />
         ) : (
-          <ExternalLink className="h-2.5 w-2.5 shrink-0 opacity-40" />
+          <ExternalLink className="h-2.5 w-2.5 shrink-0 text-muted-foreground opacity-80 dark:opacity-45" />
         )}
       </div>
 
       <button
         onClick={handleCopy}
-        className="shrink-0 rounded p-0.5 text-muted-foreground/40 transition-colors hover:text-foreground cursor-pointer"
+        className="shrink-0 rounded p-0.5 text-muted-foreground transition-colors hover:text-foreground dark:text-muted-foreground/50 cursor-pointer"
         title="Copy Item ID"
       >
-        {copied ? <Check className="h-3 w-3 text-emerald-400" /> : <Copy className="h-3 w-3" />}
+        {copied ? <Check className="h-3 w-3 text-emerald-700 dark:text-emerald-400" /> : <Copy className="h-3 w-3" />}
       </button>
     </div>
   );

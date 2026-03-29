@@ -69,7 +69,7 @@ export function EditableCurrencyCell({ value, rowId, field, onSave }: EditableCu
       </span>
       <button
         onClick={startEdit}
-        className="shrink-0 rounded p-0.5 text-muted-foreground/0 transition-all group-hover/edit:text-muted-foreground/40 hover:!text-foreground cursor-pointer"
+        className="shrink-0 rounded p-0.5 text-muted-foreground/65 transition-colors group-hover/edit:text-foreground hover:!text-foreground dark:text-transparent dark:group-hover/edit:text-muted-foreground/70 cursor-pointer"
         title="Edit"
       >
         <Pencil className="h-3 w-3" />

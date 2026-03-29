@@ -24,11 +24,11 @@ export function CopyValue({ value, children, className }: CopyValueProps) {
       {children}
       <button
         onClick={handleCopy}
-        className="shrink-0 rounded p-0.5 text-muted-foreground/0 transition-all group-hover/copy:text-muted-foreground/40 hover:!text-foreground cursor-pointer"
+        className="shrink-0 rounded p-0.5 text-muted-foreground/55 transition-colors group-hover/copy:text-foreground hover:!text-foreground dark:text-transparent dark:group-hover/copy:text-muted-foreground/70 cursor-pointer"
         title="Copy to clipboard"
       >
         {copied ? (
-          <Check className="h-3 w-3 text-emerald-400" />
+          <Check className="h-3 w-3 text-emerald-700 dark:text-emerald-400" />
         ) : (
           <Copy className="h-3 w-3" />
         )}

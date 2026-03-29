@@ -35,7 +35,7 @@ function CopyButton({ text }: { text: string }) {
   return (
     <button
       onClick={handleCopy}
-      className="ml-auto shrink-0 rounded p-0.5 text-muted-foreground/40 transition-colors hover:text-foreground cursor-pointer"
+      className="ml-auto shrink-0 rounded p-0.5 text-muted-foreground hover:text-foreground dark:text-muted-foreground/45 dark:hover:text-foreground cursor-pointer"
       title="Copy to clipboard"
     >
       {copied ? (
@@ -89,7 +89,10 @@ export function StoreBlock({
           {label}
         </span>
         {shortItemId && (
-          <span className="text-[8px] font-mono text-muted-foreground/60 leading-none mt-0.5" title={`Item ID: ${item.listingId}`}>
+          <span
+            className="text-[8px] font-mono text-foreground/85 dark:text-muted-foreground/70 leading-none mt-0.5"
+            title={`Item ID: ${item.listingId}`}
+          >
             #{shortItemId}
           </span>
         )}
@@ -434,7 +437,7 @@ function EditableStoreBlock({
           <PlatformIcon platform={item.platform} className="h-3.5 w-3.5 shrink-0" />
           <div className="shrink-0 flex flex-col items-start">
             <span className="w-10 text-[10px] font-extrabold uppercase text-foreground leading-none">{label}</span>
-            {shortItemId && <span className="text-[8px] font-mono text-muted-foreground/60 leading-none mt-0.5" title={`Item ID: ${item.listingId}`}>#{shortItemId}</span>}
+            {shortItemId && <span className="text-[8px] font-mono text-foreground/85 dark:text-muted-foreground/70 leading-none mt-0.5" title={`Item ID: ${item.listingId}`}>#{shortItemId}</span>}
           </div>
         </div>
         <div className="flex items-center gap-1">
@@ -502,7 +505,7 @@ function EditableStoreBlock({
       <PlatformIcon platform={item.platform} className="h-3.5 w-3.5 shrink-0" />
       <div className="shrink-0 flex flex-col items-start">
         <span className="w-10 text-[10px] font-extrabold uppercase text-foreground leading-none">{label}</span>
-        {shortItemId && <span className="text-[8px] font-mono text-muted-foreground/60 leading-none mt-0.5" title={`Item ID: ${item.listingId}`}>#{shortItemId}</span>}
+        {shortItemId && <span className="text-[8px] font-mono text-foreground/85 dark:text-muted-foreground/70 leading-none mt-0.5" title={`Item ID: ${item.listingId}`}>#{shortItemId}</span>}
       </div>
       <div className="min-w-0 flex-1 self-stretch">
         {hasStaged ? (
@@ -628,7 +631,7 @@ function EditableStoreBlock({
       </div>
       <button
         onClick={startEdit}
-        className="shrink-0 rounded p-0.5 text-muted-foreground/0 transition-all group-hover/edit:text-muted-foreground/60 hover:!text-foreground cursor-pointer"
+        className="shrink-0 rounded p-0.5 text-muted-foreground/65 transition-colors group-hover/edit:text-foreground dark:text-transparent dark:group-hover/edit:text-muted-foreground/75 hover:!text-foreground cursor-pointer"
         title="Edit price"
       >
         <Pencil className="h-3 w-3" />
@@ -1080,7 +1083,7 @@ function EditableAdRateBlock({
           <PlatformIcon platform={item.platform} className="h-3.5 w-3.5 shrink-0" />
           <div className="shrink-0 flex flex-col items-start">
             <span className="w-10 text-[10px] font-extrabold uppercase text-foreground leading-none">{label}</span>
-            {shortItemId && <span className="text-[8px] font-mono text-muted-foreground/60 leading-none mt-0.5">#{shortItemId}</span>}
+            {shortItemId && <span className="text-[8px] font-mono text-foreground/85 dark:text-muted-foreground/70 leading-none mt-0.5">#{shortItemId}</span>}
           </div>
         </div>
         <div className="flex items-center gap-1">
@@ -1161,7 +1164,7 @@ function EditableAdRateBlock({
       <PlatformIcon platform={item.platform} className="h-3.5 w-3.5 shrink-0" />
       <div className="shrink-0 flex flex-col items-start">
         <span className="w-10 text-[10px] font-extrabold uppercase text-foreground leading-none">{label}</span>
-        {shortItemId && <span className="text-[8px] font-mono text-muted-foreground/60 leading-none mt-0.5" title={`Item ID: ${item.listingId}`}>#{shortItemId}</span>}
+        {shortItemId && <span className="text-[8px] font-mono text-foreground/85 dark:text-muted-foreground/70 leading-none mt-0.5" title={`Item ID: ${item.listingId}`}>#{shortItemId}</span>}
       </div>
       <div className="min-w-0 flex-1 self-stretch">
         {hasStaged ? (
@@ -1285,7 +1288,7 @@ function EditableAdRateBlock({
       </div>
       <button
         onClick={startEdit}
-        className="shrink-0 rounded p-0.5 text-muted-foreground/0 transition-all group-hover/edit:text-muted-foreground/60 hover:!text-foreground cursor-pointer"
+        className="shrink-0 rounded p-0.5 text-muted-foreground/65 transition-colors group-hover/edit:text-foreground dark:text-transparent dark:group-hover/edit:text-muted-foreground/75 hover:!text-foreground cursor-pointer"
         title="Edit ad rate"
       >
         <Pencil className="h-3 w-3" />
