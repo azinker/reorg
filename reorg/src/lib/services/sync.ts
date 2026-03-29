@@ -23,6 +23,7 @@ import {
 } from "@/lib/services/sync-jobs";
 import { CATALOG_SYNC_CHUNK_BUDGET_MS } from "@/lib/services/sync-chunk-budget";
 import { dispatchCatalogSyncContinuation } from "@/lib/services/sync-continuation";
+import { recordSyncJobNetworkSample } from "@/lib/services/network-transfer-samples";
 
 export interface SyncResult {
   syncJobId: string;
@@ -301,6 +302,17 @@ export async function runSync(
       },
     });
 
+    recordSyncJobNetworkSample({
+      integrationId,
+      platform: integrationPlatform,
+      syncJobId: syncJob.id,
+      status: "COMPLETED",
+      itemsProcessed: totalProcessed,
+      itemsCreated: totalCreated,
+      itemsUpdated: totalUpdated,
+      durationMs: Date.now() - startTime,
+    });
+
     try {
       await repairVariationFamiliesForIntegration(integrationId);
     } catch (repairError) {
@@ -361,6 +373,17 @@ export async function runSync(
             durationMs: Date.now() - startTime,
           },
         },
+      });
+
+      recordSyncJobNetworkSample({
+        integrationId,
+        platform: integrationPlatform,
+        syncJobId: syncJob.id,
+        status: "FAILED",
+        itemsProcessed: totalProcessed,
+        itemsCreated: totalCreated,
+        itemsUpdated: totalUpdated,
+        durationMs: Date.now() - startTime,
       });
     }
 

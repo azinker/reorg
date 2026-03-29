@@ -95,6 +95,14 @@ enum InventorySourceType {
   MASTER_TPP_LIVE
 }
 
+enum NetworkTransferChannel {
+  CLIENT_API_RESPONSE
+  MARKETPLACE_INBOUND
+  SYNC_JOB
+  FORECAST
+  OTHER
+}
+
 // ─── Auth & Users ────────────────────────────────────────────────────────────
 
 model User {
@@ -173,9 +181,10 @@ model Integration {
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
-  listings          MarketplaceListing[]
-  unmatchedListings UnmatchedListing[]
-  syncJobs          SyncJob[]
+  listings                 MarketplaceListing[]
+  unmatchedListings        UnmatchedListing[]
+  syncJobs                 SyncJob[]
+  networkTransferSamples   NetworkTransferSample[]
 
   @@map("integrations")
 }
@@ -361,6 +370,24 @@ model AuditLog {
   @@index([entityType, entityId])
   @@index([createdAt])
   @@map("audit_logs")
+}
+
+model NetworkTransferSample {
+  id              String                  @id @default(cuid())
+  createdAt       DateTime                @default(now())
+  channel         NetworkTransferChannel
+  label           String
+  bytesEstimate   Int?
+  durationMs      Int?
+  metadata        Json                    @default("{}")
+  integrationId   String?
+
+  integration Integration? @relation(fields: [integrationId], references: [id], onDelete: SetNull)
+
+  @@index([createdAt])
+  @@index([channel])
+  @@index([integrationId])
+  @@map("network_transfer_samples")
 }
 
 // ─── Backups ─────────────────────────────────────────────────────────────────

@@ -27,6 +27,7 @@ import {
   SYNC_CANCELLED_ERROR,
   throwIfSyncJobStopped,
 } from "@/lib/services/sync-jobs";
+import { recordSyncJobNetworkSample } from "@/lib/services/network-transfer-samples";
 
 interface SyncProgress {
   jobId: string;
@@ -281,6 +282,8 @@ export async function runShopifySync(
   progress.itemsCreated = priorCreated;
   progress.itemsUpdated = priorUpdated;
 
+  const syncStartedAt = Date.now();
+
   const chunkStartedAt = Date.now();
   const overBudget = () => Date.now() - chunkStartedAt >= CATALOG_SYNC_CHUNK_BUDGET_MS;
 
@@ -464,6 +467,17 @@ export async function runShopifySync(
         },
       });
     }
+
+    recordSyncJobNetworkSample({
+      integrationId: integration.id,
+      platform: "SHOPIFY",
+      syncJobId: syncJob.id,
+      status: "COMPLETED",
+      itemsProcessed: progress.itemsProcessed,
+      itemsCreated: progress.itemsCreated,
+      itemsUpdated: progress.itemsUpdated,
+      durationMs: Date.now() - syncStartedAt,
+    });
   } catch (err) {
     progress.status = "FAILED";
     const errorMessage = err instanceof Error ? err.message : "Sync failed";
@@ -483,6 +497,17 @@ export async function runShopifySync(
           completedAt: new Date(),
           errors: JSON.parse(JSON.stringify(allErrors)),
         },
+      });
+
+      recordSyncJobNetworkSample({
+        integrationId: integration.id,
+        platform: "SHOPIFY",
+        syncJobId: syncJob.id,
+        status: "FAILED",
+        itemsProcessed: progress.itemsProcessed,
+        itemsCreated: progress.itemsCreated,
+        itemsUpdated: progress.itemsUpdated,
+        durationMs: Date.now() - syncStartedAt,
       });
     }
   }
@@ -637,6 +662,17 @@ export async function runShopifyWebhookReconcile(
       itemsUpdated: progress.itemsUpdated,
       durationMs: Date.now() - startTime,
     });
+
+    recordSyncJobNetworkSample({
+      integrationId: integration.id,
+      platform: "SHOPIFY",
+      syncJobId: syncJob.id,
+      status: "COMPLETED",
+      itemsProcessed: progress.itemsProcessed,
+      itemsCreated: progress.itemsCreated,
+      itemsUpdated: progress.itemsUpdated,
+      durationMs: Date.now() - startTime,
+    });
   } catch (err) {
     progress.status = "FAILED";
     const errorMessage = err instanceof Error ? err.message : "Sync failed";
@@ -671,6 +707,17 @@ export async function runShopifyWebhookReconcile(
       itemsUpdated: progress.itemsUpdated,
       durationMs: Date.now() - startTime,
       error: errorMessage,
+    });
+
+    recordSyncJobNetworkSample({
+      integrationId: integration.id,
+      platform: "SHOPIFY",
+      syncJobId: syncJob.id,
+      status: "FAILED",
+      itemsProcessed: progress.itemsProcessed,
+      itemsCreated: progress.itemsCreated,
+      itemsUpdated: progress.itemsUpdated,
+      durationMs: Date.now() - startTime,
     });
   }
 

@@ -345,6 +345,42 @@ export const PAGE_TOUR_STEPS: Record<OnboardingPageKey, TourStep[]> = {
   ],
 
   /* ================================================================
+   * PUBLIC NETWORK TRANSFER (Admin)
+   * ================================================================ */
+  publicNetworkTransfer: [
+    {
+      id: "network-1",
+      target: "network-transfer-root",
+      title: "Public Network Transfer",
+      body: "This page is for admins. It shows what reorG measured going over the network: large API responses (like the dashboard grid), eBay HTTP traffic during syncs, and when sync jobs finished. The yellow banner explains that these numbers are estimates to help you optimize — they are not copied from Neon’s billing screen.",
+    },
+    {
+      id: "network-2",
+      target: "network-transfer-disclaimer",
+      title: "Read the disclaimer",
+      body: "Always start here. Byte estimates come from JSON size and response bodies inside the app. They correlate with load on your database and APIs but will not match Neon’s invoice line-by-line. Data older than about 10 days is removed automatically so the table stays small.",
+    },
+    {
+      id: "network-3",
+      target: "network-transfer-controls",
+      title: "Range and filters",
+      body: "Pick 24 hours, 7 days, or 30 days. The chart switches to daily buckets on the 30-day view. Filter the event log by channel (for example only sync jobs or only API responses) to focus on one kind of traffic.",
+    },
+    {
+      id: "network-4",
+      target: "network-transfer-chart",
+      title: "Interactive chart",
+      body: "The stacked chart shows estimated bytes per time bucket by category. Hover a point for exact numbers and the UTC timestamp. Use the brush under the chart to zoom into a shorter window — for example, to see a spike the morning after a heavy sync.",
+    },
+    {
+      id: "network-5",
+      target: "network-transfer-table",
+      title: "Event log",
+      body: "Each row is one recorded event with Eastern time, UTC ISO time (easy to copy into a support note), label, estimated bytes, duration, and store when relevant. Use the search box to filter the current page by label. Pagination loads more history from the server.",
+    },
+  ],
+
+  /* ================================================================
    * ERRORS
    * ================================================================ */
   errors: [

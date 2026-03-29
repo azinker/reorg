@@ -7,6 +7,8 @@ import {
 } from "@/lib/services/sync-control";
 import { getIntegrationConfig, mergeIntegrationConfig } from "@/lib/integrations/runtime-config";
 import { trimRawDataForStorage } from "@/lib/integrations/types";
+import { addMarketplaceInboundBytes, runWithMarketplaceTelemetry } from "@/lib/server/marketplace-telemetry";
+import { recordSyncJobNetworkSample } from "@/lib/services/network-transfer-samples";
 import {
   buildEbayQuotaExhaustedMessage,
   buildLocallyTrackedSnapshot,
@@ -135,6 +137,7 @@ async function fetchWithTimeout(
   try {
     const response = await fetch(url, { ...options, signal: controller.signal });
     const body = await response.text();
+    addMarketplaceInboundBytes(Buffer.byteLength(body, "utf8"));
     return { ok: response.ok, status: response.status, body };
   } catch (error) {
     if (error instanceof Error && error.name === "AbortError") {
@@ -394,6 +397,13 @@ export async function runEbayTppSync(
 
   const syncStartedAt = Date.now();
 
+  await runWithMarketplaceTelemetry(
+    {
+      syncJobId: syncJob.id,
+      integrationId: integration.id,
+      platform: Platform.TPP_EBAY,
+    },
+    async () => {
   try {
     let effectiveMode = options.effectiveMode ?? options.requestedMode ?? "full";
     let completionCursor = new Date().toISOString();
@@ -480,6 +490,16 @@ export async function runEbayTppSync(
             itemsProcessed: 0,
             errors: JSON.parse(JSON.stringify(progress.errors)),
           },
+        });
+        recordSyncJobNetworkSample({
+          integrationId: integration.id,
+          platform: "TPP_EBAY",
+          syncJobId: syncJob.id,
+          status: "COMPLETED",
+          itemsProcessed: 0,
+          itemsCreated: progress.itemsCreated,
+          itemsUpdated: progress.itemsUpdated,
+          durationMs: Date.now() - syncStartedAt,
         });
         return progress;
       } else {
@@ -796,6 +816,17 @@ export async function runEbayTppSync(
     } catch (postSyncErr) {
       console.error("[ebay-tpp-sync] Post-sync reconcile step failed", postSyncErr);
     }
+
+    recordSyncJobNetworkSample({
+      integrationId: integration.id,
+      platform: "TPP_EBAY",
+      syncJobId: syncJob.id,
+      status: "COMPLETED",
+      itemsProcessed: progress.itemsProcessed,
+      itemsCreated: progress.itemsCreated,
+      itemsUpdated: progress.itemsUpdated,
+      durationMs: Date.now() - syncStartedAt,
+    });
   } catch (err) {
     progress.status = "FAILED";
     if (isEbayUsageLimitError(err)) {
@@ -824,9 +855,22 @@ export async function runEbayTppSync(
         errors: JSON.parse(JSON.stringify(allErrors)),
       },
     });
-  } finally {
-    try {
-      const latest = await db.integration.findUnique({ where: { id: integration.id } });
+    recordSyncJobNetworkSample({
+      integrationId: integration.id,
+      platform: "TPP_EBAY",
+      syncJobId: syncJob.id,
+      status: "FAILED",
+      itemsProcessed: progress.itemsProcessed,
+      itemsCreated: progress.itemsCreated,
+      itemsUpdated: progress.itemsUpdated,
+      durationMs: Date.now() - syncStartedAt,
+    });
+  }
+    },
+  );
+
+  try {
+    const latest = await db.integration.findUnique({ where: { id: integration.id } });
       if (latest) {
         const cfg = getIntegrationConfig(latest);
         const updatedUsage = mergeSyncCallsIntoLocalUsage(
@@ -884,9 +928,8 @@ export async function runEbayTppSync(
           // Non-fatal — sibling quota bars won't update
         }
       }
-    } catch (analyticsErr) {
-      console.error("[ebay-tpp-sync] Post-sync analytics persist failed:", analyticsErr);
-    }
+  } catch (analyticsErr) {
+    console.error("[ebay-tpp-sync] Post-sync analytics persist failed:", analyticsErr);
   }
 
   return progress;
