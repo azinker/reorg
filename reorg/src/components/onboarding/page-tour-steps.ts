@@ -364,7 +364,7 @@ export const PAGE_TOUR_STEPS: Record<OnboardingPageKey, TourStep[]> = {
       id: "network-3",
       target: "network-transfer-controls",
       title: "Range and filters",
-      body: "Pick 24 hours, 7 days, or 30 days. The chart switches to daily buckets on the 30-day view. Filter the event log by channel (for example only sync jobs or only API responses) to focus on one kind of traffic.",
+      body: "Pick 24 hours, 7 days, or 30 days. The chart switches to daily buckets on the 30-day view. Filter the event log by channel (for example only pull sync jobs or only API responses) to focus on one kind of traffic.",
     },
     {
       id: "network-4",

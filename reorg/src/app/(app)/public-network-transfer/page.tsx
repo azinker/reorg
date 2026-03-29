@@ -28,10 +28,32 @@ const CHANNEL_KEYS = [
 const CHANNEL_LABEL: Record<(typeof CHANNEL_KEYS)[number], string> = {
   CLIENT_API_RESPONSE: "API responses (e.g. dashboard grid JSON)",
   MARKETPLACE_INBOUND: "Marketplace HTTP (eBay response bodies, sync)",
-  SYNC_JOB: "Sync jobs completed / failed",
+  /** One category for all pull-sync telemetry; each row’s Label + Result say completed vs failed. */
+  SYNC_JOB: "Pull sync jobs",
   FORECAST: "Forecast runs",
   OTHER: "Other",
 };
+
+/** Shorter legend text (Recharts legend is narrow). */
+const CHANNEL_LEGEND_LABEL: Record<(typeof CHANNEL_KEYS)[number], string> = {
+  CLIENT_API_RESPONSE: "API responses (grid JSON)",
+  MARKETPLACE_INBOUND: "Marketplace HTTP (eBay)",
+  SYNC_JOB: "Pull syncs",
+  FORECAST: "Forecast",
+  OTHER: "Other",
+};
+
+function syncResultFromMetadata(
+  channel: string,
+  meta: unknown,
+): "Completed" | "Failed" | null {
+  if (channel !== "SYNC_JOB") return null;
+  if (!meta || typeof meta !== "object") return null;
+  const st = (meta as Record<string, unknown>).status;
+  if (st === "COMPLETED") return "Completed";
+  if (st === "FAILED") return "Failed";
+  return null;
+}
 
 const CHANNEL_STROKE: Record<(typeof CHANNEL_KEYS)[number], string> = {
   CLIENT_API_RESPONSE: "hsl(262, 83%, 68%)",
@@ -231,10 +253,14 @@ export default function PublicNetworkTransferPage() {
         className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-foreground"
       >
         <strong className="font-semibold">How to read this page:</strong> These are{" "}
-        <strong>estimates</strong> from reorG (JSON payload sizes, eBay HTTP bodies during sync, sync job
-        events). They help you see <em>what ran</em> and <em>how heavy</em> it was. Neon’s invoice uses its
-        own network accounting — numbers here will not match exactly. Samples older than{" "}
-        {data?.retentionDays ?? 10} days are pruned automatically.
+        <strong>estimates</strong> from reorG (JSON payload sizes, eBay HTTP bodies during sync, plus{" "}
+        <strong>pull sync job</strong> rows for timing and item counts). Neon’s invoice uses its own
+        network accounting — numbers here will not match exactly.{" "}
+        <strong>Pull sync jobs</strong> do not carry a byte estimate (they show “—” and 0 B on the chart)
+        because we record duration and processed counts, not total download size. The{" "}
+        <strong>Result</strong> column shows Completed vs Failed; successful BigCommerce/eBay/Shopify syncs
+        still appear under Pull sync jobs — that category means “a sync run was recorded,” not “something
+        failed.” Samples older than {data?.retentionDays ?? 10} days are pruned automatically.
       </div>
 
       {error && (
@@ -361,7 +387,9 @@ export default function PublicNetworkTransferPage() {
                   />
                   <Legend
                     wrapperStyle={{ fontSize: 11, color: "var(--muted-foreground)" }}
-                    formatter={(value) => CHANNEL_LABEL[value as (typeof CHANNEL_KEYS)[number]] ?? value}
+                    formatter={(value) =>
+                      CHANNEL_LEGEND_LABEL[value as (typeof CHANNEL_KEYS)[number]] ?? value
+                    }
                   />
                   {CHANNEL_KEYS.map((k, i) => (
                     <Area
@@ -412,6 +440,11 @@ export default function PublicNetworkTransferPage() {
                   <div className="mt-1 font-mono text-lg font-semibold text-foreground">
                     {formatBytes(t.bytesSum)}
                   </div>
+                  {t.channel === "SYNC_JOB" && t.bytesSum === 0 ? (
+                    <p className="mt-1 text-[11px] leading-snug text-muted-foreground">
+                      No byte estimate for this channel — open the log for duration and item counts.
+                    </p>
+                  ) : null}
                   <div className="text-xs text-muted-foreground">{t.eventCount} events</div>
                 </div>
               ))}
@@ -441,6 +474,7 @@ export default function PublicNetworkTransferPage() {
                     <th className="px-3 py-2 font-medium">Time (NY)</th>
                     <th className="px-3 py-2 font-medium">UTC ISO</th>
                     <th className="px-3 py-2 font-medium">Channel</th>
+                    <th className="px-3 py-2 font-medium">Result</th>
                     <th className="px-3 py-2 font-medium">Label</th>
                     <th className="px-3 py-2 font-medium">Bytes (est.)</th>
                     <th className="px-3 py-2 font-medium">Duration</th>
@@ -458,6 +492,22 @@ export default function PublicNetworkTransferPage() {
                       </td>
                       <td className="whitespace-nowrap px-3 py-2 text-xs">
                         {CHANNEL_LABEL[s.channel as (typeof CHANNEL_KEYS)[number]] ?? s.channel}
+                      </td>
+                      <td className="whitespace-nowrap px-3 py-2 text-xs">
+                        {(() => {
+                          const r = syncResultFromMetadata(s.channel, s.metadata);
+                          if (!r) return <span className="text-muted-foreground">—</span>;
+                          return (
+                            <span
+                              className={cn(
+                                "font-medium",
+                                r === "Failed" ? "text-destructive" : "text-emerald-500 dark:text-emerald-400",
+                              )}
+                            >
+                              {r}
+                            </span>
+                          );
+                        })()}
                       </td>
                       <td className="max-w-[280px] px-3 py-2 text-foreground">{s.label}</td>
                       <td className="whitespace-nowrap px-3 py-2 font-mono text-xs">
