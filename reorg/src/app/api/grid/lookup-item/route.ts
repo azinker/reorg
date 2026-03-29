@@ -3,6 +3,7 @@ import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { isAuthBypassEnabled } from "@/lib/app-env";
+import { recordNetworkTransferSample } from "@/lib/services/network-transfer-samples";
 import type { Platform as PrismaPlatform } from "@prisma/client";
 
 export const runtime = "nodejs";
@@ -30,6 +31,7 @@ function gridRowIdFromListing(listing: {
 }
 
 export async function GET(request: NextRequest) {
+  const t0 = performance.now();
   const session = await auth();
   if (!session?.user?.id && !isAuthBypassEnabled()) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -85,12 +87,22 @@ export async function GET(request: NextRequest) {
   const chosen = listings[0]!;
   const rowId = gridRowIdFromListing(chosen);
 
-  return NextResponse.json({
+  const body = {
     data: {
       rowId,
       platform: chosen.integration.platform,
       platformItemId: chosen.platformItemId,
       ambiguous: listings.length > 1,
     },
+  };
+  const bytesEstimate = Buffer.byteLength(JSON.stringify(body), "utf8");
+  void recordNetworkTransferSample({
+    channel: "CLIENT_API_RESPONSE",
+    label: "GET /api/grid/lookup-item",
+    bytesEstimate,
+    durationMs: Math.round(performance.now() - t0),
+    metadata: { rowId, ambiguous: body.data.ambiguous },
   });
+
+  return NextResponse.json(body);
 }

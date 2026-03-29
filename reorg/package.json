@@ -16,7 +16,8 @@
     "db:migrate:deploy": "prisma migrate deploy",
     "db:seed": "npx tsx prisma/seed.ts",
     "db:studio": "prisma studio",
-    "webhooks:ensure": "npx tsx scripts/ensure-marketplace-webhooks.ts"
+    "webhooks:ensure": "npx tsx scripts/ensure-marketplace-webhooks.ts",
+    "extension:icons": "node scripts/generate-extension-icons.mjs"
   },
   "dependencies": {
     "@auth/prisma-adapter": "^2.11.1",
@@ -58,6 +59,7 @@
     "@types/react-dom": "^19.2.3",
     "eslint": "^10.0.3",
     "eslint-config-next": "^16.1.6",
+    "sharp": "^0.34.5",
     "tailwindcss": "^4.2.1",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3"

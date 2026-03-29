@@ -63,14 +63,12 @@ export default function ChromeExtensionPage() {
             Download
           </h2>
           <p className="mt-2 text-sm text-foreground">
-            Download the extension package as a ZIP file. Unzip it on your computer, then load the
-            unzipped folder in Chrome (see steps below). The folder must contain{" "}
+            Download the extension package as a ZIP file. Unzip it, then in Chrome use{" "}
+            <strong className="font-medium text-foreground">Load unpacked</strong> on the folder that{" "}
+            <strong className="font-medium text-foreground">directly</strong> contains{" "}
             <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">manifest.json</code>{" "}
-            at the top level inside{" "}
-            <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">
-              reorg-chrome-extension
-            </code>
-            .
+            (same level as <code className="font-mono text-xs">background.js</code>), not a parent
+            folder and not the <code className="font-mono text-xs">.zip</code> file.
           </p>
           <div className="mt-4 flex flex-wrap items-center gap-3">
             <button
@@ -109,11 +107,15 @@ export default function ChromeExtensionPage() {
               <div>
                 <p className="font-medium">Unzip the download</p>
                 <p className="mt-1 text-muted-foreground">
-                  Extract <code className="font-mono text-xs">reorg-chrome-extension.zip</code>. You
-                  should see a folder named{" "}
-                  <code className="font-mono text-xs">reorg-chrome-extension</code> containing{" "}
-                  <code className="font-mono text-xs">manifest.json</code>,{" "}
-                  <code className="font-mono text-xs">background.js</code>, and other files.
+                  Extract <code className="font-mono text-xs">reorg-chrome-extension.zip</code>. Open
+                  the extracted location until you see <code className="font-mono text-xs">
+                    manifest.json
+                  </code>{" "}
+                  and <code className="font-mono text-xs">background.js</code> in the{" "}
+                  <strong className="font-medium text-foreground">same</strong> folder — that is the
+                  folder you will choose in the next step. If Windows created a nested folder, use the
+                  inner one (Chrome shows &quot;Manifest file is missing&quot; if you pick the wrong
+                  level).
                 </p>
               </div>
             </li>
@@ -152,12 +154,12 @@ export default function ChromeExtensionPage() {
                 <p className="font-medium">Load unpacked</p>
                 <p className="mt-1 text-muted-foreground">
                   Click <strong className="font-medium text-foreground">Load unpacked</strong> and
-                  select the{" "}
-                  <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">
-                    reorg-chrome-extension
-                  </code>{" "}
-                  folder (the one that contains <code className="font-mono text-xs">manifest.json</code>
-                  ), not the ZIP file.
+                  select that folder — the directory whose <strong className="font-medium text-foreground">
+                    immediate
+                  </strong>{" "}
+                  children include <code className="font-mono text-xs">manifest.json</code>, not the{" "}
+                  <code className="font-mono text-xs">.zip</code> and not a folder that only contains
+                  another subfolder.
                 </p>
               </div>
             </li>

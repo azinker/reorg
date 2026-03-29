@@ -6,6 +6,7 @@ import { finished } from "node:stream/promises";
 import archiver from "archiver";
 import { auth } from "@/lib/auth";
 import { isAuthBypassEnabled } from "@/lib/app-env";
+import { recordNetworkTransferSample } from "@/lib/services/network-transfer-samples";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -28,7 +29,10 @@ async function zipExtensionDirectory(): Promise<Buffer> {
   });
   archive.pipe(pass);
 
-  archive.directory(root, "reorg-chrome-extension");
+  // Put files at the zip root so after "Extract here" / "Extract all", the chosen folder
+  // always contains manifest.json (avoids users selecting a parent folder that only wraps
+  // `reorg-chrome-extension/` and triggers "Manifest file is missing or unreadable").
+  archive.directory(root, false);
   await archive.finalize();
   await finished(pass);
   return Buffer.concat(chunks);
@@ -41,7 +45,15 @@ export async function GET() {
   }
 
   try {
+    const t0 = performance.now();
     const buffer = await zipExtensionDirectory();
+    void recordNetworkTransferSample({
+      channel: "CLIENT_API_RESPONSE",
+      label: "GET /api/chrome-extension/download",
+      bytesEstimate: buffer.length,
+      durationMs: Math.round(performance.now() - t0),
+      metadata: { contentType: "application/zip" },
+    });
     return new NextResponse(new Uint8Array(buffer), {
       status: 200,
       headers: {

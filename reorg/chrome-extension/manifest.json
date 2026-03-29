@@ -3,6 +3,12 @@
   "name": "reorG Dashboard Link",
   "version": "1.1.0",
   "description": "Open the current marketplace listing in reorG (scroll to row on the dashboard).",
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
   "permissions": ["tabs", "storage"],
   "host_permissions": [
     "https://reorg.theperfectpart.net/*",
@@ -18,7 +24,13 @@
   },
   "action": {
     "default_title": "Open in reorG",
-    "default_popup": "popup.html"
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png",
+      "48": "icons/icon-48.png",
+      "128": "icons/icon-128.png"
+    }
   },
   "options_ui": {
     "page": "options.html",

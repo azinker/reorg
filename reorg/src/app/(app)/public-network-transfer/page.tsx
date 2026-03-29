@@ -26,7 +26,7 @@ const CHANNEL_KEYS = [
 ] as const;
 
 const CHANNEL_LABEL: Record<(typeof CHANNEL_KEYS)[number], string> = {
-  CLIENT_API_RESPONSE: "API responses (e.g. dashboard grid JSON)",
+  CLIENT_API_RESPONSE: "API responses (e.g. grid JSON, Chrome extension zip, lookup-item)",
   MARKETPLACE_INBOUND: "Marketplace HTTP (eBay response bodies, sync)",
   /** One category for all pull-sync telemetry; each row’s Label + Result say completed vs failed. */
   SYNC_JOB: "Pull sync jobs",
@@ -36,7 +36,7 @@ const CHANNEL_LABEL: Record<(typeof CHANNEL_KEYS)[number], string> = {
 
 /** Shorter legend text (Recharts legend is narrow). */
 const CHANNEL_LEGEND_LABEL: Record<(typeof CHANNEL_KEYS)[number], string> = {
-  CLIENT_API_RESPONSE: "API responses (grid JSON)",
+  CLIENT_API_RESPONSE: "API responses (grid, extension)",
   MARKETPLACE_INBOUND: "Marketplace HTTP (eBay)",
   SYNC_JOB: "Pull syncs",
   FORECAST: "Forecaster",
@@ -253,7 +253,8 @@ export default function PublicNetworkTransferPage() {
         className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-foreground"
       >
         <strong className="font-semibold">How to read this page:</strong> These are{" "}
-        <strong>estimates</strong> from reorG (JSON payload sizes, eBay HTTP bodies during sync, plus{" "}
+        <strong>estimates</strong> from reorG (JSON and binary response sizes — grid, Chrome extension zip,
+        lookup-item, etc. — eBay HTTP bodies during sync, plus{" "}
         <strong>pull sync job</strong> rows for timing and item counts). Neon’s invoice uses its own
         network accounting — numbers here will not match exactly.{" "}
         <strong>Pull sync jobs</strong> do not carry a byte estimate (they show “—” and 0 B on the chart)
