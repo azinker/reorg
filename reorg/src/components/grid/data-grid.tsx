@@ -2503,37 +2503,96 @@ export function DataGrid({ rows: initialRows }: DataGridProps) {
   function handleBulkEditApply(params: BulkEditApplyParams) {
     const { field, platform: targetPlatform, value, mode, rowIds } = params;
 
+    const isStoreSpecific = field === "salePrice" || field === "adRate";
+
+    if (!isStoreSpecific) {
+      for (const rowId of rowIds) {
+        if (field === "weight") handleWeightSave(rowId, String(value));
+        else if (field === "supplierCost") handleCellSave(rowId, "supplierCost", value);
+        else if (field === "supplierShipping") handleCellSave(rowId, "supplierShipping", value);
+      }
+      clearSelection();
+      showToast(`Bulk ${FIELD_LABELS[field]} updated across ${rowIds.length} row${rowIds.length !== 1 ? "s" : ""}`);
+      return;
+    }
+
+    if (mode === "stage") {
+      for (const rowId of rowIds) {
+        const row = findRow(rowId);
+        if (!row) continue;
+        const entries = field === "salePrice" ? row.salePrices : row.adRates;
+        const matching = entries.filter((e) => e.platform === targetPlatform);
+        for (const e of matching) {
+          const identity = { variantId: e.variantId, marketplaceListingId: e.marketplaceListingId };
+          if (field === "salePrice") handleSalePriceEdit(rowId, e.platform, e.listingId, value, "stage", identity);
+          else handleAdRateEdit(rowId, e.platform, e.listingId, value, "stage", identity);
+        }
+      }
+      clearSelection();
+      showToast(`Bulk ${FIELD_LABELS[field]} staged across ${rowIds.length} row${rowIds.length !== 1 ? "s" : ""}`);
+      return;
+    }
+
+    const stagePromises: Promise<unknown>[] = [];
+    const pushItems: PushItem[] = [];
+    const pushField: PushField = field === "salePrice" ? "salePrice" : "adRate";
+
     for (const rowId of rowIds) {
       const row = findRow(rowId);
       if (!row) continue;
+      const sku = row.sku;
+      const entries = field === "salePrice" ? row.salePrices : row.adRates;
+      const matching = entries.filter((e) => e.platform === targetPlatform);
 
-      if (field === "salePrice" && targetPlatform) {
-        const matchingListings = row.salePrices.filter((sp) => sp.platform === targetPlatform);
-        for (const sp of matchingListings) {
-          handleSalePriceEdit(rowId, sp.platform, sp.listingId, value, mode, {
-            variantId: sp.variantId,
-            marketplaceListingId: sp.marketplaceListingId,
-          });
+      for (const e of matching) {
+        const identity = { variantId: e.variantId, marketplaceListingId: e.marketplaceListingId };
+        const liveValue = e.value != null ? Number(e.value) : null;
+        if (valuesMatch(liveValue, value)) continue;
+
+        updateRowById(rowId, (r) => {
+          const sourceKey = field === "salePrice" ? "salePrices" : "adRates";
+          const next = r[sourceKey].map((sv) =>
+            matchStoreValue(sv, e.platform, e.listingId, identity) ? { ...sv, stagedValue: value } : sv,
+          );
+          return recalcRow({ ...r, [sourceKey]: next });
+        });
+
+        if (field === "salePrice") {
+          stagePromises.push(persistStageAction(sku, e.platform, e.listingId, "stage", value, undefined, identity));
+        } else {
+          stagePromises.push(persistAdRateAction(sku, e.platform, e.listingId, "stage", value, identity));
         }
-      } else if (field === "adRate" && targetPlatform) {
-        const matchingListings = row.adRates.filter((ar) => ar.platform === targetPlatform);
-        for (const ar of matchingListings) {
-          handleAdRateEdit(rowId, ar.platform, ar.listingId, value, mode, {
-            variantId: ar.variantId,
-            marketplaceListingId: ar.marketplaceListingId,
-          });
+
+        const item = buildPushItem(row, e.platform, e.listingId, pushField, value);
+        if (item) {
+          if (identity.marketplaceListingId) item.marketplaceListingId = identity.marketplaceListingId;
+          if (identity.variantId) item.platformVariantId = identity.variantId;
+          pushItems.push(item);
         }
-      } else if (field === "weight") {
-        handleWeightSave(rowId, String(value));
-      } else if (field === "supplierCost") {
-        handleCellSave(rowId, "supplierCost", value);
-      } else if (field === "supplierShipping") {
-        handleCellSave(rowId, "supplierShipping", value);
       }
     }
 
+    if (pushItems.length === 0) {
+      clearSelection();
+      showToast(`No ${FIELD_LABELS[field]} changes needed — all values already match.`);
+      return;
+    }
+
+    if (mode === "push") {
+      void Promise.allSettled(stagePromises).then(() => {
+        queuePushReview(pushItems, "review");
+      });
+      clearSelection();
+      showToast(`Bulk ${FIELD_LABELS[field]} staged for review — ${pushItems.length} change${pushItems.length !== 1 ? "s" : ""}`);
+      return;
+    }
+
+    const bulkKey = `bulk:${Date.now()}`;
+    void Promise.allSettled(stagePromises).then(() => {
+      startInlineFastPushItems(bulkKey, pushItems);
+    });
     clearSelection();
-    showToast(`Bulk ${FIELD_LABELS[field]} updated across ${rowIds.length} row${rowIds.length !== 1 ? "s" : ""}`);
+    showToast(`Bulk fast push started — ${pushItems.length} ${FIELD_LABELS[field]} change${pushItems.length !== 1 ? "s" : ""}`);
   }
 
   const FIELD_LABELS: Record<string, string> = {
