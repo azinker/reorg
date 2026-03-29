@@ -15,6 +15,7 @@ import {
   Weight,
   Database,
   ClipboardCheck,
+  Puzzle,
   Settings,
   Users,
   Globe,
@@ -38,6 +39,7 @@ const navItems = [
   { href: "/shipping-rates", label: "Shipping Rates", icon: Weight },
   { href: "/backups", label: "Backups", icon: Database },
   { href: "/setup", label: "Setup Checklist", icon: ClipboardCheck },
+  { href: "/chrome-extension", label: "Chrome Extension", icon: Puzzle },
   { href: "/users", label: "Users", icon: Users },
   { href: "/settings", label: "Settings", icon: Settings },
 ];
