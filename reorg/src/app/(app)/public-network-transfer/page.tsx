@@ -30,7 +30,7 @@ const CHANNEL_LABEL: Record<(typeof CHANNEL_KEYS)[number], string> = {
   MARKETPLACE_INBOUND: "Marketplace HTTP (eBay response bodies, sync)",
   /** One category for all pull-sync telemetry; each row’s Label + Result say completed vs failed. */
   SYNC_JOB: "Pull sync jobs",
-  FORECAST: "Forecast runs",
+  FORECAST: "Inventory Forecaster (page load, runs, Excel, saves, order export)",
   OTHER: "Other",
 };
 
@@ -39,7 +39,7 @@ const CHANNEL_LEGEND_LABEL: Record<(typeof CHANNEL_KEYS)[number], string> = {
   CLIENT_API_RESPONSE: "API responses (grid JSON)",
   MARKETPLACE_INBOUND: "Marketplace HTTP (eBay)",
   SYNC_JOB: "Pull syncs",
-  FORECAST: "Forecast",
+  FORECAST: "Forecaster",
   OTHER: "Other",
 };
 
@@ -260,7 +260,11 @@ export default function PublicNetworkTransferPage() {
         because we record duration and processed counts, not total download size. The{" "}
         <strong>Result</strong> column shows Completed vs Failed; successful BigCommerce/eBay/Shopify syncs
         still appear under Pull sync jobs — that category means “a sync run was recorded,” not “something
-        failed.” Samples older than {data?.retentionDays ?? 10} days are pruned automatically.
+        failed.” If you still see an older channel name like “Sync jobs completed / failed,” refresh after
+        deploy — that wording grouped both outcomes in one bucket; it did not mean every row failed.{" "}
+        <strong>Inventory Forecaster</strong> rows appear when you open the forecaster, run a forecast,
+        export or save, or load supplier-order Excel data — read the <strong>Label</strong> column for the
+        exact action. Samples older than {data?.retentionDays ?? 10} days are pruned automatically.
       </div>
 
       {error && (
