@@ -3384,6 +3384,11 @@ export function DataGrid({
   scrollToRowRef.current = scrollToRow;
 
   async function resolveItemIdToRowAndScroll(itemId: string, platform?: Platform) {
+    for (let attempt = 0; attempt < 12; attempt++) {
+      const rows = gridRowsRef.current;
+      if (rows.length > 0) break;
+      if (attempt < 11) await new Promise((r) => setTimeout(r, 100));
+    }
     const rows = gridRowsRef.current;
     if (rows.length === 0) {
       showToast("Grid is still loading. Try again in a moment.", 4500, true);

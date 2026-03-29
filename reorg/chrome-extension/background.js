@@ -25,13 +25,17 @@ function isDashboardUrl(fullUrl) {
 }
 
 /**
+ * Dispatch scroll-to-row in the **page** JavaScript world. Content scripts are isolated from
+ * the Next.js app, so window.dispatchEvent from a content script does not reach React.
+ * MAIN-world injection matches what the reorg-tab-bridge inline script attempted (often blocked by CSP).
+ *
  * @param {{ itemId: string, platform?: string | null }} params
  */
 async function openOrFocusReorg(params) {
   const { reorgBaseUrl } = await getSettings();
   const base = normalizeBase(reorgBaseUrl);
   const allTabs = await chrome.tabs.query({});
-  const existing = allTabs.filter((t) => t.url && t.url.startsWith(base));
+  const reorgTabs = allTabs.filter((t) => t.url && t.url.startsWith(base));
 
   const payload = {
     itemId: params.itemId,
@@ -43,33 +47,40 @@ async function openOrFocusReorg(params) {
   if (params.platform) q.set("platform", params.platform);
   const dashboardWithQuery = `${base}/dashboard?${q.toString()}`;
 
-  if (existing.length > 0) {
-    const tab = existing[0];
-    const tabUrl = tab.url || "";
+  const dashboardTab = reorgTabs.find((t) => isDashboardUrl(t.url || ""));
+  const anyReorgTab = reorgTabs[0];
+  const tab = dashboardTab ?? anyReorgTab;
 
-    if (tab.id != null && isDashboardUrl(tabUrl)) {
-      try {
-        await chrome.tabs.sendMessage(tab.id, {
-          type: "SCROLL_TO_ITEM_IN_REORG",
-          payload,
-        });
-        await chrome.tabs.update(tab.id, { active: true });
-        if (tab.windowId != null) {
-          await chrome.windows.update(tab.windowId, { focused: true });
-        }
-        return { ok: true, action: "messaged" };
-      } catch {
-        /* content script missing or page not ready — fall through to navigation */
-      }
-    }
-
-    if (tab.id != null) {
-      await chrome.tabs.update(tab.id, { url: dashboardWithQuery, active: true });
+  if (tab?.id != null && isDashboardUrl(tab.url || "")) {
+    try {
+      await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        world: "MAIN",
+        func: (detail) => {
+          try {
+            window.dispatchEvent(new CustomEvent("reorg-extension-deep-link", { detail }));
+          } catch {
+            /* ignore */
+          }
+        },
+        args: [payload],
+      });
+      await chrome.tabs.update(tab.id, { active: true });
       if (tab.windowId != null) {
         await chrome.windows.update(tab.windowId, { focused: true });
       }
-      return { ok: true, action: "navigated" };
+      return { ok: true, action: "injected" };
+    } catch (err) {
+      console.warn("[reorg ext] MAIN-world inject failed, navigating with query string", err);
     }
+  }
+
+  if (tab?.id != null) {
+    await chrome.tabs.update(tab.id, { url: dashboardWithQuery, active: true });
+    if (tab.windowId != null) {
+      await chrome.windows.update(tab.windowId, { focused: true });
+    }
+    return { ok: true, action: "navigated" };
   }
 
   await chrome.tabs.create({ url: dashboardWithQuery, active: true });
@@ -87,7 +98,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     const id = message.itemId;
     const short = id && String(id).length >= 4 ? String(id).slice(-4) : "••••";
     chrome.action.setBadgeText({ tabId: sender.tab.id, text: short });
-    chrome.action.setBadgeBackgroundColor({ color: "#7c3aed" });
+    chrome.action.setBadgeBackgroundColor({ color: "#B5282D" });
     sendResponse({ ok: true });
     return false;
   }

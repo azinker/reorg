@@ -2,7 +2,7 @@
 
 Opens the reorG dashboard and scrolls to the row for the marketplace listing you are viewing.
 
-- **Existing reorG tab on `/dashboard`:** the extension focuses that tab and scrolls to the row **without reloading** the page (in-page messaging).
+- **Existing reorG tab on `/dashboard`:** the extension focuses that tab and scrolls to the row **without reloading** the page (injects a tiny script in the page context so the dashboard receives the same `CustomEvent` as a URL deep link; content scripts alone cannot reach the Next.js app).
 - **Existing reorG tab on another route** (e.g. Settings): the tab navigates to the dashboard with query params (one load).
 - **No reorG tab:** a new tab opens on the dashboard with query params.
 
@@ -60,6 +60,7 @@ The dashboard resolves the row (client-side grid match first, then `GET /api/gri
 
 - **tabs**: find or create the reorG tab and focus it.
 - **storage**: save options (base URL, eBay default, BC host).
+- **scripting**: run a short **MAIN-world** script on the dashboard tab so `window.dispatchEvent` reaches the reorG app (required because extension content scripts are isolated from page JavaScript).
 - **host_permissions**: reorG origin, localhost, eBay, Shopify admin, BigCommerce `*.mybigcommerce.com`.
 
 ## Development
