@@ -22,7 +22,7 @@ export function AppShell({ children, user }: AppShellProps) {
   return (
     <div className="flex h-screen overflow-hidden">
       <div className="hidden lg:flex">
-        <Sidebar />
+        <Sidebar userRole={user?.role ?? null} />
       </div>
       <div
         className={cn(
@@ -37,7 +37,7 @@ export function AppShell({ children, user }: AppShellProps) {
           mobileOpen ? "translate-x-0" : "-translate-x-full"
         )}
       >
-        <Sidebar mobile onNavigate={() => setMobileOpen(false)} />
+        <Sidebar mobile userRole={user?.role ?? null} onNavigate={() => setMobileOpen(false)} />
       </div>
       <DashboardConnectionProvider>
         <div className="flex min-w-0 flex-1 flex-col overflow-hidden">

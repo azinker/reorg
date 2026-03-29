@@ -45,9 +45,11 @@ const navItems = [
 interface SidebarProps {
   mobile?: boolean;
   onNavigate?: () => void;
+  /** When set, admin-only nav items are hidden for non-admins. */
+  userRole?: string | null;
 }
 
-export function Sidebar({ mobile = false, onNavigate }: SidebarProps) {
+export function Sidebar({ mobile = false, onNavigate, userRole }: SidebarProps) {
   const pathname = usePathname();
   const isPageVisible = usePageVisibility();
   const [collapsed, setCollapsed] = useState(false);
@@ -151,7 +153,12 @@ export function Sidebar({ mobile = false, onNavigate }: SidebarProps) {
       {/* Nav Items */}
       <nav className="flex-1 overflow-y-auto p-2">
         <ul className="space-y-1">
-          {navItems.map((item) => {
+          {navItems
+            .filter(
+              (item) =>
+                item.href !== "/public-network-transfer" || userRole !== "OPERATOR",
+            )
+            .map((item) => {
             const isActive =
               pathname === item.href ||
               (item.href !== "/dashboard" && pathname.startsWith(item.href));
