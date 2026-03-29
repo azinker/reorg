@@ -1,7 +1,7 @@
 import { db } from "@/lib/db";
 import { Platform, Prisma, type Integration, type SyncStatus } from "@prisma/client";
 import { XMLParser } from "fast-xml-parser";
-import type { RawListing } from "@/lib/integrations/types";
+import { type RawListing, trimRawDataForStorage } from "@/lib/integrations/types";
 import { getIntegrationConfig, mergeIntegrationConfig } from "@/lib/integrations/runtime-config";
 import {
   buildCompletedSyncConfigFromLatest,
@@ -1197,7 +1197,7 @@ async function tryApplyIncrementalQuantityFirstTtItem(
       inventory: available,
       status: available > 0 ? "ACTIVE" : "OUT_OF_STOCK",
       lastSyncedAt: now,
-      rawData: JSON.parse(JSON.stringify(item)) as Prisma.InputJsonValue,
+      rawData: trimRawDataForStorage(JSON.parse(JSON.stringify(item)), "TT_EBAY") as Prisma.InputJsonValue,
     };
     if (salePrice !== undefined) {
       data.salePrice = salePrice;
@@ -1269,12 +1269,12 @@ async function tryApplyIncrementalQuantityFirstTtItem(
       inventory: available,
       status: available > 0 ? "ACTIVE" : "OUT_OF_STOCK",
       lastSyncedAt: now,
-      rawData: JSON.parse(
+      rawData: trimRawDataForStorage(JSON.parse(
         JSON.stringify({
           variation,
           parentItemId: itemId,
         }),
-      ) as Prisma.InputJsonValue,
+      ), "TT_EBAY") as Prisma.InputJsonValue,
     };
     if (salePrice !== undefined) {
       data.salePrice = salePrice;
@@ -1336,7 +1336,7 @@ function extractListingsFromItem(item: unknown): RawListing[] {
         status: available > 0 ? "active" : "out_of_stock",
         isVariation: false,
         upc: extractUpc(item) ?? undefined,
-        rawData: JSON.parse(JSON.stringify(item)),
+        rawData: trimRawDataForStorage(JSON.parse(JSON.stringify(item)), "TT_EBAY"),
       },
     ];
   }
@@ -1367,12 +1367,12 @@ function extractListingsFromItem(item: unknown): RawListing[] {
       status: variationAvailable > 0 ? ("active" as const) : ("out_of_stock" as const),
       isVariation: true,
       upc: extractVariationUpc(variation) ?? undefined,
-      rawData: JSON.parse(
+      rawData: trimRawDataForStorage(JSON.parse(
         JSON.stringify({
           variation,
           parentItemId: itemId,
         }),
-      ) as Record<string, unknown>,
+      ), "TT_EBAY") as Record<string, unknown>,
     } satisfies RawListing;
   });
 

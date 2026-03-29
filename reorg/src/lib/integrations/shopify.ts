@@ -1,13 +1,14 @@
-import type {
-  MarketplaceAdapter,
-  FetchListingsOptions,
-  FetchListingsResult,
-  RawListing,
-  InventoryMap,
-  PriceUpdate,
-  AdRateUpdate,
-  UpcUpdate,
-  PushResult,
+import {
+  type MarketplaceAdapter,
+  type FetchListingsOptions,
+  type FetchListingsResult,
+  type RawListing,
+  type InventoryMap,
+  type PriceUpdate,
+  type AdRateUpdate,
+  type UpcUpdate,
+  type PushResult,
+  trimRawDataForStorage,
 } from "@/lib/integrations/types";
 import type { Platform } from "@prisma/client";
 
@@ -354,7 +355,7 @@ export class ShopifyAdapter implements MarketplaceAdapter {
       isVariation: hasMultipleVariants,
       parentPlatformItemId: hasMultipleVariants ? String(product.id) : undefined,
       upc: (variant.barcode as string) ?? undefined,
-      rawData: { product, variant },
+      rawData: trimRawDataForStorage({ product, variant }, "SHOPIFY"),
     };
   }
 }

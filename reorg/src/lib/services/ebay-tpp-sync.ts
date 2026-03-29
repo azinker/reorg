@@ -6,6 +6,7 @@ import {
   type SyncExecutionOptions,
 } from "@/lib/services/sync-control";
 import { getIntegrationConfig, mergeIntegrationConfig } from "@/lib/integrations/runtime-config";
+import { trimRawDataForStorage } from "@/lib/integrations/types";
 import {
   buildEbayQuotaExhaustedMessage,
   buildLocallyTrackedSnapshot,
@@ -1620,7 +1621,7 @@ async function upsertEbayItem(
           imageUrl,
           isVariation: true,
           status: "ACTIVE",
-          rawData: JSON.parse(JSON.stringify(item)),
+          rawData: trimRawDataForStorage(JSON.parse(JSON.stringify(item)), "TPP_EBAY"),
           lastSyncedAt: new Date(),
         },
       });
@@ -1631,7 +1632,7 @@ async function upsertEbayItem(
           masterRowId: parentMaster.id,
           title: title ?? null,
           imageUrl,
-          rawData: JSON.parse(JSON.stringify(item)),
+          rawData: trimRawDataForStorage(JSON.parse(JSON.stringify(item)), "TPP_EBAY"),
           lastSyncedAt: new Date(),
         },
       });
@@ -1699,7 +1700,7 @@ async function upsertEbayItem(
         status: available > 0 ? ("ACTIVE" as const) : ("OUT_OF_STOCK" as const),
         isVariation: true,
         parentListingId: parentListing?.id ?? null,
-        rawData: JSON.parse(JSON.stringify(variation)),
+        rawData: trimRawDataForStorage(JSON.parse(JSON.stringify(variation)), "TPP_EBAY"),
         lastSyncedAt: new Date(),
       };
 
@@ -1777,7 +1778,7 @@ async function upsertEbayItem(
     status: available > 0 ? ("ACTIVE" as const) : ("OUT_OF_STOCK" as const),
     isVariation: false,
     parentListingId: null,
-    rawData: JSON.parse(JSON.stringify(item)),
+    rawData: trimRawDataForStorage(JSON.parse(JSON.stringify(item)), "TPP_EBAY"),
     lastSyncedAt: new Date(),
   };
 
@@ -1881,7 +1882,7 @@ async function tryApplyIncrementalQuantityFirstTppItem(
         inventory: available,
         status: available > 0 ? "ACTIVE" : "OUT_OF_STOCK",
         lastSyncedAt: now,
-        rawData: JSON.parse(JSON.stringify(variation)) as Prisma.InputJsonValue,
+        rawData: trimRawDataForStorage(JSON.parse(JSON.stringify(variation)), "TPP_EBAY") as Prisma.InputJsonValue,
       };
       if (salePrice !== undefined) {
         data.salePrice = salePrice;
@@ -1904,7 +1905,7 @@ async function tryApplyIncrementalQuantityFirstTppItem(
         where: { id: existingParent.id },
         data: {
           lastSyncedAt: now,
-          rawData: JSON.parse(JSON.stringify(item)) as Prisma.InputJsonValue,
+          rawData: trimRawDataForStorage(JSON.parse(JSON.stringify(item)), "TPP_EBAY") as Prisma.InputJsonValue,
           ...(title ? { title } : {}),
         },
       }),
@@ -1936,7 +1937,7 @@ async function tryApplyIncrementalQuantityFirstTppItem(
     inventory: available,
     status: available > 0 ? "ACTIVE" : "OUT_OF_STOCK",
     lastSyncedAt: now,
-    rawData: JSON.parse(JSON.stringify(item)) as Prisma.InputJsonValue,
+    rawData: trimRawDataForStorage(JSON.parse(JSON.stringify(item)), "TPP_EBAY") as Prisma.InputJsonValue,
   };
   if (salePrice !== undefined) {
     data.salePrice = salePrice;

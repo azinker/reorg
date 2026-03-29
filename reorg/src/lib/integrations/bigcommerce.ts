@@ -1,8 +1,9 @@
-import type {
-  MarketplaceAdapter,
-  FetchListingsOptions,
-  FetchListingsResult,
-  RawListing,
+import {
+  type MarketplaceAdapter,
+  type FetchListingsOptions,
+  type FetchListingsResult,
+  type RawListing,
+  trimRawDataForStorage,
   InventoryMap,
   PriceUpdate,
   AdRateUpdate,
@@ -316,7 +317,7 @@ export class BigCommerceAdapter implements MarketplaceAdapter {
       status: inventory > 0 ? "active" : "out_of_stock",
       isVariation: hasMultipleVariants,
       upc: (variant?.upc as string) ?? (product.upc as string),
-      rawData: { product, variant },
+      rawData: trimRawDataForStorage({ product, variant }, "BIGCOMMERCE"),
     };
   }
 }
