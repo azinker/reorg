@@ -52,7 +52,10 @@ import {
   RefreshCw,
   X,
   Link2,
+  Barcode,
+  Loader2,
 } from "lucide-react";
+import { saveAs } from "file-saver";
 
 interface DataGridProps {
   rows: GridRow[];
@@ -816,6 +819,7 @@ export function DataGrid({
   const deepLinkProcessedKeyRef = useRef<string | null>(null);
   const [selectedRowIds, setSelectedRowIds] = useState<Set<string>>(() => new Set());
   const [bulkEditOpen, setBulkEditOpen] = useState(false);
+  const [binLabelLoadingRowId, setBinLabelLoadingRowId] = useState<string | null>(null);
   const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const quickPushTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const rowRefreshTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
@@ -2115,6 +2119,34 @@ export function DataGrid({
       }
     }
     return undefined;
+  }
+
+  async function downloadBinLabelsPdf(rowIds: string[]) {
+    if (rowIds.length === 0) {
+      showToast("No eligible rows to print.", 4000, true);
+      return;
+    }
+    try {
+      const res = await fetch("/api/grid/bin-labels", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ rowIds }),
+      });
+      if (!res.ok) {
+        const errJson = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(errJson.error ?? `Request failed (${res.status})`);
+      }
+      const blob = await res.blob();
+      const cd = res.headers.get("Content-Disposition");
+      const nameMatch = cd?.match(/filename="([^"]+)"/);
+      const filename = nameMatch?.[1] ?? `bin-labels-${new Date().toISOString().slice(0, 10)}.pdf`;
+      saveAs(blob, filename);
+      showToast(`Downloaded bin labels (${rowIds.length} page${rowIds.length !== 1 ? "s" : ""})`);
+    } catch (e) {
+      console.error(e);
+      showToast(e instanceof Error ? e.message : "Failed to download bin labels", 4000, true);
+      throw e;
+    }
   }
 
   async function reloadRowSnapshot(rowId: string) {
@@ -4211,87 +4243,110 @@ export function DataGrid({
                       <span className="text-base font-semibold text-emerald-600 dark:text-emerald-400">↳</span>
                     )}
                     </div>
-                    {!isChild && (
+                    {!isParent && (
                       <div className="flex flex-col items-center gap-1">
-                        {/* Refresh button */}
-                        {(() => {
-                          const phase = rowRefreshStates[row.id];
-                          const errorMsg = rowRefreshErrors[row.id];
-                          return (
-                            <div className="relative flex flex-col items-center gap-0.5">
-                              <button
-                                onClick={() => void handleRefreshRow(row.id, row.parentId)}
-                                disabled={phase === "loading"}
-                                className={cn(
-                                  "flex h-7 w-7 items-center justify-center rounded-md border transition-colors cursor-pointer",
-                                  phase === "success"
-                                    ? "border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-500/40 dark:bg-emerald-500/15 dark:text-emerald-300"
-                                    : phase === "error"
-                                      ? "border-amber-300 bg-amber-50 text-amber-700 dark:border-amber-500/50 dark:bg-amber-500/15 dark:text-amber-300"
-                                      : "border-violet-300 bg-violet-50 text-violet-700 dark:border-violet-500/35 dark:bg-violet-500/15 dark:text-violet-300",
-                                  phase === "loading"
-                                    ? "cursor-wait opacity-80"
-                                    : phase === "success"
-                                      ? "hover:border-emerald-400 hover:bg-emerald-100 hover:text-emerald-800 dark:hover:border-emerald-500/50 dark:hover:bg-emerald-500/20 dark:hover:text-emerald-200"
-                                      : phase === "error"
-                                        ? "hover:border-amber-400 hover:bg-amber-100 hover:text-amber-800 dark:hover:border-amber-500/70 dark:hover:bg-amber-500/25 dark:hover:text-amber-200"
-                                        : "hover:border-violet-400 hover:bg-violet-100 hover:text-violet-800 dark:hover:border-violet-400/60 dark:hover:bg-violet-500/25 dark:hover:text-violet-200"
-                                )}
-                                title={
-                                  phase === "success"
-                                    ? "Row refreshed"
-                                    : phase === "error"
-                                      ? "Click to retry refresh"
-                                      : phase === "loading" && isAnyRefreshLoading
-                                        ? "Queued — waiting for another refresh to finish"
-                                        : "Refresh this row from linked marketplaces"
-                                }
-                              >
-                                {phase === "success" ? (
-                                  <Check className="h-3.5 w-3.5" strokeWidth={3} />
-                                ) : phase === "error" ? (
-                                  <AlertTriangle className="h-3.5 w-3.5" strokeWidth={2.4} />
-                                ) : (
-                                  <RefreshCw
-                                    className={cn("h-3.5 w-3.5", phase === "loading" && "animate-spin")}
-                                    strokeWidth={2.4}
-                                  />
-                                )}
-                              </button>
-                              {phase === "error" && (
-                                <span className="max-w-[34px] break-words text-center text-[8px] font-semibold leading-tight text-amber-600/90 dark:text-amber-400/90">
-                                  {errorMsg ? getRefreshErrorLabel(errorMsg) : "Failed"}
-                                </span>
-                              )}
-                              {phase === "error" && errorMsg && (
-                                <div className="absolute left-[calc(100%+6px)] top-1/2 z-20 w-max max-w-[380px] -translate-y-1/2 animate-in fade-in slide-in-from-left-1">
-                                  <div className="relative rounded-md border border-amber-500/40 bg-amber-950/95 px-3 py-2 shadow-lg backdrop-blur-sm">
-                                    <div className="absolute -left-[5px] top-1/2 h-2.5 w-2.5 -translate-y-1/2 rotate-45 border-b border-l border-amber-500/40 bg-amber-950/95" />
-                                    <p className="relative text-[11px] leading-relaxed text-amber-200">
-                                      {errorMsg}
-                                    </p>
-                                  </div>
+                        {!isChild && (
+                          <>
+                            {/* Refresh button */}
+                            {(() => {
+                              const phase = rowRefreshStates[row.id];
+                              const errorMsg = rowRefreshErrors[row.id];
+                              return (
+                                <div className="relative flex flex-col items-center gap-0.5">
+                                  <button
+                                    onClick={() => void handleRefreshRow(row.id, row.parentId)}
+                                    disabled={phase === "loading"}
+                                    className={cn(
+                                      "flex h-7 w-7 items-center justify-center rounded-md border transition-colors cursor-pointer",
+                                      phase === "success"
+                                        ? "border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-500/40 dark:bg-emerald-500/15 dark:text-emerald-300"
+                                        : phase === "error"
+                                          ? "border-amber-300 bg-amber-50 text-amber-700 dark:border-amber-500/50 dark:bg-amber-500/15 dark:text-amber-300"
+                                          : "border-violet-300 bg-violet-50 text-violet-700 dark:border-violet-500/35 dark:bg-violet-500/15 dark:text-violet-300",
+                                      phase === "loading"
+                                        ? "cursor-wait opacity-80"
+                                        : phase === "success"
+                                          ? "hover:border-emerald-400 hover:bg-emerald-100 hover:text-emerald-800 dark:hover:border-emerald-500/50 dark:hover:bg-emerald-500/20 dark:hover:text-emerald-200"
+                                          : phase === "error"
+                                            ? "hover:border-amber-400 hover:bg-amber-100 hover:text-amber-800 dark:hover:border-amber-500/70 dark:hover:bg-amber-500/25 dark:hover:text-amber-200"
+                                            : "hover:border-violet-400 hover:bg-violet-100 hover:text-violet-800 dark:hover:border-violet-400/60 dark:hover:bg-violet-500/25 dark:hover:text-violet-200"
+                                    )}
+                                    title={
+                                      phase === "success"
+                                        ? "Row refreshed"
+                                        : phase === "error"
+                                          ? "Click to retry refresh"
+                                          : phase === "loading" && isAnyRefreshLoading
+                                            ? "Queued — waiting for another refresh to finish"
+                                            : "Refresh this row from linked marketplaces"
+                                    }
+                                  >
+                                    {phase === "success" ? (
+                                      <Check className="h-3.5 w-3.5" strokeWidth={3} />
+                                    ) : phase === "error" ? (
+                                      <AlertTriangle className="h-3.5 w-3.5" strokeWidth={2.4} />
+                                    ) : (
+                                      <RefreshCw
+                                        className={cn("h-3.5 w-3.5", phase === "loading" && "animate-spin")}
+                                        strokeWidth={2.4}
+                                      />
+                                    )}
+                                  </button>
+                                  {phase === "error" && (
+                                    <span className="max-w-[34px] break-words text-center text-[8px] font-semibold leading-tight text-amber-600/90 dark:text-amber-400/90">
+                                      {errorMsg ? getRefreshErrorLabel(errorMsg) : "Failed"}
+                                    </span>
+                                  )}
+                                  {phase === "error" && errorMsg && (
+                                    <div className="absolute left-[calc(100%+6px)] top-1/2 z-20 w-max max-w-[380px] -translate-y-1/2 animate-in fade-in slide-in-from-left-1">
+                                      <div className="relative rounded-md border border-amber-500/40 bg-amber-950/95 px-3 py-2 shadow-lg backdrop-blur-sm">
+                                        <div className="absolute -left-[5px] top-1/2 h-2.5 w-2.5 -translate-y-1/2 rotate-45 border-b border-l border-amber-500/40 bg-amber-950/95" />
+                                        <p className="relative text-[11px] leading-relaxed text-amber-200">
+                                          {errorMsg}
+                                        </p>
+                                      </div>
+                                    </div>
+                                  )}
                                 </div>
-                              )}
-                            </div>
-                          );
-                        })()}
-                        {/* Rematch button — only for rows that have at least one linked marketplace listing */}
-                        {row.itemNumbers.some((sv) => sv.marketplaceListingId) && (
-                          <button
-                            onClick={() => {
-                              const listings = row.itemNumbers.filter((sv) => sv.marketplaceListingId);
-                              setRematchRow(row);
-                              setRematchListingId(listings[0]?.marketplaceListingId ?? "");
-                              setRematchNewSku(row.sku);
-                              setRematchError(null);
-                            }}
-                            className="flex h-6 w-6 items-center justify-center rounded-md border border-violet-300 bg-violet-50 text-violet-700 dark:border-violet-500/40 dark:bg-violet-500/15 dark:text-violet-300 transition-colors hover:border-violet-400 hover:bg-violet-100 hover:text-violet-800 dark:hover:border-violet-400/70 dark:hover:bg-violet-500/30 dark:hover:text-violet-200 cursor-pointer"
-                            title="Rematch listing to a different master SKU"
-                          >
-                            <Link2 className="h-3 w-3" strokeWidth={2.4} />
-                          </button>
+                              );
+                            })()}
+                            {/* Rematch button — only for rows that have at least one linked marketplace listing */}
+                            {row.itemNumbers.some((sv) => sv.marketplaceListingId) && (
+                              <button
+                                onClick={() => {
+                                  const listings = row.itemNumbers.filter((sv) => sv.marketplaceListingId);
+                                  setRematchRow(row);
+                                  setRematchListingId(listings[0]?.marketplaceListingId ?? "");
+                                  setRematchNewSku(row.sku);
+                                  setRematchError(null);
+                                }}
+                                className="flex h-6 w-6 items-center justify-center rounded-md border border-violet-300 bg-violet-50 text-violet-700 dark:border-violet-500/40 dark:bg-violet-500/15 dark:text-violet-300 transition-colors hover:border-violet-400 hover:bg-violet-100 hover:text-violet-800 dark:hover:border-violet-400/70 dark:hover:bg-violet-500/30 dark:hover:text-violet-200 cursor-pointer"
+                                title="Rematch listing to a different master SKU"
+                              >
+                                <Link2 className="h-3 w-3" strokeWidth={2.4} />
+                              </button>
+                            )}
+                          </>
                         )}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setBinLabelLoadingRowId(row.id);
+                            void downloadBinLabelsPdf([row.id]).finally(() => setBinLabelLoadingRowId(null));
+                          }}
+                          disabled={binLabelLoadingRowId === row.id}
+                          className={cn(
+                            "flex h-6 w-6 items-center justify-center rounded-md border border-violet-300 bg-violet-50 text-violet-700 dark:border-violet-500/40 dark:bg-violet-500/15 dark:text-violet-300 transition-colors hover:border-violet-400 hover:bg-violet-100 hover:text-violet-800 dark:hover:border-violet-400/70 dark:hover:bg-violet-500/30 dark:hover:text-violet-200 cursor-pointer",
+                            binLabelLoadingRowId === row.id && "cursor-wait opacity-80",
+                          )}
+                          title="Download bin label PDF"
+                        >
+                          {binLabelLoadingRowId === row.id ? (
+                            <Loader2 className="h-3 w-3 animate-spin" strokeWidth={2.4} />
+                          ) : (
+                            <Barcode className="h-3 w-3" strokeWidth={2.4} />
+                          )}
+                        </button>
                       </div>
                     )}
                   </div>
@@ -5387,6 +5442,7 @@ export function DataGrid({
           findRow={findRow}
           onClose={() => setBulkEditOpen(false)}
           onApply={handleBulkEditApply}
+          onPrintBinLabels={downloadBinLabelsPdf}
         />
       )}
 

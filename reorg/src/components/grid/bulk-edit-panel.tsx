@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useCallback, useRef, useEffect } from "react";
-import { X, Check, ArrowRight, Zap } from "lucide-react";
+import { useState, useCallback, useRef, useEffect, useMemo } from "react";
+import { X, Check, ArrowRight, Zap, Download } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   type Platform,
@@ -11,12 +11,14 @@ import {
 } from "@/lib/grid-types";
 import { PlatformIcon } from "@/components/grid/platform-icon";
 
-export type BulkEditField =
+export type NumericBulkEditField =
   | "salePrice"
   | "adRate"
   | "weight"
   | "supplierCost"
   | "supplierShipping";
+
+export type BulkEditField = NumericBulkEditField | "printBinLabels";
 
 const FIELD_OPTIONS: { value: BulkEditField; label: string; storeSpecific: boolean }[] = [
   { value: "salePrice", label: "Sale Price", storeSpecific: true },
@@ -24,6 +26,7 @@ const FIELD_OPTIONS: { value: BulkEditField; label: string; storeSpecific: boole
   { value: "weight", label: "Weight", storeSpecific: false },
   { value: "supplierCost", label: "Supplier Cost", storeSpecific: false },
   { value: "supplierShipping", label: "Supplier Shipping", storeSpecific: false },
+  { value: "printBinLabels", label: "Print Bin Labels", storeSpecific: false },
 ];
 
 const ALL_PLATFORMS: Platform[] = ["TPP_EBAY", "TT_EBAY", "BIGCOMMERCE", "SHOPIFY"];
@@ -33,10 +36,11 @@ interface BulkEditPanelProps {
   findRow: (id: string) => GridRow | undefined;
   onClose: () => void;
   onApply: (params: BulkEditApplyParams) => void;
+  onPrintBinLabels?: (rowIds: string[]) => Promise<void>;
 }
 
 export interface BulkEditApplyParams {
-  field: BulkEditField;
+  field: NumericBulkEditField;
   platform: Platform | null;
   value: number;
   mode: "stage" | "push" | "fastPush";
@@ -48,15 +52,25 @@ export function BulkEditPanel({
   findRow,
   onClose,
   onApply,
+  onPrintBinLabels,
 }: BulkEditPanelProps) {
   const [field, setField] = useState<BulkEditField | null>(null);
   const [platform, setPlatform] = useState<Platform | null>(null);
   const [rawValue, setRawValue] = useState("");
+  const [printLoading, setPrintLoading] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const selectedField = FIELD_OPTIONS.find((f) => f.value === field);
   const isStoreSpecific = selectedField?.storeSpecific ?? false;
-  const needsPlatform = isStoreSpecific && !platform;
+
+  const printEligibleRowIds = useMemo(() => {
+    const out: string[] = [];
+    for (const id of selectedRowIds) {
+      const row = findRow(id);
+      if (row && !row.isParent) out.push(id);
+    }
+    return out;
+  }, [selectedRowIds, findRow]);
 
   const availablePlatforms = (() => {
     if (!isStoreSpecific) return [];
@@ -73,7 +87,7 @@ export function BulkEditPanel({
   })();
 
   useEffect(() => {
-    if (field && (!isStoreSpecific || platform) && inputRef.current) {
+    if (field && field !== "printBinLabels" && (!isStoreSpecific || platform) && inputRef.current) {
       inputRef.current.focus();
     }
   }, [field, platform, isStoreSpecific]);
@@ -93,10 +107,14 @@ export function BulkEditPanel({
     return num;
   })();
 
-  const canApply = field != null && parsedValue != null && (!isStoreSpecific || platform != null);
+  const canApply =
+    field != null &&
+    field !== "printBinLabels" &&
+    parsedValue != null &&
+    (!isStoreSpecific || platform != null);
 
   function handleApply(mode: "stage" | "push" | "fastPush") {
-    if (!field || parsedValue == null) return;
+    if (!field || field === "printBinLabels" || parsedValue == null) return;
     onApply({
       field,
       platform: isStoreSpecific ? platform : null,
@@ -105,6 +123,17 @@ export function BulkEditPanel({
       rowIds: [...selectedRowIds],
     });
     onClose();
+  }
+
+  async function handlePrintBinLabels() {
+    if (!onPrintBinLabels || printEligibleRowIds.length === 0) return;
+    setPrintLoading(true);
+    try {
+      await onPrintBinLabels(printEligibleRowIds);
+      onClose();
+    } finally {
+      setPrintLoading(false);
+    }
   }
 
   const fieldLabel = selectedField?.label ?? "field";
@@ -152,7 +181,7 @@ export function BulkEditPanel({
           </div>
 
           {/* Step 2: Platform (only for store-specific fields) */}
-          {field && isStoreSpecific && (
+          {field && field !== "printBinLabels" && isStoreSpecific && (
             <div>
               <label className="mb-1.5 block text-xs font-medium text-muted-foreground uppercase tracking-wide">
                 Target Marketplace
@@ -187,7 +216,7 @@ export function BulkEditPanel({
           )}
 
           {/* Step 3: Value */}
-          {field && (!isStoreSpecific || platform) && (
+          {field && field !== "printBinLabels" && (!isStoreSpecific || platform) && (
             <div>
               <label className="mb-1.5 block text-xs font-medium text-muted-foreground uppercase tracking-wide">
                 New {fieldLabel} Value
@@ -228,6 +257,25 @@ export function BulkEditPanel({
               )}
             </div>
           )}
+
+          {field === "printBinLabels" && (
+            <div className="rounded-md border border-border bg-muted/30 px-3 py-2.5">
+              <p className="text-xs leading-relaxed text-foreground">
+                Download a 6×4&quot; PDF with one label per eligible row, in selection order. Variation parent rows
+                are skipped.
+              </p>
+              <p className="mt-1.5 text-[11px] text-muted-foreground">
+                Eligible:{" "}
+                <span className="font-semibold tabular-nums text-foreground">
+                  {printEligibleRowIds.length}
+                </span>{" "}
+                of {selectedRowIds.size} selected
+                {selectedRowIds.size > 0 && printEligibleRowIds.length === 0
+                  ? " (only parent rows selected — choose single-SKU or child rows)"
+                  : ""}
+              </p>
+            </div>
+          )}
         </div>
 
         {/* Actions */}
@@ -238,6 +286,26 @@ export function BulkEditPanel({
           >
             Cancel
           </button>
+          {field === "printBinLabels" ? (
+            <button
+              type="button"
+              onClick={() => void handlePrintBinLabels()}
+              disabled={
+                printLoading ||
+                printEligibleRowIds.length === 0 ||
+                !onPrintBinLabels
+              }
+              className={cn(
+                "flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs font-semibold transition-colors cursor-pointer",
+                printLoading || printEligibleRowIds.length === 0 || !onPrintBinLabels
+                  ? "border-border text-muted-foreground opacity-50 cursor-not-allowed"
+                  : "border-violet-400 bg-violet-600/15 text-violet-700 dark:text-violet-300 hover:bg-violet-600/25",
+              )}
+            >
+              <Download className="h-3.5 w-3.5" />
+              {printLoading ? "Generating…" : "Download PDF"}
+            </button>
+          ) : (
           <div className="flex items-center gap-2">
             <button
               onClick={() => handleApply("stage")}
@@ -279,6 +347,7 @@ export function BulkEditPanel({
               Fast Push
             </button>
           </div>
+          )}
         </div>
       </div>
     </div>
