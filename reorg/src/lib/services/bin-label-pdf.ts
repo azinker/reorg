@@ -28,6 +28,30 @@ function buildBarcodeFormat(upc: string) {
   return { bcid: "code128" as const, text: upc };
 }
 
+/** Largest font size (pt) so measured text width ≤ maxWidth. */
+function maxFontSizeForWidth(
+  measureWidth: (fontSize: number) => number,
+  maxWidth: number,
+  minSize: number,
+  maxSize: number,
+): number {
+  let lo = minSize;
+  let hi = maxSize;
+  let best = minSize;
+  for (let i = 0; i < 48; i++) {
+    const mid = (lo + hi) / 2;
+    const w = measureWidth(mid);
+    if (w <= maxWidth) {
+      best = mid;
+      lo = mid;
+    } else {
+      hi = mid;
+    }
+    if (hi - lo < 0.25) break;
+  }
+  return Math.round(best * 4) / 4;
+}
+
 async function buildBarcodePngBuffer(upc: string): Promise<Uint8Array | null> {
   const trimmed = upc.trim();
   if (!trimmed) return null;
@@ -92,34 +116,75 @@ export async function buildBinLabelsPdf(orderedRowIds: string[]): Promise<Uint8A
   const fontBold = await pdf.embedFont(StandardFonts.HelveticaBold);
   const font = await pdf.embedFont(StandardFonts.Helvetica);
 
+  const marginX = 20;
+  const maxTextW = BIN_LABEL_PAGE_WIDTH_PT - 2 * marginX;
+  const HELV_CAP = 0.72;
+
   for (const id of orderedValidMasterIds) {
     const master = byId.get(id)!;
     const page = pdf.addPage([BIN_LABEL_PAGE_WIDTH_PT, BIN_LABEL_PAGE_HEIGHT_PT]);
     const { width, height } = page.getSize();
 
     const binText = binPrefixFromSku(master.sku);
-    const binFontSize = 34;
+    const skuText = master.sku;
+
+    const canUseUpc =
+      tppMasterIds.has(master.id) && master.upc != null && master.upc.trim().length > 0;
+
+    const binPtMax = canUseUpc ? 96 : 118;
+    const skuPtMax = canUseUpc ? 60 : 78;
+    const binVertFrac = canUseUpc ? 0.37 : 0.46;
+    const skuVertFrac = canUseUpc ? 0.31 : 0.41;
+
+    let binFontSize = maxFontSizeForWidth(
+      (s) => fontBold.widthOfTextAtSize(binText, s),
+      maxTextW,
+      22,
+      binPtMax,
+    );
+    let skuFontSize = maxFontSizeForWidth(
+      (s) => font.widthOfTextAtSize(skuText, s),
+      maxTextW,
+      18,
+      skuPtMax,
+    );
+
+    const topPad = 10;
+    const bottomPad = 14;
+    binFontSize = Math.min(binFontSize, (height * binVertFrac - topPad) / HELV_CAP);
+    skuFontSize = Math.min(skuFontSize, (height * skuVertFrac - bottomPad) / HELV_CAP);
+
+    const binBaseline = height - topPad - HELV_CAP * binFontSize;
+    const skuBaseline = bottomPad + 0.22 * skuFontSize;
+    const skuTopY = skuBaseline + HELV_CAP * skuFontSize;
+    const binGap = 14;
+    const verticalSlot = binBaseline - binGap - (skuTopY + binGap);
+
     const binW = fontBold.widthOfTextAtSize(binText, binFontSize);
     page.drawText(binText, {
       x: (width - binW) / 2,
-      y: height - 52,
+      y: binBaseline,
       size: binFontSize,
       font: fontBold,
       color: rgb(0, 0, 0),
     });
 
-    const canUseUpc =
-      tppMasterIds.has(master.id) && master.upc != null && master.upc.trim().length > 0;
     if (canUseUpc) {
       const pngBytes = await buildBarcodePngBuffer(master.upc!);
       if (pngBytes) {
         const png = await pdf.embedPng(pngBytes);
-        const maxW = width - 72;
-        const maxH = 120;
-        const s = Math.min(maxW / png.width, maxH / png.height, 1);
+        const maxBarW = width - 64;
+        const maxBarH =
+          verticalSlot > 36 ? Math.min(118, verticalSlot - 4) : Math.min(118, Math.max(56, height * 0.28));
+        const s = Math.min(maxBarW / png.width, maxBarH / png.height, 1);
         const dw = png.width * s;
         const dh = png.height * s;
-        const imgY = (height - dh) / 2;
+        const minBottomY = skuTopY + binGap;
+        const maxBottomY = binBaseline - binGap - dh;
+        const imgY =
+          maxBottomY >= minBottomY
+            ? minBottomY + (maxBottomY - minBottomY) / 2
+            : (height - dh) / 2;
         page.drawImage(png, {
           x: (width - dw) / 2,
           y: imgY,
@@ -129,13 +194,11 @@ export async function buildBinLabelsPdf(orderedRowIds: string[]): Promise<Uint8A
       }
     }
 
-    const skuText = master.sku;
-    const skuSize = 15;
-    const skuW = font.widthOfTextAtSize(skuText, skuSize);
+    const skuW = font.widthOfTextAtSize(skuText, skuFontSize);
     page.drawText(skuText, {
       x: (width - skuW) / 2,
-      y: 40,
-      size: skuSize,
+      y: skuBaseline,
+      size: skuFontSize,
       font,
       color: rgb(0, 0, 0),
     });
