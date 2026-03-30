@@ -8,6 +8,13 @@ export const BIN_LABEL_PAGE_HEIGHT_PT = 4 * 72;
 
 export const BIN_LABEL_MAX_ROW_IDS = 300;
 
+/** Grid uses `child-${MasterRow.id}` for variation children; parents may be `variation-parent:...` (no label). */
+export function resolveMasterRowIdFromGridId(gridRowId: string): string | null {
+  if (gridRowId.startsWith("variation-parent:")) return null;
+  if (gridRowId.startsWith("child-")) return gridRowId.slice("child-".length);
+  return gridRowId;
+}
+
 export function binPrefixFromSku(sku: string): string {
   if (!sku.includes("_")) return "—";
   const first = sku.split("_")[0];
@@ -55,8 +62,14 @@ export async function buildBinLabelsPdf(orderedRowIds: string[]): Promise<Uint8A
     throw new Error(`At most ${BIN_LABEL_MAX_ROW_IDS} labels per request`);
   }
 
+  const resolvedMasterIds: string[] = [];
+  for (const gridId of orderedRowIds) {
+    const mid = resolveMasterRowIdFromGridId(gridId);
+    if (mid) resolvedMasterIds.push(mid);
+  }
+
   const masters = await db.masterRow.findMany({
-    where: { id: { in: [...new Set(orderedRowIds)] }, isActive: true },
+    where: { id: { in: [...new Set(resolvedMasterIds)] }, isActive: true },
     select: { id: true, sku: true, upc: true },
   });
   const byId = new Map(masters.map((m) => [m.id, m]));
@@ -70,8 +83,8 @@ export async function buildBinLabelsPdf(orderedRowIds: string[]): Promise<Uint8A
   });
   const tppMasterIds = new Set(tppListings.map((l) => l.masterRowId));
 
-  const orderedValid = orderedRowIds.filter((id) => byId.has(id));
-  if (orderedValid.length === 0) {
+  const orderedValidMasterIds = resolvedMasterIds.filter((id) => byId.has(id));
+  if (orderedValidMasterIds.length === 0) {
     throw new Error("No valid active rows to print");
   }
 
@@ -79,7 +92,7 @@ export async function buildBinLabelsPdf(orderedRowIds: string[]): Promise<Uint8A
   const fontBold = await pdf.embedFont(StandardFonts.HelveticaBold);
   const font = await pdf.embedFont(StandardFonts.Helvetica);
 
-  for (const id of orderedValid) {
+  for (const id of orderedValidMasterIds) {
     const master = byId.get(id)!;
     const page = pdf.addPage([BIN_LABEL_PAGE_WIDTH_PT, BIN_LABEL_PAGE_HEIGHT_PT]);
     const { width, height } = page.getSize();
