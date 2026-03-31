@@ -6,6 +6,7 @@ import { cn } from "@/lib/utils";
 import {
   LayoutDashboard,
   Boxes,
+  ClipboardList,
   RefreshCw,
   Plug,
   Gauge,
@@ -28,6 +29,7 @@ import { usePageVisibility } from "@/lib/use-page-visibility";
 const navItems = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/inventory-forecaster", label: "Inventory Forecaster", icon: Boxes },
+  { href: "/tasks", label: "Tasks", icon: ClipboardList },
   { href: "/sync", label: "Sync", icon: RefreshCw },
   { href: "/integrations", label: "Integrations", icon: Plug },
   { href: "/engine-room", label: "Engine Room", icon: Gauge },

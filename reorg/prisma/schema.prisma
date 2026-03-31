@@ -103,6 +103,29 @@ enum NetworkTransferChannel {
   OTHER
 }
 
+enum TaskStatus {
+  OPEN
+  IN_PROGRESS
+  BLOCKED
+  COMPLETED
+}
+
+enum TaskUrgency {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum TaskActivityType {
+  CREATED
+  UPDATED
+  COMPLETED
+  REOPENED
+  DELETED
+  RESTORED
+}
+
 // ─── Auth & Users ────────────────────────────────────────────────────────────
 
 model User {
@@ -121,6 +144,10 @@ model User {
   stagedChanges  StagedChange[]
   pushJobs       PushJob[]
   auditLogs      AuditLog[]
+  createdTasks    Task[]         @relation("TaskCreator")
+  assignedTasks   Task[]         @relation("TaskAssignee")
+  deletedTasks    Task[]         @relation("TaskDeleter")
+  taskActivities  TaskActivity[] @relation("TaskActivityActor")
   forecastRuns   ForecastRun[]
   supplierOrders SupplierOrder[]
 
@@ -419,6 +446,70 @@ model AppSetting {
   updatedAt DateTime @updatedAt
 
   @@map("app_settings")
+}
+
+model TaskCategory {
+  id        String   @id @default(cuid())
+  name      String
+  slug      String   @unique
+  sortOrder Int      @default(0)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tasks Task[]
+
+  @@index([sortOrder])
+  @@index([isActive])
+  @@map("task_categories")
+}
+
+model Task {
+  id               String      @id @default(cuid())
+  title            String
+  notes            String?
+  status           TaskStatus  @default(OPEN)
+  urgency          TaskUrgency @default(MEDIUM)
+  categoryId       String
+  createdByUserId  String
+  assignedToUserId String?
+  isSharedTeamTask Boolean     @default(false)
+  dueAt            DateTime?
+  createdAt        DateTime    @default(now())
+  updatedAt        DateTime    @updatedAt
+  completedAt      DateTime?
+  deletedAt        DateTime?
+  deletedByUserId  String?
+  restoredAt       DateTime?
+
+  category   TaskCategory @relation(fields: [categoryId], references: [id])
+  createdBy  User         @relation("TaskCreator", fields: [createdByUserId], references: [id])
+  assignedTo User?        @relation("TaskAssignee", fields: [assignedToUserId], references: [id], onDelete: SetNull)
+  deletedBy  User?        @relation("TaskDeleter", fields: [deletedByUserId], references: [id], onDelete: SetNull)
+  activities TaskActivity[]
+
+  @@index([status, deletedAt, dueAt])
+  @@index([createdByUserId, deletedAt])
+  @@index([assignedToUserId, deletedAt])
+  @@index([categoryId, deletedAt])
+  @@index([deletedAt])
+  @@map("tasks")
+}
+
+model TaskActivity {
+  id          String           @id @default(cuid())
+  taskId       String
+  actorUserId  String?
+  type         TaskActivityType
+  details      Json             @default("{}")
+  createdAt    DateTime         @default(now())
+
+  task  Task  @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  actor User? @relation("TaskActivityActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  @@index([taskId, createdAt])
+  @@index([actorUserId, createdAt])
+  @@map("task_activities")
 }
 
 model MarketplaceSaleOrder {

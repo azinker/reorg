@@ -183,6 +183,36 @@ export const PAGE_TOUR_STEPS: Record<OnboardingPageKey, TourStep[]> = {
   ],
 
   /* ================================================================
+   * TASKS
+   * ================================================================ */
+  tasks: [
+    {
+      id: "tasks-1",
+      target: "tasks-header",
+      title: "Welcome to Tasks",
+      body: "This page is a lightweight operations queue for personal reminders, assigned work, and shared team tasks. Use it for real work that needs visibility, follow-through, and a clean completion trail without turning reorG into a giant project-management app.",
+    },
+    {
+      id: "tasks-2",
+      target: "tasks-quick-add",
+      title: "Quick Add",
+      body: "Use Quick Add when you just need to capture something fast. Pick a category, decide whether it belongs to you or the team, and add it. You can always open the full editor later for notes, due dates, assignment changes, or status updates.",
+    },
+    {
+      id: "tasks-3",
+      target: "tasks-filters",
+      title: "Views and Filters",
+      body: "The top tabs split work into Open, Completed, Recently Deleted, and Expired Cleanup. Filters let you narrow by status, urgency, assignee, due date, and category so you can focus on exactly the slice of work you need right now.",
+    },
+    {
+      id: "tasks-4",
+      target: "tasks-list",
+      title: "Task List",
+      body: "Open tasks are sorted to surface overdue and urgent work first. You can complete tasks directly from the list, open them for more detail, restore deleted tasks within the 30-day window, and admins can permanently clean up only the expired deleted items.",
+    },
+  ],
+
+  /* ================================================================
    * SYNC
    * ================================================================ */
   sync: [

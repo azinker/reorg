@@ -1,5 +1,6 @@
 import { PrismaClient, Platform, Role } from "@prisma/client";
 import bcrypt from "bcryptjs";
+import { INITIAL_TASK_CATEGORIES } from "@/lib/tasks";
 
 const prisma = new PrismaClient();
 
@@ -150,6 +151,26 @@ async function main() {
   }
 
   console.log("  Created app settings");
+
+  // —— Task Categories ——————————————————————————————————————————————————————————————
+  for (const category of INITIAL_TASK_CATEGORIES) {
+    await prisma.taskCategory.upsert({
+      where: { slug: category.slug },
+      update: {
+        name: category.name,
+        sortOrder: category.sortOrder,
+      },
+      create: {
+        id: category.id,
+        name: category.name,
+        slug: category.slug,
+        sortOrder: category.sortOrder,
+        isActive: true,
+      },
+    });
+  }
+
+  console.log("  Created task categories");
   console.log("Seed complete.");
 }
 

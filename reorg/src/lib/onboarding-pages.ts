@@ -1,6 +1,7 @@
 export const ONBOARDING_PAGES = [
   "dashboard",
   "inventoryForecaster",
+  "tasks",
   "sync",
   "integrations",
   "engineRoom",
@@ -19,6 +20,7 @@ export type OnboardingPageKey = (typeof ONBOARDING_PAGES)[number];
 export const PATH_TO_ONBOARDING_PAGE: Record<string, OnboardingPageKey> = {
   "/dashboard": "dashboard",
   "/inventory-forecaster": "inventoryForecaster",
+  "/tasks": "tasks",
   "/sync": "sync",
   "/integrations": "integrations",
   "/engine-room": "engineRoom",
