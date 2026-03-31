@@ -119,6 +119,7 @@ export default function TasksPage() {
   );
   const [quickAddTitle, setQuickAddTitle] = useState("");
   const [quickAddCategoryId, setQuickAddCategoryId] = useState("");
+  const [quickAddUrgency, setQuickAddUrgency] = useState<TaskRecord["urgency"]>("MEDIUM");
   const [quickAddMode, setQuickAddMode] = useState<"mine" | "team">("mine");
   const [quickAddSaving, setQuickAddSaving] = useState(false);
   const [editorTask, setEditorTask] = useState<TaskRecord | null>(null);
@@ -239,6 +240,7 @@ export default function TasksPage() {
         body: JSON.stringify({
           title: quickAddTitle.trim(),
           categoryId: quickAddCategoryId,
+          urgency: quickAddUrgency,
           assignedToUserId: quickAddMode === "mine" ? data.currentUser.id : null,
           isSharedTeamTask: quickAddMode === "team",
         }),
@@ -477,7 +479,7 @@ export default function TasksPage() {
           </div>
         </div>
 
-        <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_220px_240px_auto]">
+        <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_220px_180px_240px_auto]">
           <input
             value={quickAddTitle}
             onChange={(event) => setQuickAddTitle(event.target.value)}
@@ -492,6 +494,19 @@ export default function TasksPage() {
             {activeCategories.map((category) => (
               <option key={category.id} value={category.id}>
                 {category.name}
+              </option>
+            ))}
+          </select>
+          <select
+            value={quickAddUrgency}
+            onChange={(event) =>
+              setQuickAddUrgency(event.target.value as TaskRecord["urgency"])
+            }
+            className="w-full rounded-xl border border-input bg-background px-3 py-2.5 text-sm text-foreground outline-none"
+          >
+            {TASK_URGENCY_VALUES.map((urgency) => (
+              <option key={urgency} value={urgency}>
+                {TASK_URGENCY_LABELS[urgency]}
               </option>
             ))}
           </select>
