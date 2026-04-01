@@ -38,7 +38,9 @@ import { PageTour } from "@/components/onboarding/page-tour";
 import { PAGE_TOUR_STEPS } from "@/components/onboarding/page-tour-steps";
 
 const PIE_COLORS = ["#8b5cf6", "#22c55e", "#f59e0b", "#38bdf8"];
-const REVENUE_LOAD_TIMEOUT_MS = 15_000;
+const REVENUE_ANALYTICS_LOAD_TIMEOUT_MS = 60_000;
+const REVENUE_STATUS_TIMEOUT_MS = 10_000;
+const REVENUE_SYNC_REQUEST_TIMEOUT_MS = 15_000;
 const REVENUE_SYNC_POLL_INTERVAL_MS = 8_000;
 
 function logRevenueClient(event: string, payload?: Record<string, unknown>) {
@@ -181,7 +183,7 @@ export default function RevenuePage() {
       const nextStatus = await fetchRevenueJson<RevenueStatusData>(
         `/api/revenue/status${query}`,
         { cache: "no-store" },
-        10_000,
+        REVENUE_STATUS_TIMEOUT_MS,
       );
       setStatusData(nextStatus);
       setWatchingRefresh(nextStatus.hasActiveSyncJobs);
@@ -240,7 +242,7 @@ export default function RevenuePage() {
           cache: "no-store",
           signal: controller.signal,
         },
-        REVENUE_LOAD_TIMEOUT_MS,
+        REVENUE_ANALYTICS_LOAD_TIMEOUT_MS,
       );
       if (requestId !== requestIdRef.current) return;
       setData(nextData);
@@ -353,7 +355,7 @@ export default function RevenuePage() {
             platforms,
           }),
         },
-        REVENUE_LOAD_TIMEOUT_MS,
+        REVENUE_SYNC_REQUEST_TIMEOUT_MS,
       );
       const hasQueuedOrRunningJobs = result.jobs.some(
         (job) => job.status === "PENDING" || job.status === "RUNNING",
