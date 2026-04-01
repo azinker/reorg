@@ -618,7 +618,7 @@ export default function RevenuePage() {
             : null,
         totalSellingCosts:
           data?.kpis.totalSellingCosts.value != null
-            ? `${formatPlainPercent((data.kpis.totalSellingCosts.value / currentGrossRevenue) * 100)} of gross revenue`
+            ? `${formatPlainPercent((data.kpis.totalSellingCosts.value / currentGrossRevenue) * 100)} of gross revenue, excluding tax collected`
             : null,
         taxCollected:
           data?.kpis.taxCollected.value != null

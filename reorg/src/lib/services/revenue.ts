@@ -292,6 +292,22 @@ function resolveBuyerIdentity(order: RevenueLineRow["marketplaceSaleOrder"], pla
   };
 }
 
+function computeTotalSellingCosts(parts: {
+  marketplaceFees?: number | null;
+  advertisingFees?: number | null;
+  shippingLabels?: number | null;
+  accountLevelFees?: number | null;
+  otherFees?: number | null;
+}) {
+  return (
+    (parts.marketplaceFees ?? 0) +
+    (parts.advertisingFees ?? 0) +
+    (parts.shippingLabels ?? 0) +
+    (parts.accountLevelFees ?? 0) +
+    (parts.otherFees ?? 0)
+  );
+}
+
 function daysFromSimpleWindow(window: RevenueSimpleWindow) {
   if (window === "3d") return 3;
   if (window === "7d") return 7;
@@ -991,7 +1007,11 @@ async function aggregateLineBasedOperationalPeriod(filters: RevenueQueryFilters)
   const shippingCollected = [...orders.values()].reduce((sum, order) => sum + order.shippingCollected, 0);
   const averageOrderValue = orderCount > 0 ? grossRevenue / orderCount : null;
   const netRevenuePartial = grossRevenue - marketplaceFeesKnown - advertisingFeesKnown;
-  const totalSellingCosts = marketplaceFeesKnown + advertisingFeesKnown + otherFeesKnown;
+  const totalSellingCosts = computeTotalSellingCosts({
+    marketplaceFees: marketplaceFeesKnown,
+    advertisingFees: advertisingFeesKnown,
+    otherFees: otherFeesKnown,
+  });
 
   const trend = [...trendMap.values()]
     .sort((a, b) => a.bucketStart.getTime() - b.bucketStart.getTime())
@@ -1358,7 +1378,11 @@ async function aggregateNormalizedCurrentPeriod(filters: RevenueQueryFilters): P
   const buyerCount = basePeriod.buyerCount;
   const unitsSold = basePeriod.unitsSold;
   const averageOrderValue = orderCount > 0 ? grossRevenue / orderCount : null;
-  const totalSellingCosts = marketplaceFees + advertisingFees + otherFeesAmount;
+  const totalSellingCosts = computeTotalSellingCosts({
+    marketplaceFees,
+    advertisingFees,
+    otherFees: otherFeesAmount,
+  });
 
   return {
     ...basePeriod,
@@ -1489,8 +1513,13 @@ async function aggregateEbayExactPeriod(
     taxCollectedFromEvents > 0
       ? taxCollectedFromEvents
       : [...orders.values()].reduce((sum, order) => sum + order.taxCollected, 0);
-  const sellingCosts =
-    marketplaceFees + advertisingFees + shippingLabels + accountLevelFees + otherCosts;
+  const sellingCosts = computeTotalSellingCosts({
+    marketplaceFees,
+    advertisingFees,
+    shippingLabels,
+    accountLevelFees,
+    otherFees: otherCosts,
+  });
   const averageOrderValue = orderCount > 0 ? grossRevenue / orderCount : null;
   const netRevenue = grossRevenue > 0 ? grossRevenue - taxCollected - sellingCosts : null;
 
