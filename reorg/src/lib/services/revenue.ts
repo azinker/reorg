@@ -65,6 +65,7 @@ type RevenueSyncJobRecord = {
   id: string;
   integrationId: string;
   platform: Platform;
+  triggeredByUserId?: string | null;
   status: "PENDING" | "RUNNING" | "COMPLETED" | "FAILED";
   startedAt: Date | null;
   completedAt: Date | null;
@@ -73,6 +74,7 @@ type RevenueSyncJobRecord = {
   warningCount: number;
   errorSummary: string | null;
   metadata: Prisma.JsonValue;
+  createdAt?: Date;
   integration: { label: string };
 };
 
@@ -227,6 +229,8 @@ type PeriodAggregation = {
 const EXACT_EBAY_PLATFORMS = new Set<Platform>(["TPP_EBAY", "TT_EBAY"]);
 const DEFAULT_EBAY_REPORTING_TIMEZONE = "America/Los_Angeles";
 const MAX_EBAY_REVENUE_REFRESH_DAYS = 90;
+const STALE_REVENUE_PENDING_JOB_MS = 5 * 60 * 1000;
+const STALE_REVENUE_RUNNING_JOB_MS = 25 * 60 * 1000;
 
 function requireRevenueAccess(user: AuthenticatedRevenueUser | null | undefined) {
   if (!user?.id) throw new RevenueServiceError("Unauthorized", 401);
@@ -527,6 +531,92 @@ function parseSyncStages(value: unknown): RevenueSyncStageSummary[] {
   });
 }
 
+function asRevenueMetadataRecord(value: Prisma.JsonValue) {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function isRevenueSyncJobStale(
+  job: Pick<RevenueSyncJobRecord, "status" | "startedAt" | "createdAt">,
+  now = new Date(),
+) {
+  const createdAt = job.createdAt ?? now;
+  const referenceTime = job.startedAt ?? createdAt;
+  const ageMs = now.getTime() - referenceTime.getTime();
+
+  if (job.status === "PENDING") {
+    return ageMs >= STALE_REVENUE_PENDING_JOB_MS;
+  }
+
+  if (job.status === "RUNNING") {
+    return ageMs >= STALE_REVENUE_RUNNING_JOB_MS;
+  }
+
+  return false;
+}
+
+async function failStaleRevenueSyncJobs(platforms: Platform[]) {
+  const candidates = await db.revenueSyncJob.findMany({
+    where: {
+      platform: { in: platforms },
+      status: { in: ["PENDING", "RUNNING"] },
+    },
+    include: { integration: { select: { label: true } } },
+    orderBy: { createdAt: "desc" },
+  });
+
+  const now = new Date();
+  const staleJobs = candidates.filter((job) => isRevenueSyncJobStale(job, now));
+
+  await Promise.all(
+    staleJobs.map(async (job) => {
+      const metadata = asRevenueMetadataRecord(job.metadata);
+      const syncStages = parseSyncStages(metadata.syncStages);
+      const reason =
+        job.status === "PENDING"
+          ? "Revenue refresh was queued but did not start in time. Marked stale so a new refresh can be started."
+          : "Revenue refresh stopped reporting progress and was marked stale. Start a new refresh to retry this store.";
+
+      await db.revenueSyncJob.update({
+        where: { id: job.id },
+        data: {
+          status: "FAILED",
+          completedAt: now,
+          errorSummary: reason,
+          metadata: {
+            ...metadata,
+            syncStages: [
+              ...syncStages,
+              {
+                key: "stale",
+                label: "Revenue Sync",
+                status: "FAILED",
+                detail: reason,
+                updatedAt: now.toISOString(),
+              },
+            ],
+          } as unknown as Prisma.InputJsonValue,
+        },
+      });
+
+      await db.auditLog.create({
+        data: {
+          userId: job.triggeredByUserId ?? null,
+          action: "revenue_sync_stale_failed",
+          entityType: "revenue_sync_job",
+          entityId: job.id,
+          details: {
+            integrationId: job.integrationId,
+            platform: job.platform,
+            reason,
+          } as unknown as Prisma.InputJsonValue,
+        },
+      });
+    }),
+  );
+}
+
 function formatRevenueJob(job: {
   id: string;
   integrationId: string;
@@ -541,10 +631,7 @@ function formatRevenueJob(job: {
   metadata: Prisma.JsonValue;
   integration: { label: string };
 }): RevenueSyncJobSummary {
-  const metadata =
-    job.metadata && typeof job.metadata === "object" && !Array.isArray(job.metadata)
-      ? (job.metadata as Record<string, unknown>)
-      : {};
+  const metadata = asRevenueMetadataRecord(job.metadata);
 
   return {
     id: job.id,
@@ -586,10 +673,7 @@ async function getLatestRevenueSourceJobSnapshots(
   const latestByIntegration = new Map<string, RevenueSourceJobSnapshot>();
   for (const job of jobs) {
     if (latestByIntegration.has(job.integrationId)) continue;
-    const metadata =
-      job.metadata && typeof job.metadata === "object" && !Array.isArray(job.metadata)
-        ? (job.metadata as Record<string, unknown>)
-        : {};
+    const metadata = asRevenueMetadataRecord(job.metadata);
     latestByIntegration.set(job.integrationId, {
       platform: job.platform,
       label: job.integration.label,
@@ -610,6 +694,8 @@ async function queueRevenueSyncJobs(
   queuedJobIds: string[];
   warnings: string[];
 }> {
+  await failStaleRevenueSyncJobs(integrations.map((integration) => integration.platform));
+
   const runningJobs = await db.revenueSyncJob.findMany({
     where: {
       integrationId: { in: integrations.map((integration) => integration.id) },
@@ -1785,6 +1871,8 @@ function buildEmptyRevenuePageData(
 }
 
 async function getRevenueSyncSummary(platforms: Platform[]): Promise<RevenueSyncSummary> {
+  await failStaleRevenueSyncJobs(platforms);
+
   const jobs = await db.revenueSyncJob.findMany({
     where: { platform: { in: platforms } },
     include: { integration: { select: { label: true } } },
