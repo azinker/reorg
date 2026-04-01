@@ -1,8 +1,13 @@
-import { NextResponse, type NextRequest } from "next/server";
+import { after, NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { getRequiredSessionUser } from "@/lib/server-auth";
+import { dispatchQueuedRevenueSyncExecution } from "@/lib/services/revenue-continuation";
 import { recordNetworkTransferSample } from "@/lib/services/network-transfer-samples";
-import { RevenueServiceError, syncRevenueData } from "@/lib/services/revenue";
+import {
+  RevenueServiceError,
+  executeQueuedRevenueSyncData,
+  queueRevenueSyncData,
+} from "@/lib/services/revenue";
 
 const syncSchema = z.object({
   from: z.string().datetime(),
@@ -47,13 +52,35 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "From date must be before to date." }, { status: 400 });
     }
 
-    const data = await syncRevenueData(user, {
+    const syncRequest = {
       from: parsed.data.from,
       to: parsed.data.to,
       platforms: parsed.data.platforms,
-    });
+    };
+    const queued = await queueRevenueSyncData(user, syncRequest);
 
-    const responseBody = { data };
+    if (queued.queuedJobIds.length > 0) {
+      after(async () => {
+        const dispatched = await dispatchQueuedRevenueSyncExecution(syncRequest, queued.queuedJobIds);
+        if (dispatched) {
+          return;
+        }
+
+        try {
+          await executeQueuedRevenueSyncData(syncRequest, queued.queuedJobIds);
+        } catch (executionError) {
+          console.error("[revenue/sync] Inline fallback execution failed", executionError);
+        }
+      });
+    }
+
+    const responseBody = {
+      data: {
+        jobs: queued.jobs,
+        completedAt: queued.completedAt,
+        warnings: queued.warnings,
+      },
+    };
     void recordNetworkTransferSample({
       channel: "CLIENT_API_RESPONSE",
       label: "POST /api/revenue/sync",
@@ -63,8 +90,9 @@ export async function POST(request: NextRequest) {
         route: "POST /api/revenue/sync",
         platformCount: parsed.data.platforms.length,
         platforms: parsed.data.platforms,
-        jobCount: data.jobs.length,
-        warningCount: data.warnings.length,
+        jobCount: queued.jobs.length,
+        warningCount: queued.warnings.length,
+        queuedJobCount: queued.queuedJobIds.length,
       },
     });
 

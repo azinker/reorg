@@ -57,6 +57,25 @@ type RevenueIntegrationRecord = {
   config: Prisma.JsonValue;
 };
 
+type RevenueSyncJobRecord = {
+  id: string;
+  integrationId: string;
+  platform: Platform;
+  status: "PENDING" | "RUNNING" | "COMPLETED" | "FAILED";
+  startedAt: Date | null;
+  completedAt: Date | null;
+  ordersProcessed: number;
+  linesProcessed: number;
+  warningCount: number;
+  errorSummary: string | null;
+  metadata: Prisma.JsonValue;
+  integration: { label: string };
+};
+
+type QueuedRevenueSyncResult = RevenueSyncResult & {
+  queuedJobIds: string[];
+};
+
 type RevenueLineRow = {
   id: string;
   platform: Platform;
@@ -410,6 +429,61 @@ function formatRevenueJob(job: {
   };
 }
 
+async function queueRevenueSyncJobs(
+  userId: string,
+  request: RevenueSyncRequest,
+  integrations: RevenueIntegrationRecord[],
+): Promise<{
+  jobs: RevenueSyncJobRecord[];
+  queuedJobIds: string[];
+  warnings: string[];
+}> {
+  const runningJobs = await db.revenueSyncJob.findMany({
+    where: {
+      integrationId: { in: integrations.map((integration) => integration.id) },
+      status: { in: ["PENDING", "RUNNING"] },
+    },
+    include: { integration: { select: { label: true } } },
+    orderBy: { createdAt: "desc" },
+  });
+
+  const runningByIntegration = new Map<string, RevenueSyncJobRecord>();
+  for (const job of runningJobs) {
+    if (runningByIntegration.has(job.integrationId)) continue;
+    runningByIntegration.set(job.integrationId, job);
+  }
+
+  const integrationsToQueue = integrations.filter(
+    (integration) => !runningByIntegration.has(integration.id),
+  );
+
+  const queuedJobs = await Promise.all(
+    integrationsToQueue.map((integration) =>
+      db.revenueSyncJob.create({
+        data: {
+          integrationId: integration.id,
+          platform: integration.platform,
+          triggeredByUserId: userId,
+          status: "PENDING",
+          metadata: {
+            requestedRange: { from: request.from, to: request.to },
+            syncStages: [],
+          } as unknown as Prisma.InputJsonValue,
+        },
+        include: { integration: { select: { label: true } } },
+      }),
+    ),
+  );
+
+  return {
+    jobs: [...runningByIntegration.values(), ...queuedJobs],
+    queuedJobIds: queuedJobs.map((job) => job.id),
+    warnings: [...runningByIntegration.values()].map(
+      (job) => `${job.integration.label}: revenue refresh is already queued or running.`,
+    ),
+  };
+}
+
 async function getEnabledRevenueIntegrations(): Promise<RevenueIntegrationRecord[]> {
   return db.integration.findMany({
     where: {
@@ -427,6 +501,27 @@ function toIntegrationOptions(integrations: RevenueIntegrationRecord[]): Revenue
     platform: integration.platform,
     label: integration.label,
   }));
+}
+
+async function getRevenueSyncIntegrations(
+  request: RevenueSyncRequest,
+): Promise<RevenueIntegrationRecord[]> {
+  const integrations = await db.integration.findMany({
+    where: {
+      enabled: true,
+      platform: {
+        in: request.platforms.length ? request.platforms : ["TPP_EBAY", "TT_EBAY", "SHOPIFY", "BIGCOMMERCE"],
+      },
+    },
+    select: { id: true, platform: true, label: true, config: true },
+    orderBy: { createdAt: "asc" },
+  });
+
+  if (integrations.length === 0) {
+    throw new RevenueServiceError("No enabled integrations are available for revenue sync.", 400);
+  }
+
+  return integrations;
 }
 
 function normalizeSelectedPlatforms(
@@ -1291,8 +1386,9 @@ async function getRevenueSyncSummary(platforms: Platform[]): Promise<RevenueSync
   }
 
   const latestOverall = jobs[0] ? formatRevenueJob(jobs[0]) : null;
+  const latestCompletedJob = jobs.find((job) => job.completedAt != null);
   return {
-    latestCompletedAt: latestOverall?.completedAt ?? null,
+    latestCompletedAt: latestCompletedJob?.completedAt?.toISOString() ?? null,
     latestStatus: latestOverall?.status ?? null,
     latestStartedAt: latestOverall?.startedAt ?? null,
     jobs: [...latestByIntegration.values()],
@@ -1384,40 +1480,114 @@ export async function syncRevenueData(
   user: AuthenticatedRevenueUser,
   request: RevenueSyncRequest,
 ): Promise<RevenueSyncResult> {
+  const queued = await queueRevenueSyncData(user, request);
+  const executed = await executeQueuedRevenueSyncData(request, queued.queuedJobIds);
+
+  return {
+    jobs: executed.jobs.length > 0 ? executed.jobs : queued.jobs,
+    completedAt: executed.completedAt,
+    warnings: [...queued.warnings, ...executed.warnings],
+  };
+}
+
+export async function queueRevenueSyncData(
+  user: AuthenticatedRevenueUser,
+  request: RevenueSyncRequest,
+): Promise<QueuedRevenueSyncResult> {
   requireRevenueAccess(user);
+
+  const integrations = await getRevenueSyncIntegrations(request);
+  const queued = await queueRevenueSyncJobs(user.id, request, integrations);
+
+  await db.auditLog.create({
+    data: {
+      userId: user.id,
+      action: "revenue_sync_manual",
+      entityType: "revenue",
+      entityId: new Date().toISOString(),
+      details: {
+        from: request.from,
+        to: request.to,
+        platforms: request.platforms,
+        queuedJobIds: queued.queuedJobIds,
+        reusedJobIds: queued.jobs
+          .filter((job) => !queued.queuedJobIds.includes(job.id))
+          .map((job) => job.id),
+      } as unknown as Prisma.InputJsonValue,
+    },
+  });
+
+  return {
+    jobs: queued.jobs.map((job) => formatRevenueJob(job)).sort((a, b) => a.label.localeCompare(b.label)),
+    completedAt: new Date().toISOString(),
+    warnings: queued.warnings,
+    queuedJobIds: queued.queuedJobIds,
+  };
+}
+
+export async function executeQueuedRevenueSyncData(
+  request: RevenueSyncRequest,
+  jobIds: string[],
+): Promise<RevenueSyncResult> {
+  if (jobIds.length === 0) {
+    return {
+      jobs: [],
+      completedAt: new Date().toISOString(),
+      warnings: [],
+    };
+  }
+
+  const claimStartedAt = new Date();
+  const claimResult = await db.revenueSyncJob.updateMany({
+    where: {
+      id: { in: jobIds },
+      status: "PENDING",
+    },
+    data: {
+      status: "RUNNING",
+      startedAt: claimStartedAt,
+    },
+  });
+
+  if (claimResult.count === 0) {
+    const existingJobs = await db.revenueSyncJob.findMany({
+      where: { id: { in: jobIds } },
+      include: { integration: { select: { label: true } } },
+    });
+    return {
+      jobs: existingJobs.map((job) => formatRevenueJob(job)).sort((a, b) => a.label.localeCompare(b.label)),
+      completedAt: new Date().toISOString(),
+      warnings: [],
+    };
+  }
+
+  const jobs = await db.revenueSyncJob.findMany({
+    where: {
+      id: { in: jobIds },
+      status: "RUNNING",
+    },
+    include: { integration: { select: { label: true } } },
+  });
+
+  if (jobs.length === 0) {
+    throw new RevenueServiceError("Queued revenue sync jobs were not found.", 404);
+  }
 
   const integrations = await db.integration.findMany({
     where: {
-      enabled: true,
-      platform: {
-        in: request.platforms.length ? request.platforms : ["TPP_EBAY", "TT_EBAY", "SHOPIFY", "BIGCOMMERCE"],
-      },
+      id: { in: [...new Set(jobs.map((job) => job.integrationId))] },
     },
     select: { id: true, platform: true, label: true, config: true },
-    orderBy: { createdAt: "asc" },
   });
 
-  if (integrations.length === 0) {
-    throw new RevenueServiceError("No enabled integrations are available for revenue sync.", 400);
-  }
+  return runQueuedRevenueSyncJobs(request, jobs, integrations);
+}
 
-  const startedAt = new Date();
-  const jobs = await Promise.all(
-    integrations.map((integration) =>
-      db.revenueSyncJob.create({
-        data: {
-          integrationId: integration.id,
-          platform: integration.platform,
-          triggeredByUserId: user.id,
-          status: "RUNNING",
-          startedAt,
-          metadata: { requestedRange: { from: request.from, to: request.to }, syncStages: [] } as unknown as Prisma.InputJsonValue,
-        },
-        include: { integration: { select: { label: true } } },
-      }),
-    ),
-  );
-
+async function runQueuedRevenueSyncJobs(
+  request: RevenueSyncRequest,
+  jobs: RevenueSyncJobRecord[],
+  integrations: RevenueIntegrationRecord[],
+): Promise<RevenueSyncResult> {
   const warnings: string[] = [];
   const results: RevenueSyncJobSummary[] = [];
 
@@ -1553,16 +1723,6 @@ export async function syncRevenueData(
       }
     }),
   );
-
-  await db.auditLog.create({
-    data: {
-      userId: user.id,
-      action: "revenue_sync_manual",
-      entityType: "revenue",
-      entityId: startedAt.toISOString(),
-      details: { from: request.from, to: request.to, platforms: request.platforms, jobs: results } as unknown as Prisma.InputJsonValue,
-    },
-  });
 
   return {
     jobs: results.sort((a, b) => a.label.localeCompare(b.label)),

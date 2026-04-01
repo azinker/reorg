@@ -23,6 +23,7 @@ import type {
   RevenueKpiMetric,
   RevenuePageData,
   RevenueRangePreset,
+  RevenueSyncResult,
   RevenueSimpleWindow,
 } from "@/lib/revenue";
 import { PlatformIcon } from "@/components/grid/platform-icon";
@@ -87,11 +88,26 @@ function rangeFromPreset(preset: RevenueRangePreset) {
 }
 
 async function parseJson<T>(response: Response) {
-  const json = (await response.json()) as { error?: string; data?: T };
-  if (!response.ok) {
-    throw new Error(json.error ?? "Request failed");
+  const text = await response.text();
+  let json: { error?: string; data?: T } | null = null;
+
+  if (text.trim()) {
+    try {
+      json = JSON.parse(text) as { error?: string; data?: T };
+    } catch {
+      const returnedHtml =
+        text.trimStart().startsWith("<!DOCTYPE") || text.trimStart().startsWith("<html");
+      const fallbackMessage = returnedHtml
+        ? `The server returned an HTML error page (${response.status} ${response.statusText}) instead of JSON.`
+        : `The server returned an unreadable response (${response.status} ${response.statusText}).`;
+      throw new Error(fallbackMessage);
+    }
   }
-  return json.data as T;
+
+  if (!response.ok) {
+    throw new Error(json?.error ?? `Request failed (${response.status} ${response.statusText})`);
+  }
+  return json?.data as T;
 }
 
 function KpiCard(props: { label: string; metric: RevenueKpiMetric }) {
@@ -186,13 +202,17 @@ export default function RevenuePage() {
     void load();
   }, [load]);
 
+  const hasActiveSyncJobs = Boolean(
+    data?.syncSummary.jobs.some((job) => job.status === "PENDING" || job.status === "RUNNING"),
+  );
+
   useEffect(() => {
-    if (!syncing) return undefined;
+    if (!syncing && !hasActiveSyncJobs) return undefined;
     const timer = window.setInterval(() => {
       void load({ silent: true });
     }, 3000);
     return () => window.clearInterval(timer);
-  }, [load, syncing]);
+  }, [hasActiveSyncJobs, load, syncing]);
 
   async function handleManualRefresh() {
     setSyncing(true);
@@ -213,13 +233,20 @@ export default function RevenuePage() {
           platforms,
         }),
       });
-      const result = await parseJson<{ warnings: string[] }>(response);
-      setBanner(
-        result.warnings.length > 0
-          ? `Revenue refresh finished with notes: ${result.warnings[0]}`
-          : "Revenue data refreshed.",
+      const result = await parseJson<RevenueSyncResult>(response);
+      const hasQueuedOrRunningJobs = result.jobs.some(
+        (job) => job.status === "PENDING" || job.status === "RUNNING",
       );
-      await load();
+      setBanner(
+        hasQueuedOrRunningJobs
+          ? result.warnings.length > 0
+            ? `Revenue refresh started. ${result.warnings[0]}`
+            : "Revenue refresh started. Watch Refresh Status below for live job updates."
+          : result.warnings.length > 0
+            ? `Revenue refresh finished with notes: ${result.warnings[0]}`
+            : "Revenue data refreshed.",
+      );
+      await load({ silent: true });
     } catch (syncError) {
       setError(syncError instanceof Error ? syncError.message : "Failed to refresh revenue");
     } finally {
