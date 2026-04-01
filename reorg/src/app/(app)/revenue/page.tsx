@@ -28,6 +28,7 @@ import type {
   RevenueSyncJobSummary,
   RevenueSyncResult,
   RevenueSimpleWindow,
+  RevenueTopTablesData,
 } from "@/lib/revenue";
 import {
   fetchRevenueJson,
@@ -43,6 +44,7 @@ const REVENUE_ANALYTICS_LOAD_TIMEOUT_MS = 120_000;
 const REVENUE_STATUS_TIMEOUT_MS = 10_000;
 const REVENUE_SYNC_REQUEST_TIMEOUT_MS = 15_000;
 const REVENUE_SYNC_POLL_INTERVAL_MS = 8_000;
+const REVENUE_TOP_TABLES_TIMEOUT_MS = 90_000;
 
 function logRevenueClient(event: string, payload?: Record<string, unknown>) {
   console.info("[revenue]", {
@@ -162,6 +164,8 @@ export default function RevenuePage() {
   const [itemWindow, setItemWindow] = useState<RevenueSimpleWindow>("30d");
   const [selectedPlatforms, setSelectedPlatforms] = useState<Platform[]>([]);
   const [data, setData] = useState<RevenuePageData | null>(null);
+  const [topTables, setTopTables] = useState<RevenueTopTablesData | null>(null);
+  const [tablesLoading, setTablesLoading] = useState(false);
   const [statusData, setStatusData] = useState<RevenueStatusData | null>(null);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
@@ -169,6 +173,7 @@ export default function RevenuePage() {
   const [error, setError] = useState("");
   const [banner, setBanner] = useState<string>("");
   const requestIdRef = useRef(0);
+  const tablesRequestIdRef = useRef(0);
   const loadAbortRef = useRef<AbortController | null>(null);
   const completedRefreshLoadRef = useRef<string | null>(null);
 
@@ -220,6 +225,56 @@ export default function RevenuePage() {
     }
   }, [selectedPlatformParam, selectedPlatforms]);
 
+  const loadTopTables = useCallback(async (options?: { preserveTables?: boolean }) => {
+    const requestId = ++tablesRequestIdRef.current;
+    if (!options?.preserveTables) {
+      setTopTables(null);
+    }
+    setTablesLoading(true);
+    logRevenueClient("top-tables-load:start", {
+      requestId,
+      selectedPlatforms: selectedPlatforms.join(","),
+      from: queryRange.fromDate.toISOString(),
+      to: queryRange.toDate.toISOString(),
+    });
+
+    try {
+      const params = new URLSearchParams({
+        preset,
+        from: queryRange.fromDate.toISOString(),
+        to: queryRange.toDate.toISOString(),
+        granularity,
+        buyerWindow,
+        itemWindow,
+      });
+      if (selectedPlatforms.length > 0) {
+        params.set("platforms", selectedPlatforms.join(","));
+      }
+      const nextTables = await fetchRevenueJson<RevenueTopTablesData>(
+        `/api/revenue/tables?${params.toString()}`,
+        { cache: "no-store" },
+        REVENUE_TOP_TABLES_TIMEOUT_MS,
+      );
+      if (requestId !== tablesRequestIdRef.current) return;
+      setTopTables(nextTables);
+      logRevenueClient("top-tables-load:success", {
+        requestId,
+        topBuyerCount: nextTables.topBuyers.length,
+        topItemCount: nextTables.topItems.length,
+      });
+    } catch (tablesError) {
+      if (requestId !== tablesRequestIdRef.current) return;
+      logRevenueClient("top-tables-load:error", {
+        requestId,
+        message: tablesError instanceof Error ? tablesError.message : String(tablesError),
+      });
+    } finally {
+      if (requestId === tablesRequestIdRef.current) {
+        setTablesLoading(false);
+      }
+    }
+  }, [buyerWindow, granularity, itemWindow, preset, queryRange.fromDate, queryRange.toDate, selectedPlatforms]);
+
   const load = useCallback(async (options?: { silent?: boolean; preserveData?: boolean }) => {
     if (options?.silent && loadAbortRef.current) {
       return;
@@ -253,7 +308,7 @@ export default function RevenuePage() {
         params.set("platforms", selectedPlatforms.join(","));
       }
       const nextData = await fetchRevenueJson<RevenuePageData>(
-        `/api/revenue?${params.toString()}`,
+        `/api/revenue?${params.toString()}&includeTopTables=0`,
         {
           cache: "no-store",
           signal: controller.signal,
@@ -290,6 +345,7 @@ export default function RevenuePage() {
             : current,
         );
       }
+      void loadTopTables({ preserveTables: options?.preserveData });
     } catch (loadError) {
       if (requestId !== requestIdRef.current) return;
       if (isAbortError(loadError)) {
@@ -311,6 +367,7 @@ export default function RevenuePage() {
       void loadStatus({ silent: true });
       if (!options?.preserveData) {
         setData(null);
+        setTopTables(null);
       }
     } finally {
       if (loadAbortRef.current === controller) {
@@ -320,7 +377,7 @@ export default function RevenuePage() {
         setLoading(false);
       }
     }
-  }, [buyerWindow, granularity, itemWindow, loadStatus, preset, queryRange.fromDate, queryRange.toDate, revenueDebugUrl, selectedPlatforms]);
+  }, [buyerWindow, granularity, itemWindow, loadStatus, loadTopTables, preset, queryRange.fromDate, queryRange.toDate, revenueDebugUrl, selectedPlatforms]);
 
   useEffect(() => {
     void loadStatus();
@@ -450,6 +507,8 @@ export default function RevenuePage() {
   const hasStoreChartData = Boolean(data?.storeBreakdown.some((row) => row.grossRevenue > 0));
   const hasFeeChartData = Boolean(data?.feeBreakdown.some((row) => row.amount > 0));
   const hasShareData = Boolean(data?.revenueShare.some((row) => row.grossRevenue > 0));
+  const visibleTopBuyers = topTables?.topBuyers ?? data?.topBuyers ?? [];
+  const visibleTopItems = topTables?.topItems ?? data?.topItems ?? [];
   const currentGrossRevenue = data?.kpis.grossRevenue.value ?? null;
   const kpiShareDetails = currentGrossRevenue && currentGrossRevenue > 0
     ? {
@@ -895,7 +954,7 @@ export default function RevenuePage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {data.topBuyers.map((buyer) => (
+                    {visibleTopBuyers.map((buyer) => (
                       <tr key={buyer.buyerKey} className="border-t border-border/70">
                         <td className="py-3 pr-4">
                           <div className="font-medium text-foreground">{buyer.buyerName ?? buyer.buyerLabel}</div>
@@ -919,6 +978,9 @@ export default function RevenuePage() {
                     ))}
                   </tbody>
                 </table>
+                {tablesLoading && visibleTopBuyers.length === 0 ? (
+                  <div className="py-6 text-center text-sm text-muted-foreground">Loading buyer rankings...</div>
+                ) : null}
               </div>
             </div>
 
@@ -954,7 +1016,7 @@ export default function RevenuePage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {data.topItems.map((item) => (
+                    {visibleTopItems.map((item) => (
                       <tr key={item.sku} className="border-t border-border/70">
                         <td className="py-3 pr-4">
                           <div className="font-medium text-foreground">{item.sku}</div>
@@ -977,6 +1039,9 @@ export default function RevenuePage() {
                     ))}
                   </tbody>
                 </table>
+                {tablesLoading && visibleTopItems.length === 0 ? (
+                  <div className="py-6 text-center text-sm text-muted-foreground">Loading item rankings...</div>
+                ) : null}
               </div>
             </div>
           </div>

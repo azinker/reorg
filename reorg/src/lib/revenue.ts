@@ -204,6 +204,11 @@ export interface RevenueDebugData {
   recentSamples: RevenueDebugSample[];
 }
 
+export interface RevenueTopTablesData {
+  topBuyers: RevenueTopBuyerRow[];
+  topItems: RevenueTopItemRow[];
+}
+
 export interface RevenuePageData {
   filters: RevenueQueryFilters;
   integrations: RevenueIntegrationOption[];

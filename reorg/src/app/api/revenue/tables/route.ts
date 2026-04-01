@@ -10,13 +10,13 @@ import {
 } from "@/lib/revenue";
 import { recordNetworkTransferSample } from "@/lib/services/network-transfer-samples";
 import {
-  getRevenuePageData,
+  getRevenueTopTablesData,
   RevenueServiceError,
 } from "@/lib/services/revenue";
 
 const platformSchema = z.enum(["TPP_EBAY", "TT_EBAY", "SHOPIFY", "BIGCOMMERCE"]);
 
-const revenueQuerySchema = z.object({
+const revenueTablesQuerySchema = z.object({
   preset: z.enum(REVENUE_RANGE_PRESETS).default("30d"),
   from: z.string().datetime().optional(),
   to: z.string().datetime().optional(),
@@ -24,19 +24,18 @@ const revenueQuerySchema = z.object({
   buyerWindow: z.enum(REVENUE_SIMPLE_WINDOW_VALUES).default("30d"),
   itemWindow: z.enum(REVENUE_SIMPLE_WINDOW_VALUES).default("30d"),
   platforms: z.string().optional(),
-  includeTopTables: z.enum(["0", "1"]).optional(),
 });
 
-function handleRevenueError(error: unknown, scope: string) {
+function handleRevenueTablesError(error: unknown, scope: string) {
   if (error instanceof RevenueServiceError) {
     return NextResponse.json({ error: error.message }, { status: error.status });
   }
 
   console.error(scope, error);
-  return NextResponse.json({ error: "Revenue request failed" }, { status: 500 });
+  return NextResponse.json({ error: "Revenue top tables request failed" }, { status: 500 });
 }
 
-function resolveRevenueFilters(raw: z.infer<typeof revenueQuerySchema>): RevenueQueryFilters {
+function resolveRevenueFilters(raw: z.infer<typeof revenueTablesQuerySchema>): RevenueQueryFilters {
   const now = new Date();
   const to =
     raw.preset === "custom" && raw.to ? new Date(raw.to) : endOfDay(now);
@@ -88,7 +87,7 @@ export async function GET(request: NextRequest) {
   const t0 = performance.now();
 
   try {
-    const parsed = revenueQuerySchema.safeParse({
+    const parsed = revenueTablesQuerySchema.safeParse({
       preset: request.nextUrl.searchParams.get("preset") ?? undefined,
       from: request.nextUrl.searchParams.get("from") ?? undefined,
       to: request.nextUrl.searchParams.get("to") ?? undefined,
@@ -96,7 +95,6 @@ export async function GET(request: NextRequest) {
       buyerWindow: request.nextUrl.searchParams.get("buyerWindow") ?? undefined,
       itemWindow: request.nextUrl.searchParams.get("itemWindow") ?? undefined,
       platforms: request.nextUrl.searchParams.get("platforms") ?? undefined,
-      includeTopTables: request.nextUrl.searchParams.get("includeTopTables") ?? undefined,
     });
 
     if (!parsed.success) {
@@ -106,23 +104,19 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const data = await getRevenuePageData(user, resolveRevenueFilters(parsed.data), {
-      includeTopTables: parsed.data.includeTopTables !== "0",
-    });
+    const data = await getRevenueTopTablesData(user, resolveRevenueFilters(parsed.data));
     const body = { data };
     void recordNetworkTransferSample({
       channel: "CLIENT_API_RESPONSE",
-      label: "GET /api/revenue",
+      label: "GET /api/revenue/tables",
       bytesEstimate: Buffer.byteLength(JSON.stringify(body), "utf8"),
       durationMs: Math.round(performance.now() - t0),
       metadata: {
-        route: "GET /api/revenue",
+        route: "GET /api/revenue/tables",
         preset: parsed.data.preset,
-        platformCount: data.filters.platforms.length,
-        platforms: data.filters.platforms,
-        mode: data.mode,
-        includeTopTables: parsed.data.includeTopTables !== "0",
-        trendPoints: data.trend.length,
+        buyerWindow: parsed.data.buyerWindow,
+        itemWindow: parsed.data.itemWindow,
+        platforms: resolveRevenueFilters(parsed.data).platforms,
         topBuyerCount: data.topBuyers.length,
         topItemCount: data.topItems.length,
       },
@@ -131,23 +125,18 @@ export async function GET(request: NextRequest) {
   } catch (error) {
     void recordNetworkTransferSample({
       channel: "OTHER",
-      label: "GET /api/revenue failed",
+      label: "GET /api/revenue/tables failed",
       durationMs: Math.round(performance.now() - t0),
       metadata: {
-        route: "GET /api/revenue",
-        preset: request.nextUrl.searchParams.get("preset") ?? "30d",
-        granularity: request.nextUrl.searchParams.get("granularity") ?? null,
-        buyerWindow: request.nextUrl.searchParams.get("buyerWindow") ?? "30d",
-        itemWindow: request.nextUrl.searchParams.get("itemWindow") ?? "30d",
-        platforms: request.nextUrl.searchParams.get("platforms") ?? "",
+        route: "GET /api/revenue/tables",
         error:
           error instanceof Error
             ? error.message
             : typeof error === "string"
               ? error
-              : "Unknown revenue route failure",
+              : "Unknown revenue top tables route failure",
       },
     });
-    return handleRevenueError(error, "[revenue] GET failed");
+    return handleRevenueTablesError(error, "[revenue] tables GET failed");
   }
 }

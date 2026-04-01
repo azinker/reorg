@@ -32,6 +32,7 @@ import type {
   RevenueSimpleWindow,
   RevenueTopBuyerRow,
   RevenueTopItemRow,
+  RevenueTopTablesData,
   RevenueTrendPoint,
 } from "@/lib/revenue";
 import { PLATFORM_FULL } from "@/lib/grid-types";
@@ -373,6 +374,35 @@ function parseSourceSummary(value: unknown): RevenueSourceSummary | null {
   };
 }
 
+function parseRequestedRange(value: unknown): { from: string; to: string } | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  return typeof record.from === "string" && typeof record.to === "string"
+    ? { from: record.from, to: record.to }
+    : null;
+}
+
+function rangesRoughlyMatch(
+  left: { from: string; to: string } | null,
+  right: { from: string; to: string },
+) {
+  if (!left) return false;
+
+  const leftFrom = new Date(left.from).getTime();
+  const leftTo = new Date(left.to).getTime();
+  const rightFrom = new Date(right.from).getTime();
+  const rightTo = new Date(right.to).getTime();
+  if ([leftFrom, leftTo, rightFrom, rightTo].some((value) => Number.isNaN(value))) {
+    return false;
+  }
+
+  const toleratedMs = 36 * 60 * 60 * 1000;
+  return (
+    Math.abs(leftFrom - rightFrom) <= toleratedMs &&
+    Math.abs(leftTo - rightTo) <= toleratedMs
+  );
+}
+
 function parseSyncStages(value: unknown): RevenueSyncStageSummary[] {
   if (!Array.isArray(value)) return [];
   return value.flatMap((entry) => {
@@ -430,6 +460,44 @@ function formatRevenueJob(job: {
     syncStages: parseSyncStages(metadata.syncStages),
     sourceSummary: parseSourceSummary(metadata.sourceSummary),
   };
+}
+
+type RevenueSourceJobSnapshot = {
+  platform: Platform;
+  label: string;
+  requestedRange: { from: string; to: string } | null;
+  sourceSummary: RevenueSourceSummary | null;
+};
+
+async function getLatestRevenueSourceJobSnapshots(
+  platforms: Platform[],
+): Promise<RevenueSourceJobSnapshot[]> {
+  const jobs = await db.revenueSyncJob.findMany({
+    where: {
+      platform: { in: platforms },
+      completedAt: { not: null },
+    },
+    include: { integration: { select: { label: true } } },
+    orderBy: { createdAt: "desc" },
+    take: Math.max(12, platforms.length * 4),
+  });
+
+  const latestByIntegration = new Map<string, RevenueSourceJobSnapshot>();
+  for (const job of jobs) {
+    if (latestByIntegration.has(job.integrationId)) continue;
+    const metadata =
+      job.metadata && typeof job.metadata === "object" && !Array.isArray(job.metadata)
+        ? (job.metadata as Record<string, unknown>)
+        : {};
+    latestByIntegration.set(job.integrationId, {
+      platform: job.platform,
+      label: job.integration.label,
+      requestedRange: parseRequestedRange(metadata.requestedRange),
+      sourceSummary: parseSourceSummary(metadata.sourceSummary),
+    });
+  }
+
+  return [...latestByIntegration.values()];
 }
 
 async function queueRevenueSyncJobs(
@@ -1123,24 +1191,81 @@ function mergeNormalizedPeriods(periods: PeriodAggregation[]): PeriodAggregation
 }
 
 async function aggregateNormalizedCurrentPeriod(filters: RevenueQueryFilters): Promise<PeriodAggregation> {
-  const integrations = await getEnabledRevenueIntegrations();
-  const selectedIntegrations = integrations.filter((integration) =>
-    filters.platforms.includes(integration.platform),
+  const [basePeriod, sourceJobs] = await Promise.all([
+    aggregateNormalizedPeriod(filters),
+    getLatestRevenueSourceJobSnapshots(filters.platforms),
+  ]);
+
+  const matchingSourceJobs = sourceJobs.filter(
+    (job) =>
+      rangesRoughlyMatch(job.requestedRange, { from: filters.from, to: filters.to }) &&
+      job.sourceSummary &&
+      EXACT_EBAY_PLATFORMS.has(job.platform),
   );
 
-  if (selectedIntegrations.length === 0) {
-    return aggregateNormalizedPeriod(filters);
+  if (matchingSourceJobs.length === 0) {
+    return basePeriod;
   }
 
-  const periods = await Promise.all(
-    selectedIntegrations.map((integration) =>
-      EXACT_EBAY_PLATFORMS.has(integration.platform)
-        ? aggregateEbayExactPeriod({ ...filters, platforms: [integration.platform] }, integration)
-        : aggregateLineBasedOperationalPeriod({ ...filters, platforms: [integration.platform] }),
-    ),
-  );
+  const storeBreakdown = basePeriod.storeBreakdown.map((store) => ({ ...store }));
+  const storeByPlatform = new Map(storeBreakdown.map((store) => [store.platform, store]));
+  const otherFeesAmount = basePeriod.feeBreakdown.find((row) => row.key === "otherFees")?.amount ?? 0;
 
-  return mergeNormalizedPeriods(periods);
+  for (const job of matchingSourceJobs) {
+    const summary = job.sourceSummary;
+    if (!summary) continue;
+
+    const store = storeByPlatform.get(job.platform);
+    if (!store) continue;
+
+    const grossRevenue = safeNumber(summary.grossRevenue) ?? store.grossRevenue;
+    const netRevenue = safeNumber(summary.netRevenue) ?? store.netRevenue;
+    const marketplaceFees = safeNumber(summary.marketplaceFees) ?? store.marketplaceFees ?? 0;
+    const advertisingFees = safeNumber(summary.advertisingFees) ?? store.advertisingFees ?? 0;
+    const taxCollected = safeNumber(summary.taxCollected) ?? store.taxCollected;
+
+    store.label = job.label;
+    store.grossRevenue = grossRevenue;
+    store.netRevenue = netRevenue;
+    store.marketplaceFees = marketplaceFees;
+    store.advertisingFees = advertisingFees;
+    store.taxCollected = taxCollected;
+    store.feeRatePercent = grossRevenue > 0 ? (marketplaceFees / grossRevenue) * 100 : null;
+    store.advertisingRatePercent = grossRevenue > 0 ? (advertisingFees / grossRevenue) * 100 : null;
+    store.exactFeeCoverage = true;
+  }
+
+  const grossRevenue = storeBreakdown.reduce((sum, store) => sum + store.grossRevenue, 0);
+  const netRevenue = storeBreakdown.reduce((sum, store) => sum + (store.netRevenue ?? 0), 0);
+  const marketplaceFees = storeBreakdown.reduce((sum, store) => sum + (store.marketplaceFees ?? 0), 0);
+  const advertisingFees = storeBreakdown.reduce((sum, store) => sum + (store.advertisingFees ?? 0), 0);
+  const taxCollected = storeBreakdown.reduce((sum, store) => sum + store.taxCollected, 0);
+  const shippingCollected = storeBreakdown.reduce((sum, store) => sum + store.shippingCollected, 0);
+  const orderCount = storeBreakdown.reduce((sum, store) => sum + store.orderCount, 0);
+  const averageOrderValue = orderCount > 0 ? grossRevenue / orderCount : null;
+
+  return {
+    ...basePeriod,
+    grossRevenue,
+    netRevenue,
+    marketplaceFees,
+    advertisingFees,
+    taxCollected,
+    shippingCollected,
+    orderCount,
+    averageOrderValue,
+    storeBreakdown: storeBreakdown.sort((a, b) => b.grossRevenue - a.grossRevenue),
+    feeBreakdown: ([
+      { key: "marketplaceFees", label: "Marketplace fees", amount: marketplaceFees },
+      { key: "advertisingFees", label: "Advertising fees", amount: advertisingFees },
+      { key: "otherFees", label: "Other fees", amount: otherFeesAmount },
+    ] satisfies RevenueFeeBreakdownRow[]).filter((row) => row.amount !== 0),
+    revenueShare: storeBreakdown.map((store) => ({
+      platform: store.platform,
+      label: store.label,
+      grossRevenue: store.grossRevenue,
+    })),
+  };
 }
 
 async function aggregateNormalizedPeriod(filters: RevenueQueryFilters): Promise<PeriodAggregation> {
@@ -1533,6 +1658,8 @@ export async function getRevenueDebugData(
       OR: [
         { label: "GET /api/revenue" },
         { label: "GET /api/revenue failed" },
+        { label: "GET /api/revenue/tables" },
+        { label: "GET /api/revenue/tables failed" },
         { label: "POST /api/revenue/sync" },
         { label: { contains: "revenue sync" } },
       ],
@@ -1562,6 +1689,7 @@ export async function getRevenueDebugData(
 export async function getRevenuePageData(
   user: AuthenticatedRevenueUser,
   filters: RevenueQueryFilters,
+  options?: { includeTopTables?: boolean },
 ): Promise<RevenuePageData> {
   requireRevenueAccess(user);
 
@@ -1600,8 +1728,10 @@ export async function getRevenuePageData(
   const previousFrom = new Date(previousTo.getTime() - spanMs);
   const buyerRange = rangeForSimpleWindow(normalizedFilters.to, normalizedFilters.buyerWindow);
   const itemRange = rangeForSimpleWindow(normalizedFilters.to, normalizedFilters.itemWindow);
+  const includeTopTables = options?.includeTopTables ?? true;
 
-  const useSharedTopTables = buyerRange.from === itemRange.from && buyerRange.to === itemRange.to;
+  const useSharedTopTables =
+    includeTopTables && buyerRange.from === itemRange.from && buyerRange.to === itemRange.to;
   const sharedTopTablesPromise = useSharedTopTables
     ? aggregateTopTables({ ...normalizedFilters, from: buyerRange.from, to: buyerRange.to })
     : null;
@@ -1613,8 +1743,12 @@ export async function getRevenuePageData(
     mode === "ebay_exact" && exactIntegration
       ? aggregateEbayExactPeriod({ ...normalizedFilters, from: previousFrom.toISOString(), to: previousTo.toISOString() }, exactIntegration)
       : aggregateNormalizedPeriod({ ...normalizedFilters, from: previousFrom.toISOString(), to: previousTo.toISOString() }),
-    sharedTopTablesPromise ?? aggregateTopTables({ ...normalizedFilters, from: buyerRange.from, to: buyerRange.to }),
-    sharedTopTablesPromise ?? aggregateTopTables({ ...normalizedFilters, from: itemRange.from, to: itemRange.to }),
+    includeTopTables
+      ? sharedTopTablesPromise ?? aggregateTopTables({ ...normalizedFilters, from: buyerRange.from, to: buyerRange.to })
+      : Promise.resolve({ topBuyers: [], topItems: [] } satisfies RevenueTopTablesData),
+    includeTopTables
+      ? sharedTopTablesPromise ?? aggregateTopTables({ ...normalizedFilters, from: itemRange.from, to: itemRange.to })
+      : Promise.resolve({ topBuyers: [], topItems: [] } satisfies RevenueTopTablesData),
   ]);
 
   const kpis = buildRevenueKpis(current, previous);
@@ -1649,6 +1783,33 @@ export async function getRevenuePageData(
     syncSummary,
     notes,
     hasAnyRevenueData: current.hasAnyRevenueData,
+  };
+}
+
+export async function getRevenueTopTablesData(
+  user: AuthenticatedRevenueUser,
+  filters: RevenueQueryFilters,
+): Promise<RevenueTopTablesData> {
+  requireRevenueAccess(user);
+
+  const integrations = await getEnabledRevenueIntegrations();
+  const platforms = normalizeSelectedPlatforms(integrations, filters.platforms);
+  const normalizedFilters: RevenueQueryFilters = { ...filters, platforms };
+  const buyerRange = rangeForSimpleWindow(normalizedFilters.to, normalizedFilters.buyerWindow);
+  const itemRange = rangeForSimpleWindow(normalizedFilters.to, normalizedFilters.itemWindow);
+  const useSharedTopTables = buyerRange.from === itemRange.from && buyerRange.to === itemRange.to;
+  const sharedTopTablesPromise = useSharedTopTables
+    ? aggregateTopTables({ ...normalizedFilters, from: buyerRange.from, to: buyerRange.to })
+    : null;
+
+  const [buyerTables, itemTables] = await Promise.all([
+    sharedTopTablesPromise ?? aggregateTopTables({ ...normalizedFilters, from: buyerRange.from, to: buyerRange.to }),
+    sharedTopTablesPromise ?? aggregateTopTables({ ...normalizedFilters, from: itemRange.from, to: itemRange.to }),
+  ]);
+
+  return {
+    topBuyers: buyerTables.topBuyers,
+    topItems: itemTables.topItems,
   };
 }
 
