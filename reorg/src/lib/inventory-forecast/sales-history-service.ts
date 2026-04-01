@@ -8,6 +8,7 @@ import {
 } from "@/lib/inventory-forecast/marketplace-sales";
 import type {
   ForecastSaleLine,
+  RevenueFinancialEventInput,
   SalesSyncIssue,
   SalesSyncSummary,
 } from "@/lib/inventory-forecast/types";
@@ -268,7 +269,7 @@ export async function syncSalesHistoryForLookback(lookbackDays: number): Promise
   return { issues, truncatedPlatforms };
 }
 
-async function upsertSalesHistoryLines(lines: ForecastSaleLine[]) {
+export async function upsertSalesHistoryLines(lines: ForecastSaleLine[]) {
   if (lines.length === 0) return;
 
   const skuSet = [...new Set(lines.map((line) => line.sku.trim()).filter(Boolean))];
@@ -288,9 +289,19 @@ async function upsertSalesHistoryLines(lines: ForecastSaleLine[]) {
       platform: ForecastSaleLine["platform"];
       externalOrderId: string;
       orderDate: Date;
-      orderStatus: string;
+      orderStatus: string | null;
       cancelledAt: Date | null;
       rawData: Record<string, unknown>;
+      currencyCode: string | null;
+      grossRevenueAmount: number | null;
+      shippingCollectedAmount: number | null;
+      taxCollectedAmount: number | null;
+      discountAmount: number | null;
+      netRevenueAmount: number | null;
+      buyerIdentifier: string | null;
+      buyerDisplayLabel: string | null;
+      buyerEmail: string | null;
+      financialRawData: Record<string, unknown>;
     }
   >();
 
@@ -301,9 +312,19 @@ async function upsertSalesHistoryLines(lines: ForecastSaleLine[]) {
       platform: line.platform,
       externalOrderId: line.externalOrderId,
       orderDate: line.orderDate,
-      orderStatus: line.isCancelled ? "cancelled" : "completed",
-      cancelledAt: line.isCancelled ? line.orderDate : null,
+      orderStatus: line.orderStatus ?? (line.isCancelled ? "cancelled" : "completed"),
+      cancelledAt: line.cancelledAt ?? (line.isCancelled ? line.orderDate : null),
       rawData: line.rawData ?? {},
+      currencyCode: line.currencyCode ?? null,
+      grossRevenueAmount: line.orderGrossRevenueAmount ?? null,
+      shippingCollectedAmount: line.orderShippingCollectedAmount ?? null,
+      taxCollectedAmount: line.orderTaxCollectedAmount ?? null,
+      discountAmount: line.orderDiscountAmount ?? null,
+      netRevenueAmount: line.orderNetRevenueAmount ?? null,
+      buyerIdentifier: line.buyerIdentifier ?? null,
+      buyerDisplayLabel: line.buyerDisplayLabel ?? null,
+      buyerEmail: line.buyerEmail ?? null,
+      financialRawData: line.orderFinancialRawData ?? {},
     });
   }
 
@@ -353,6 +374,16 @@ async function upsertSalesHistoryLines(lines: ForecastSaleLine[]) {
       orderStatus: order.orderStatus,
       cancelledAt: order.cancelledAt,
       rawData: order.rawData as never,
+      currencyCode: order.currencyCode,
+      grossRevenueAmount: order.grossRevenueAmount,
+      shippingCollectedAmount: order.shippingCollectedAmount,
+      taxCollectedAmount: order.taxCollectedAmount,
+      discountAmount: order.discountAmount,
+      netRevenueAmount: order.netRevenueAmount,
+      buyerIdentifier: order.buyerIdentifier,
+      buyerDisplayLabel: order.buyerDisplayLabel,
+      buyerEmail: order.buyerEmail,
+      financialRawData: order.financialRawData as never,
     }));
 
   for (const chunk of chunkArray(ordersToCreate, 1000)) {
@@ -360,6 +391,36 @@ async function upsertSalesHistoryLines(lines: ForecastSaleLine[]) {
       data: chunk,
       skipDuplicates: true,
     });
+  }
+
+  const existingOrdersToUpdate = existingOrders.flatMap((order) => {
+    const source = orderByKey.get(`${order.platform}:${order.externalOrderId}`);
+    if (!source) return [];
+    return [
+      db.marketplaceSaleOrder.update({
+        where: { id: order.id },
+        data: {
+          orderDate: source.orderDate,
+          orderStatus: source.orderStatus,
+          cancelledAt: source.cancelledAt,
+          rawData: source.rawData as never,
+          currencyCode: source.currencyCode,
+          grossRevenueAmount: source.grossRevenueAmount,
+          shippingCollectedAmount: source.shippingCollectedAmount,
+          taxCollectedAmount: source.taxCollectedAmount,
+          discountAmount: source.discountAmount,
+          netRevenueAmount: source.netRevenueAmount,
+          buyerIdentifier: source.buyerIdentifier,
+          buyerDisplayLabel: source.buyerDisplayLabel,
+          buyerEmail: source.buyerEmail,
+          financialRawData: source.financialRawData as never,
+        },
+      }),
+    ];
+  });
+
+  for (const chunk of chunkArray(existingOrdersToUpdate, 100)) {
+    await db.$transaction(chunk);
   }
 
   const resolvedOrders = await findOrdersByPlatform(orderIdsByPlatform);
@@ -382,15 +443,392 @@ async function upsertSalesHistoryLines(lines: ForecastSaleLine[]) {
         platformItemId: line.platformItemId ?? null,
         platformVariantId: line.platformVariantId ?? null,
         quantity: line.quantity,
+        unitPriceAmount: line.unitPriceAmount ?? null,
+        grossRevenueAmount: line.grossRevenueAmount ?? null,
+        marketplaceFeeAmount: line.marketplaceFeeAmount ?? null,
+        advertisingFeeAmount: line.advertisingFeeAmount ?? null,
+        otherFeeAmount: line.otherFeeAmount ?? null,
+        taxAmount: line.taxAmount ?? null,
+        shippingAmount: line.shippingAmount ?? null,
+        netRevenueAmount: line.netRevenueAmount ?? null,
         isCancelled: Boolean(line.isCancelled),
         isReturn: Boolean(line.isReturn),
         rawData: (line.rawData ?? {}) as never,
+        financialRawData: (line.financialRawData ?? {}) as never,
+      },
+    ];
+  });
+
+  const existingLineRows = await db.marketplaceSaleLine.findMany({
+    where: {
+      marketplaceSaleOrderId: {
+        in: [...new Set(lineRows.map((line) => line.marketplaceSaleOrderId))],
+      },
+    },
+    select: {
+      id: true,
+      marketplaceSaleOrderId: true,
+      externalLineId: true,
+    },
+  });
+  const existingLineIdByKey = new Map(
+    existingLineRows.map((line) => [
+      `${line.marketplaceSaleOrderId}:${line.externalLineId}`,
+      line.id,
+    ]),
+  );
+
+  const linesToCreate = lineRows.filter(
+    (line) => !existingLineIdByKey.has(`${line.marketplaceSaleOrderId}:${line.externalLineId}`),
+  );
+
+  for (const chunk of chunkArray(linesToCreate, 1000)) {
+    await db.marketplaceSaleLine.createMany({
+      data: chunk,
+      skipDuplicates: true,
+    });
+  }
+
+  const lineUpdates = lineRows.flatMap((line) => {
+    const existingId = existingLineIdByKey.get(
+      `${line.marketplaceSaleOrderId}:${line.externalLineId}`,
+    );
+    if (!existingId) return [];
+    return [
+      db.marketplaceSaleLine.update({
+        where: { id: existingId },
+        data: {
+          masterRowId: line.masterRowId,
+          platform: line.platform,
+          orderDate: line.orderDate,
+          sku: line.sku,
+          title: line.title,
+          platformItemId: line.platformItemId,
+          platformVariantId: line.platformVariantId,
+          quantity: line.quantity,
+          unitPriceAmount: line.unitPriceAmount,
+          grossRevenueAmount: line.grossRevenueAmount,
+          marketplaceFeeAmount: line.marketplaceFeeAmount,
+          advertisingFeeAmount: line.advertisingFeeAmount,
+          otherFeeAmount: line.otherFeeAmount,
+          taxAmount: line.taxAmount,
+          shippingAmount: line.shippingAmount,
+          netRevenueAmount: line.netRevenueAmount,
+          isCancelled: line.isCancelled,
+          isReturn: line.isReturn,
+          rawData: line.rawData,
+          financialRawData: line.financialRawData,
+        },
+      }),
+    ];
+  });
+
+  for (const chunk of chunkArray(lineUpdates, 100)) {
+    await db.$transaction(chunk);
+  }
+}
+
+export async function replaceSalesHistoryLinesForRange(params: {
+  platform: Platform;
+  from: Date;
+  to: Date;
+  lines: ForecastSaleLine[];
+}) {
+  const { platform, from, to, lines } = params;
+
+  const skuSet = [...new Set(lines.map((line) => line.sku.trim()).filter(Boolean))];
+  const masterRows = skuSet.length
+    ? await db.masterRow.findMany({
+        where: {
+          sku: { in: skuSet },
+        },
+        select: {
+          id: true,
+          sku: true,
+        },
+      })
+    : [];
+  const masterRowIdBySku = new Map(masterRows.map((row) => [row.sku, row.id]));
+  const orderByKey = new Map<
+    string,
+    {
+      platform: ForecastSaleLine["platform"];
+      externalOrderId: string;
+      orderDate: Date;
+      orderStatus: string | null;
+      cancelledAt: Date | null;
+      rawData: Record<string, unknown>;
+      currencyCode: string | null;
+      grossRevenueAmount: number | null;
+      shippingCollectedAmount: number | null;
+      taxCollectedAmount: number | null;
+      discountAmount: number | null;
+      netRevenueAmount: number | null;
+      buyerIdentifier: string | null;
+      buyerDisplayLabel: string | null;
+      buyerEmail: string | null;
+      financialRawData: Record<string, unknown>;
+    }
+  >();
+
+  for (const line of lines) {
+    const key = `${line.platform}:${line.externalOrderId}`;
+    if (orderByKey.has(key)) continue;
+    orderByKey.set(key, {
+      platform: line.platform,
+      externalOrderId: line.externalOrderId,
+      orderDate: line.orderDate,
+      orderStatus: line.orderStatus ?? (line.isCancelled ? "cancelled" : "completed"),
+      cancelledAt: line.cancelledAt ?? (line.isCancelled ? line.orderDate : null),
+      rawData: line.rawData ?? {},
+      currencyCode: line.currencyCode ?? null,
+      grossRevenueAmount: line.orderGrossRevenueAmount ?? null,
+      shippingCollectedAmount: line.orderShippingCollectedAmount ?? null,
+      taxCollectedAmount: line.orderTaxCollectedAmount ?? null,
+      discountAmount: line.orderDiscountAmount ?? null,
+      netRevenueAmount: line.orderNetRevenueAmount ?? null,
+      buyerIdentifier: line.buyerIdentifier ?? null,
+      buyerDisplayLabel: line.buyerDisplayLabel ?? null,
+      buyerEmail: line.buyerEmail ?? null,
+      financialRawData: line.orderFinancialRawData ?? {},
+    });
+  }
+
+  await db.marketplaceSaleOrder.deleteMany({
+    where: {
+      platform,
+      orderDate: {
+        gte: from,
+        lte: to,
+      },
+    },
+  });
+
+  const ordersToCreate = [...orderByKey.values()].map((order) => ({
+    platform: order.platform,
+    externalOrderId: order.externalOrderId,
+    orderDate: order.orderDate,
+    orderStatus: order.orderStatus,
+    cancelledAt: order.cancelledAt,
+    rawData: order.rawData as never,
+    currencyCode: order.currencyCode,
+    grossRevenueAmount: order.grossRevenueAmount,
+    shippingCollectedAmount: order.shippingCollectedAmount,
+    taxCollectedAmount: order.taxCollectedAmount,
+    discountAmount: order.discountAmount,
+    netRevenueAmount: order.netRevenueAmount,
+    buyerIdentifier: order.buyerIdentifier,
+    buyerDisplayLabel: order.buyerDisplayLabel,
+    buyerEmail: order.buyerEmail,
+    financialRawData: order.financialRawData as never,
+  }));
+
+  for (const chunk of chunkArray(ordersToCreate, 1000)) {
+    if (chunk.length === 0) continue;
+    await db.marketplaceSaleOrder.createMany({
+      data: chunk,
+      skipDuplicates: true,
+    });
+  }
+
+  if (lines.length === 0) return;
+
+  const externalOrderIds = [...new Set(lines.map((line) => line.externalOrderId))];
+  const resolvedOrders = await db.marketplaceSaleOrder.findMany({
+    where: {
+      platform,
+      externalOrderId: { in: externalOrderIds },
+    },
+    select: {
+      id: true,
+      platform: true,
+      externalOrderId: true,
+    },
+  });
+  const orderIdByKey = new Map(
+    resolvedOrders.map((order) => [`${order.platform}:${order.externalOrderId}`, order.id]),
+  );
+
+  const lineRows = lines.flatMap((line) => {
+    const marketplaceSaleOrderId = orderIdByKey.get(`${line.platform}:${line.externalOrderId}`);
+    if (!marketplaceSaleOrderId) return [];
+    return [
+      {
+        marketplaceSaleOrderId,
+        masterRowId: masterRowIdBySku.get(line.sku) ?? null,
+        platform: line.platform,
+        externalLineId: line.externalLineId,
+        orderDate: line.orderDate,
+        sku: line.sku,
+        title: line.title,
+        platformItemId: line.platformItemId ?? null,
+        platformVariantId: line.platformVariantId ?? null,
+        quantity: line.quantity,
+        unitPriceAmount: line.unitPriceAmount ?? null,
+        grossRevenueAmount: line.grossRevenueAmount ?? null,
+        marketplaceFeeAmount: line.marketplaceFeeAmount ?? null,
+        advertisingFeeAmount: line.advertisingFeeAmount ?? null,
+        otherFeeAmount: line.otherFeeAmount ?? null,
+        taxAmount: line.taxAmount ?? null,
+        shippingAmount: line.shippingAmount ?? null,
+        netRevenueAmount: line.netRevenueAmount ?? null,
+        isCancelled: Boolean(line.isCancelled),
+        isReturn: Boolean(line.isReturn),
+        rawData: (line.rawData ?? {}) as never,
+        financialRawData: (line.financialRawData ?? {}) as never,
       },
     ];
   });
 
   for (const chunk of chunkArray(lineRows, 1000)) {
+    if (chunk.length === 0) continue;
     await db.marketplaceSaleLine.createMany({
+      data: chunk,
+      skipDuplicates: true,
+    });
+  }
+}
+
+export async function upsertRevenueFinancialEvents(events: RevenueFinancialEventInput[]) {
+  if (events.length === 0) return;
+
+  const rows = events.map((event) => ({
+    integrationId: event.integrationId,
+    platform: event.platform,
+    eventType: event.eventType,
+    classification: event.classification,
+    externalEventId: event.externalEventId,
+    externalOrderId: event.externalOrderId ?? null,
+    externalLineId: event.externalLineId ?? null,
+    platformItemId: event.platformItemId ?? null,
+    sku: event.sku ?? null,
+    occurredAt: event.occurredAt,
+    amount: event.amount,
+    currencyCode: event.currencyCode ?? null,
+    feeType: event.feeType ?? null,
+    feeTypeDescription: event.feeTypeDescription ?? null,
+    bookingEntry: event.bookingEntry ?? null,
+    isExact: event.isExact ?? true,
+    rawData: (event.rawData ?? {}) as never,
+  }));
+
+  const existing: Array<{
+    id: string;
+    integrationId: string;
+    eventType: RevenueFinancialEventInput["eventType"];
+    externalEventId: string;
+  }> = [];
+  for (const chunk of chunkArray(rows, 500)) {
+    const matches = await db.revenueFinancialEvent.findMany({
+      where: {
+        OR: chunk.map((row) => ({
+          integrationId: row.integrationId,
+          eventType: row.eventType,
+          externalEventId: row.externalEventId,
+        })),
+      },
+      select: {
+        id: true,
+        integrationId: true,
+        eventType: true,
+        externalEventId: true,
+      },
+    });
+    existing.push(...matches);
+  }
+
+  const existingByKey = new Map(
+    existing.map((row) => [
+      `${row.integrationId}:${row.eventType}:${row.externalEventId}`,
+      row.id,
+    ]),
+  );
+
+  const rowsToCreate = rows.filter(
+    (row) => !existingByKey.has(`${row.integrationId}:${row.eventType}:${row.externalEventId}`),
+  );
+
+  for (const chunk of chunkArray(rowsToCreate, 1000)) {
+    await db.revenueFinancialEvent.createMany({
+      data: chunk,
+      skipDuplicates: true,
+    });
+  }
+
+  const updates = rows.flatMap((row) => {
+    const id = existingByKey.get(`${row.integrationId}:${row.eventType}:${row.externalEventId}`);
+    if (!id) return [];
+    return [
+      db.revenueFinancialEvent.update({
+        where: { id },
+        data: {
+          platform: row.platform,
+          classification: row.classification,
+          externalOrderId: row.externalOrderId,
+          externalLineId: row.externalLineId,
+          platformItemId: row.platformItemId,
+          sku: row.sku,
+          occurredAt: row.occurredAt,
+          amount: row.amount,
+          currencyCode: row.currencyCode,
+          feeType: row.feeType,
+          feeTypeDescription: row.feeTypeDescription,
+          bookingEntry: row.bookingEntry,
+          isExact: row.isExact,
+          rawData: row.rawData,
+        },
+      }),
+    ];
+  });
+
+  for (const chunk of chunkArray(updates, 100)) {
+    await db.$transaction(chunk);
+  }
+}
+
+export async function replaceRevenueFinancialEventsForRange(params: {
+  integrationId: string;
+  from: Date;
+  to: Date;
+  events: RevenueFinancialEventInput[];
+}) {
+  const { integrationId, from, to, events } = params;
+
+  await db.revenueFinancialEvent.deleteMany({
+    where: {
+      integrationId,
+      occurredAt: {
+        gte: from,
+        lte: to,
+      },
+    },
+  });
+
+  if (events.length === 0) return;
+
+  const rows = events.map((event) => ({
+    integrationId: event.integrationId,
+    platform: event.platform,
+    eventType: event.eventType,
+    classification: event.classification,
+    externalEventId: event.externalEventId,
+    externalOrderId: event.externalOrderId ?? null,
+    externalLineId: event.externalLineId ?? null,
+    platformItemId: event.platformItemId ?? null,
+    sku: event.sku ?? null,
+    occurredAt: event.occurredAt,
+    amount: event.amount,
+    currencyCode: event.currencyCode ?? null,
+    feeType: event.feeType ?? null,
+    feeTypeDescription: event.feeTypeDescription ?? null,
+    bookingEntry: event.bookingEntry ?? null,
+    isExact: event.isExact ?? true,
+    rawData: (event.rawData ?? {}) as never,
+  }));
+
+  for (const chunk of chunkArray(rows, 1000)) {
+    if (chunk.length === 0) continue;
+    await db.revenueFinancialEvent.createMany({
       data: chunk,
       skipDuplicates: true,
     });

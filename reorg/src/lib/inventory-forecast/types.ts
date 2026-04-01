@@ -48,15 +48,64 @@ export interface ForecastSaleLine {
   quantity: number;
   platformItemId?: string | null;
   platformVariantId?: string | null;
+  orderStatus?: string | null;
+  cancelledAt?: Date | null;
+  currencyCode?: string | null;
+  unitPriceAmount?: number | null;
+  grossRevenueAmount?: number | null;
+  marketplaceFeeAmount?: number | null;
+  advertisingFeeAmount?: number | null;
+  otherFeeAmount?: number | null;
+  taxAmount?: number | null;
+  shippingAmount?: number | null;
+  netRevenueAmount?: number | null;
+  orderGrossRevenueAmount?: number | null;
+  orderShippingCollectedAmount?: number | null;
+  orderTaxCollectedAmount?: number | null;
+  orderDiscountAmount?: number | null;
+  orderNetRevenueAmount?: number | null;
+  buyerIdentifier?: string | null;
+  buyerDisplayLabel?: string | null;
+  buyerEmail?: string | null;
   isCancelled?: boolean;
   isReturn?: boolean;
   rawData?: Record<string, unknown>;
+  financialRawData?: Record<string, unknown>;
+  orderFinancialRawData?: Record<string, unknown>;
 }
 
 export interface SalesSyncIssue {
   platform: Platform;
   level: "warning" | "error";
   message: string;
+}
+
+export interface RevenueFinancialEventInput {
+  integrationId: string;
+  platform: Platform;
+  eventType: "TRANSACTION" | "BILLING_ACTIVITY" | "SUMMARY";
+  classification:
+    | "SALE"
+    | "TAX"
+    | "MARKETPLACE_FEE"
+    | "ADVERTISING_FEE"
+    | "SHIPPING_LABEL"
+    | "ACCOUNT_LEVEL_FEE"
+    | "CREDIT"
+    | "OTHER";
+  externalEventId: string;
+  externalOrderId?: string | null;
+  externalLineId?: string | null;
+  platformItemId?: string | null;
+  sku?: string | null;
+  occurredAt: Date;
+  amount: number;
+  currencyCode?: string | null;
+  feeType?: string | null;
+  feeTypeDescription?: string | null;
+  bookingEntry?: string | null;
+  isExact?: boolean;
+  rawData?: Record<string, unknown>;
 }
 
 export interface SalesSyncSummary {

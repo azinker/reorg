@@ -126,6 +126,23 @@ enum TaskActivityType {
   RESTORED
 }
 
+enum RevenueFinancialEventType {
+  TRANSACTION
+  BILLING_ACTIVITY
+  SUMMARY
+}
+
+enum RevenueFinancialEventClassification {
+  SALE
+  TAX
+  MARKETPLACE_FEE
+  ADVERTISING_FEE
+  SHIPPING_LABEL
+  ACCOUNT_LEVEL_FEE
+  CREDIT
+  OTHER
+}
+
 // ─── Auth & Users ────────────────────────────────────────────────────────────
 
 model User {
@@ -148,6 +165,7 @@ model User {
   assignedTasks   Task[]         @relation("TaskAssignee")
   deletedTasks    Task[]         @relation("TaskDeleter")
   taskActivities  TaskActivity[] @relation("TaskActivityActor")
+  revenueSyncJobs RevenueSyncJob[] @relation("RevenueSyncJobTrigger")
   forecastRuns   ForecastRun[]
   supplierOrders SupplierOrder[]
 
@@ -211,6 +229,8 @@ model Integration {
   listings                 MarketplaceListing[]
   unmatchedListings        UnmatchedListing[]
   syncJobs                 SyncJob[]
+  revenueSyncJobs          RevenueSyncJob[]
+  revenueFinancialEvents   RevenueFinancialEvent[]
   networkTransferSamples   NetworkTransferSample[]
 
   @@map("integrations")
@@ -513,21 +533,32 @@ model TaskActivity {
 }
 
 model MarketplaceSaleOrder {
-  id              String    @id @default(cuid())
-  platform        Platform
-  externalOrderId String
-  orderDate       DateTime
-  orderStatus     String?
-  cancelledAt     DateTime?
-  rawData         Json      @default("{}")
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
+  id                       String    @id @default(cuid())
+  platform                 Platform
+  externalOrderId          String
+  orderDate                DateTime
+  orderStatus              String?
+  cancelledAt              DateTime?
+  currencyCode             String?
+  grossRevenueAmount       Float?
+  shippingCollectedAmount  Float?
+  taxCollectedAmount       Float?
+  discountAmount           Float?
+  netRevenueAmount         Float?
+  buyerIdentifier          String?
+  buyerDisplayLabel        String?
+  buyerEmail               String?
+  rawData                  Json      @default("{}")
+  financialRawData         Json      @default("{}")
+  createdAt                DateTime  @default(now())
+  updatedAt                DateTime  @updatedAt
 
   lines MarketplaceSaleLine[]
 
   @@unique([platform, externalOrderId])
   @@index([platform, orderDate])
   @@index([orderDate])
+  @@index([platform, buyerIdentifier])
   @@map("marketplace_sale_orders")
 }
 
@@ -543,9 +574,18 @@ model MarketplaceSaleLine {
   platformItemId         String?
   platformVariantId      String?
   quantity               Int
+  unitPriceAmount        Float?
+  grossRevenueAmount     Float?
+  marketplaceFeeAmount   Float?
+  advertisingFeeAmount   Float?
+  otherFeeAmount         Float?
+  taxAmount              Float?
+  shippingAmount         Float?
+  netRevenueAmount       Float?
   isCancelled            Boolean  @default(false)
   isReturn               Boolean  @default(false)
   rawData                Json     @default("{}")
+  financialRawData       Json     @default("{}")
   createdAt              DateTime @default(now())
   updatedAt              DateTime @updatedAt
 
@@ -559,6 +599,64 @@ model MarketplaceSaleLine {
   @@index([platform, sku])
   @@index([orderDate])
   @@map("marketplace_sale_lines")
+}
+
+model RevenueSyncJob {
+  id                String     @id @default(cuid())
+  integrationId     String
+  platform          Platform
+  triggeredByUserId String?
+  status            SyncStatus @default(PENDING)
+  startedAt         DateTime?
+  completedAt       DateTime?
+  ordersProcessed   Int        @default(0)
+  linesProcessed    Int        @default(0)
+  warningCount      Int        @default(0)
+  warnings          Json       @default("[]")
+  errorSummary      String?
+  metadata          Json       @default("{}")
+  createdAt         DateTime   @default(now())
+
+  integration Integration @relation(fields: [integrationId], references: [id])
+  triggeredBy User?       @relation("RevenueSyncJobTrigger", fields: [triggeredByUserId], references: [id], onDelete: SetNull)
+
+  @@index([integrationId, createdAt])
+  @@index([platform, createdAt])
+  @@index([status, createdAt])
+  @@map("revenue_sync_jobs")
+}
+
+model RevenueFinancialEvent {
+  id                 String                             @id @default(cuid())
+  integrationId      String
+  platform           Platform
+  eventType          RevenueFinancialEventType
+  classification     RevenueFinancialEventClassification
+  externalEventId    String
+  externalOrderId    String?
+  externalLineId     String?
+  platformItemId     String?
+  sku                String?
+  occurredAt         DateTime
+  amount             Float
+  currencyCode       String?
+  feeType            String?
+  feeTypeDescription String?
+  bookingEntry       String?
+  isExact            Boolean                            @default(true)
+  rawData            Json                               @default("{}")
+  createdAt          DateTime                           @default(now())
+  updatedAt          DateTime                           @updatedAt
+
+  integration Integration @relation(fields: [integrationId], references: [id], onDelete: Cascade)
+
+  @@unique([integrationId, eventType, externalEventId])
+  @@index([platform, occurredAt])
+  @@index([integrationId, occurredAt])
+  @@index([classification, occurredAt])
+  @@index([externalOrderId])
+  @@index([platformItemId])
+  @@map("revenue_financial_events")
 }
 
 model InventorySnapshot {

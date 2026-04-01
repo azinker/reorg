@@ -213,6 +213,36 @@ export const PAGE_TOUR_STEPS: Record<OnboardingPageKey, TourStep[]> = {
   ],
 
   /* ================================================================
+   * REVENUE
+   * ================================================================ */
+  revenue: [
+    {
+      id: "revenue-1",
+      target: "revenue-header",
+      title: "Welcome to Revenue",
+      body: "This page is an owner-facing analytics view for sales performance across your connected stores. It is manual-refresh only in this version, so you stay in control of when marketplace revenue data is pulled into reorG.",
+    },
+    {
+      id: "revenue-2",
+      target: "revenue-filters",
+      title: "Date and Store Filters",
+      body: "Use these controls to slice the dashboard by date range, chart granularity, and store. Example: switch to the last 90 days and only select TPP eBay to isolate how that store's revenue and fees are trending.",
+    },
+    {
+      id: "revenue-3",
+      target: "revenue-summary",
+      title: "Revenue Summary Cards",
+      body: "These cards show the key business numbers for the selected range: gross revenue, net revenue, fees, taxes, shipping, orders, and average order value. Cards marked 'Partial' mean the selected stores include sources where exact fee detail is not exposed yet, so reorG avoids guessing.",
+    },
+    {
+      id: "revenue-4",
+      target: "revenue-buyers",
+      title: "Top Buyers and Top Items",
+      body: "This section surfaces who is buying the most and which SKUs are moving the most units. Use it to quickly spot repeat buyers, high-volume items, and which stores are driving the strongest item demand.",
+    },
+  ],
+
+  /* ================================================================
    * SYNC
    * ================================================================ */
   sync: [
