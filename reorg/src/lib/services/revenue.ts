@@ -226,6 +226,7 @@ type PeriodAggregation = {
 
 const EXACT_EBAY_PLATFORMS = new Set<Platform>(["TPP_EBAY", "TT_EBAY"]);
 const DEFAULT_EBAY_REPORTING_TIMEZONE = "America/Los_Angeles";
+const MAX_EBAY_REVENUE_REFRESH_DAYS = 90;
 
 function requireRevenueAccess(user: AuthenticatedRevenueUser | null | undefined) {
   if (!user?.id) throw new RevenueServiceError("Unauthorized", 401);
@@ -394,6 +395,40 @@ function normalizeRangeToTimeZoneDayBounds(fromIso: string, toIso: string, timeZ
       0,
     ),
     to: zonedDateTimeToUtc(timeZone, toParts.year, toParts.month, toParts.day, 23, 59, 59),
+  };
+}
+
+function resolveRevenueSyncRangeForPlatform(
+  platform: Platform,
+  fromIso: string,
+  toIso: string,
+  reportingTimeZone: string,
+) {
+  if (!EXACT_EBAY_PLATFORMS.has(platform)) {
+    return {
+      effectiveRange: { from: new Date(fromIso), to: new Date(toIso) },
+      warning: null as string | null,
+    };
+  }
+
+  const normalizedRange = normalizeRangeToTimeZoneDayBounds(fromIso, toIso, reportingTimeZone);
+  const spanDays =
+    Math.floor((normalizedRange.to.getTime() - normalizedRange.from.getTime()) / (24 * 60 * 60 * 1000)) + 1;
+
+  if (spanDays <= MAX_EBAY_REVENUE_REFRESH_DAYS) {
+    return {
+      effectiveRange: normalizedRange,
+      warning: null as string | null,
+    };
+  }
+
+  const clampedFrom = subDays(normalizedRange.to, MAX_EBAY_REVENUE_REFRESH_DAYS - 1);
+  return {
+    effectiveRange: {
+      from: clampedFrom,
+      to: normalizedRange.to,
+    },
+    warning: `eBay revenue refresh supports the most recent ${MAX_EBAY_REVENUE_REFRESH_DAYS} days only. Using ${format(clampedFrom, "MMM d, yyyy")} through ${format(normalizedRange.to, "MMM d, yyyy")}.`,
   };
 }
 
@@ -2106,9 +2141,12 @@ async function runQueuedRevenueSyncJobs(
           EXACT_EBAY_PLATFORMS.has(integration.platform)
             ? getIntegrationConfig(integration).syncProfile.timezone || DEFAULT_EBAY_REPORTING_TIMEZONE
             : "UTC";
-        const effectiveRange = EXACT_EBAY_PLATFORMS.has(integration.platform)
-          ? normalizeRangeToTimeZoneDayBounds(request.from, request.to, reportingTimeZone)
-          : { from: new Date(request.from), to: new Date(request.to) };
+        const { effectiveRange, warning: rangeWarning } = resolveRevenueSyncRangeForPlatform(
+          integration.platform,
+          request.from,
+          request.to,
+          reportingTimeZone,
+        );
         const persistStages = async (syncStages: RevenueSyncStageSummary[]) => {
           await db.revenueSyncJob.update({
             where: { id: job.id },
@@ -2137,6 +2175,21 @@ async function runQueuedRevenueSyncJobs(
             }),
         );
 
+        const jobWarnings = rangeWarning ? [rangeWarning, ...fetched.warnings] : fetched.warnings;
+        const syncStages =
+          fetched.syncStages.length > 0
+            ? [...fetched.syncStages]
+            : fallbackSyncStagesForPlatform(integration.platform, fetched.lines.length);
+        if (rangeWarning) {
+          syncStages.unshift({
+            key: "window",
+            label: "Supported Window",
+            status: "COMPLETED",
+            detail: rangeWarning,
+            updatedAt: new Date().toISOString(),
+          });
+        }
+
         await replaceSalesHistoryLinesForRange({
           platform: integration.platform,
           from: effectiveRange.from,
@@ -2149,7 +2202,7 @@ async function runQueuedRevenueSyncJobs(
           to: effectiveRange.to,
           events: fetched.financialEvents,
         });
-        warnings.push(...fetched.warnings.map((warning) => `${integration.label}: ${warning}`));
+        warnings.push(...jobWarnings.map((warning) => `${integration.label}: ${warning}`));
 
         const updated = await db.revenueSyncJob.update({
           where: { id: job.id },
@@ -2158,12 +2211,12 @@ async function runQueuedRevenueSyncJobs(
             completedAt: new Date(),
             ordersProcessed: new Set(fetched.lines.map((line) => line.externalOrderId)).size,
             linesProcessed: fetched.lines.length,
-            warningCount: fetched.warnings.length,
-            warnings: fetched.warnings as unknown as Prisma.InputJsonValue,
+            warningCount: jobWarnings.length,
+            warnings: jobWarnings as unknown as Prisma.InputJsonValue,
             metadata: {
               requestedRange: { from: request.from, to: request.to },
               effectiveRange: { from: effectiveRange.from.toISOString(), to: effectiveRange.to.toISOString(), reportingTimeZone },
-              syncStages: fetched.syncStages.length > 0 ? fetched.syncStages : fallbackSyncStagesForPlatform(integration.platform, fetched.lines.length),
+              syncStages,
               sourceSummary: fetched.exactSummary,
               financialEventCount: fetched.financialEvents.length,
             } as unknown as Prisma.InputJsonValue,
