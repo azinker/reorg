@@ -93,6 +93,13 @@ function urgencyTone(urgency: TaskRecord["urgency"]) {
   return "border-border bg-background text-muted-foreground";
 }
 
+function urgencyTitleTone(urgency: TaskRecord["urgency"]) {
+  if (urgency === "CRITICAL") return "text-red-200";
+  if (urgency === "HIGH") return "text-amber-200";
+  if (urgency === "MEDIUM") return "text-sky-200";
+  return "text-foreground";
+}
+
 function statusTone(status: TaskRecord["status"]) {
   if (status === "COMPLETED") return "border-emerald-500/30 bg-emerald-500/10 text-emerald-300";
   if (status === "BLOCKED") return "border-red-500/30 bg-red-500/10 text-red-200";
@@ -815,7 +822,7 @@ export default function TasksPage() {
                                 }}
                                 className="cursor-pointer text-left"
                               >
-                                <div className="font-medium text-foreground">{task.title}</div>
+                                    <div className={cn("font-medium", urgencyTitleTone(task.urgency))}>{task.title}</div>
                                 <div className="mt-1 flex flex-wrap gap-2 text-xs text-muted-foreground">
                                   <span>{task.isSharedTeamTask ? "Shared team task" : "Personal task"}</span>
                                   <span>Created by {task.createdBy.name}</span>
@@ -934,7 +941,7 @@ export default function TasksPage() {
                             }}
                             className="cursor-pointer text-left"
                           >
-                            <div className="font-medium text-foreground">{task.title}</div>
+                            <div className={cn("font-medium", urgencyTitleTone(task.urgency))}>{task.title}</div>
                             <div className="mt-1 text-xs text-muted-foreground">
                               {task.isSharedTeamTask ? "Shared team task" : "Personal task"}
                             </div>
