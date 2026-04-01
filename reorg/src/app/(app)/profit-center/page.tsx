@@ -1,5 +1,6 @@
-import { DollarSign, TrendingDown, TrendingUp, Target } from "lucide-react";
+import { DollarSign, TrendingUp, Target } from "lucide-react";
 import { PlatformIcon } from "@/components/grid/platform-icon";
+import { ProfitCenterBiggestLosers } from "@/components/profit-center/profit-center-biggest-losers";
 import { cn } from "@/lib/utils";
 import { PLATFORM_COLORS } from "@/lib/grid-types";
 import { getProfitCenterData } from "@/lib/services/ops-insights";
@@ -181,46 +182,11 @@ export default async function ProfitCenterPage() {
           </div>
         </div>
 
-        <div className="rounded-xl border border-border bg-card p-5 shadow-sm">
-          <div className="flex items-center gap-2 text-sm font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-            <TrendingDown className="h-4 w-4 text-red-300" />
-            Biggest Losers
-          </div>
-          <div className="mt-4 overflow-x-auto">
-            <table className="min-w-full text-sm">
-              <thead className="text-left text-xs uppercase tracking-[0.18em] text-muted-foreground">
-                <tr>
-                  <th className="pb-3 pr-4">SKU / Title</th>
-                  <th className="pb-3 pr-4">Store</th>
-                  <th className="pb-3 pr-4">Price</th>
-                  <th className="pb-3 pr-4">Profit</th>
-                  <th className="pb-3">Margin</th>
-                </tr>
-              </thead>
-              <tbody>
-                {data.biggestLosers.map((entry) => (
-                  <tr key={`${entry.rowId}-${entry.platform}-${entry.sku}-loser`} className="border-t border-border/70">
-                    <td className="py-3 pr-4">
-                      <div className="font-medium text-foreground">{entry.sku}</div>
-                      <div className="text-xs text-muted-foreground">{entry.title}</div>
-                    </td>
-                    <td className="py-3 pr-4">
-                      <div className="inline-flex items-center gap-2">
-                        <PlatformIcon platform={entry.platform} size={16} />
-                        <span className={cn("rounded-full border px-2 py-0.5 text-xs", PLATFORM_COLORS[entry.platform])}>
-                          {entry.platform}
-                        </span>
-                      </div>
-                    </td>
-                    <td className="py-3 pr-4 text-foreground">{formatCurrency(entry.salePrice)}</td>
-                    <td className="py-3 pr-4 text-red-300">{formatCurrency(entry.profit)}</td>
-                    <td className="py-3 text-amber-300">{formatPercent(entry.marginPercent)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
+        <ProfitCenterBiggestLosers
+          initialItems={data.biggestLosers}
+          initialPageSize={data.biggestLosersPageSize}
+          initialTotalCount={data.biggestLoserCount}
+        />
       </div>
 
       <div className="rounded-xl border border-border bg-card p-5 shadow-sm">

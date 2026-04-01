@@ -1,7 +1,7 @@
 import { db } from "@/lib/db";
 import { getGridData } from "@/lib/grid-query";
 import type { GridRow, Platform, StoreValue } from "@/lib/grid-types";
-import { PLATFORM_DISPLAY_ORDER, PLATFORM_FULL } from "@/lib/grid-types";
+import { calcFee, calcProfit, PLATFORM_DISPLAY_ORDER, PLATFORM_FULL } from "@/lib/grid-types";
 
 type FlattenedGridRow = GridRow & {
   hasAlternateTitlesIssue: boolean;
@@ -60,15 +60,27 @@ export type ProfitCenterListing = {
   rowId: string;
   sku: string;
   title: string;
+  imageUrl: string | null;
+  upc: string | null;
+  weight: string | null;
+  inventory: number | null;
   platform: Platform;
+  listingId: string;
+  marketplaceListingId: string | null;
+  platformVariantId: string | null;
   salePrice: number;
+  liveSalePrice: number;
+  stagedSalePrice: number | null;
   profit: number;
   marginPercent: number;
   supplierCost: number | null;
   supplierShipping: number | null;
   shippingCost: number | null;
   adRatePercent: number | null;
-  feeAmount: number | null;
+  liveAdRatePercent: number | null;
+  stagedAdRatePercent: number | null;
+  feeAmount: number;
+  platformFeeRatePercent: number;
 };
 
 export type ProfitCenterPlatformSummary = {
@@ -92,7 +104,17 @@ export type ProfitCenterData = {
   platformSummaries: ProfitCenterPlatformSummary[];
   topWinners: ProfitCenterListing[];
   biggestLosers: ProfitCenterListing[];
+  biggestLoserCount: number;
+  biggestLosersPageSize: number;
   watchlist: ProfitCenterListing[];
+};
+
+export type ProfitCenterLoserPage = {
+  items: ProfitCenterListing[];
+  page: number;
+  pageSize: number;
+  totalCount: number;
+  totalPages: number;
 };
 
 const ISSUE_LABELS: Record<CatalogHealthIssueKey, string> = {
@@ -135,6 +157,16 @@ function numericStoreValue(entry: StoreValue | undefined) {
   return typeof entry?.value === "number" && Number.isFinite(entry.value) ? entry.value : null;
 }
 
+function stagedNumericStoreValue(entry: StoreValue | undefined) {
+  return typeof entry?.stagedValue === "number" && Number.isFinite(entry.stagedValue)
+    ? entry.stagedValue
+    : null;
+}
+
+function effectiveNumericStoreValue(entry: StoreValue | undefined) {
+  return stagedNumericStoreValue(entry) ?? numericStoreValue(entry);
+}
+
 function matchStoreValue(values: StoreValue[], target: StoreValue) {
   return values.find(
     (entry) =>
@@ -147,6 +179,82 @@ function matchStoreValue(values: StoreValue[], target: StoreValue) {
 async function getFlattenedRows() {
   const rows = await getGridData();
   return flattenGridRows(rows);
+}
+
+function buildProfitCenterListings(rows: FlattenedGridRow[]): ProfitCenterListing[] {
+  const listings: ProfitCenterListing[] = [];
+
+  for (const row of rows) {
+    for (const salePriceEntry of row.salePrices) {
+      const liveSalePrice = numericStoreValue(salePriceEntry);
+      const stagedSalePrice = stagedNumericStoreValue(salePriceEntry);
+      const salePrice = effectiveNumericStoreValue(salePriceEntry);
+      const adRateEntry = matchStoreValue(row.adRates, salePriceEntry);
+      const liveAdRate = numericStoreValue(adRateEntry);
+      const stagedAdRate = stagedNumericStoreValue(adRateEntry);
+      const effectiveAdRate = effectiveNumericStoreValue(adRateEntry) ?? 0;
+
+      if (salePrice == null || liveSalePrice == null) continue;
+
+      const platformFeeRate = salePriceEntry.platform === "BIGCOMMERCE" || salePriceEntry.platform === "SHOPIFY"
+        ? 0
+        : row.platformFeeRate;
+      const feeAmount = calcFee(salePrice, platformFeeRate);
+      const profit = calcProfit(
+        salePrice,
+        row.supplierCost ?? 0,
+        row.supplierShipping ?? 0,
+        row.shippingCost ?? 0,
+        platformFeeRate,
+        effectiveAdRate,
+      );
+
+      listings.push({
+        rowId: row.id,
+        sku: row.sku,
+        title: row.title,
+        imageUrl: row.imageUrl,
+        upc: row.upc ?? null,
+        weight: row.weight ?? null,
+        inventory: row.inventory ?? null,
+        platform: salePriceEntry.platform,
+        listingId: salePriceEntry.listingId,
+        marketplaceListingId: salePriceEntry.marketplaceListingId ?? null,
+        platformVariantId: salePriceEntry.variantId ?? null,
+        salePrice,
+        liveSalePrice,
+        stagedSalePrice,
+        profit,
+        marginPercent: salePrice > 0 ? (profit / salePrice) * 100 : 0,
+        supplierCost: row.supplierCost,
+        supplierShipping: row.supplierShipping,
+        shippingCost: row.shippingCost,
+        adRatePercent: effectiveNumericStoreValue(adRateEntry) != null ? effectiveAdRate * 100 : null,
+        liveAdRatePercent: liveAdRate != null ? liveAdRate * 100 : null,
+        stagedAdRatePercent: stagedAdRate != null ? stagedAdRate * 100 : null,
+        feeAmount,
+        platformFeeRatePercent: platformFeeRate * 100,
+      });
+    }
+  }
+
+  return listings;
+}
+
+function sortProfitCenterByProfitDesc(listings: ProfitCenterListing[]) {
+  return [...listings].sort((a, b) =>
+    b.profit - a.profit ||
+    b.marginPercent - a.marginPercent ||
+    a.sku.localeCompare(b.sku),
+  );
+}
+
+function sortProfitCenterByProfitAsc(listings: ProfitCenterListing[]) {
+  return [...listings].sort((a, b) =>
+    a.profit - b.profit ||
+    a.marginPercent - b.marginPercent ||
+    a.sku.localeCompare(b.sku),
+  );
 }
 
 export async function getCatalogHealthData(): Promise<CatalogHealthData> {
@@ -239,37 +347,7 @@ export async function getCatalogHealthData(): Promise<CatalogHealthData> {
 
 export async function getProfitCenterData(): Promise<ProfitCenterData> {
   const rows = await getFlattenedRows();
-  const listings: ProfitCenterListing[] = [];
-
-  for (const row of rows) {
-    for (const salePriceEntry of row.salePrices) {
-      const salePrice = numericStoreValue(salePriceEntry);
-      const profitEntry = matchStoreValue(row.profits, salePriceEntry);
-      const adRateEntry = matchStoreValue(row.adRates, salePriceEntry);
-      const feeEntry = matchStoreValue(row.platformFees, salePriceEntry);
-      const profit = numericStoreValue(profitEntry);
-
-      if (salePrice == null || profit == null) continue;
-
-      listings.push({
-        rowId: row.id,
-        sku: row.sku,
-        title: row.title,
-        platform: salePriceEntry.platform,
-        salePrice,
-        profit,
-        marginPercent: salePrice > 0 ? (profit / salePrice) * 100 : 0,
-        supplierCost: row.supplierCost,
-        supplierShipping: row.supplierShipping,
-        shippingCost: row.shippingCost,
-        adRatePercent:
-          typeof adRateEntry?.value === "number" && Number.isFinite(adRateEntry.value)
-            ? adRateEntry.value * 100
-            : null,
-        feeAmount: numericStoreValue(feeEntry),
-      });
-    }
-  }
+  const listings = buildProfitCenterListings(rows);
 
   const analyzedListingCount = listings.length;
   const averageProfit =
@@ -304,16 +382,9 @@ export async function getProfitCenterData(): Promise<ProfitCenterData> {
     };
   }).filter((entry): entry is ProfitCenterPlatformSummary => entry != null);
 
-  const byProfitDesc = [...listings].sort((a, b) =>
-    b.profit - a.profit ||
-    b.marginPercent - a.marginPercent ||
-    a.sku.localeCompare(b.sku),
-  );
-  const byProfitAsc = [...listings].sort((a, b) =>
-    a.profit - b.profit ||
-    a.marginPercent - b.marginPercent ||
-    a.sku.localeCompare(b.sku),
-  );
+  const byProfitDesc = sortProfitCenterByProfitDesc(listings);
+  const byProfitAsc = sortProfitCenterByProfitAsc(listings);
+  const biggestLosersPageSize = 20;
 
   return {
     analyzedListingCount,
@@ -325,9 +396,40 @@ export async function getProfitCenterData(): Promise<ProfitCenterData> {
     totalProfitLeakage,
     platformSummaries,
     topWinners: byProfitDesc.slice(0, 12),
-    biggestLosers: byProfitAsc.slice(0, 12),
+    biggestLosers: byProfitAsc.slice(0, biggestLosersPageSize),
+    biggestLoserCount: byProfitAsc.length,
+    biggestLosersPageSize,
     watchlist: byProfitAsc
       .filter((entry) => entry.profit >= 0 && entry.marginPercent < 10)
       .slice(0, 12),
   };
+}
+
+export async function getProfitCenterLoserPage(
+  page = 1,
+  pageSize = 20,
+): Promise<ProfitCenterLoserPage> {
+  const rows = await getFlattenedRows();
+  const ordered = sortProfitCenterByProfitAsc(buildProfitCenterListings(rows));
+  const safePageSize = Math.min(Math.max(Math.floor(pageSize) || 20, 1), 100);
+  const totalCount = ordered.length;
+  const totalPages = Math.max(1, Math.ceil(totalCount / safePageSize));
+  const safePage = Math.min(Math.max(Math.floor(page) || 1, 1), totalPages);
+  const startIndex = (safePage - 1) * safePageSize;
+
+  return {
+    items: ordered.slice(startIndex, startIndex + safePageSize),
+    page: safePage,
+    pageSize: safePageSize,
+    totalCount,
+    totalPages,
+  };
+}
+
+export async function getProfitCenterListingDetail(
+  marketplaceListingId: string,
+): Promise<ProfitCenterListing | null> {
+  const rows = await getFlattenedRows();
+  const listings = buildProfitCenterListings(rows);
+  return listings.find((listing) => listing.marketplaceListingId === marketplaceListingId) ?? null;
 }
