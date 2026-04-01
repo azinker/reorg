@@ -20,9 +20,11 @@ import { CalendarRange, Loader2, RefreshCw } from "lucide-react";
 import type { Platform } from "@/lib/grid-types";
 import { PLATFORM_FULL, PLATFORM_SHORT } from "@/lib/grid-types";
 import type {
+  RevenueDebugData,
   RevenueKpiMetric,
   RevenuePageData,
   RevenueRangePreset,
+  RevenueStatusData,
   RevenueSyncResult,
   RevenueSimpleWindow,
 } from "@/lib/revenue";
@@ -38,6 +40,14 @@ import { PAGE_TOUR_STEPS } from "@/components/onboarding/page-tour-steps";
 const PIE_COLORS = ["#8b5cf6", "#22c55e", "#f59e0b", "#38bdf8"];
 const REVENUE_LOAD_TIMEOUT_MS = 15_000;
 const REVENUE_SYNC_POLL_INTERVAL_MS = 8_000;
+
+function logRevenueClient(event: string, payload?: Record<string, unknown>) {
+  console.info("[revenue]", {
+    event,
+    at: new Date().toISOString(),
+    ...(payload ?? {}),
+  });
+}
 
 function formatCurrency(value: number | null | undefined) {
   if (value == null || !Number.isFinite(value)) return "—";
@@ -135,6 +145,7 @@ export default function RevenuePage() {
   const [itemWindow, setItemWindow] = useState<RevenueSimpleWindow>("30d");
   const [selectedPlatforms, setSelectedPlatforms] = useState<Platform[]>([]);
   const [data, setData] = useState<RevenuePageData | null>(null);
+  const [statusData, setStatusData] = useState<RevenueStatusData | null>(null);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [watchingRefresh, setWatchingRefresh] = useState(false);
@@ -150,6 +161,47 @@ export default function RevenuePage() {
     return { fromDate, toDate };
   }, [customFrom, customTo, preset]);
 
+  const selectedPlatformParam = useMemo(
+    () => (selectedPlatforms.length > 0 ? selectedPlatforms.join(",") : ""),
+    [selectedPlatforms],
+  );
+
+  const revenueDebugUrl = useMemo(
+    () => `/api/revenue/debug${selectedPlatformParam ? `?platforms=${encodeURIComponent(selectedPlatformParam)}` : ""}`,
+    [selectedPlatformParam],
+  );
+
+  const loadStatus = useCallback(async (options?: { silent?: boolean }) => {
+    try {
+      logRevenueClient("status-load:start", {
+        silent: options?.silent ?? false,
+        selectedPlatforms: selectedPlatforms.join(","),
+      });
+      const query = selectedPlatformParam ? `?platforms=${encodeURIComponent(selectedPlatformParam)}` : "";
+      const nextStatus = await fetchRevenueJson<RevenueStatusData>(
+        `/api/revenue/status${query}`,
+        { cache: "no-store" },
+        10_000,
+      );
+      setStatusData(nextStatus);
+      setWatchingRefresh(nextStatus.hasActiveSyncJobs);
+      logRevenueClient("status-load:success", {
+        hasActiveSyncJobs: nextStatus.hasActiveSyncJobs,
+        hasCompletedRefresh: nextStatus.hasCompletedRefresh,
+        latestCompletedAt: nextStatus.syncSummary.latestCompletedAt,
+        jobCount: nextStatus.syncSummary.jobs.length,
+      });
+      return nextStatus;
+    } catch (statusError) {
+      if (!isAbortError(statusError)) {
+        logRevenueClient("status-load:error", {
+          message: statusError instanceof Error ? statusError.message : String(statusError),
+        });
+      }
+      return null;
+    }
+  }, [selectedPlatformParam, selectedPlatforms]);
+
   const load = useCallback(async (options?: { silent?: boolean; preserveData?: boolean }) => {
     if (options?.silent && loadAbortRef.current) {
       return;
@@ -162,6 +214,13 @@ export default function RevenuePage() {
     loadAbortRef.current?.abort();
     const controller = new AbortController();
     loadAbortRef.current = controller;
+    logRevenueClient("analytics-load:start", {
+      requestId,
+      silent: options?.silent ?? false,
+      selectedPlatforms: selectedPlatforms.join(","),
+      from: queryRange.fromDate.toISOString(),
+      to: queryRange.toDate.toISOString(),
+    });
 
     try {
       const params = new URLSearchParams({
@@ -185,10 +244,27 @@ export default function RevenuePage() {
       );
       if (requestId !== requestIdRef.current) return;
       setData(nextData);
+      setStatusData({
+        integrations: nextData.integrations,
+        selectedPlatforms: nextData.filters.platforms,
+        syncSummary: nextData.syncSummary,
+        hasActiveSyncJobs: nextData.syncSummary.jobs.some(
+          (job) => job.status === "PENDING" || job.status === "RUNNING",
+        ),
+        hasCompletedRefresh: Boolean(nextData.syncSummary.latestCompletedAt),
+        notes: nextData.notes,
+      });
       const nextHasActiveSyncJobs = nextData.syncSummary.jobs.some(
         (job) => job.status === "PENDING" || job.status === "RUNNING",
       );
       setWatchingRefresh(nextHasActiveSyncJobs);
+      logRevenueClient("analytics-load:success", {
+        requestId,
+        mode: nextData.mode,
+        hasAnyRevenueData: nextData.hasAnyRevenueData,
+        hasActiveSyncJobs: nextHasActiveSyncJobs,
+        latestCompletedAt: nextData.syncSummary.latestCompletedAt,
+      });
       if (!nextHasActiveSyncJobs && nextData.syncSummary.latestCompletedAt) {
         setBanner((current) =>
           current.includes("Revenue refresh started") || current.includes("Watch Refresh Status below")
@@ -199,6 +275,7 @@ export default function RevenuePage() {
     } catch (loadError) {
       if (requestId !== requestIdRef.current) return;
       if (isAbortError(loadError)) {
+        logRevenueClient("analytics-load:aborted", { requestId });
         return;
       }
       const message =
@@ -207,7 +284,13 @@ export default function RevenuePage() {
           : loadError instanceof Error
             ? loadError.message
             : "Failed to load revenue";
+      logRevenueClient("analytics-load:error", {
+        requestId,
+        message,
+        debugUrl: revenueDebugUrl,
+      });
       setError(message);
+      void loadStatus({ silent: true });
       if (!options?.preserveData) {
         setData(null);
       }
@@ -219,11 +302,12 @@ export default function RevenuePage() {
         setLoading(false);
       }
     }
-  }, [buyerWindow, granularity, itemWindow, preset, queryRange.fromDate, queryRange.toDate, selectedPlatforms]);
+  }, [buyerWindow, granularity, itemWindow, loadStatus, preset, queryRange.fromDate, queryRange.toDate, revenueDebugUrl, selectedPlatforms]);
 
   useEffect(() => {
+    void loadStatus();
     void load();
-  }, [load]);
+  }, [load, loadStatus]);
 
   useEffect(() => {
     return () => {
@@ -232,16 +316,20 @@ export default function RevenuePage() {
   }, []);
 
   const hasActiveSyncJobs = Boolean(
-    data?.syncSummary.jobs.some((job) => job.status === "PENDING" || job.status === "RUNNING"),
+    data?.syncSummary.jobs.some((job) => job.status === "PENDING" || job.status === "RUNNING") ??
+      statusData?.hasActiveSyncJobs,
   );
 
   useEffect(() => {
     if (!watchingRefresh && !hasActiveSyncJobs) return undefined;
     const timer = window.setInterval(() => {
-      void load({ silent: true, preserveData: true });
+      void loadStatus({ silent: true });
+      if (!statusData?.hasActiveSyncJobs) {
+        void load({ silent: true, preserveData: true });
+      }
     }, REVENUE_SYNC_POLL_INTERVAL_MS);
     return () => window.clearInterval(timer);
-  }, [hasActiveSyncJobs, load, watchingRefresh]);
+  }, [hasActiveSyncJobs, load, loadStatus, statusData?.hasActiveSyncJobs, watchingRefresh]);
 
   async function handleManualRefresh() {
     setSyncing(true);
@@ -270,7 +358,12 @@ export default function RevenuePage() {
       const hasQueuedOrRunningJobs = result.jobs.some(
         (job) => job.status === "PENDING" || job.status === "RUNNING",
       );
+      logRevenueClient("sync:start-response", {
+        hasQueuedOrRunningJobs,
+        warningCount: result.warnings.length,
+      });
       setWatchingRefresh(hasQueuedOrRunningJobs);
+      void loadStatus({ silent: true });
       setBanner(
         hasQueuedOrRunningJobs
           ? result.warnings.length > 0
@@ -299,6 +392,16 @@ export default function RevenuePage() {
   }
 
   const kpis = data?.kpis;
+  const visibleStatusData = statusData ?? (data
+    ? {
+        integrations: data.integrations,
+        selectedPlatforms: data.filters.platforms,
+        syncSummary: data.syncSummary,
+        hasActiveSyncJobs: data.syncSummary.jobs.some((job) => job.status === "PENDING" || job.status === "RUNNING"),
+        hasCompletedRefresh: Boolean(data.syncSummary.latestCompletedAt),
+        notes: data.notes,
+      }
+    : null);
   const hasTrendData = Boolean(data?.trend.some((point) => point.grossRevenue > 0));
   const hasStoreChartData = Boolean(data?.storeBreakdown.some((row) => row.grossRevenue > 0));
   const hasFeeChartData = Boolean(data?.feeBreakdown.some((row) => row.amount > 0));
@@ -330,7 +433,7 @@ export default function RevenuePage() {
             </div>
           ) : null}
           <p className="mt-2 text-xs text-muted-foreground">
-            Last refresh: {formatDateTime(data?.syncSummary.latestCompletedAt ?? null)}
+            Last refresh: {formatDateTime(visibleStatusData?.syncSummary.latestCompletedAt ?? null)}
           </p>
         </div>
         <button
@@ -406,7 +509,7 @@ export default function RevenuePage() {
             >
               All stores
             </button>
-            {data?.integrations.map((integration) => (
+            {(visibleStatusData?.integrations ?? []).map((integration) => (
               <button
                 key={integration.platform}
                 type="button"
@@ -431,7 +534,10 @@ export default function RevenuePage() {
       ) : null}
       {error ? (
         <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">
-          {error}
+          <div>{error}</div>
+          <div className="mt-2 text-xs text-red-100/90">
+            Debug JSON: <a href={revenueDebugUrl} target="_blank" rel="noreferrer" className="underline underline-offset-2">{revenueDebugUrl}</a>
+          </div>
         </div>
       ) : null}
 
@@ -439,6 +545,68 @@ export default function RevenuePage() {
         <div className="flex min-h-[40vh] items-center justify-center rounded-xl border border-border bg-card">
           <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
         </div>
+      ) : null}
+
+      {!loading && !data && visibleStatusData ? (
+        <>
+          {visibleStatusData.notes.length > 0 ? (
+            <div className="space-y-2">
+              {visibleStatusData.notes.map((note) => (
+                <div key={note} className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
+                  {note}
+                </div>
+              ))}
+            </div>
+          ) : null}
+
+          <div className="rounded-xl border border-border bg-card p-4">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <h2 className="text-sm font-semibold uppercase tracking-[0.18em] text-muted-foreground">Refresh Status</h2>
+                <p className="mt-2 text-sm text-muted-foreground">
+                  Analytics are not available yet, but live sync status is still available here.
+                </p>
+              </div>
+              <a
+                href={revenueDebugUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex cursor-pointer items-center gap-2 rounded-md border border-border bg-background px-3 py-2 text-xs font-medium text-foreground hover:bg-muted/60"
+              >
+                Open Debug JSON
+              </a>
+            </div>
+
+            <div className="mt-4 space-y-3">
+              {visibleStatusData.syncSummary.jobs.map((job) => (
+                <div key={job.id} className="rounded-lg border border-border bg-background px-3 py-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="font-medium text-foreground">{job.label}</p>
+                      <p className="text-xs text-muted-foreground">{PLATFORM_FULL[job.platform]}</p>
+                    </div>
+                    <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[10px] font-semibold uppercase ${
+                      job.status === "COMPLETED"
+                        ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+                        : job.status === "FAILED"
+                          ? "border-red-500/30 bg-red-500/10 text-red-200"
+                          : "border-amber-500/30 bg-amber-500/10 text-amber-200"
+                    }`}>
+                      {job.status === "RUNNING" ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+                      {job.status}
+                    </span>
+                  </div>
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    {job.ordersProcessed.toLocaleString()} orders • {job.linesProcessed.toLocaleString()} lines • {formatDateTime(job.completedAt)}
+                  </p>
+                  {job.errorSummary ? (
+                    <p className="mt-2 text-xs text-red-200">{job.errorSummary}</p>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          </div>
+        </>
       ) : null}
 
       {!loading && data && kpis ? (

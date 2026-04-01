@@ -10,6 +10,8 @@ import { fetchMarketplaceRevenue } from "@/lib/revenue/marketplace-revenue";
 import { runWithMarketplaceTelemetry } from "@/lib/server/marketplace-telemetry";
 import { recordNetworkTransferSample } from "@/lib/services/network-transfer-samples";
 import type {
+  RevenueDebugData,
+  RevenueDebugSample,
   RevenueFeeBreakdownRow,
   RevenueGrowthCard,
   RevenueIntegrationOption,
@@ -21,6 +23,7 @@ import type {
   RevenueQueryFilters,
   RevenueSourceSummary,
   RevenueStoreBreakdownRow,
+  RevenueStatusData,
   RevenueSyncJobSummary,
   RevenueSyncRequest,
   RevenueSyncResult,
@@ -1466,6 +1469,76 @@ async function getRevenueSyncSummary(platforms: Platform[]): Promise<RevenueSync
     latestStatus: latestOverall?.status ?? null,
     latestStartedAt: latestOverall?.startedAt ?? null,
     jobs: [...latestByIntegration.values()],
+  };
+}
+
+function buildRevenueStatusNotes(syncSummary: RevenueSyncSummary) {
+  if (syncSummary.jobs.some((job) => job.status === "PENDING" || job.status === "RUNNING")) {
+    return ["Revenue refresh is running. Live sync status is shown below while analytics finish processing."];
+  }
+
+  if (!syncSummary.latestCompletedAt) {
+    return ["No completed revenue refresh is available yet. Trigger Refresh Revenue Data to populate analytics."];
+  }
+
+  return ["Revenue sync status loaded. If analytics are still delayed, use /api/revenue/debug to inspect the latest samples."];
+}
+
+export async function getRevenueStatusData(
+  user: AuthenticatedRevenueUser,
+  requestedPlatforms: Platform[],
+): Promise<RevenueStatusData> {
+  requireRevenueAccess(user);
+
+  const integrations = await getEnabledRevenueIntegrations();
+  const selectedPlatforms = normalizeSelectedPlatforms(integrations, requestedPlatforms);
+  const syncSummary = await getRevenueSyncSummary(selectedPlatforms);
+  const hasActiveSyncJobs = syncSummary.jobs.some(
+    (job) => job.status === "PENDING" || job.status === "RUNNING",
+  );
+
+  return {
+    integrations: toIntegrationOptions(integrations),
+    selectedPlatforms,
+    syncSummary,
+    hasActiveSyncJobs,
+    hasCompletedRefresh: Boolean(syncSummary.latestCompletedAt),
+    notes: buildRevenueStatusNotes(syncSummary),
+  };
+}
+
+export async function getRevenueDebugData(
+  user: AuthenticatedRevenueUser,
+  requestedPlatforms: Platform[],
+): Promise<RevenueDebugData> {
+  const status = await getRevenueStatusData(user, requestedPlatforms);
+  const samples = await db.networkTransferSample.findMany({
+    where: {
+      OR: [
+        { label: "GET /api/revenue" },
+        { label: "POST /api/revenue/sync" },
+        { label: { contains: "revenue sync" } },
+      ],
+    },
+    orderBy: { createdAt: "desc" },
+    take: 12,
+  });
+
+  return {
+    generatedAt: new Date().toISOString(),
+    selectedPlatforms: status.selectedPlatforms,
+    hasActiveSyncJobs: status.hasActiveSyncJobs,
+    hasCompletedRefresh: status.hasCompletedRefresh,
+    syncSummary: status.syncSummary,
+    notes: status.notes,
+    recentSamples: samples.map<RevenueDebugSample>((sample) => ({
+      createdAt: sample.createdAt.toISOString(),
+      channel: sample.channel,
+      label: sample.label,
+      durationMs: sample.durationMs ?? null,
+      bytesEstimate: sample.bytesEstimate ?? null,
+      metadata: sample.metadata,
+    })),
   };
 }
 

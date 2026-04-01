@@ -176,6 +176,34 @@ export interface RevenueSyncSummary {
   jobs: RevenueSyncJobSummary[];
 }
 
+export interface RevenueStatusData {
+  integrations: RevenueIntegrationOption[];
+  selectedPlatforms: Platform[];
+  syncSummary: RevenueSyncSummary;
+  hasActiveSyncJobs: boolean;
+  hasCompletedRefresh: boolean;
+  notes: string[];
+}
+
+export interface RevenueDebugSample {
+  createdAt: string;
+  channel: string;
+  label: string;
+  durationMs: number | null;
+  bytesEstimate: number | null;
+  metadata: unknown;
+}
+
+export interface RevenueDebugData {
+  generatedAt: string;
+  selectedPlatforms: Platform[];
+  hasActiveSyncJobs: boolean;
+  hasCompletedRefresh: boolean;
+  syncSummary: RevenueSyncSummary;
+  notes: string[];
+  recentSamples: RevenueDebugSample[];
+}
+
 export interface RevenuePageData {
   filters: RevenueQueryFilters;
   integrations: RevenueIntegrationOption[];
