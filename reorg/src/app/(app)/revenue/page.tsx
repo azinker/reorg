@@ -25,6 +25,7 @@ import type {
   RevenuePageData,
   RevenueRangePreset,
   RevenueStatusData,
+  RevenueSyncJobSummary,
   RevenueSyncResult,
   RevenueSimpleWindow,
 } from "@/lib/revenue";
@@ -38,7 +39,7 @@ import { PageTour } from "@/components/onboarding/page-tour";
 import { PAGE_TOUR_STEPS } from "@/components/onboarding/page-tour-steps";
 
 const PIE_COLORS = ["#8b5cf6", "#22c55e", "#f59e0b", "#38bdf8"];
-const REVENUE_ANALYTICS_LOAD_TIMEOUT_MS = 60_000;
+const REVENUE_ANALYTICS_LOAD_TIMEOUT_MS = 120_000;
 const REVENUE_STATUS_TIMEOUT_MS = 10_000;
 const REVENUE_SYNC_REQUEST_TIMEOUT_MS = 15_000;
 const REVENUE_SYNC_POLL_INTERVAL_MS = 8_000;
@@ -106,8 +107,19 @@ function rangeFromPreset(preset: RevenueRangePreset) {
   };
 }
 
-function KpiCard(props: { label: string; metric: RevenueKpiMetric }) {
-  const { label, metric } = props;
+function getRevenueJobProgress(job: RevenueSyncJobSummary) {
+  if (job.status === "COMPLETED" || job.status === "FAILED") return 1;
+  if (job.status === "PENDING") return 0.05;
+  if (job.syncStages.length === 0) return 0.5;
+
+  const completedStages = job.syncStages.filter((stage) => stage.status === "COMPLETED").length;
+  const runningStages = job.syncStages.filter((stage) => stage.status === "RUNNING").length;
+  const stageProgress = completedStages / job.syncStages.length;
+  return Math.min(0.92, 0.12 + stageProgress * 0.76 + (runningStages > 0 ? 0.08 : 0));
+}
+
+function KpiCard(props: { label: string; metric: RevenueKpiMetric; detail?: string | null }) {
+  const { label, metric, detail } = props;
   return (
     <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
       <div className="flex items-start justify-between gap-3">
@@ -130,6 +142,9 @@ function KpiCard(props: { label: string; metric: RevenueKpiMetric }) {
       <p className="mt-3 text-sm text-muted-foreground">
         {metric.deltaPercent == null ? "No prior comparison" : `${formatPercent(metric.deltaPercent)} vs prior period`}
       </p>
+      {detail ? (
+        <p className="mt-2 text-xs text-sky-200">{detail}</p>
+      ) : null}
       {metric.unavailableReason ? (
         <p className="mt-2 text-xs text-amber-200">{metric.unavailableReason}</p>
       ) : null}
@@ -435,6 +450,53 @@ export default function RevenuePage() {
   const hasStoreChartData = Boolean(data?.storeBreakdown.some((row) => row.grossRevenue > 0));
   const hasFeeChartData = Boolean(data?.feeBreakdown.some((row) => row.amount > 0));
   const hasShareData = Boolean(data?.revenueShare.some((row) => row.grossRevenue > 0));
+  const currentGrossRevenue = data?.kpis.grossRevenue.value ?? null;
+  const kpiShareDetails = currentGrossRevenue && currentGrossRevenue > 0
+    ? {
+        netRevenue:
+          data?.kpis.netRevenue.value != null
+            ? `${formatPlainPercent((data.kpis.netRevenue.value / currentGrossRevenue) * 100)} of gross revenue`
+            : null,
+        marketplaceFees:
+          data?.kpis.marketplaceFees.value != null
+            ? `${formatPlainPercent((data.kpis.marketplaceFees.value / currentGrossRevenue) * 100)} of gross revenue`
+            : null,
+        advertisingFees:
+          data?.kpis.advertisingFees.value != null
+            ? `${formatPlainPercent((data.kpis.advertisingFees.value / currentGrossRevenue) * 100)} of gross revenue`
+            : null,
+        taxCollected:
+          data?.kpis.taxCollected.value != null
+            ? `${formatPlainPercent((data.kpis.taxCollected.value / currentGrossRevenue) * 100)} of gross revenue`
+            : null,
+      }
+    : {
+        netRevenue: null,
+        marketplaceFees: null,
+        advertisingFees: null,
+        taxCollected: null,
+      };
+  const refreshProgress = useMemo(() => {
+    const jobs = visibleStatusData?.syncSummary.jobs ?? [];
+    if (jobs.length === 0) {
+      return syncing || watchingRefresh
+        ? { percent: 8, completed: 0, total: 0, active: true }
+        : null;
+    }
+
+    const total = jobs.length;
+    const completed = jobs.filter((job) => job.status === "COMPLETED" || job.status === "FAILED").length;
+    const percent = Math.round(
+      (jobs.reduce((sum, job) => sum + getRevenueJobProgress(job), 0) / total) * 100,
+    );
+    const active = syncing || watchingRefresh || jobs.some((job) => job.status === "PENDING" || job.status === "RUNNING");
+
+    if (!active && completed === total) {
+      return null;
+    }
+
+    return { percent: Math.max(percent, syncing ? 8 : 0), completed, total, active };
+  }, [syncing, visibleStatusData?.syncSummary.jobs, watchingRefresh]);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-6 p-4 md:p-6">
@@ -465,15 +527,36 @@ export default function RevenuePage() {
             Last refresh: {formatDateTime(visibleStatusData?.syncSummary.latestCompletedAt ?? null)}
           </p>
         </div>
-        <button
-          type="button"
-          onClick={() => void handleManualRefresh()}
-          disabled={syncing}
-          className="inline-flex cursor-pointer items-center gap-2 rounded-md border border-border bg-card px-3 py-2 text-sm font-medium text-foreground hover:bg-muted/60 disabled:opacity-50"
-        >
-          {syncing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-          {syncing ? "Refreshing Revenue Data..." : "Refresh Revenue Data"}
-        </button>
+        <div className="flex flex-col gap-2 md:min-w-[260px] md:items-end">
+          <button
+            type="button"
+            onClick={() => void handleManualRefresh()}
+            disabled={syncing}
+            className="inline-flex cursor-pointer items-center gap-2 rounded-md border border-border bg-card px-3 py-2 text-sm font-medium text-foreground hover:bg-muted/60 disabled:opacity-50"
+          >
+            {syncing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+            {syncing ? "Refreshing Revenue Data..." : "Refresh Revenue Data"}
+          </button>
+          {refreshProgress ? (
+            <div className="w-full rounded-lg border border-border bg-card/70 px-3 py-2">
+              <div className="flex items-center justify-between gap-3 text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
+                <span>Refresh Progress</span>
+                <span>{refreshProgress.percent}%</span>
+              </div>
+              <div className="mt-2 h-2 overflow-hidden rounded-full bg-muted">
+                <div
+                  className="h-full rounded-full bg-emerald-400 transition-[width] duration-500"
+                  style={{ width: `${refreshProgress.percent}%` }}
+                />
+              </div>
+              <p className="mt-2 text-xs text-muted-foreground">
+                {refreshProgress.total > 0
+                  ? `${refreshProgress.completed} of ${refreshProgress.total} stores completed`
+                  : "Queuing revenue refresh jobs..."}
+              </p>
+            </div>
+          ) : null}
+        </div>
       </div>
 
       <div className="rounded-xl border border-border bg-card p-4" data-tour="revenue-filters">
@@ -642,10 +725,10 @@ export default function RevenuePage() {
         <>
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4" data-tour="revenue-summary">
             <KpiCard label="Gross Revenue" metric={kpis.grossRevenue} />
-            <KpiCard label="Net Revenue" metric={kpis.netRevenue} />
-            <KpiCard label="Marketplace Fees" metric={kpis.marketplaceFees} />
-            <KpiCard label="Advertising Fees" metric={kpis.advertisingFees} />
-            <KpiCard label="Tax Collected" metric={kpis.taxCollected} />
+            <KpiCard label="Net Revenue" metric={kpis.netRevenue} detail={kpiShareDetails.netRevenue} />
+            <KpiCard label="Marketplace Fees" metric={kpis.marketplaceFees} detail={kpiShareDetails.marketplaceFees} />
+            <KpiCard label="Advertising Fees" metric={kpis.advertisingFees} detail={kpiShareDetails.advertisingFees} />
+            <KpiCard label="Tax Collected" metric={kpis.taxCollected} detail={kpiShareDetails.taxCollected} />
             <KpiCard label="Shipping Collected" metric={kpis.shippingCollected} />
             {data.mode === "ebay_exact" ? (
               <>

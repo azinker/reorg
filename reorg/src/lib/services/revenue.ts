@@ -967,6 +967,182 @@ function toNormalizedModeAggregation(period: PeriodAggregation): PeriodAggregati
   };
 }
 
+function mergeExactness(values: RevenueMetricExactness[]): RevenueMetricExactness {
+  if (values.length === 0) return "unavailable";
+  if (values.every((value) => value === "exact")) return "exact";
+  if (values.every((value) => value === "unavailable")) return "unavailable";
+  return "partial";
+}
+
+function mergeNormalizedPeriods(periods: PeriodAggregation[]): PeriodAggregation {
+  if (periods.length === 0) {
+    throw new RevenueServiceError("No revenue periods were available to merge.", 500);
+  }
+
+  if (periods.length === 1) {
+    return toNormalizedModeAggregation(periods[0]);
+  }
+
+  const trendMap = new Map<
+    string,
+    {
+      bucketStart: string;
+      bucketLabel: string;
+      grossRevenue: number;
+      netRevenue: number;
+      marketplaceFees: number;
+      advertisingFees: number;
+      orderCount: number;
+    }
+  >();
+  const feeMap = new Map<string, RevenueFeeBreakdownRow>();
+
+  for (const period of periods) {
+    for (const point of period.trend) {
+      const normalizedBucketKey = point.bucketStart.slice(0, 10);
+      const entry =
+        trendMap.get(normalizedBucketKey) ??
+        {
+          bucketStart: point.bucketStart,
+          bucketLabel: point.bucketLabel,
+          grossRevenue: 0,
+          netRevenue: 0,
+          marketplaceFees: 0,
+          advertisingFees: 0,
+          orderCount: 0,
+        };
+      entry.grossRevenue += point.grossRevenue;
+      entry.netRevenue += point.netRevenue ?? 0;
+      entry.marketplaceFees += point.marketplaceFees ?? 0;
+      entry.advertisingFees += point.advertisingFees ?? 0;
+      entry.orderCount += point.orderCount;
+      trendMap.set(normalizedBucketKey, entry);
+    }
+
+    for (const fee of period.feeBreakdown) {
+      const key = fee.key === "shippingLabels" || fee.key === "accountLevelFees" ? "otherFees" : fee.key;
+      const label =
+        key === "marketplaceFees"
+          ? "Marketplace fees"
+          : key === "advertisingFees"
+            ? "Advertising fees"
+            : "Other fees";
+      const existing = feeMap.get(key);
+      if (existing) {
+        existing.amount += fee.amount;
+      } else {
+        feeMap.set(key, { key, label, amount: fee.amount });
+      }
+    }
+  }
+
+  const grossRevenue = periods.reduce((sum, period) => sum + period.grossRevenue, 0);
+  const netRevenue = periods.reduce((sum, period) => sum + (period.netRevenue ?? 0), 0);
+  const marketplaceFees = periods.reduce((sum, period) => sum + (period.marketplaceFees ?? 0), 0);
+  const advertisingFees = periods.reduce((sum, period) => sum + (period.advertisingFees ?? 0), 0);
+  const taxCollected = periods.reduce((sum, period) => sum + period.taxCollected, 0);
+  const shippingCollected = periods.reduce((sum, period) => sum + period.shippingCollected, 0);
+  const orderCount = periods.reduce((sum, period) => sum + period.orderCount, 0);
+  const averageOrderValue = orderCount > 0 ? grossRevenue / orderCount : null;
+  const netExactness = mergeExactness(periods.map((period) => period.exactnessByMetric.netRevenue));
+  const marketplaceExactness = mergeExactness(periods.map((period) => period.exactnessByMetric.marketplaceFees));
+  const advertisingExactness = mergeExactness(periods.map((period) => period.exactnessByMetric.advertisingFees));
+
+  const storeBreakdown = periods
+    .flatMap((period) => period.storeBreakdown)
+    .sort((a, b) => b.grossRevenue - a.grossRevenue);
+
+  return {
+    mode: "normalized",
+    hasAnyRevenueData: periods.some((period) => period.hasAnyRevenueData),
+    grossRevenue,
+    netRevenue,
+    marketplaceFees,
+    advertisingFees,
+    taxCollected,
+    shippingCollected,
+    shippingLabels: null,
+    accountLevelFees: null,
+    orderCount,
+    averageOrderValue,
+    exactnessByMetric: {
+      grossRevenue: "exact",
+      netRevenue: netExactness,
+      marketplaceFees: marketplaceExactness,
+      advertisingFees: advertisingExactness,
+      taxCollected: "exact",
+      shippingCollected: "exact",
+      shippingLabels: "unavailable",
+      accountLevelFees: "unavailable",
+      orderCount: "exact",
+      averageOrderValue: "exact",
+    },
+    coverageByMetric: {
+      grossRevenue: "exact",
+      netRevenue: netExactness,
+      marketplaceFees: marketplaceExactness,
+      advertisingFees: advertisingExactness,
+      taxCollected: "exact",
+      shippingCollected: "exact",
+      shippingLabels: "unavailable",
+      accountLevelFees: "unavailable",
+      orderCount: "exact",
+      averageOrderValue: "exact",
+    },
+    unavailableReasons: {
+      grossRevenue: null,
+      netRevenue:
+        netExactness === "exact"
+          ? null
+          : "Net revenue stays partial when selected stores do not expose exact fee detail.",
+      marketplaceFees:
+        marketplaceExactness === "exact"
+          ? null
+          : "Marketplace fees stay partial when selected stores do not expose exact fee detail.",
+      advertisingFees:
+        advertisingExactness === "exact"
+          ? null
+          : "Advertising fees stay partial when selected stores do not expose exact fee detail.",
+      taxCollected: null,
+      shippingCollected: null,
+      shippingLabels: "Shipping labels are only shown in exact eBay mode.",
+      accountLevelFees: "Account-level fees are only shown in exact eBay mode.",
+      orderCount: null,
+      averageOrderValue: null,
+    },
+    sourceSummary: null,
+    trend: [...trendMap.values()].sort((a, b) => a.bucketStart.localeCompare(b.bucketStart)),
+    storeBreakdown,
+    feeBreakdown: [...feeMap.values()].filter((row) => row.amount !== 0),
+    revenueShare: storeBreakdown.map((store) => ({
+      platform: store.platform,
+      label: store.label,
+      grossRevenue: store.grossRevenue,
+    })),
+  };
+}
+
+async function aggregateNormalizedCurrentPeriod(filters: RevenueQueryFilters): Promise<PeriodAggregation> {
+  const integrations = await getEnabledRevenueIntegrations();
+  const selectedIntegrations = integrations.filter((integration) =>
+    filters.platforms.includes(integration.platform),
+  );
+
+  if (selectedIntegrations.length === 0) {
+    return aggregateNormalizedPeriod(filters);
+  }
+
+  const periods = await Promise.all(
+    selectedIntegrations.map((integration) =>
+      EXACT_EBAY_PLATFORMS.has(integration.platform)
+        ? aggregateEbayExactPeriod({ ...filters, platforms: [integration.platform] }, integration)
+        : aggregateLineBasedOperationalPeriod({ ...filters, platforms: [integration.platform] }),
+    ),
+  );
+
+  return mergeNormalizedPeriods(periods);
+}
+
 async function aggregateNormalizedPeriod(filters: RevenueQueryFilters): Promise<PeriodAggregation> {
   return toNormalizedModeAggregation(await aggregateLineBasedOperationalPeriod(filters));
 }
@@ -1433,7 +1609,7 @@ export async function getRevenuePageData(
   const [current, previous, buyerTables, itemTables] = await Promise.all([
     mode === "ebay_exact" && exactIntegration
       ? aggregateEbayExactPeriod(normalizedFilters, exactIntegration)
-      : aggregateNormalizedPeriod(normalizedFilters),
+      : aggregateNormalizedCurrentPeriod(normalizedFilters),
     mode === "ebay_exact" && exactIntegration
       ? aggregateEbayExactPeriod({ ...normalizedFilters, from: previousFrom.toISOString(), to: previousTo.toISOString() }, exactIntegration)
       : aggregateNormalizedPeriod({ ...normalizedFilters, from: previousFrom.toISOString(), to: previousTo.toISOString() }),
