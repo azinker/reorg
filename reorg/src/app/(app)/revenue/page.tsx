@@ -26,11 +26,18 @@ import type {
   RevenueSyncResult,
   RevenueSimpleWindow,
 } from "@/lib/revenue";
+import {
+  fetchRevenueJson,
+  isAbortError,
+  RevenueRequestTimeoutError,
+} from "@/lib/revenue-client";
 import { PlatformIcon } from "@/components/grid/platform-icon";
 import { PageTour } from "@/components/onboarding/page-tour";
 import { PAGE_TOUR_STEPS } from "@/components/onboarding/page-tour-steps";
 
 const PIE_COLORS = ["#8b5cf6", "#22c55e", "#f59e0b", "#38bdf8"];
+const REVENUE_LOAD_TIMEOUT_MS = 15_000;
+const REVENUE_SYNC_POLL_INTERVAL_MS = 8_000;
 
 function formatCurrency(value: number | null | undefined) {
   if (value == null || !Number.isFinite(value)) return "—";
@@ -87,29 +94,6 @@ function rangeFromPreset(preset: RevenueRangePreset) {
   };
 }
 
-async function parseJson<T>(response: Response) {
-  const text = await response.text();
-  let json: { error?: string; data?: T } | null = null;
-
-  if (text.trim()) {
-    try {
-      json = JSON.parse(text) as { error?: string; data?: T };
-    } catch {
-      const returnedHtml =
-        text.trimStart().startsWith("<!DOCTYPE") || text.trimStart().startsWith("<html");
-      const fallbackMessage = returnedHtml
-        ? `The server returned an HTML error page (${response.status} ${response.statusText}) instead of JSON.`
-        : `The server returned an unreadable response (${response.status} ${response.statusText}).`;
-      throw new Error(fallbackMessage);
-    }
-  }
-
-  if (!response.ok) {
-    throw new Error(json?.error ?? `Request failed (${response.status} ${response.statusText})`);
-  }
-  return json?.data as T;
-}
-
 function KpiCard(props: { label: string; metric: RevenueKpiMetric }) {
   const { label, metric } = props;
   return (
@@ -153,9 +137,11 @@ export default function RevenuePage() {
   const [data, setData] = useState<RevenuePageData | null>(null);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
+  const [watchingRefresh, setWatchingRefresh] = useState(false);
   const [error, setError] = useState("");
   const [banner, setBanner] = useState<string>("");
   const requestIdRef = useRef(0);
+  const loadAbortRef = useRef<AbortController | null>(null);
 
   const queryRange = useMemo(() => {
     const fallback = rangeFromPreset(preset === "custom" ? "30d" : preset);
@@ -164,12 +150,18 @@ export default function RevenuePage() {
     return { fromDate, toDate };
   }, [customFrom, customTo, preset]);
 
-  const load = useCallback(async (options?: { silent?: boolean }) => {
+  const load = useCallback(async (options?: { silent?: boolean; preserveData?: boolean }) => {
+    if (options?.silent && loadAbortRef.current) {
+      return;
+    }
     const requestId = ++requestIdRef.current;
     if (!options?.silent) {
       setLoading(true);
     }
     setError("");
+    loadAbortRef.current?.abort();
+    const controller = new AbortController();
+    loadAbortRef.current = controller;
 
     try {
       const params = new URLSearchParams({
@@ -183,15 +175,46 @@ export default function RevenuePage() {
       if (selectedPlatforms.length > 0) {
         params.set("platforms", selectedPlatforms.join(","));
       }
-      const response = await fetch(`/api/revenue?${params.toString()}`, { cache: "no-store" });
-      const nextData = await parseJson<RevenuePageData>(response);
+      const nextData = await fetchRevenueJson<RevenuePageData>(
+        `/api/revenue?${params.toString()}`,
+        {
+          cache: "no-store",
+          signal: controller.signal,
+        },
+        REVENUE_LOAD_TIMEOUT_MS,
+      );
       if (requestId !== requestIdRef.current) return;
       setData(nextData);
+      const nextHasActiveSyncJobs = nextData.syncSummary.jobs.some(
+        (job) => job.status === "PENDING" || job.status === "RUNNING",
+      );
+      setWatchingRefresh(nextHasActiveSyncJobs);
+      if (!nextHasActiveSyncJobs && nextData.syncSummary.latestCompletedAt) {
+        setBanner((current) =>
+          current.includes("Revenue refresh started") || current.includes("Watch Refresh Status below")
+            ? "Revenue data refreshed."
+            : current,
+        );
+      }
     } catch (loadError) {
       if (requestId !== requestIdRef.current) return;
-      setError(loadError instanceof Error ? loadError.message : "Failed to load revenue");
-      setData(null);
+      if (isAbortError(loadError)) {
+        return;
+      }
+      const message =
+        loadError instanceof RevenueRequestTimeoutError
+          ? "Revenue data is taking longer than expected to load. ReorG will keep retrying in the background."
+          : loadError instanceof Error
+            ? loadError.message
+            : "Failed to load revenue";
+      setError(message);
+      if (!options?.preserveData) {
+        setData(null);
+      }
     } finally {
+      if (loadAbortRef.current === controller) {
+        loadAbortRef.current = null;
+      }
       if (requestId === requestIdRef.current && !options?.silent) {
         setLoading(false);
       }
@@ -202,20 +225,27 @@ export default function RevenuePage() {
     void load();
   }, [load]);
 
+  useEffect(() => {
+    return () => {
+      loadAbortRef.current?.abort();
+    };
+  }, []);
+
   const hasActiveSyncJobs = Boolean(
     data?.syncSummary.jobs.some((job) => job.status === "PENDING" || job.status === "RUNNING"),
   );
 
   useEffect(() => {
-    if (!syncing && !hasActiveSyncJobs) return undefined;
+    if (!watchingRefresh && !hasActiveSyncJobs) return undefined;
     const timer = window.setInterval(() => {
-      void load({ silent: true });
-    }, 3000);
+      void load({ silent: true, preserveData: true });
+    }, REVENUE_SYNC_POLL_INTERVAL_MS);
     return () => window.clearInterval(timer);
-  }, [hasActiveSyncJobs, load, syncing]);
+  }, [hasActiveSyncJobs, load, watchingRefresh]);
 
   async function handleManualRefresh() {
     setSyncing(true);
+    setWatchingRefresh(false);
     setBanner("Refreshing revenue data. This can take a few minutes for eBay. Watch Refresh Status below for live job updates.");
     setError("");
 
@@ -224,19 +254,23 @@ export default function RevenuePage() {
         selectedPlatforms.length > 0
           ? selectedPlatforms
           : data?.integrations.map((integration) => integration.platform) ?? [];
-      const response = await fetch("/api/revenue/sync", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          from: queryRange.fromDate.toISOString(),
-          to: queryRange.toDate.toISOString(),
-          platforms,
-        }),
-      });
-      const result = await parseJson<RevenueSyncResult>(response);
+      const result = await fetchRevenueJson<RevenueSyncResult>(
+        "/api/revenue/sync",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            from: queryRange.fromDate.toISOString(),
+            to: queryRange.toDate.toISOString(),
+            platforms,
+          }),
+        },
+        REVENUE_LOAD_TIMEOUT_MS,
+      );
       const hasQueuedOrRunningJobs = result.jobs.some(
         (job) => job.status === "PENDING" || job.status === "RUNNING",
       );
+      setWatchingRefresh(hasQueuedOrRunningJobs);
       setBanner(
         hasQueuedOrRunningJobs
           ? result.warnings.length > 0
@@ -246,7 +280,9 @@ export default function RevenuePage() {
             ? `Revenue refresh finished with notes: ${result.warnings[0]}`
             : "Revenue data refreshed.",
       );
-      await load({ silent: true });
+      if (!hasQueuedOrRunningJobs) {
+        void load({ silent: true, preserveData: true });
+      }
     } catch (syncError) {
       setError(syncError instanceof Error ? syncError.message : "Failed to refresh revenue");
     } finally {
