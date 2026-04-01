@@ -8,7 +8,6 @@ import {
   REVENUE_SIMPLE_WINDOW_VALUES,
   type RevenueQueryFilters,
 } from "@/lib/revenue";
-import { recordNetworkTransferSample } from "@/lib/services/network-transfer-samples";
 import {
   getRevenuePageData,
   RevenueServiceError,
@@ -85,8 +84,6 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const t0 = performance.now();
-
   try {
     const parsed = revenueQuerySchema.safeParse({
       preset: request.nextUrl.searchParams.get("preset") ?? undefined,
@@ -109,45 +106,8 @@ export async function GET(request: NextRequest) {
     const data = await getRevenuePageData(user, resolveRevenueFilters(parsed.data), {
       includeTopTables: parsed.data.includeTopTables !== "0",
     });
-    const body = { data };
-    void recordNetworkTransferSample({
-      channel: "CLIENT_API_RESPONSE",
-      label: "GET /api/revenue",
-      bytesEstimate: Buffer.byteLength(JSON.stringify(body), "utf8"),
-      durationMs: Math.round(performance.now() - t0),
-      metadata: {
-        route: "GET /api/revenue",
-        preset: parsed.data.preset,
-        platformCount: data.filters.platforms.length,
-        platforms: data.filters.platforms,
-        mode: data.mode,
-        includeTopTables: parsed.data.includeTopTables !== "0",
-        trendPoints: data.trend.length,
-        topBuyerCount: data.topBuyers.length,
-        topItemCount: data.topItems.length,
-      },
-    });
-    return NextResponse.json(body);
+    return NextResponse.json({ data });
   } catch (error) {
-    void recordNetworkTransferSample({
-      channel: "OTHER",
-      label: "GET /api/revenue failed",
-      durationMs: Math.round(performance.now() - t0),
-      metadata: {
-        route: "GET /api/revenue",
-        preset: request.nextUrl.searchParams.get("preset") ?? "30d",
-        granularity: request.nextUrl.searchParams.get("granularity") ?? null,
-        buyerWindow: request.nextUrl.searchParams.get("buyerWindow") ?? "30d",
-        itemWindow: request.nextUrl.searchParams.get("itemWindow") ?? "30d",
-        platforms: request.nextUrl.searchParams.get("platforms") ?? "",
-        error:
-          error instanceof Error
-            ? error.message
-            : typeof error === "string"
-              ? error
-              : "Unknown revenue route failure",
-      },
-    });
     return handleRevenueError(error, "[revenue] GET failed");
   }
 }

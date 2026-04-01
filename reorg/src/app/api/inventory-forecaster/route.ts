@@ -5,7 +5,6 @@ import {
   runInventoryForecast,
   runInventoryForecastFromUpload,
 } from "@/lib/inventory-forecast/service";
-import { recordNetworkTransferSample } from "@/lib/services/network-transfer-samples";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -29,21 +28,8 @@ const runSchema = z.object({
 
 export async function GET() {
   try {
-    const t0 = performance.now();
     const data = await getInventoryForecasterBootstrap();
-    const body = { data };
-    const bytesEstimate = Buffer.byteLength(JSON.stringify(body), "utf8");
-    void recordNetworkTransferSample({
-      channel: "FORECAST",
-      label: "Inventory Forecaster — loaded page data (recent runs & supplier orders)",
-      bytesEstimate,
-      durationMs: Math.round(performance.now() - t0),
-      metadata: {
-        route: "GET /api/inventory-forecaster",
-        recentRunCount: data.recentRuns?.length ?? 0,
-      },
-    });
-    return NextResponse.json(body);
+    return NextResponse.json({ data });
   } catch (error) {
     console.error("[inventory-forecaster] GET failed", error);
     return NextResponse.json(
@@ -64,7 +50,6 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const t0 = performance.now();
     const data = parsed.data.uploadedSales?.length
       ? await runInventoryForecastFromUpload({
           lookbackDays: parsed.data.lookbackDays,
@@ -77,26 +62,7 @@ export async function POST(request: NextRequest) {
         })
       : await runInventoryForecast(parsed.data);
 
-    const responseBody = { data };
-    const bytesEstimate = Buffer.byteLength(JSON.stringify(responseBody), "utf8");
-    const uploadedCount = parsed.data.uploadedSales?.length ?? 0;
-    void recordNetworkTransferSample({
-      channel: "FORECAST",
-      label: uploadedCount
-        ? `Inventory forecast finished — uploaded sales (${uploadedCount} SKU rows, Simple mode)`
-        : `Inventory forecast finished — ${parsed.data.mode === "simple" ? "Simple" : "Smart"} mode (${parsed.data.lookbackDays}-day lookback)`,
-      bytesEstimate,
-      durationMs: Math.round(performance.now() - t0),
-      metadata: {
-        route: "POST /api/inventory-forecaster",
-        mode: uploadedCount ? "simple_upload" : parsed.data.mode,
-        lookbackDays: parsed.data.lookbackDays,
-        skuLinesReturned: data.lines.length,
-        uploadedSalesRows: uploadedCount || undefined,
-      },
-    });
-
-    return NextResponse.json(responseBody);
+    return NextResponse.json({ data });
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
     const stack = error instanceof Error ? error.stack?.slice(0, 800) : undefined;

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import * as XLSX from "xlsx";
 import { db } from "@/lib/db";
+import { queueCurrentRequestBinaryResponseSample } from "@/lib/services/network-transfer-samples";
 
 type MissingParameterRow = {
   sku: string;
@@ -98,6 +99,15 @@ export async function GET() {
   const buffer = XLSX.write(workbook, {
     type: "buffer",
     bookType: "xlsx",
+  });
+
+  queueCurrentRequestBinaryResponseSample({
+    bytesEstimate: buffer.length,
+    metadata: {
+      rowCount: worksheetRows.length,
+      contentType:
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    },
   });
 
   return new NextResponse(buffer, {

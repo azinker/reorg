@@ -1,4 +1,12 @@
 import { db } from "@/lib/db";
+import {
+  buildNetworkTransferRouteLabel,
+  getNetworkTransferChannelForApiPath,
+  NETWORK_TRANSFER_REQUEST_METHOD_HEADER,
+  NETWORK_TRANSFER_REQUEST_PATH_HEADER,
+  NETWORK_TRANSFER_REQUEST_START_HEADER,
+} from "@/lib/network-transfer-request";
+import { headers } from "next/headers";
 import { Prisma, type NetworkTransferChannel } from "@prisma/client";
 import { z } from "zod";
 
@@ -47,7 +55,7 @@ function sanitizeMetadata(meta: Record<string, unknown>): Record<string, unknown
       continue;
     }
     if (typeof v === "string") {
-      out[k] = v.length > 400 ? `${v.slice(0, 400)}…` : v;
+      out[k] = v.length > 400 ? `${v.slice(0, 400)}...` : v;
       continue;
     }
     if (Array.isArray(v)) {
@@ -57,13 +65,112 @@ function sanitizeMetadata(meta: Record<string, unknown>): Record<string, unknown
     if (typeof v === "object") {
       try {
         const s = JSON.stringify(v);
-        out[k] = s.length > 500 ? `${s.slice(0, 500)}…` : JSON.parse(s) as unknown;
+        out[k] = s.length > 500 ? `${s.slice(0, 500)}...` : (JSON.parse(s) as unknown);
       } catch {
         out[k] = "[object]";
       }
     }
   }
   return out;
+}
+
+export function estimateJsonBytes(value: unknown): number | null {
+  try {
+    return Buffer.byteLength(JSON.stringify(value), "utf8");
+  } catch {
+    return null;
+  }
+}
+
+type CurrentRequestTransferContext = {
+  method: string;
+  pathname: string;
+  routeLabel: string;
+  durationMs: number | null;
+};
+
+async function getCurrentRequestTransferContext(): Promise<CurrentRequestTransferContext | null> {
+  try {
+    const requestHeaders = await headers();
+    const method = requestHeaders.get(NETWORK_TRANSFER_REQUEST_METHOD_HEADER)?.trim() ?? "";
+    const pathname = requestHeaders.get(NETWORK_TRANSFER_REQUEST_PATH_HEADER)?.trim() ?? "";
+    if (!pathname.startsWith("/api/")) {
+      return null;
+    }
+
+    const startedAtRaw = Number(requestHeaders.get(NETWORK_TRANSFER_REQUEST_START_HEADER));
+    const durationMs =
+      Number.isFinite(startedAtRaw) && startedAtRaw > 0
+        ? Math.max(0, Date.now() - startedAtRaw)
+        : null;
+
+    return {
+      method: method || "GET",
+      pathname,
+      routeLabel: buildNetworkTransferRouteLabel(method || "GET", pathname),
+      durationMs,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function queueCurrentRequestJsonResponseSample(input: {
+  body: unknown;
+  status: number;
+  metadata?: Record<string, unknown>;
+  integrationId?: string | null;
+}): void {
+  void (async () => {
+    const context = await getCurrentRequestTransferContext();
+    if (!context) return;
+
+    await recordNetworkTransferSample({
+      channel: getNetworkTransferChannelForApiPath(context.pathname),
+      label: context.routeLabel,
+      bytesEstimate: estimateJsonBytes(input.body),
+      durationMs: context.durationMs,
+      integrationId: input.integrationId ?? null,
+      metadata: {
+        route: context.routeLabel,
+        method: context.method,
+        pathname: context.pathname,
+        status: input.status,
+        responseType: "json",
+        autoCaptured: true,
+        ...input.metadata,
+      },
+    });
+  })();
+}
+
+export function queueCurrentRequestBinaryResponseSample(input: {
+  bytesEstimate: number;
+  metadata?: Record<string, unknown>;
+  integrationId?: string | null;
+  channel?: NetworkTransferChannel;
+  label?: string;
+}): void {
+  void (async () => {
+    const context = await getCurrentRequestTransferContext();
+    if (!context) return;
+
+    await recordNetworkTransferSample({
+      channel: input.channel ?? getNetworkTransferChannelForApiPath(context.pathname),
+      label: input.label ?? context.routeLabel,
+      bytesEstimate: input.bytesEstimate,
+      durationMs: context.durationMs,
+      integrationId: input.integrationId ?? null,
+      metadata: {
+        route: context.routeLabel,
+        method: context.method,
+        pathname: context.pathname,
+        responseType: "binary",
+        autoCaptured: true,
+        ...input.metadata,
+      },
+    });
+  })();
 }
 
 export async function pruneOldNetworkTransferSamples(): Promise<number> {

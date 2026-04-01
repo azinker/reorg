@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import * as XLSX from "xlsx";
+import { queueCurrentRequestBinaryResponseSample } from "@/lib/services/network-transfer-samples";
 
 const TEMPLATE_ROWS = [
   {
@@ -62,6 +63,15 @@ export async function GET() {
   const buffer = XLSX.write(workbook, {
     type: "buffer",
     bookType: "xlsx",
+  });
+
+  queueCurrentRequestBinaryResponseSample({
+    bytesEstimate: buffer.length,
+    metadata: {
+      rowCount: TEMPLATE_ROWS.length,
+      contentType:
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    },
   });
 
   return new NextResponse(buffer, {

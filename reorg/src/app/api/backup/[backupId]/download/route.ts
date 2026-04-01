@@ -6,6 +6,7 @@ import {
   createBackupWorkbookBuffer,
   parseBackupSnapshot,
 } from "@/lib/services/backup";
+import { queueCurrentRequestBinaryResponseSample } from "@/lib/services/network-transfer-samples";
 
 interface RouteContext {
   params: Promise<{
@@ -60,6 +61,16 @@ export async function GET(_request: NextRequest, context: RouteContext) {
       format === "xlsx"
         ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         : "application/json; charset=utf-8";
+
+    queueCurrentRequestBinaryResponseSample({
+      bytesEstimate: body.length,
+      label: "GET /api/backup/:id/download",
+      metadata: {
+        backupId,
+        format,
+        contentType,
+      },
+    });
 
     return new NextResponse(new Uint8Array(body), {
       headers: {

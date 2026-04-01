@@ -4,6 +4,7 @@ import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { isAuthBypassEnabled } from "@/lib/app-env";
 import { BIN_LABEL_MAX_ROW_IDS, buildBinLabelsPdf } from "@/lib/services/bin-label-pdf";
+import { queueCurrentRequestBinaryResponseSample } from "@/lib/services/network-transfer-samples";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -60,6 +61,13 @@ export async function POST(request: NextRequest) {
     }
 
     const filename = `bin-labels-${new Date().toISOString().slice(0, 10)}.pdf`;
+    queueCurrentRequestBinaryResponseSample({
+      bytesEstimate: pdfBytes.byteLength,
+      metadata: {
+        rowCount: rowIds.length,
+        contentType: "application/pdf",
+      },
+    });
     return new NextResponse(Buffer.from(pdfBytes), {
       status: 200,
       headers: {

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
+import { queueCurrentRequestBinaryResponseSample } from "@/lib/services/network-transfer-samples";
 
 export async function GET(request: NextRequest) {
   const session = await auth();
@@ -40,6 +41,13 @@ export async function GET(request: NextRequest) {
 
     const contentType = upstream.headers.get("content-type") ?? "application/octet-stream";
     const body = await upstream.arrayBuffer();
+    queueCurrentRequestBinaryResponseSample({
+      bytesEstimate: body.byteLength,
+      metadata: {
+        contentType,
+        upstreamHost: parsedUrl.host,
+      },
+    });
 
     return new NextResponse(body, {
       status: 200,

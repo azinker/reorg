@@ -2,7 +2,6 @@ import { after, NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { getRequiredSessionUser } from "@/lib/server-auth";
 import { dispatchQueuedRevenueSyncExecution } from "@/lib/services/revenue-continuation";
-import { recordNetworkTransferSample } from "@/lib/services/network-transfer-samples";
 import {
   RevenueServiceError,
   executeQueuedRevenueSyncData,
@@ -37,7 +36,6 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const t0 = performance.now();
     const body = await request.json();
     const parsed = syncSchema.safeParse(body);
 
@@ -74,29 +72,13 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    const responseBody = {
+    return NextResponse.json({
       data: {
         jobs: queued.jobs,
         completedAt: queued.completedAt,
         warnings: queued.warnings,
       },
-    };
-    void recordNetworkTransferSample({
-      channel: "CLIENT_API_RESPONSE",
-      label: "POST /api/revenue/sync",
-      bytesEstimate: Buffer.byteLength(JSON.stringify(responseBody), "utf8"),
-      durationMs: Math.round(performance.now() - t0),
-      metadata: {
-        route: "POST /api/revenue/sync",
-        platformCount: parsed.data.platforms.length,
-        platforms: parsed.data.platforms,
-        jobCount: queued.jobs.length,
-        warningCount: queued.warnings.length,
-        queuedJobCount: queued.queuedJobIds.length,
-      },
     });
-
-    return NextResponse.json(responseBody);
   } catch (error) {
     return handleRevenueError(error, "[revenue/sync] POST failed");
   }

@@ -26,7 +26,7 @@ const CHANNEL_KEYS = [
 ] as const;
 
 const CHANNEL_LABEL: Record<(typeof CHANNEL_KEYS)[number], string> = {
-  CLIENT_API_RESPONSE: "API responses (e.g. grid JSON, Chrome extension zip, lookup-item)",
+  CLIENT_API_RESPONSE: "App API and file responses (JSON, downloads, image proxy, exports)",
   MARKETPLACE_INBOUND: "Marketplace HTTP (eBay response bodies, sync)",
   /** One category for all pull-sync telemetry; each row’s Label + Result say completed vs failed. */
   SYNC_JOB: "Pull sync jobs",
@@ -36,7 +36,7 @@ const CHANNEL_LABEL: Record<(typeof CHANNEL_KEYS)[number], string> = {
 
 /** Shorter legend text (Recharts legend is narrow). */
 const CHANNEL_LEGEND_LABEL: Record<(typeof CHANNEL_KEYS)[number], string> = {
-  CLIENT_API_RESPONSE: "API responses (grid, extension)",
+  CLIENT_API_RESPONSE: "App responses",
   MARKETPLACE_INBOUND: "Marketplace HTTP (eBay)",
   SYNC_JOB: "Pull syncs",
   FORECAST: "Forecaster",
@@ -234,7 +234,7 @@ export default function PublicNetworkTransferPage() {
             Public Network Transfer
           </h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            App-measured activity that correlates with database and API traffic — not Neon’s billing meter.
+            Site-wide app telemetry for public network transfer, measured inside reorG so we can spot heavy routes and downloads.
           </p>
         </div>
         <button
@@ -501,7 +501,7 @@ export default function PublicNetworkTransferPage() {
                       <td className="whitespace-nowrap px-3 py-2 text-xs">
                         {(() => {
                           const r = syncResultFromMetadata(s.channel, s.metadata);
-                          if (!r) return <span className="text-muted-foreground">—</span>;
+                          if (!r) return <span className="text-muted-foreground">-</span>;
                           return (
                             <span
                               className={cn(

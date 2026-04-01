@@ -8,7 +8,6 @@ import {
   REVENUE_SIMPLE_WINDOW_VALUES,
   type RevenueQueryFilters,
 } from "@/lib/revenue";
-import { recordNetworkTransferSample } from "@/lib/services/network-transfer-samples";
 import {
   getRevenueTopTablesData,
   RevenueServiceError,
@@ -84,8 +83,6 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const t0 = performance.now();
-
   try {
     const parsed = revenueTablesQuerySchema.safeParse({
       preset: request.nextUrl.searchParams.get("preset") ?? undefined,
@@ -105,38 +102,8 @@ export async function GET(request: NextRequest) {
     }
 
     const data = await getRevenueTopTablesData(user, resolveRevenueFilters(parsed.data));
-    const body = { data };
-    void recordNetworkTransferSample({
-      channel: "CLIENT_API_RESPONSE",
-      label: "GET /api/revenue/tables",
-      bytesEstimate: Buffer.byteLength(JSON.stringify(body), "utf8"),
-      durationMs: Math.round(performance.now() - t0),
-      metadata: {
-        route: "GET /api/revenue/tables",
-        preset: parsed.data.preset,
-        buyerWindow: parsed.data.buyerWindow,
-        itemWindow: parsed.data.itemWindow,
-        platforms: resolveRevenueFilters(parsed.data).platforms,
-        topBuyerCount: data.topBuyers.length,
-        topItemCount: data.topItems.length,
-      },
-    });
-    return NextResponse.json(body);
+    return NextResponse.json({ data });
   } catch (error) {
-    void recordNetworkTransferSample({
-      channel: "OTHER",
-      label: "GET /api/revenue/tables failed",
-      durationMs: Math.round(performance.now() - t0),
-      metadata: {
-        route: "GET /api/revenue/tables",
-        error:
-          error instanceof Error
-            ? error.message
-            : typeof error === "string"
-              ? error
-              : "Unknown revenue top tables route failure",
-      },
-    });
     return handleRevenueTablesError(error, "[revenue] tables GET failed");
   }
 }

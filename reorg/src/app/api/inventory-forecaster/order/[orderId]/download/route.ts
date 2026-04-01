@@ -1,6 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getOrderExportData } from "@/lib/inventory-forecast/service";
-import { recordNetworkTransferSample } from "@/lib/services/network-transfer-samples";
 
 export async function GET(
   _request: NextRequest,
@@ -8,7 +7,6 @@ export async function GET(
 ) {
   try {
     const { orderId } = await context.params;
-    const t0 = performance.now();
     const result = await getOrderExportData(orderId);
 
     if (!result) {
@@ -18,19 +16,7 @@ export async function GET(
       );
     }
 
-    const body = { data: result };
-    void recordNetworkTransferSample({
-      channel: "FORECAST",
-      label: "Supplier order — loaded data for Excel (JSON to browser)",
-      bytesEstimate: Buffer.byteLength(JSON.stringify(body), "utf8"),
-      durationMs: Math.round(performance.now() - t0),
-      metadata: {
-        route: "GET /api/inventory-forecaster/order/:orderId/download",
-        orderId,
-      },
-    });
-
-    return NextResponse.json(body);
+    return NextResponse.json({ data: result });
   } catch (error) {
     console.error("[inventory-forecaster/order/:orderId/download] GET failed", error);
     return NextResponse.json(
