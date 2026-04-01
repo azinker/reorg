@@ -571,7 +571,6 @@ async function loadRevenueLines(from: Date, to: Date, platforms: Platform[]): Pr
         },
       },
     },
-    orderBy: { orderDate: "asc" },
   });
 }
 
@@ -590,7 +589,6 @@ async function loadRevenueFinancialEvents(
       amount: true,
       externalOrderId: true,
     },
-    orderBy: { occurredAt: "asc" },
   });
 }
 
@@ -1371,6 +1369,82 @@ function buildGrowthCards(kpis: RevenueKpiSummary): RevenueGrowthCard[] {
   ];
 }
 
+function buildEmptyRevenuePageData(
+  filters: RevenueQueryFilters,
+  integrations: RevenueIntegrationOption[],
+  syncSummary: RevenueSyncSummary,
+  notes: string[],
+): RevenuePageData {
+  const emptyMetric: RevenueKpiMetric = {
+    value: null,
+    previousValue: null,
+    deltaPercent: null,
+    exact: false,
+    unavailableReason: null,
+  };
+
+  const kpis: RevenueKpiSummary = {
+    grossRevenue: emptyMetric,
+    netRevenue: emptyMetric,
+    marketplaceFees: emptyMetric,
+    advertisingFees: emptyMetric,
+    taxCollected: emptyMetric,
+    shippingCollected: emptyMetric,
+    shippingLabels: {
+      ...emptyMetric,
+      unavailableReason: "Shipping labels are only shown in exact eBay mode.",
+    },
+    accountLevelFees: {
+      ...emptyMetric,
+      unavailableReason: "Account-level fees are only shown in exact eBay mode.",
+    },
+    orderCount: emptyMetric,
+    averageOrderValue: emptyMetric,
+  };
+
+  return {
+    filters,
+    integrations,
+    mode: "normalized",
+    exactnessByMetric: {
+      grossRevenue: "unavailable",
+      netRevenue: "unavailable",
+      marketplaceFees: "unavailable",
+      advertisingFees: "unavailable",
+      taxCollected: "unavailable",
+      shippingCollected: "unavailable",
+      shippingLabels: "unavailable",
+      accountLevelFees: "unavailable",
+      orderCount: "unavailable",
+      averageOrderValue: "unavailable",
+    },
+    coverageByMetric: {
+      grossRevenue: "unavailable",
+      netRevenue: "unavailable",
+      marketplaceFees: "unavailable",
+      advertisingFees: "unavailable",
+      taxCollected: "unavailable",
+      shippingCollected: "unavailable",
+      shippingLabels: "unavailable",
+      accountLevelFees: "unavailable",
+      orderCount: "unavailable",
+      averageOrderValue: "unavailable",
+    },
+    sourceSummary: null,
+    kpis,
+    trend: [],
+    storeBreakdown: [],
+    feeBreakdown: [],
+    revenueShare: [],
+    topBuyers: [],
+    topItems: [],
+    growthCards: buildGrowthCards(kpis),
+    syncSummary,
+    notes,
+    hasAnyRevenueData: false,
+  };
+}
+
 async function getRevenueSyncSummary(platforms: Platform[]): Promise<RevenueSyncSummary> {
   const jobs = await db.revenueSyncJob.findMany({
     where: { platform: { in: platforms } },
@@ -1404,6 +1478,24 @@ export async function getRevenuePageData(
   const integrations = await getEnabledRevenueIntegrations();
   const platforms = normalizeSelectedPlatforms(integrations, filters.platforms);
   const normalizedFilters: RevenueQueryFilters = { ...filters, platforms };
+  const integrationOptions = toIntegrationOptions(integrations);
+  const syncSummary = await getRevenueSyncSummary(platforms);
+
+  if (!syncSummary.latestCompletedAt) {
+    const notes = [
+      syncSummary.jobs.some((job) => job.status === "PENDING" || job.status === "RUNNING")
+        ? "Initial revenue refresh is running. Revenue analytics will appear after the first completed refresh."
+        : "No revenue data is stored for the selected range yet. Run a manual refresh to populate this dashboard.",
+    ];
+
+    return buildEmptyRevenuePageData(
+      normalizedFilters,
+      integrationOptions,
+      syncSummary,
+      notes,
+    );
+  }
+
   const mode: RevenueMetricMode = isSingleStoreEbayExactMode(platforms) ? "ebay_exact" : "normalized";
   const exactIntegration =
     mode === "ebay_exact" ? integrations.find((integration) => integration.platform === platforms[0]) ?? null : null;
@@ -1419,7 +1511,7 @@ export async function getRevenuePageData(
   const buyerRange = rangeForSimpleWindow(normalizedFilters.to, normalizedFilters.buyerWindow);
   const itemRange = rangeForSimpleWindow(normalizedFilters.to, normalizedFilters.itemWindow);
 
-  const [current, previous, buyerTables, itemTables, syncSummary] = await Promise.all([
+  const [current, previous, buyerTables, itemTables] = await Promise.all([
     mode === "ebay_exact" && exactIntegration
       ? aggregateEbayExactPeriod(normalizedFilters, exactIntegration)
       : aggregateNormalizedPeriod(normalizedFilters),
@@ -1428,7 +1520,6 @@ export async function getRevenuePageData(
       : aggregateNormalizedPeriod({ ...normalizedFilters, from: previousFrom.toISOString(), to: previousTo.toISOString() }),
     aggregateTopTables({ ...normalizedFilters, from: buyerRange.from, to: buyerRange.to }),
     aggregateTopTables({ ...normalizedFilters, from: itemRange.from, to: itemRange.to }),
-    getRevenueSyncSummary(platforms),
   ]);
 
   const kpis = buildRevenueKpis(current, previous);
@@ -1447,7 +1538,7 @@ export async function getRevenuePageData(
 
   return {
     filters: normalizedFilters,
-    integrations: toIntegrationOptions(integrations),
+    integrations: integrationOptions,
     mode,
     exactnessByMetric: current.exactnessByMetric,
     coverageByMetric: current.coverageByMetric,
