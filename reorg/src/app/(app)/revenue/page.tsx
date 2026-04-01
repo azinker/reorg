@@ -186,20 +186,58 @@ function getRevenueJobProgress(job: RevenueSyncJobSummary) {
   return Math.min(0.92, 0.12 + stageProgress * 0.76 + (runningStages > 0 ? 0.08 : 0));
 }
 
+function getKpiTone(label: string) {
+  if (label === "Gross Revenue" || label === "Net Revenue" || label === "Shipping Collected" || label === "Average Order Value") {
+    return {
+      cardClass: "border-emerald-500/20 bg-[radial-gradient(circle_at_top_left,rgba(16,185,129,0.14),transparent_58%)]",
+      labelClass: "text-emerald-100/55",
+      valueClass: "text-emerald-300",
+      deltaClass: "text-emerald-100/70",
+      detailClass: "text-emerald-200/90",
+    };
+  }
+  if (label === "Total Marketplace Fees" || label === "Total Advertising Fees" || label === "Total Selling Costs" || label === "Shipping Labels" || label === "Account-Level Fees") {
+    return {
+      cardClass: "border-amber-500/20 bg-[radial-gradient(circle_at_top_left,rgba(245,158,11,0.13),transparent_58%)]",
+      labelClass: "text-amber-100/60",
+      valueClass: "text-amber-300",
+      deltaClass: "text-amber-100/70",
+      detailClass: "text-amber-200/90",
+    };
+  }
+  if (label === "Tax Collected") {
+    return {
+      cardClass: "border-sky-500/20 bg-[radial-gradient(circle_at_top_left,rgba(56,189,248,0.13),transparent_58%)]",
+      labelClass: "text-sky-100/55",
+      valueClass: "text-sky-300",
+      deltaClass: "text-sky-100/70",
+      detailClass: "text-sky-200/90",
+    };
+  }
+  return {
+    cardClass: "border-violet-500/20 bg-[radial-gradient(circle_at_top_left,rgba(139,92,246,0.13),transparent_58%)]",
+    labelClass: "text-violet-100/55",
+    valueClass: "text-violet-200",
+    deltaClass: "text-violet-100/70",
+    detailClass: "text-violet-200/90",
+  };
+}
+
 function KpiCard(props: { label: string; metric: RevenueKpiMetric; detail?: string | null }) {
   const { label, metric, detail } = props;
   const isCountMetric = label === "Orders" || label === "Unique Buyers" || label === "Units Sold";
+  const tone = getKpiTone(label);
   return (
-    <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
-      <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">{label}</p>
-      <p className="mt-2 text-2xl font-semibold text-foreground">
+    <div className={`rounded-xl border bg-card p-4 shadow-sm ${tone.cardClass}`}>
+      <p className={`text-xs uppercase tracking-[0.18em] ${tone.labelClass}`}>{label}</p>
+      <p className={`mt-2 text-2xl font-semibold ${tone.valueClass}`}>
         {isCountMetric ? (metric.value ?? 0).toLocaleString() : formatCurrency(metric.value)}
       </p>
-      <p className="mt-3 text-sm text-muted-foreground">
+      <p className={`mt-3 text-sm ${tone.deltaClass}`}>
         {metric.deltaPercent == null ? "No prior comparison" : `${formatPercent(metric.deltaPercent)} vs prior period`}
       </p>
       {detail ? (
-        <p className="mt-2 text-xs text-sky-200">{detail}</p>
+        <p className={`mt-2 text-xs ${tone.detailClass}`}>{detail}</p>
       ) : null}
     </div>
   );
@@ -752,7 +790,7 @@ export default function RevenuePage() {
             <button
               type="button"
               onClick={() => setSelectedPlatforms([])}
-              className={`cursor-pointer rounded-full border px-3 py-1.5 text-sm ${
+              className={`inline-flex cursor-pointer items-center gap-2 rounded-full border px-3 py-1.5 text-sm ${
                 selectedPlatforms.length === 0
                   ? "border-primary/40 bg-primary/10 text-primary"
                   : "border-border bg-background text-muted-foreground hover:bg-muted/50 hover:text-foreground"
@@ -765,13 +803,14 @@ export default function RevenuePage() {
                 key={integration.platform}
                 type="button"
                 onClick={() => togglePlatform(integration.platform)}
-                className={`cursor-pointer rounded-full border px-3 py-1.5 text-sm ${
+                className={`inline-flex cursor-pointer items-center gap-2 rounded-full border px-3 py-1.5 text-sm ${
                   selectedPlatforms.includes(integration.platform)
                     ? "border-primary/40 bg-primary/10 text-primary"
                     : "border-border bg-background text-muted-foreground hover:bg-muted/50 hover:text-foreground"
                 }`}
               >
-                {integration.label}
+                <PlatformIcon platform={integration.platform} size={14} />
+                <span>{integration.label}</span>
               </button>
             ))}
           </div>
@@ -833,7 +872,10 @@ export default function RevenuePage() {
                 <div key={job.id} className="rounded-lg border border-border bg-background px-3 py-3">
                   <div className="flex items-center justify-between gap-3">
                     <div>
-                      <p className="font-medium text-foreground">{job.label}</p>
+                      <p className="inline-flex items-center gap-2 font-medium text-foreground">
+                        <PlatformIcon platform={job.platform} size={16} />
+                        <span>{job.label}</span>
+                      </p>
                       <p className="text-xs text-muted-foreground">{PLATFORM_FULL[job.platform]}</p>
                     </div>
                     <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[10px] font-semibold uppercase ${
@@ -1029,7 +1071,7 @@ export default function RevenuePage() {
                     <button
                       type="button"
                       onClick={() => setTopBuyerPlatforms([])}
-                      className={`cursor-pointer rounded-full border px-3 py-1 text-xs ${
+                      className={`inline-flex cursor-pointer items-center gap-2 rounded-full border px-3 py-1 text-xs ${
                         topBuyerPlatforms.length === 0
                           ? "border-primary/40 bg-primary/10 text-primary"
                           : "border-border bg-background text-muted-foreground hover:bg-muted/50 hover:text-foreground"
@@ -1042,13 +1084,14 @@ export default function RevenuePage() {
                         key={`buyer-filter-${platform}`}
                         type="button"
                         onClick={() => toggleTopBuyerPlatform(platform)}
-                        className={`cursor-pointer rounded-full border px-3 py-1 text-xs ${
+                        className={`inline-flex cursor-pointer items-center gap-2 rounded-full border px-3 py-1 text-xs ${
                           topBuyerPlatforms.includes(platform)
                             ? "border-primary/40 bg-primary/10 text-primary"
                             : "border-border bg-background text-muted-foreground hover:bg-muted/50 hover:text-foreground"
                         }`}
                       >
-                        {formatMarketplaceBubbleLabel(platform)}
+                        <PlatformIcon platform={platform} size={12} />
+                        <span>{formatMarketplaceBubbleLabel(platform)}</span>
                       </button>
                     ))}
                   </div>
@@ -1078,7 +1121,7 @@ export default function RevenuePage() {
                         <td className="py-3 pr-4 text-muted-foreground">
                           <div className="flex flex-wrap items-center gap-2">
                             {buyer.platformBreakdown.map((entry) => (
-                              <span key={`${buyer.buyerKey}-${entry.platform}`} className="inline-flex items-center gap-1 rounded-full border border-border px-2 py-1 text-xs text-muted-foreground">
+                              <span key={`${buyer.buyerKey}-${entry.platform}`} className="inline-flex items-center gap-1 rounded-full border border-border bg-background/70 px-2 py-1 text-xs text-muted-foreground">
                                 <PlatformIcon platform={entry.platform} size={14} />
                                 {formatMarketplaceBubbleLabel(entry.platform)}
                                 <span className={`font-semibold ${marketplaceCountClassName(entry.platform)}`}>
@@ -1089,8 +1132,8 @@ export default function RevenuePage() {
                           </div>
                         </td>
                         <td className="py-3 pr-4 text-muted-foreground">{buyer.orderCount.toLocaleString()}</td>
-                        <td className="py-3 pr-4 text-foreground">{formatCurrency(buyer.grossRevenue)}</td>
-                        <td className="py-3 text-foreground">{formatCurrency(buyer.netRevenue)}</td>
+                        <td className="py-3 pr-4 text-emerald-300">{formatCurrency(buyer.grossRevenue)}</td>
+                        <td className="py-3 text-emerald-200">{formatCurrency(buyer.netRevenue)}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -1125,7 +1168,7 @@ export default function RevenuePage() {
                     <button
                       type="button"
                       onClick={() => setTopItemPlatforms([])}
-                      className={`cursor-pointer rounded-full border px-3 py-1 text-xs ${
+                      className={`inline-flex cursor-pointer items-center gap-2 rounded-full border px-3 py-1 text-xs ${
                         topItemPlatforms.length === 0
                           ? "border-primary/40 bg-primary/10 text-primary"
                           : "border-border bg-background text-muted-foreground hover:bg-muted/50 hover:text-foreground"
@@ -1138,13 +1181,14 @@ export default function RevenuePage() {
                         key={`item-filter-${platform}`}
                         type="button"
                         onClick={() => toggleTopItemPlatform(platform)}
-                        className={`cursor-pointer rounded-full border px-3 py-1 text-xs ${
+                        className={`inline-flex cursor-pointer items-center gap-2 rounded-full border px-3 py-1 text-xs ${
                           topItemPlatforms.includes(platform)
                             ? "border-primary/40 bg-primary/10 text-primary"
                             : "border-border bg-background text-muted-foreground hover:bg-muted/50 hover:text-foreground"
                         }`}
                       >
-                        {formatMarketplaceBubbleLabel(platform)}
+                        <PlatformIcon platform={platform} size={12} />
+                        <span>{formatMarketplaceBubbleLabel(platform)}</span>
                       </button>
                     ))}
                   </div>
@@ -1171,7 +1215,7 @@ export default function RevenuePage() {
                         <td className="py-3 pr-4 text-muted-foreground">
                           <div className="flex flex-wrap items-center gap-2">
                             {item.platformBreakdown.map((entry) => (
-                              <span key={`${item.sku}-${entry.platform}`} className="inline-flex items-center gap-1 rounded-full border border-border px-2 py-1 text-xs text-muted-foreground">
+                              <span key={`${item.sku}-${entry.platform}`} className="inline-flex items-center gap-1 rounded-full border border-border bg-background/70 px-2 py-1 text-xs text-muted-foreground">
                                 <PlatformIcon platform={entry.platform} size={14} />
                                 {formatMarketplaceBubbleLabel(entry.platform)}
                                 <span className={`font-semibold ${marketplaceCountClassName(entry.platform)}`}>
@@ -1182,8 +1226,8 @@ export default function RevenuePage() {
                           </div>
                         </td>
                         <td className="py-3 pr-4 text-muted-foreground">{item.unitsSold.toLocaleString()}</td>
-                        <td className="py-3 pr-4 text-foreground">{formatCurrency(item.grossRevenue)}</td>
-                        <td className="py-3 text-foreground">{formatCurrency(item.netRevenue)}</td>
+                        <td className="py-3 pr-4 text-emerald-300">{formatCurrency(item.grossRevenue)}</td>
+                        <td className="py-3 text-emerald-200">{formatCurrency(item.netRevenue)}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -1214,13 +1258,16 @@ export default function RevenuePage() {
                     {data.storeBreakdown.map((store) => (
                       <tr key={store.platform} className="border-t border-border/70">
                         <td className="py-3 pr-4">
-                          <div className="font-medium text-foreground">{store.label}</div>
+                          <div className="inline-flex items-center gap-2 font-medium text-foreground">
+                            <PlatformIcon platform={store.platform} size={16} />
+                            <span>{store.label}</span>
+                          </div>
                         </td>
-                        <td className="py-3 pr-4 text-foreground">{formatCurrency(store.grossRevenue)}</td>
+                        <td className="py-3 pr-4 text-emerald-300">{formatCurrency(store.grossRevenue)}</td>
                         <td className="py-3 pr-4 text-muted-foreground">{store.orderCount.toLocaleString()}</td>
-                        <td className="py-3 pr-4 text-foreground">{formatCurrency(store.averageOrderValue)}</td>
-                        <td className="py-3 pr-4 text-muted-foreground">{formatPlainPercent(store.feeRatePercent)}</td>
-                        <td className="py-3 text-muted-foreground">{formatPlainPercent(store.advertisingRatePercent)}</td>
+                        <td className="py-3 pr-4 text-emerald-200">{formatCurrency(store.averageOrderValue)}</td>
+                        <td className="py-3 pr-4 text-amber-300">{formatPlainPercent(store.feeRatePercent)}</td>
+                        <td className="py-3 text-amber-200">{formatPlainPercent(store.advertisingRatePercent)}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -1235,7 +1282,10 @@ export default function RevenuePage() {
                   <div key={job.id} className="rounded-lg border border-border bg-background px-3 py-3">
                     <div className="flex items-center justify-between gap-3">
                       <div>
-                        <p className="font-medium text-foreground">{job.label}</p>
+                        <p className="inline-flex items-center gap-2 font-medium text-foreground">
+                          <PlatformIcon platform={job.platform} size={16} />
+                          <span>{job.label}</span>
+                        </p>
                         <p className="text-xs text-muted-foreground">{PLATFORM_FULL[job.platform]}</p>
                       </div>
                       <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[10px] font-semibold uppercase ${
