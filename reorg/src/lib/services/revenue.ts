@@ -939,196 +939,36 @@ async function aggregateLineBasedOperationalPeriod(filters: RevenueQueryFilters)
   };
 }
 
-function mergeExactness(values: RevenueMetricExactness[]): RevenueMetricExactness {
-  if (values.length === 0) return "unavailable";
-  if (values.every((value) => value === "exact")) return "exact";
-  if (values.every((value) => value === "unavailable")) return "unavailable";
-  return "partial";
+function toNormalizedModeAggregation(period: PeriodAggregation): PeriodAggregation {
+  return {
+    ...period,
+    mode: "normalized",
+    shippingLabels: null,
+    accountLevelFees: null,
+    exactnessByMetric: {
+      ...period.exactnessByMetric,
+      shippingLabels: "unavailable",
+      accountLevelFees: "unavailable",
+    },
+    coverageByMetric: {
+      ...period.coverageByMetric,
+      shippingLabels: "unavailable",
+      accountLevelFees: "unavailable",
+    },
+    unavailableReasons: {
+      ...period.unavailableReasons,
+      shippingLabels: "Shipping labels are only shown in exact eBay mode.",
+      accountLevelFees: "Account-level fees are only shown in exact eBay mode.",
+    },
+    sourceSummary: null,
+    feeBreakdown: period.feeBreakdown.filter(
+      (row) => row.key === "marketplaceFees" || row.key === "advertisingFees" || row.key === "otherFees",
+    ),
+  };
 }
 
 async function aggregateNormalizedPeriod(filters: RevenueQueryFilters): Promise<PeriodAggregation> {
-  const integrations = await getEnabledRevenueIntegrations();
-  const selectedIntegrations = integrations.filter((integration) =>
-    filters.platforms.includes(integration.platform),
-  );
-
-  const periods = await Promise.all(
-    selectedIntegrations.map((integration) =>
-      EXACT_EBAY_PLATFORMS.has(integration.platform)
-        ? aggregateEbayExactPeriod({ ...filters, platforms: [integration.platform] }, integration)
-        : aggregateLineBasedOperationalPeriod({ ...filters, platforms: [integration.platform] }),
-    ),
-  );
-
-  if (periods.length === 0) {
-    return aggregateLineBasedOperationalPeriod(filters);
-  }
-
-  if (periods.length === 1) {
-    const [period] = periods;
-    return {
-      ...period,
-      mode: "normalized",
-      shippingLabels: null,
-      accountLevelFees: null,
-      exactnessByMetric: {
-        ...period.exactnessByMetric,
-        shippingLabels: "unavailable",
-        accountLevelFees: "unavailable",
-      },
-      coverageByMetric: {
-        ...period.coverageByMetric,
-        shippingLabels: "unavailable",
-        accountLevelFees: "unavailable",
-      },
-      unavailableReasons: {
-        ...period.unavailableReasons,
-        shippingLabels: "Shipping labels are only shown in exact eBay mode.",
-        accountLevelFees: "Account-level fees are only shown in exact eBay mode.",
-      },
-      sourceSummary: null,
-      feeBreakdown: period.feeBreakdown.filter(
-        (row) => row.key === "marketplaceFees" || row.key === "advertisingFees" || row.key === "otherFees",
-      ),
-    };
-  }
-
-  const trendMap = new Map<
-    string,
-    {
-      bucketStart: string;
-      bucketLabel: string;
-      grossRevenue: number;
-      netRevenue: number;
-      marketplaceFees: number;
-      advertisingFees: number;
-      orderCount: number;
-    }
-  >();
-  const feeMap = new Map<string, RevenueFeeBreakdownRow>();
-
-  for (const period of periods) {
-    for (const point of period.trend) {
-      const entry =
-        trendMap.get(point.bucketStart) ??
-        {
-          bucketStart: point.bucketStart,
-          bucketLabel: point.bucketLabel,
-          grossRevenue: 0,
-          netRevenue: 0,
-          marketplaceFees: 0,
-          advertisingFees: 0,
-          orderCount: 0,
-        };
-      entry.grossRevenue += point.grossRevenue;
-      entry.netRevenue += point.netRevenue ?? 0;
-      entry.marketplaceFees += point.marketplaceFees ?? 0;
-      entry.advertisingFees += point.advertisingFees ?? 0;
-      entry.orderCount += point.orderCount;
-      trendMap.set(point.bucketStart, entry);
-    }
-
-    for (const fee of period.feeBreakdown) {
-      const key = fee.key === "shippingLabels" || fee.key === "accountLevelFees" ? "otherFees" : fee.key;
-      const label =
-        key === "marketplaceFees"
-          ? "Marketplace fees"
-          : key === "advertisingFees"
-            ? "Advertising fees"
-            : "Other fees";
-      const existing = feeMap.get(key);
-      if (existing) {
-        existing.amount += fee.amount;
-      } else {
-        feeMap.set(key, { key, label, amount: fee.amount });
-      }
-    }
-  }
-
-  const grossRevenue = periods.reduce((sum, period) => sum + period.grossRevenue, 0);
-  const netRevenue = periods.reduce((sum, period) => sum + (period.netRevenue ?? 0), 0);
-  const marketplaceFees = periods.reduce((sum, period) => sum + (period.marketplaceFees ?? 0), 0);
-  const advertisingFees = periods.reduce((sum, period) => sum + (period.advertisingFees ?? 0), 0);
-  const taxCollected = periods.reduce((sum, period) => sum + period.taxCollected, 0);
-  const shippingCollected = periods.reduce((sum, period) => sum + period.shippingCollected, 0);
-  const orderCount = periods.reduce((sum, period) => sum + period.orderCount, 0);
-  const averageOrderValue = orderCount > 0 ? grossRevenue / orderCount : null;
-  const netExactness = mergeExactness(periods.map((period) => period.exactnessByMetric.netRevenue));
-  const marketplaceExactness = mergeExactness(periods.map((period) => period.exactnessByMetric.marketplaceFees));
-  const advertisingExactness = mergeExactness(periods.map((period) => period.exactnessByMetric.advertisingFees));
-
-  const storeBreakdown = periods
-    .flatMap((period) => period.storeBreakdown)
-    .sort((a, b) => b.grossRevenue - a.grossRevenue);
-
-  return {
-    mode: "normalized",
-    hasAnyRevenueData: periods.some((period) => period.hasAnyRevenueData),
-    grossRevenue,
-    netRevenue,
-    marketplaceFees,
-    advertisingFees,
-    taxCollected,
-    shippingCollected,
-    shippingLabels: null,
-    accountLevelFees: null,
-    orderCount,
-    averageOrderValue,
-    exactnessByMetric: {
-      grossRevenue: "exact",
-      netRevenue: netExactness,
-      marketplaceFees: marketplaceExactness,
-      advertisingFees: advertisingExactness,
-      taxCollected: "exact",
-      shippingCollected: "exact",
-      shippingLabels: "unavailable",
-      accountLevelFees: "unavailable",
-      orderCount: "exact",
-      averageOrderValue: "exact",
-    },
-    coverageByMetric: {
-      grossRevenue: "exact",
-      netRevenue: netExactness,
-      marketplaceFees: marketplaceExactness,
-      advertisingFees: advertisingExactness,
-      taxCollected: "exact",
-      shippingCollected: "exact",
-      shippingLabels: "unavailable",
-      accountLevelFees: "unavailable",
-      orderCount: "exact",
-      averageOrderValue: "exact",
-    },
-    unavailableReasons: {
-      grossRevenue: null,
-      netRevenue:
-        netExactness === "exact"
-          ? null
-          : "Net revenue stays partial when selected stores do not expose exact fee detail.",
-      marketplaceFees:
-        marketplaceExactness === "exact"
-          ? null
-          : "Marketplace fees stay partial when selected stores do not expose exact fee detail.",
-      advertisingFees:
-        advertisingExactness === "exact"
-          ? null
-          : "Advertising fees stay partial when selected stores do not expose exact fee detail.",
-      taxCollected: null,
-      shippingCollected: null,
-      shippingLabels: "Shipping labels are only shown in exact eBay mode.",
-      accountLevelFees: "Account-level fees are only shown in exact eBay mode.",
-      orderCount: null,
-      averageOrderValue: null,
-    },
-    sourceSummary: null,
-    trend: [...trendMap.values()].sort((a, b) => a.bucketStart.localeCompare(b.bucketStart)),
-    storeBreakdown,
-    feeBreakdown: [...feeMap.values()].filter((row) => row.amount !== 0),
-    revenueShare: storeBreakdown.map((store) => ({
-      platform: store.platform,
-      label: store.label,
-      grossRevenue: store.grossRevenue,
-    })),
-  };
+  return toNormalizedModeAggregation(await aggregateLineBasedOperationalPeriod(filters));
 }
 
 async function aggregateEbayExactPeriod(
@@ -1516,6 +1356,7 @@ export async function getRevenueDebugData(
     where: {
       OR: [
         { label: "GET /api/revenue" },
+        { label: "GET /api/revenue failed" },
         { label: "POST /api/revenue/sync" },
         { label: { contains: "revenue sync" } },
       ],
@@ -1584,6 +1425,11 @@ export async function getRevenuePageData(
   const buyerRange = rangeForSimpleWindow(normalizedFilters.to, normalizedFilters.buyerWindow);
   const itemRange = rangeForSimpleWindow(normalizedFilters.to, normalizedFilters.itemWindow);
 
+  const useSharedTopTables = buyerRange.from === itemRange.from && buyerRange.to === itemRange.to;
+  const sharedTopTablesPromise = useSharedTopTables
+    ? aggregateTopTables({ ...normalizedFilters, from: buyerRange.from, to: buyerRange.to })
+    : null;
+
   const [current, previous, buyerTables, itemTables] = await Promise.all([
     mode === "ebay_exact" && exactIntegration
       ? aggregateEbayExactPeriod(normalizedFilters, exactIntegration)
@@ -1591,8 +1437,8 @@ export async function getRevenuePageData(
     mode === "ebay_exact" && exactIntegration
       ? aggregateEbayExactPeriod({ ...normalizedFilters, from: previousFrom.toISOString(), to: previousTo.toISOString() }, exactIntegration)
       : aggregateNormalizedPeriod({ ...normalizedFilters, from: previousFrom.toISOString(), to: previousTo.toISOString() }),
-    aggregateTopTables({ ...normalizedFilters, from: buyerRange.from, to: buyerRange.to }),
-    aggregateTopTables({ ...normalizedFilters, from: itemRange.from, to: itemRange.to }),
+    sharedTopTablesPromise ?? aggregateTopTables({ ...normalizedFilters, from: buyerRange.from, to: buyerRange.to }),
+    sharedTopTablesPromise ?? aggregateTopTables({ ...normalizedFilters, from: itemRange.from, to: itemRange.to }),
   ]);
 
   const kpis = buildRevenueKpis(current, previous);

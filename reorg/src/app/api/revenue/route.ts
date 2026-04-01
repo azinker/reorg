@@ -84,8 +84,9 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  const t0 = performance.now();
+
   try {
-    const t0 = performance.now();
     const parsed = revenueQuerySchema.safeParse({
       preset: request.nextUrl.searchParams.get("preset") ?? undefined,
       from: request.nextUrl.searchParams.get("from") ?? undefined,
@@ -123,6 +124,25 @@ export async function GET(request: NextRequest) {
     });
     return NextResponse.json(body);
   } catch (error) {
+    void recordNetworkTransferSample({
+      channel: "OTHER",
+      label: "GET /api/revenue failed",
+      durationMs: Math.round(performance.now() - t0),
+      metadata: {
+        route: "GET /api/revenue",
+        preset: request.nextUrl.searchParams.get("preset") ?? "30d",
+        granularity: request.nextUrl.searchParams.get("granularity") ?? null,
+        buyerWindow: request.nextUrl.searchParams.get("buyerWindow") ?? "30d",
+        itemWindow: request.nextUrl.searchParams.get("itemWindow") ?? "30d",
+        platforms: request.nextUrl.searchParams.get("platforms") ?? "",
+        error:
+          error instanceof Error
+            ? error.message
+            : typeof error === "string"
+              ? error
+              : "Unknown revenue route failure",
+      },
+    });
     return handleRevenueError(error, "[revenue] GET failed");
   }
 }
