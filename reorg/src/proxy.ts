@@ -2,6 +2,11 @@ import { auth } from "@/lib/auth";
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { isAuthBypassEnabled } from "@/lib/app-env";
+import {
+  NETWORK_TRANSFER_REQUEST_METHOD_HEADER,
+  NETWORK_TRANSFER_REQUEST_PATH_HEADER,
+  NETWORK_TRANSFER_REQUEST_START_HEADER,
+} from "@/lib/network-transfer-request";
 
 function isPublicPath(pathname: string) {
   return (
@@ -19,11 +24,24 @@ function isPublicPath(pathname: string) {
   );
 }
 
+function buildNextResponse(req: NextRequest) {
+  const requestHeaders = new Headers(req.headers);
+  requestHeaders.set(NETWORK_TRANSFER_REQUEST_METHOD_HEADER, req.method.toUpperCase());
+  requestHeaders.set(NETWORK_TRANSFER_REQUEST_PATH_HEADER, req.nextUrl.pathname);
+  requestHeaders.set(NETWORK_TRANSFER_REQUEST_START_HEADER, String(Date.now()));
+
+  return NextResponse.next({
+    request: {
+      headers: requestHeaders,
+    },
+  });
+}
+
 export default auth(function proxy(req: NextRequest & { auth?: unknown }) {
   const { pathname } = req.nextUrl;
 
   if (isPublicPath(pathname)) {
-    return NextResponse.next();
+    return buildNextResponse(req);
   }
 
   if (isAuthBypassEnabled() && pathname === "/login") {
@@ -31,7 +49,7 @@ export default auth(function proxy(req: NextRequest & { auth?: unknown }) {
   }
 
   if (isAuthBypassEnabled()) {
-    return NextResponse.next();
+    return buildNextResponse(req);
   }
 
   if (!req.auth) {
@@ -42,7 +60,7 @@ export default auth(function proxy(req: NextRequest & { auth?: unknown }) {
     return NextResponse.redirect(new URL("/login", req.url));
   }
 
-  return NextResponse.next();
+  return buildNextResponse(req);
 });
 
 export const config = {
