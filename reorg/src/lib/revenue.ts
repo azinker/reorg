@@ -58,11 +58,14 @@ export interface RevenueKpiSummary {
   netRevenue: RevenueKpiMetric;
   marketplaceFees: RevenueKpiMetric;
   advertisingFees: RevenueKpiMetric;
+  totalSellingCosts: RevenueKpiMetric;
   taxCollected: RevenueKpiMetric;
   shippingCollected: RevenueKpiMetric;
   shippingLabels: RevenueKpiMetric;
   accountLevelFees: RevenueKpiMetric;
   orderCount: RevenueKpiMetric;
+  buyerCount: RevenueKpiMetric;
+  unitsSold: RevenueKpiMetric;
   averageOrderValue: RevenueKpiMetric;
 }
 
@@ -110,6 +113,12 @@ export interface RevenueTopBuyerRow {
   buyerLabel: string;
   buyerEmail: string | null;
   platforms: Platform[];
+  platformBreakdown: Array<{
+    platform: Platform;
+    orderCount: number;
+    grossRevenue: number;
+    netRevenue: number | null;
+  }>;
   orderCount: number;
   grossRevenue: number;
   netRevenue: number | null;
@@ -119,6 +128,12 @@ export interface RevenueTopItemRow {
   sku: string;
   title: string | null;
   platforms: Platform[];
+  platformBreakdown: Array<{
+    platform: Platform;
+    unitsSold: number;
+    grossRevenue: number;
+    netRevenue: number | null;
+  }>;
   unitsSold: number;
   grossRevenue: number;
   netRevenue: number | null;

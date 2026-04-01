@@ -18,7 +18,7 @@ import {
 } from "recharts";
 import { CalendarRange, Loader2, RefreshCw } from "lucide-react";
 import type { Platform } from "@/lib/grid-types";
-import { PLATFORM_FULL, PLATFORM_SHORT } from "@/lib/grid-types";
+import { PLATFORM_FULL } from "@/lib/grid-types";
 import type {
   RevenueDebugData,
   RevenueKpiMetric,
@@ -28,6 +28,8 @@ import type {
   RevenueSyncJobSummary,
   RevenueSyncResult,
   RevenueSimpleWindow,
+  RevenueTopBuyerRow,
+  RevenueTopItemRow,
   RevenueTopTablesData,
 } from "@/lib/revenue";
 import {
@@ -83,6 +85,70 @@ function formatPlainPercent(value: number | null | undefined) {
   return `${value.toFixed(1)}%`;
 }
 
+function formatMarketplaceBubbleLabel(platform: Platform) {
+  if (platform === "TPP_EBAY") return "eBay TPP";
+  if (platform === "TT_EBAY") return "eBay TT";
+  if (platform === "BIGCOMMERCE") return "BigCommerce BC";
+  return "Shopify SHPFY";
+}
+
+function marketplaceCountClassName(platform: Platform) {
+  if (platform === "TPP_EBAY") return "text-violet-300";
+  if (platform === "TT_EBAY") return "text-sky-300";
+  if (platform === "BIGCOMMERCE") return "text-amber-300";
+  return "text-emerald-300";
+}
+
+function deriveVisibleTopBuyerRows(rows: RevenueTopBuyerRow[], selectedPlatforms: Platform[]) {
+  return rows
+    .map((row) => {
+      const platformBreakdown =
+        selectedPlatforms.length > 0
+          ? row.platformBreakdown.filter((entry) => selectedPlatforms.includes(entry.platform))
+          : row.platformBreakdown;
+      if (platformBreakdown.length === 0) return null;
+
+      return {
+        ...row,
+        platforms: platformBreakdown.map((entry) => entry.platform),
+        platformBreakdown,
+        orderCount: platformBreakdown.reduce((sum, entry) => sum + entry.orderCount, 0),
+        grossRevenue: platformBreakdown.reduce((sum, entry) => sum + entry.grossRevenue, 0),
+        netRevenue: platformBreakdown.some((entry) => entry.netRevenue == null)
+          ? null
+          : platformBreakdown.reduce((sum, entry) => sum + (entry.netRevenue ?? 0), 0),
+      };
+    })
+    .filter((row): row is RevenueTopBuyerRow => row != null)
+    .sort((a, b) => b.orderCount - a.orderCount || b.grossRevenue - a.grossRevenue)
+    .slice(0, 12);
+}
+
+function deriveVisibleTopItemRows(rows: RevenueTopItemRow[], selectedPlatforms: Platform[]) {
+  return rows
+    .map((row) => {
+      const platformBreakdown =
+        selectedPlatforms.length > 0
+          ? row.platformBreakdown.filter((entry) => selectedPlatforms.includes(entry.platform))
+          : row.platformBreakdown;
+      if (platformBreakdown.length === 0) return null;
+
+      return {
+        ...row,
+        platforms: platformBreakdown.map((entry) => entry.platform),
+        platformBreakdown,
+        unitsSold: platformBreakdown.reduce((sum, entry) => sum + entry.unitsSold, 0),
+        grossRevenue: platformBreakdown.reduce((sum, entry) => sum + entry.grossRevenue, 0),
+        netRevenue: platformBreakdown.some((entry) => entry.netRevenue == null)
+          ? null
+          : platformBreakdown.reduce((sum, entry) => sum + (entry.netRevenue ?? 0), 0),
+      };
+    })
+    .filter((row): row is RevenueTopItemRow => row != null)
+    .sort((a, b) => b.unitsSold - a.unitsSold || b.grossRevenue - a.grossRevenue)
+    .slice(0, 12);
+}
+
 function formatDateTime(value: string | null) {
   if (!value) return "Never";
   return new Date(value).toLocaleString("en-US", {
@@ -122,13 +188,14 @@ function getRevenueJobProgress(job: RevenueSyncJobSummary) {
 
 function KpiCard(props: { label: string; metric: RevenueKpiMetric; detail?: string | null }) {
   const { label, metric, detail } = props;
+  const isCountMetric = label === "Orders" || label === "Unique Buyers" || label === "Units Sold";
   return (
     <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
       <div className="flex items-start justify-between gap-3">
         <div>
           <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">{label}</p>
           <p className="mt-2 text-2xl font-semibold text-foreground">
-            {label === "Orders" ? (metric.value ?? 0).toLocaleString() : formatCurrency(metric.value)}
+            {isCountMetric ? (metric.value ?? 0).toLocaleString() : formatCurrency(metric.value)}
           </p>
         </div>
         <span
@@ -163,6 +230,8 @@ export default function RevenuePage() {
   const [buyerWindow, setBuyerWindow] = useState<RevenueSimpleWindow>("30d");
   const [itemWindow, setItemWindow] = useState<RevenueSimpleWindow>("30d");
   const [selectedPlatforms, setSelectedPlatforms] = useState<Platform[]>([]);
+  const [topBuyerPlatforms, setTopBuyerPlatforms] = useState<Platform[]>([]);
+  const [topItemPlatforms, setTopItemPlatforms] = useState<Platform[]>([]);
   const [data, setData] = useState<RevenuePageData | null>(null);
   const [topTables, setTopTables] = useState<RevenueTopTablesData | null>(null);
   const [tablesLoading, setTablesLoading] = useState(false);
@@ -492,6 +561,22 @@ export default function RevenuePage() {
     );
   }
 
+  function toggleTopBuyerPlatform(platform: Platform) {
+    setTopBuyerPlatforms((current) =>
+      current.includes(platform)
+        ? current.filter((entry) => entry !== platform)
+        : [...current, platform],
+    );
+  }
+
+  function toggleTopItemPlatform(platform: Platform) {
+    setTopItemPlatforms((current) =>
+      current.includes(platform)
+        ? current.filter((entry) => entry !== platform)
+        : [...current, platform],
+    );
+  }
+
   const kpis = data?.kpis;
   const visibleStatusData = statusData ?? (data
     ? {
@@ -507,8 +592,15 @@ export default function RevenuePage() {
   const hasStoreChartData = Boolean(data?.storeBreakdown.some((row) => row.grossRevenue > 0));
   const hasFeeChartData = Boolean(data?.feeBreakdown.some((row) => row.amount > 0));
   const hasShareData = Boolean(data?.revenueShare.some((row) => row.grossRevenue > 0));
-  const visibleTopBuyers = topTables?.topBuyers ?? data?.topBuyers ?? [];
-  const visibleTopItems = topTables?.topItems ?? data?.topItems ?? [];
+  const availableTopTablePlatforms = visibleStatusData?.integrations.map((integration) => integration.platform) ?? [];
+  const visibleTopBuyers = useMemo(
+    () => deriveVisibleTopBuyerRows(topTables?.topBuyers ?? data?.topBuyers ?? [], topBuyerPlatforms),
+    [data?.topBuyers, topBuyerPlatforms, topTables?.topBuyers],
+  );
+  const visibleTopItems = useMemo(
+    () => deriveVisibleTopItemRows(topTables?.topItems ?? data?.topItems ?? [], topItemPlatforms),
+    [data?.topItems, topItemPlatforms, topTables?.topItems],
+  );
   const currentGrossRevenue = data?.kpis.grossRevenue.value ?? null;
   const kpiShareDetails = currentGrossRevenue && currentGrossRevenue > 0
     ? {
@@ -524,6 +616,10 @@ export default function RevenuePage() {
           data?.kpis.advertisingFees.value != null
             ? `${formatPlainPercent((data.kpis.advertisingFees.value / currentGrossRevenue) * 100)} of gross revenue`
             : null,
+        totalSellingCosts:
+          data?.kpis.totalSellingCosts.value != null
+            ? `${formatPlainPercent((data.kpis.totalSellingCosts.value / currentGrossRevenue) * 100)} of gross revenue`
+            : null,
         taxCollected:
           data?.kpis.taxCollected.value != null
             ? `${formatPlainPercent((data.kpis.taxCollected.value / currentGrossRevenue) * 100)} of gross revenue`
@@ -533,6 +629,7 @@ export default function RevenuePage() {
         netRevenue: null,
         marketplaceFees: null,
         advertisingFees: null,
+        totalSellingCosts: null,
         taxCollected: null,
       };
   const refreshProgress = useMemo(() => {
@@ -785,8 +882,9 @@ export default function RevenuePage() {
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4" data-tour="revenue-summary">
             <KpiCard label="Gross Revenue" metric={kpis.grossRevenue} />
             <KpiCard label="Net Revenue" metric={kpis.netRevenue} detail={kpiShareDetails.netRevenue} />
-            <KpiCard label="Marketplace Fees" metric={kpis.marketplaceFees} detail={kpiShareDetails.marketplaceFees} />
-            <KpiCard label="Advertising Fees" metric={kpis.advertisingFees} detail={kpiShareDetails.advertisingFees} />
+            <KpiCard label="Total Marketplace Fees" metric={kpis.marketplaceFees} detail={kpiShareDetails.marketplaceFees} />
+            <KpiCard label="Total Advertising Fees" metric={kpis.advertisingFees} detail={kpiShareDetails.advertisingFees} />
+            <KpiCard label="Total Selling Costs" metric={kpis.totalSellingCosts} detail={kpiShareDetails.totalSellingCosts} />
             <KpiCard label="Tax Collected" metric={kpis.taxCollected} detail={kpiShareDetails.taxCollected} />
             <KpiCard label="Shipping Collected" metric={kpis.shippingCollected} />
             {data.mode === "ebay_exact" ? (
@@ -796,6 +894,8 @@ export default function RevenuePage() {
               </>
             ) : null}
             <KpiCard label="Orders" metric={kpis.orderCount} />
+            <KpiCard label="Unique Buyers" metric={kpis.buyerCount} />
+            <KpiCard label="Units Sold" metric={kpis.unitsSold} />
             <KpiCard label="Average Order Value" metric={kpis.averageOrderValue} />
           </div>
 
@@ -925,21 +1025,50 @@ export default function RevenuePage() {
             <div className="rounded-xl border border-border bg-card p-4">
               <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                 <h2 className="text-sm font-semibold uppercase tracking-[0.18em] text-muted-foreground">Top Buyers</h2>
-                <div className="flex flex-wrap items-center gap-2">
-                  {(["3d", "7d", "15d", "30d"] as const).map((value) => (
+                <div className="flex flex-col gap-2 md:items-end">
+                  <div className="flex flex-wrap items-center gap-2">
+                    {(["3d", "7d", "15d", "30d"] as const).map((value) => (
+                      <button
+                        key={value}
+                        type="button"
+                        onClick={() => setBuyerWindow(value)}
+                        className={`cursor-pointer rounded-full border px-3 py-1 text-xs ${
+                          buyerWindow === value
+                            ? "border-primary/40 bg-primary/10 text-primary"
+                            : "border-border bg-background text-muted-foreground hover:bg-muted/50 hover:text-foreground"
+                        }`}
+                      >
+                        {value.toUpperCase()}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
                     <button
-                      key={value}
                       type="button"
-                      onClick={() => setBuyerWindow(value)}
+                      onClick={() => setTopBuyerPlatforms([])}
                       className={`cursor-pointer rounded-full border px-3 py-1 text-xs ${
-                        buyerWindow === value
+                        topBuyerPlatforms.length === 0
                           ? "border-primary/40 bg-primary/10 text-primary"
                           : "border-border bg-background text-muted-foreground hover:bg-muted/50 hover:text-foreground"
                       }`}
                     >
-                      {value.toUpperCase()}
+                      All marketplaces
                     </button>
-                  ))}
+                    {availableTopTablePlatforms.map((platform) => (
+                      <button
+                        key={`buyer-filter-${platform}`}
+                        type="button"
+                        onClick={() => toggleTopBuyerPlatform(platform)}
+                        className={`cursor-pointer rounded-full border px-3 py-1 text-xs ${
+                          topBuyerPlatforms.includes(platform)
+                            ? "border-primary/40 bg-primary/10 text-primary"
+                            : "border-border bg-background text-muted-foreground hover:bg-muted/50 hover:text-foreground"
+                        }`}
+                      >
+                        {formatMarketplaceBubbleLabel(platform)}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               </div>
               <div className="mt-4 overflow-x-auto">
@@ -958,15 +1087,20 @@ export default function RevenuePage() {
                       <tr key={buyer.buyerKey} className="border-t border-border/70">
                         <td className="py-3 pr-4">
                           <div className="font-medium text-foreground">{buyer.buyerName ?? buyer.buyerLabel}</div>
-                          <div className="text-xs text-muted-foreground">Buyer ID: {buyer.buyerIdentifier}</div>
+                          {buyer.buyerIdentifier !== buyer.buyerEmail ? (
+                            <div className="text-xs text-muted-foreground">Buyer ID: {buyer.buyerIdentifier}</div>
+                          ) : null}
                           <div className="text-xs text-muted-foreground">{buyer.buyerEmail ?? "No email provided"}</div>
                         </td>
                         <td className="py-3 pr-4 text-muted-foreground">
                           <div className="flex flex-wrap items-center gap-2">
-                            {buyer.platforms.map((platform) => (
-                              <span key={`${buyer.buyerKey}-${platform}`} className="inline-flex items-center gap-1 rounded-full border border-border px-2 py-1 text-xs text-muted-foreground">
-                                <PlatformIcon platform={platform} size={14} />
-                                {PLATFORM_SHORT[platform]}
+                            {buyer.platformBreakdown.map((entry) => (
+                              <span key={`${buyer.buyerKey}-${entry.platform}`} className="inline-flex items-center gap-1 rounded-full border border-border px-2 py-1 text-xs text-muted-foreground">
+                                <PlatformIcon platform={entry.platform} size={14} />
+                                {formatMarketplaceBubbleLabel(entry.platform)}
+                                <span className={`font-semibold ${marketplaceCountClassName(entry.platform)}`}>
+                                  {entry.orderCount}
+                                </span>
                               </span>
                             ))}
                           </div>
@@ -987,21 +1121,50 @@ export default function RevenuePage() {
             <div className="rounded-xl border border-border bg-card p-4">
               <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                 <h2 className="text-sm font-semibold uppercase tracking-[0.18em] text-muted-foreground">Top Items Sold</h2>
-                <div className="flex flex-wrap items-center gap-2">
-                  {(["3d", "7d", "15d", "30d"] as const).map((value) => (
+                <div className="flex flex-col gap-2 md:items-end">
+                  <div className="flex flex-wrap items-center gap-2">
+                    {(["3d", "7d", "15d", "30d"] as const).map((value) => (
+                      <button
+                        key={value}
+                        type="button"
+                        onClick={() => setItemWindow(value)}
+                        className={`cursor-pointer rounded-full border px-3 py-1 text-xs ${
+                          itemWindow === value
+                            ? "border-primary/40 bg-primary/10 text-primary"
+                            : "border-border bg-background text-muted-foreground hover:bg-muted/50 hover:text-foreground"
+                        }`}
+                      >
+                        {value.toUpperCase()}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
                     <button
-                      key={value}
                       type="button"
-                      onClick={() => setItemWindow(value)}
+                      onClick={() => setTopItemPlatforms([])}
                       className={`cursor-pointer rounded-full border px-3 py-1 text-xs ${
-                        itemWindow === value
+                        topItemPlatforms.length === 0
                           ? "border-primary/40 bg-primary/10 text-primary"
                           : "border-border bg-background text-muted-foreground hover:bg-muted/50 hover:text-foreground"
                       }`}
                     >
-                      {value.toUpperCase()}
+                      All marketplaces
                     </button>
-                  ))}
+                    {availableTopTablePlatforms.map((platform) => (
+                      <button
+                        key={`item-filter-${platform}`}
+                        type="button"
+                        onClick={() => toggleTopItemPlatform(platform)}
+                        className={`cursor-pointer rounded-full border px-3 py-1 text-xs ${
+                          topItemPlatforms.includes(platform)
+                            ? "border-primary/40 bg-primary/10 text-primary"
+                            : "border-border bg-background text-muted-foreground hover:bg-muted/50 hover:text-foreground"
+                        }`}
+                      >
+                        {formatMarketplaceBubbleLabel(platform)}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               </div>
               <div className="mt-4 overflow-x-auto">
@@ -1024,10 +1187,13 @@ export default function RevenuePage() {
                         </td>
                         <td className="py-3 pr-4 text-muted-foreground">
                           <div className="flex flex-wrap items-center gap-2">
-                            {item.platforms.map((platform) => (
-                              <span key={`${item.sku}-${platform}`} className="inline-flex items-center gap-1 rounded-full border border-border px-2 py-1 text-xs text-muted-foreground">
-                                <PlatformIcon platform={platform} size={14} />
-                                {PLATFORM_SHORT[platform]}
+                            {item.platformBreakdown.map((entry) => (
+                              <span key={`${item.sku}-${entry.platform}`} className="inline-flex items-center gap-1 rounded-full border border-border px-2 py-1 text-xs text-muted-foreground">
+                                <PlatformIcon platform={entry.platform} size={14} />
+                                {formatMarketplaceBubbleLabel(entry.platform)}
+                                <span className={`font-semibold ${marketplaceCountClassName(entry.platform)}`}>
+                                  {entry.unitsSold}
+                                </span>
                               </span>
                             ))}
                           </div>

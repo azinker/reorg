@@ -146,6 +146,15 @@ type MutableBuyerAggregation = {
   buyerLabel: string;
   buyerEmail: string | null;
   platforms: Set<Platform>;
+  platformBreakdown: Map<
+    Platform,
+    {
+      orderCount: number;
+      grossRevenue: number;
+      netRevenueKnown: number;
+      hasMissingNetData: boolean;
+    }
+  >;
   orderCount: number;
   grossRevenue: number;
   netRevenueKnown: number;
@@ -156,6 +165,15 @@ type MutableItemAggregation = {
   sku: string;
   title: string | null;
   platforms: Set<Platform>;
+  platformBreakdown: Map<
+    Platform,
+    {
+      unitsSold: number;
+      grossRevenue: number;
+      netRevenueKnown: number;
+      hasMissingNetData: boolean;
+    }
+  >;
   unitsSold: number;
   grossRevenue: number;
   netRevenueKnown: number;
@@ -187,11 +205,14 @@ type PeriodAggregation = {
   netRevenue: number | null;
   marketplaceFees: number | null;
   advertisingFees: number | null;
+  totalSellingCosts: number | null;
   taxCollected: number;
   shippingCollected: number;
   shippingLabels: number | null;
   accountLevelFees: number | null;
   orderCount: number;
+  buyerCount: number;
+  unitsSold: number;
   averageOrderValue: number | null;
   exactnessByMetric: Record<string, RevenueMetricExactness>;
   coverageByMetric: Record<string, RevenueMetricExactness>;
@@ -240,6 +261,35 @@ function toTitleChoice(current: string | null, incoming: string | null) {
   if (current?.trim()) return current;
   if (incoming?.trim()) return incoming;
   return current ?? incoming ?? null;
+}
+
+function isPlaceholderBuyerIdentifier(value: string | null | undefined) {
+  if (!value) return true;
+  const normalized = value.trim().toLowerCase();
+  return normalized.length === 0 || normalized === "0" || normalized === "guest" || normalized === "unknown";
+}
+
+function resolveBuyerIdentity(order: RevenueLineRow["marketplaceSaleOrder"], platform: Platform) {
+  const rawBuyerIdentifier = order.buyerIdentifier?.trim() || null;
+  const buyerEmail = order.buyerEmail?.trim() || null;
+  const externalOrderId = order.externalOrderId;
+  const hasPlaceholderIdentifier = isPlaceholderBuyerIdentifier(rawBuyerIdentifier);
+  const buyerIdentifier =
+    (!hasPlaceholderIdentifier ? rawBuyerIdentifier : null) ??
+    buyerEmail ??
+    externalOrderId;
+  const buyerLabel =
+    order.buyerDisplayLabel?.trim() ||
+    buyerEmail ||
+    (!hasPlaceholderIdentifier ? rawBuyerIdentifier : null) ||
+    externalOrderId;
+
+  return {
+    buyerKey: `${platform}:${buyerIdentifier}`,
+    buyerIdentifier,
+    buyerLabel,
+    buyerEmail,
+  };
 }
 
 function daysFromSimpleWindow(window: RevenueSimpleWindow) {
@@ -671,11 +721,7 @@ function aggregateOrdersFromLines(lines: RevenueLineRow[]) {
       safeNumber(line.grossRevenueAmount) ??
       (safeNumber(line.unitPriceAmount) != null ? (line.unitPriceAmount as number) * line.quantity : 0);
     const lineNet = safeNumber(line.netRevenueAmount);
-    const buyerIdentifier =
-      line.marketplaceSaleOrder.buyerIdentifier ??
-      line.marketplaceSaleOrder.buyerEmail ??
-      line.marketplaceSaleOrder.externalOrderId;
-    const buyerKey = `${line.platform}:${buyerIdentifier}`;
+    const buyerIdentity = resolveBuyerIdentity(line.marketplaceSaleOrder, line.platform);
 
     const order =
       orders.get(line.marketplaceSaleOrder.id) ??
@@ -683,15 +729,11 @@ function aggregateOrdersFromLines(lines: RevenueLineRow[]) {
         id: line.marketplaceSaleOrder.id,
         platform: line.platform,
         label: PLATFORM_FULL[line.platform],
-        buyerKey,
-        buyerIdentifier,
+        buyerKey: buyerIdentity.buyerKey,
+        buyerIdentifier: buyerIdentity.buyerIdentifier,
         buyerName: line.marketplaceSaleOrder.buyerDisplayLabel,
-        buyerLabel:
-          line.marketplaceSaleOrder.buyerDisplayLabel ??
-          line.marketplaceSaleOrder.buyerIdentifier ??
-          line.marketplaceSaleOrder.buyerEmail ??
-          line.marketplaceSaleOrder.externalOrderId,
-        buyerEmail: line.marketplaceSaleOrder.buyerEmail,
+        buyerLabel: buyerIdentity.buyerLabel,
+        buyerEmail: buyerIdentity.buyerEmail,
         grossRevenue: safeNumber(line.marketplaceSaleOrder.grossRevenueAmount) ?? 0,
         hasStoredGrossRevenue: safeNumber(line.marketplaceSaleOrder.grossRevenueAmount) != null,
         netRevenueKnown: 0,
@@ -727,6 +769,7 @@ async function aggregateTopTables(filters: RevenueQueryFilters): Promise<TopTabl
         sku: line.sku,
         title: line.title,
         platforms: new Set<Platform>(),
+        platformBreakdown: new Map(),
         unitsSold: 0,
         grossRevenue: 0,
         netRevenueKnown: 0,
@@ -738,6 +781,19 @@ async function aggregateTopTables(filters: RevenueQueryFilters): Promise<TopTabl
     item.grossRevenue += lineGross;
     if (lineNet != null) item.netRevenueKnown += lineNet;
     else if (lineGross > 0) item.hasMissingNetData = true;
+    const itemPlatformEntry =
+      item.platformBreakdown.get(line.platform) ??
+      {
+        unitsSold: 0,
+        grossRevenue: 0,
+        netRevenueKnown: 0,
+        hasMissingNetData: false,
+      };
+    itemPlatformEntry.unitsSold += line.quantity;
+    itemPlatformEntry.grossRevenue += lineGross;
+    if (lineNet != null) itemPlatformEntry.netRevenueKnown += lineNet;
+    else if (lineGross > 0) itemPlatformEntry.hasMissingNetData = true;
+    item.platformBreakdown.set(line.platform, itemPlatformEntry);
     items.set(line.sku, item);
   }
 
@@ -751,6 +807,7 @@ async function aggregateTopTables(filters: RevenueQueryFilters): Promise<TopTabl
         buyerLabel: order.buyerLabel,
         buyerEmail: order.buyerEmail,
         platforms: new Set<Platform>(),
+        platformBreakdown: new Map(),
         orderCount: 0,
         grossRevenue: 0,
         netRevenueKnown: 0,
@@ -761,6 +818,19 @@ async function aggregateTopTables(filters: RevenueQueryFilters): Promise<TopTabl
     buyer.grossRevenue += order.grossRevenue;
     buyer.netRevenueKnown += order.netRevenueKnown;
     if (order.hasMissingNetData) buyer.hasMissingNetData = true;
+    const buyerPlatformEntry =
+      buyer.platformBreakdown.get(order.platform) ??
+      {
+        orderCount: 0,
+        grossRevenue: 0,
+        netRevenueKnown: 0,
+        hasMissingNetData: false,
+      };
+    buyerPlatformEntry.orderCount += 1;
+    buyerPlatformEntry.grossRevenue += order.grossRevenue;
+    buyerPlatformEntry.netRevenueKnown += order.netRevenueKnown;
+    if (order.hasMissingNetData) buyerPlatformEntry.hasMissingNetData = true;
+    buyer.platformBreakdown.set(order.platform, buyerPlatformEntry);
     buyers.set(order.buyerKey, buyer);
   }
 
@@ -775,6 +845,14 @@ async function aggregateTopTables(filters: RevenueQueryFilters): Promise<TopTabl
         buyerLabel: buyer.buyerLabel,
         buyerEmail: buyer.buyerEmail,
         platforms: [...buyer.platforms],
+        platformBreakdown: [...buyer.platformBreakdown.entries()]
+          .map(([platform, entry]) => ({
+            platform,
+            orderCount: entry.orderCount,
+            grossRevenue: entry.grossRevenue,
+            netRevenue: entry.hasMissingNetData ? null : entry.netRevenueKnown,
+          }))
+          .sort((a, b) => b.orderCount - a.orderCount || b.grossRevenue - a.grossRevenue),
         orderCount: buyer.orderCount,
         grossRevenue: buyer.grossRevenue,
         netRevenue: buyer.hasMissingNetData ? null : buyer.netRevenueKnown,
@@ -786,6 +864,14 @@ async function aggregateTopTables(filters: RevenueQueryFilters): Promise<TopTabl
         sku: item.sku,
         title: item.title,
         platforms: [...item.platforms],
+        platformBreakdown: [...item.platformBreakdown.entries()]
+          .map(([platform, entry]) => ({
+            platform,
+            unitsSold: entry.unitsSold,
+            grossRevenue: entry.grossRevenue,
+            netRevenue: entry.hasMissingNetData ? null : entry.netRevenueKnown,
+          }))
+          .sort((a, b) => b.unitsSold - a.unitsSold || b.grossRevenue - a.grossRevenue),
         unitsSold: item.unitsSold,
         grossRevenue: item.grossRevenue,
         netRevenue: item.hasMissingNetData ? null : item.netRevenueKnown,
@@ -796,6 +882,7 @@ async function aggregateTopTables(filters: RevenueQueryFilters): Promise<TopTabl
 async function aggregateLineBasedOperationalPeriod(filters: RevenueQueryFilters): Promise<PeriodAggregation> {
   const lines = await loadRevenueLines(new Date(filters.from), new Date(filters.to), filters.platforms);
   const orders = aggregateOrdersFromLines(lines);
+  const buyerKeys = new Set<string>();
   const stores = new Map<
     Platform,
     {
@@ -820,6 +907,7 @@ async function aggregateLineBasedOperationalPeriod(filters: RevenueQueryFilters)
   let advertisingFeesKnown = 0;
   let otherFeesKnown = 0;
   let hasMissingFeeData = false;
+  let unitsSold = 0;
 
   for (const line of lines) {
     const lineGross =
@@ -838,6 +926,8 @@ async function aggregateLineBasedOperationalPeriod(filters: RevenueQueryFilters)
     if (lineAdvertisingFee != null) advertisingFeesKnown += lineAdvertisingFee;
     otherFeesKnown += lineOtherFee;
     if (lineHasMissingFeeData) hasMissingFeeData = true;
+    unitsSold += line.quantity;
+    buyerKeys.add(resolveBuyerIdentity(line.marketplaceSaleOrder, line.platform).buyerKey);
 
     const store =
       stores.get(line.platform) ??
@@ -896,10 +986,12 @@ async function aggregateLineBasedOperationalPeriod(filters: RevenueQueryFilters)
   }
 
   const orderCount = orders.size;
+  const buyerCount = buyerKeys.size;
   const taxCollected = [...orders.values()].reduce((sum, order) => sum + order.taxCollected, 0);
   const shippingCollected = [...orders.values()].reduce((sum, order) => sum + order.shippingCollected, 0);
   const averageOrderValue = orderCount > 0 ? grossRevenue / orderCount : null;
   const netRevenuePartial = grossRevenue - marketplaceFeesKnown - advertisingFeesKnown;
+  const totalSellingCosts = marketplaceFeesKnown + advertisingFeesKnown + otherFeesKnown;
 
   const trend = [...trendMap.values()]
     .sort((a, b) => a.bucketStart.getTime() - b.bucketStart.getTime())
@@ -949,11 +1041,14 @@ async function aggregateLineBasedOperationalPeriod(filters: RevenueQueryFilters)
     netRevenue: hasMissingFeeData ? netRevenuePartial : netRevenueKnown,
     marketplaceFees: marketplaceFeesKnown,
     advertisingFees: advertisingFeesKnown,
+    totalSellingCosts,
     taxCollected,
     shippingCollected,
     shippingLabels: null,
     accountLevelFees: null,
     orderCount,
+    buyerCount,
+    unitsSold,
     averageOrderValue,
     exactnessByMetric: {
       grossRevenue: "exact",
@@ -965,6 +1060,8 @@ async function aggregateLineBasedOperationalPeriod(filters: RevenueQueryFilters)
       shippingLabels: "unavailable",
       accountLevelFees: "unavailable",
       orderCount: "exact",
+      buyerCount: "exact",
+      unitsSold: "exact",
       averageOrderValue: "exact",
     },
     coverageByMetric: {
@@ -977,6 +1074,8 @@ async function aggregateLineBasedOperationalPeriod(filters: RevenueQueryFilters)
       shippingLabels: "unavailable",
       accountLevelFees: "unavailable",
       orderCount: "exact",
+      buyerCount: "exact",
+      unitsSold: "exact",
       averageOrderValue: "exact",
     },
     unavailableReasons: {
@@ -989,6 +1088,8 @@ async function aggregateLineBasedOperationalPeriod(filters: RevenueQueryFilters)
       shippingLabels: "Shipping labels are only shown in exact eBay mode.",
       accountLevelFees: "Account-level fees are only shown in exact eBay mode.",
       orderCount: null,
+      buyerCount: null,
+      unitsSold: null,
       averageOrderValue: null,
     },
     sourceSummary: null,
@@ -1111,10 +1212,13 @@ function mergeNormalizedPeriods(periods: PeriodAggregation[]): PeriodAggregation
   const taxCollected = periods.reduce((sum, period) => sum + period.taxCollected, 0);
   const shippingCollected = periods.reduce((sum, period) => sum + period.shippingCollected, 0);
   const orderCount = periods.reduce((sum, period) => sum + period.orderCount, 0);
+  const buyerCount = periods.reduce((sum, period) => sum + period.buyerCount, 0);
+  const unitsSold = periods.reduce((sum, period) => sum + period.unitsSold, 0);
   const averageOrderValue = orderCount > 0 ? grossRevenue / orderCount : null;
   const netExactness = mergeExactness(periods.map((period) => period.exactnessByMetric.netRevenue));
   const marketplaceExactness = mergeExactness(periods.map((period) => period.exactnessByMetric.marketplaceFees));
   const advertisingExactness = mergeExactness(periods.map((period) => period.exactnessByMetric.advertisingFees));
+  const totalSellingCosts = periods.reduce((sum, period) => sum + (period.totalSellingCosts ?? 0), 0);
 
   const storeBreakdown = periods
     .flatMap((period) => period.storeBreakdown)
@@ -1127,11 +1231,14 @@ function mergeNormalizedPeriods(periods: PeriodAggregation[]): PeriodAggregation
     netRevenue,
     marketplaceFees,
     advertisingFees,
+    totalSellingCosts,
     taxCollected,
     shippingCollected,
     shippingLabels: null,
     accountLevelFees: null,
     orderCount,
+    buyerCount,
+    unitsSold,
     averageOrderValue,
     exactnessByMetric: {
       grossRevenue: "exact",
@@ -1143,6 +1250,8 @@ function mergeNormalizedPeriods(periods: PeriodAggregation[]): PeriodAggregation
       shippingLabels: "unavailable",
       accountLevelFees: "unavailable",
       orderCount: "exact",
+      buyerCount: "exact",
+      unitsSold: "exact",
       averageOrderValue: "exact",
     },
     coverageByMetric: {
@@ -1155,6 +1264,8 @@ function mergeNormalizedPeriods(periods: PeriodAggregation[]): PeriodAggregation
       shippingLabels: "unavailable",
       accountLevelFees: "unavailable",
       orderCount: "exact",
+      buyerCount: "exact",
+      unitsSold: "exact",
       averageOrderValue: "exact",
     },
     unavailableReasons: {
@@ -1176,6 +1287,8 @@ function mergeNormalizedPeriods(periods: PeriodAggregation[]): PeriodAggregation
       shippingLabels: "Shipping labels are only shown in exact eBay mode.",
       accountLevelFees: "Account-level fees are only shown in exact eBay mode.",
       orderCount: null,
+      buyerCount: null,
+      unitsSold: null,
       averageOrderValue: null,
     },
     sourceSummary: null,
@@ -1242,7 +1355,10 @@ async function aggregateNormalizedCurrentPeriod(filters: RevenueQueryFilters): P
   const taxCollected = storeBreakdown.reduce((sum, store) => sum + store.taxCollected, 0);
   const shippingCollected = storeBreakdown.reduce((sum, store) => sum + store.shippingCollected, 0);
   const orderCount = storeBreakdown.reduce((sum, store) => sum + store.orderCount, 0);
+  const buyerCount = basePeriod.buyerCount;
+  const unitsSold = basePeriod.unitsSold;
   const averageOrderValue = orderCount > 0 ? grossRevenue / orderCount : null;
+  const totalSellingCosts = marketplaceFees + advertisingFees + otherFeesAmount;
 
   return {
     ...basePeriod,
@@ -1250,9 +1366,12 @@ async function aggregateNormalizedCurrentPeriod(filters: RevenueQueryFilters): P
     netRevenue,
     marketplaceFees,
     advertisingFees,
+    totalSellingCosts,
     taxCollected,
     shippingCollected,
     orderCount,
+    buyerCount,
+    unitsSold,
     averageOrderValue,
     storeBreakdown: storeBreakdown.sort((a, b) => b.grossRevenue - a.grossRevenue),
     feeBreakdown: ([
@@ -1363,6 +1482,8 @@ async function aggregateEbayExactPeriod(
   }
 
   const orderCount = orders.size;
+  const buyerCount = new Set([...orders.values()].map((order) => order.buyerKey)).size;
+  const unitsSold = lines.reduce((sum, line) => sum + line.quantity, 0);
   const shippingCollected = [...orders.values()].reduce((sum, order) => sum + order.shippingCollected, 0);
   const taxCollected =
     taxCollectedFromEvents > 0
@@ -1411,11 +1532,14 @@ async function aggregateEbayExactPeriod(
     netRevenue,
     marketplaceFees,
     advertisingFees,
+    totalSellingCosts: sellingCosts,
     taxCollected,
     shippingCollected,
     shippingLabels,
     accountLevelFees,
     orderCount,
+    buyerCount,
+    unitsSold,
     averageOrderValue,
     exactnessByMetric: {
       grossRevenue: "exact",
@@ -1427,6 +1551,8 @@ async function aggregateEbayExactPeriod(
       shippingLabels: "exact",
       accountLevelFees: "exact",
       orderCount: "exact",
+      buyerCount: "exact",
+      unitsSold: "exact",
       averageOrderValue: "exact",
     },
     coverageByMetric: {
@@ -1439,6 +1565,8 @@ async function aggregateEbayExactPeriod(
       shippingLabels: "exact",
       accountLevelFees: "exact",
       orderCount: "exact",
+      buyerCount: "exact",
+      unitsSold: "exact",
       averageOrderValue: "exact",
     },
     unavailableReasons: {
@@ -1451,6 +1579,8 @@ async function aggregateEbayExactPeriod(
       shippingLabels: null,
       accountLevelFees: null,
       orderCount: null,
+      buyerCount: null,
+      unitsSold: null,
       averageOrderValue: null,
     },
     sourceSummary,
@@ -1495,11 +1625,14 @@ function buildRevenueKpis(current: PeriodAggregation, previous: PeriodAggregatio
     netRevenue: metricWithDelta(current.netRevenue, previous.netRevenue, current.exactnessByMetric.netRevenue, current.unavailableReasons.netRevenue),
     marketplaceFees: metricWithDelta(current.marketplaceFees, previous.marketplaceFees, current.exactnessByMetric.marketplaceFees, current.unavailableReasons.marketplaceFees),
     advertisingFees: metricWithDelta(current.advertisingFees, previous.advertisingFees, current.exactnessByMetric.advertisingFees, current.unavailableReasons.advertisingFees),
+    totalSellingCosts: metricWithDelta(current.totalSellingCosts, previous.totalSellingCosts, current.exactnessByMetric.netRevenue, current.unavailableReasons.netRevenue),
     taxCollected: metricWithDelta(current.taxCollected, previous.taxCollected, current.exactnessByMetric.taxCollected, current.unavailableReasons.taxCollected),
     shippingCollected: metricWithDelta(current.shippingCollected, previous.shippingCollected, current.exactnessByMetric.shippingCollected, current.unavailableReasons.shippingCollected),
     shippingLabels: metricWithDelta(current.shippingLabels, previous.shippingLabels, current.exactnessByMetric.shippingLabels, current.unavailableReasons.shippingLabels),
     accountLevelFees: metricWithDelta(current.accountLevelFees, previous.accountLevelFees, current.exactnessByMetric.accountLevelFees, current.unavailableReasons.accountLevelFees),
     orderCount: metricWithDelta(current.orderCount, previous.orderCount, current.exactnessByMetric.orderCount, current.unavailableReasons.orderCount),
+    buyerCount: metricWithDelta(current.buyerCount, previous.buyerCount, current.exactnessByMetric.buyerCount, current.unavailableReasons.buyerCount),
+    unitsSold: metricWithDelta(current.unitsSold, previous.unitsSold, current.exactnessByMetric.unitsSold, current.unavailableReasons.unitsSold),
     averageOrderValue: metricWithDelta(current.averageOrderValue, previous.averageOrderValue, current.exactnessByMetric.averageOrderValue, current.unavailableReasons.averageOrderValue),
   };
 }
@@ -1532,6 +1665,7 @@ function buildEmptyRevenuePageData(
     netRevenue: emptyMetric,
     marketplaceFees: emptyMetric,
     advertisingFees: emptyMetric,
+    totalSellingCosts: emptyMetric,
     taxCollected: emptyMetric,
     shippingCollected: emptyMetric,
     shippingLabels: {
@@ -1543,6 +1677,8 @@ function buildEmptyRevenuePageData(
       unavailableReason: "Account-level fees are only shown in exact eBay mode.",
     },
     orderCount: emptyMetric,
+    buyerCount: emptyMetric,
+    unitsSold: emptyMetric,
     averageOrderValue: emptyMetric,
   };
 
@@ -1560,6 +1696,8 @@ function buildEmptyRevenuePageData(
       shippingLabels: "unavailable",
       accountLevelFees: "unavailable",
       orderCount: "unavailable",
+      buyerCount: "unavailable",
+      unitsSold: "unavailable",
       averageOrderValue: "unavailable",
     },
     coverageByMetric: {
@@ -1572,6 +1710,8 @@ function buildEmptyRevenuePageData(
       shippingLabels: "unavailable",
       accountLevelFees: "unavailable",
       orderCount: "unavailable",
+      buyerCount: "unavailable",
+      unitsSold: "unavailable",
       averageOrderValue: "unavailable",
     },
     sourceSummary: null,
