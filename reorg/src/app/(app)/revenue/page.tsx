@@ -155,6 +155,7 @@ export default function RevenuePage() {
   const [banner, setBanner] = useState<string>("");
   const requestIdRef = useRef(0);
   const loadAbortRef = useRef<AbortController | null>(null);
+  const completedRefreshLoadRef = useRef<string | null>(null);
 
   const queryRange = useMemo(() => {
     const fallback = rangeFromPreset(preset === "custom" ? "30d" : preset);
@@ -325,13 +326,39 @@ export default function RevenuePage() {
   useEffect(() => {
     if (!watchingRefresh && !hasActiveSyncJobs) return undefined;
     const timer = window.setInterval(() => {
-      void loadStatus({ silent: true });
-      if (!statusData?.hasActiveSyncJobs) {
-        void load({ silent: true, preserveData: true });
-      }
+      void (async () => {
+        const latestStatus = await loadStatus({ silent: true });
+        if (
+          latestStatus &&
+          !latestStatus.hasActiveSyncJobs &&
+          latestStatus.hasCompletedRefresh
+        ) {
+          void load({ silent: true, preserveData: true });
+        }
+      })();
     }, REVENUE_SYNC_POLL_INTERVAL_MS);
     return () => window.clearInterval(timer);
-  }, [hasActiveSyncJobs, load, loadStatus, statusData?.hasActiveSyncJobs, watchingRefresh]);
+  }, [hasActiveSyncJobs, load, loadStatus, watchingRefresh]);
+
+  useEffect(() => {
+    const latestCompletedAt = statusData?.syncSummary.latestCompletedAt ?? null;
+    if (!latestCompletedAt || statusData?.hasActiveSyncJobs) {
+      return;
+    }
+    if (data?.syncSummary.latestCompletedAt === latestCompletedAt) {
+      completedRefreshLoadRef.current = latestCompletedAt;
+      return;
+    }
+    if (completedRefreshLoadRef.current === latestCompletedAt) {
+      return;
+    }
+
+    completedRefreshLoadRef.current = latestCompletedAt;
+    logRevenueClient("analytics-load:trigger-on-refresh-complete", {
+      latestCompletedAt,
+    });
+    void load({ silent: true, preserveData: true });
+  }, [data?.syncSummary.latestCompletedAt, load, statusData?.hasActiveSyncJobs, statusData?.syncSummary.latestCompletedAt]);
 
   async function handleManualRefresh() {
     setSyncing(true);
