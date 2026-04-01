@@ -24,6 +24,7 @@ import type {
   RevenueKpiMetric,
   RevenuePageData,
   RevenueRangePreset,
+  RevenueStoreBreakdownRow,
   RevenueStatusData,
   RevenueSyncJobSummary,
   RevenueSyncResult,
@@ -70,6 +71,14 @@ function formatCurrencyCompact(value: number | null | undefined) {
   return new Intl.NumberFormat("en-US", {
     style: "currency",
     currency: "USD",
+    notation: "compact",
+    maximumFractionDigits: 1,
+  }).format(value);
+}
+
+function formatCountCompact(value: number | null | undefined) {
+  if (value == null || !Number.isFinite(value)) return "—";
+  return new Intl.NumberFormat("en-US", {
     notation: "compact",
     maximumFractionDigits: 1,
   }).format(value);
@@ -223,8 +232,67 @@ function getKpiTone(label: string) {
   };
 }
 
-function KpiCard(props: { label: string; metric: RevenueKpiMetric; detail?: string | null }) {
-  const { label, metric, detail } = props;
+type RevenueKpiBreakdownRow = {
+  platform: Platform;
+  label: string;
+  value: number | null;
+};
+
+function metricBreakdownValue(
+  metricKey: keyof RevenuePageData["kpis"],
+  store: RevenueStoreBreakdownRow,
+) {
+  switch (metricKey) {
+    case "grossRevenue":
+      return store.grossRevenue;
+    case "netRevenue":
+      return store.netRevenue;
+    case "marketplaceFees":
+      return store.marketplaceFees;
+    case "advertisingFees":
+      return store.advertisingFees;
+    case "totalSellingCosts":
+      return store.totalSellingCosts;
+    case "taxCollected":
+      return store.taxCollected;
+    case "shippingCollected":
+      return store.shippingCollected;
+    case "orderCount":
+      return store.orderCount;
+    case "buyerCount":
+      return store.buyerCount;
+    case "unitsSold":
+      return store.unitsSold;
+    case "averageOrderValue":
+      return store.averageOrderValue;
+    default:
+      return null;
+  }
+}
+
+function buildKpiBreakdownRows(
+  data: RevenuePageData | null,
+  metricKey: keyof RevenuePageData["kpis"],
+  isAllStoresSelected: boolean,
+) {
+  if (!data || !isAllStoresSelected || data.storeBreakdown.length <= 1) {
+    return [];
+  }
+
+  return data.storeBreakdown.map((store) => ({
+    platform: store.platform,
+    label: store.label,
+    value: metricBreakdownValue(metricKey, store),
+  }));
+}
+
+function KpiCard(props: {
+  label: string;
+  metric: RevenueKpiMetric;
+  detail?: string | null;
+  breakdownRows?: RevenueKpiBreakdownRow[];
+}) {
+  const { label, metric, detail, breakdownRows = [] } = props;
   const isCountMetric = label === "Orders" || label === "Unique Buyers" || label === "Units Sold";
   const tone = getKpiTone(label);
   return (
@@ -238,6 +306,21 @@ function KpiCard(props: { label: string; metric: RevenueKpiMetric; detail?: stri
       </p>
       {detail ? (
         <p className={`mt-2 text-xs ${tone.detailClass}`}>{detail}</p>
+      ) : null}
+      {breakdownRows.length > 0 ? (
+        <div className="mt-3 space-y-2 border-t border-white/8 pt-3">
+          {breakdownRows.map((row) => (
+            <div key={`${label}-${row.platform}`} className="flex items-center justify-between gap-3 text-xs">
+              <div className="inline-flex min-w-0 items-center gap-2 text-muted-foreground">
+                <PlatformIcon platform={row.platform} size={13} />
+                <span className="truncate">{row.label}</span>
+              </div>
+              <span className={`shrink-0 font-semibold ${tone.detailClass}`}>
+                {isCountMetric ? formatCountCompact(row.value) : formatCurrencyCompact(row.value)}
+              </span>
+            </div>
+          ))}
+        </div>
       ) : null}
     </div>
   );
@@ -632,6 +715,7 @@ export default function RevenuePage() {
     () => deriveVisibleTopItemRows(topTables?.topItems ?? data?.topItems ?? [], topItemPlatforms),
     [data?.topItems, topItemPlatforms, topTables?.topItems],
   );
+  const isAllStoresSelected = selectedPlatforms.length === 0;
   const currentGrossRevenue = data?.kpis.grossRevenue.value ?? null;
   const kpiShareDetails = currentGrossRevenue && currentGrossRevenue > 0
     ? {
@@ -663,6 +747,22 @@ export default function RevenuePage() {
         totalSellingCosts: null,
         taxCollected: null,
       };
+  const kpiBreakdowns = useMemo(
+    () => ({
+      grossRevenue: buildKpiBreakdownRows(data, "grossRevenue", isAllStoresSelected),
+      netRevenue: buildKpiBreakdownRows(data, "netRevenue", isAllStoresSelected),
+      marketplaceFees: buildKpiBreakdownRows(data, "marketplaceFees", isAllStoresSelected),
+      advertisingFees: buildKpiBreakdownRows(data, "advertisingFees", isAllStoresSelected),
+      totalSellingCosts: buildKpiBreakdownRows(data, "totalSellingCosts", isAllStoresSelected),
+      taxCollected: buildKpiBreakdownRows(data, "taxCollected", isAllStoresSelected),
+      shippingCollected: buildKpiBreakdownRows(data, "shippingCollected", isAllStoresSelected),
+      orderCount: buildKpiBreakdownRows(data, "orderCount", isAllStoresSelected),
+      buyerCount: buildKpiBreakdownRows(data, "buyerCount", isAllStoresSelected),
+      unitsSold: buildKpiBreakdownRows(data, "unitsSold", isAllStoresSelected),
+      averageOrderValue: buildKpiBreakdownRows(data, "averageOrderValue", isAllStoresSelected),
+    }),
+    [data, isAllStoresSelected],
+  );
   const refreshProgress = useMemo(() => {
     const jobs = visibleStatusData?.syncSummary.jobs ?? [];
     if (jobs.length === 0) {
@@ -905,23 +1005,48 @@ export default function RevenuePage() {
       {!loading && data && kpis ? (
         <>
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4" data-tour="revenue-summary">
-            <KpiCard label="Gross Revenue" metric={kpis.grossRevenue} />
-            <KpiCard label="Net Revenue" metric={kpis.netRevenue} detail={kpiShareDetails.netRevenue} />
-            <KpiCard label="Total Marketplace Fees" metric={kpis.marketplaceFees} detail={kpiShareDetails.marketplaceFees} />
-            <KpiCard label="Total Advertising Fees" metric={kpis.advertisingFees} detail={kpiShareDetails.advertisingFees} />
-            <KpiCard label="Total Selling Costs" metric={kpis.totalSellingCosts} detail={kpiShareDetails.totalSellingCosts} />
-            <KpiCard label="Tax Collected" metric={kpis.taxCollected} detail={kpiShareDetails.taxCollected} />
-            <KpiCard label="Shipping Collected" metric={kpis.shippingCollected} />
+            <KpiCard label="Gross Revenue" metric={kpis.grossRevenue} breakdownRows={kpiBreakdowns.grossRevenue} />
+            <KpiCard
+              label="Net Revenue"
+              metric={kpis.netRevenue}
+              detail={kpiShareDetails.netRevenue}
+              breakdownRows={kpiBreakdowns.netRevenue}
+            />
+            <KpiCard
+              label="Total Marketplace Fees"
+              metric={kpis.marketplaceFees}
+              detail={kpiShareDetails.marketplaceFees}
+              breakdownRows={kpiBreakdowns.marketplaceFees}
+            />
+            <KpiCard
+              label="Total Advertising Fees"
+              metric={kpis.advertisingFees}
+              detail={kpiShareDetails.advertisingFees}
+              breakdownRows={kpiBreakdowns.advertisingFees}
+            />
+            <KpiCard
+              label="Total Selling Costs"
+              metric={kpis.totalSellingCosts}
+              detail={kpiShareDetails.totalSellingCosts}
+              breakdownRows={kpiBreakdowns.totalSellingCosts}
+            />
+            <KpiCard
+              label="Tax Collected"
+              metric={kpis.taxCollected}
+              detail={kpiShareDetails.taxCollected}
+              breakdownRows={kpiBreakdowns.taxCollected}
+            />
+            <KpiCard label="Shipping Collected" metric={kpis.shippingCollected} breakdownRows={kpiBreakdowns.shippingCollected} />
             {data.mode === "ebay_exact" ? (
               <>
                 <KpiCard label="Shipping Labels" metric={kpis.shippingLabels} />
                 <KpiCard label="Account-Level Fees" metric={kpis.accountLevelFees} />
               </>
             ) : null}
-            <KpiCard label="Orders" metric={kpis.orderCount} />
-            <KpiCard label="Unique Buyers" metric={kpis.buyerCount} />
-            <KpiCard label="Units Sold" metric={kpis.unitsSold} />
-            <KpiCard label="Average Order Value" metric={kpis.averageOrderValue} />
+            <KpiCard label="Orders" metric={kpis.orderCount} breakdownRows={kpiBreakdowns.orderCount} />
+            <KpiCard label="Unique Buyers" metric={kpis.buyerCount} breakdownRows={kpiBreakdowns.buyerCount} />
+            <KpiCard label="Units Sold" metric={kpis.unitsSold} breakdownRows={kpiBreakdowns.unitsSold} />
+            <KpiCard label="Average Order Value" metric={kpis.averageOrderValue} breakdownRows={kpiBreakdowns.averageOrderValue} />
           </div>
 
           {data.mode === "ebay_exact" && data.sourceSummary ? (

@@ -83,10 +83,13 @@ export interface RevenueStoreBreakdownRow {
   platform: Platform;
   label: string;
   orderCount: number;
+  buyerCount: number;
+  unitsSold: number;
   grossRevenue: number;
   netRevenue: number | null;
   marketplaceFees: number | null;
   advertisingFees: number | null;
+  totalSellingCosts: number | null;
   taxCollected: number;
   shippingCollected: number;
   averageOrderValue: number | null;

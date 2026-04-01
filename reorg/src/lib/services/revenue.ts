@@ -1025,6 +1025,8 @@ async function aggregateLineBasedOperationalPeriod(filters: RevenueQueryFilters)
     {
       platform: Platform;
       label: string;
+      buyerKeys: Set<string>;
+      unitsSold: number;
       grossRevenue: number;
       netRevenueKnown: number;
       marketplaceFeesKnown: number;
@@ -1071,6 +1073,8 @@ async function aggregateLineBasedOperationalPeriod(filters: RevenueQueryFilters)
       {
         platform: line.platform,
         label: PLATFORM_FULL[line.platform],
+        buyerKeys: new Set<string>(),
+        unitsSold: 0,
         grossRevenue: 0,
         netRevenueKnown: 0,
         marketplaceFeesKnown: 0,
@@ -1082,12 +1086,14 @@ async function aggregateLineBasedOperationalPeriod(filters: RevenueQueryFilters)
         hasMissingFeeData: false,
       };
     store.grossRevenue += lineGross;
+    store.unitsSold += line.quantity;
     if (lineNet != null) store.netRevenueKnown += lineNet;
     if (lineMarketplaceFee != null) store.marketplaceFeesKnown += lineMarketplaceFee;
     if (lineAdvertisingFee != null) store.advertisingFeesKnown += lineAdvertisingFee;
     store.otherFeesKnown += lineOtherFee;
     if (lineHasMissingFeeData) store.hasMissingFeeData = true;
     store.orderIds.add(line.marketplaceSaleOrder.id);
+    store.buyerKeys.add(resolveBuyerIdentity(line.marketplaceSaleOrder, line.platform).buyerKey);
     stores.set(line.platform, store);
 
     const bucketStart = bucketStartForDate(line.orderDate, filters.granularity);
@@ -1157,15 +1163,23 @@ async function aggregateLineBasedOperationalPeriod(filters: RevenueQueryFilters)
         store.grossRevenue > 0 ? (store.advertisingFeesKnown / store.grossRevenue) * 100 : null;
       const netRevenuePartialForStore =
         store.grossRevenue - store.marketplaceFeesKnown - store.advertisingFeesKnown;
+      const totalSellingCostsForStore = computeTotalSellingCosts({
+        marketplaceFees: store.marketplaceFeesKnown,
+        advertisingFees: store.advertisingFeesKnown,
+        otherFees: store.otherFeesKnown,
+      });
 
       return {
         platform: store.platform,
         label: store.label,
         orderCount: orderCountForStore,
+        buyerCount: store.buyerKeys.size,
+        unitsSold: store.unitsSold,
         grossRevenue: store.grossRevenue,
         netRevenue: store.hasMissingFeeData ? netRevenuePartialForStore : store.netRevenueKnown,
         marketplaceFees: store.marketplaceFeesKnown,
         advertisingFees: store.advertisingFeesKnown,
+        totalSellingCosts: totalSellingCostsForStore,
         taxCollected: store.taxCollected,
         shippingCollected: store.shippingCollected,
         averageOrderValue: averageOrderValueForStore,
@@ -1731,10 +1745,13 @@ async function aggregateEbayExactPeriod(
         platform: integration.platform,
         label: integration.label,
         orderCount,
+        buyerCount,
+        unitsSold,
         grossRevenue,
         netRevenue,
         marketplaceFees,
         advertisingFees,
+        totalSellingCosts: sellingCosts,
         taxCollected,
         shippingCollected,
         averageOrderValue,
