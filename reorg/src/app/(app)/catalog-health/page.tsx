@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { AlertTriangle, ArrowRight, Image, Package, Truck, Weight } from "lucide-react";
+import { AlertTriangle, Download, Image, Package, Truck, Weight } from "lucide-react";
 import { PlatformIcon } from "@/components/grid/platform-icon";
 import { cn } from "@/lib/utils";
 import { PLATFORM_COLORS } from "@/lib/grid-types";
@@ -47,38 +47,38 @@ export default async function CatalogHealthPage() {
             Clean up the rows that distort pricing, profit, and sync confidence.
           </h1>
           <p className="mt-2 text-sm text-muted-foreground">
-            This page surfaces the catalog issues most likely to block clean operations: missing internal inputs,
-            missing images or UPCs, title mismatches, and unmatched marketplace listings.
+            This page surfaces the full catalog issue queue: missing internal inputs, missing images or UPCs,
+            title mismatches, and unmatched marketplace listings.
           </p>
         </div>
         <div className="grid gap-2 sm:grid-cols-2">
-          <Link
-            href="/dashboard"
-            className="inline-flex cursor-pointer items-center justify-between rounded-xl border border-border bg-background/70 px-4 py-3 text-sm text-foreground hover:bg-muted/50"
+          <a
+            href="/api/import/missing-parameters?scope=catalog-health"
+            className="inline-flex cursor-pointer items-center justify-between rounded-xl border border-emerald-500/25 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-100 hover:bg-emerald-500/15"
           >
-            <span>Open Dashboard</span>
-            <ArrowRight className="h-4 w-4" />
-          </Link>
+            <span>Download Issue Template</span>
+            <Download className="h-4 w-4" />
+          </a>
           <Link
             href="/unmatched"
             className="inline-flex cursor-pointer items-center justify-between rounded-xl border border-border bg-background/70 px-4 py-3 text-sm text-foreground hover:bg-muted/50"
           >
             <span>Review Unmatched</span>
-            <ArrowRight className="h-4 w-4" />
+            <Package className="h-4 w-4" />
           </Link>
           <Link
             href="/import"
             className="inline-flex cursor-pointer items-center justify-between rounded-xl border border-border bg-background/70 px-4 py-3 text-sm text-foreground hover:bg-muted/50"
           >
-            <span>Import Missing Data</span>
-            <ArrowRight className="h-4 w-4" />
+            <span>Import Completed File</span>
+            <Download className="h-4 w-4" />
           </Link>
           <Link
             href="/shipping-rates"
             className="inline-flex cursor-pointer items-center justify-between rounded-xl border border-border bg-background/70 px-4 py-3 text-sm text-foreground hover:bg-muted/50"
           >
             <span>Check Shipping Rates</span>
-            <ArrowRight className="h-4 w-4" />
+            <Truck className="h-4 w-4" />
           </Link>
         </div>
       </div>
@@ -176,24 +176,32 @@ export default async function CatalogHealthPage() {
         <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
           <div>
             <h2 className="text-sm font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-              Most Urgent Rows
+              All Issue Rows
             </h2>
             <p className="mt-1 text-sm text-muted-foreground">
-              Ranked by the issues most likely to skew profit, shipping, or listing quality.
+              Every SKU currently flagged by Catalog Health. Download the issue template to fill in what you can and re-import it.
             </p>
           </div>
-          <Link href="/dashboard" className="inline-flex cursor-pointer items-center gap-2 text-sm text-primary hover:underline">
-            Open full grid
-            <ArrowRight className="h-4 w-4" />
-          </Link>
+          <a
+            href="/api/import/missing-parameters?scope=catalog-health"
+            className="inline-flex cursor-pointer items-center gap-2 text-sm text-primary hover:underline"
+          >
+            Download import-ready issue file
+            <Download className="h-4 w-4" />
+          </a>
         </div>
 
-        <div className="mt-4 overflow-x-auto">
+        <div className="mt-3 text-xs text-muted-foreground">
+          {formatNumber(data.attentionRows.length)} issue rows in the current snapshot.
+        </div>
+
+        <div className="mt-4 max-h-[900px] overflow-auto">
           <table className="min-w-full text-sm">
-            <thead className="text-left text-xs uppercase tracking-[0.18em] text-muted-foreground">
+            <thead className="sticky top-0 bg-card text-left text-xs uppercase tracking-[0.18em] text-muted-foreground">
               <tr>
                 <th className="pb-3 pr-4">SKU / Title</th>
                 <th className="pb-3 pr-4">Issues</th>
+                <th className="pb-3 pr-4">Import Fields</th>
                 <th className="pb-3 pr-4">Store Links</th>
                 <th className="pb-3">Priority</th>
               </tr>
@@ -213,6 +221,12 @@ export default async function CatalogHealthPage() {
                         </span>
                       ))}
                     </div>
+                  </td>
+                  <td className="py-3 pr-4 text-xs text-muted-foreground">
+                    <div>UPC: {row.upc?.trim() ? row.upc : "blank"}</div>
+                    <div>Weight: {row.weight?.trim() ? row.weight : "blank"}</div>
+                    <div>Supplier cost: {row.supplierCost != null ? row.supplierCost : "blank"}</div>
+                    <div>Supplier shipping: {row.supplierShipping != null ? row.supplierShipping : "blank"}</div>
                   </td>
                   <td className="py-3 pr-4 text-muted-foreground">
                     <div className="inline-flex items-center gap-2">

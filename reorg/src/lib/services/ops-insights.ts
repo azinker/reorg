@@ -27,6 +27,10 @@ export type CatalogHealthAttentionRow = {
   sku: string;
   title: string;
   imageUrl: string | null;
+  weight: string | null;
+  upc: string | null;
+  supplierCost: number | null;
+  supplierShipping: number | null;
   issueKeys: CatalogHealthIssueKey[];
   issueLabels: string[];
   issueScore: number;
@@ -185,6 +189,10 @@ export async function getCatalogHealthData(): Promise<CatalogHealthData> {
       sku: row.sku,
       title: row.title,
       imageUrl: row.imageUrl,
+      weight: row.weight ?? null,
+      upc: row.upc ?? null,
+      supplierCost: row.supplierCost ?? null,
+      supplierShipping: row.supplierShipping ?? null,
       issueKeys,
       issueLabels: issueKeys.map((key) => ISSUE_LABELS[key]),
       issueScore: issueKeys.reduce((sum, key) => sum + ISSUE_WEIGHTS[key], 0),
@@ -225,7 +233,7 @@ export async function getCatalogHealthData(): Promise<CatalogHealthData> {
     unmatchedCount: unmatchedRows.length,
     issueSummaries,
     unmatchedByPlatform,
-    attentionRows: attentionRows.slice(0, 24),
+    attentionRows,
   };
 }
 
