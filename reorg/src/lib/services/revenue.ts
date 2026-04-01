@@ -1100,9 +1100,9 @@ async function aggregateLineBasedOperationalPeriod(filters: RevenueQueryFilters)
     },
     unavailableReasons: {
       grossRevenue: null,
-      netRevenue: hasMissingFeeData ? "Net revenue stays partial when selected stores do not expose exact fee detail." : null,
-      marketplaceFees: hasMissingFeeData ? "Marketplace fees stay partial when selected stores do not expose exact fee detail." : null,
-      advertisingFees: hasMissingFeeData ? "Advertising fees stay partial when selected stores do not expose exact fee detail." : null,
+      netRevenue: null,
+      marketplaceFees: null,
+      advertisingFees: null,
       taxCollected: null,
       shippingCollected: null,
       shippingLabels: "Shipping labels are only shown in exact eBay mode.",
@@ -1290,18 +1290,9 @@ function mergeNormalizedPeriods(periods: PeriodAggregation[]): PeriodAggregation
     },
     unavailableReasons: {
       grossRevenue: null,
-      netRevenue:
-        netExactness === "exact"
-          ? null
-          : "Net revenue stays partial when selected stores do not expose exact fee detail.",
-      marketplaceFees:
-        marketplaceExactness === "exact"
-          ? null
-          : "Marketplace fees stay partial when selected stores do not expose exact fee detail.",
-      advertisingFees:
-        advertisingExactness === "exact"
-          ? null
-          : "Advertising fees stay partial when selected stores do not expose exact fee detail.",
+      netRevenue: null,
+      marketplaceFees: null,
+      advertisingFees: null,
       taxCollected: null,
       shippingCollected: null,
       shippingLabels: "Shipping labels are only shown in exact eBay mode.",
@@ -1930,8 +1921,6 @@ export async function getRevenuePageData(
   if (mode === "ebay_exact") {
     notes.push("eBay Exact mode mirrors Seller Hub semantics for one selected eBay store. Gross revenue includes taxes, and Net Revenue subtracts taxes and all selling costs recorded by eBay.");
     notes.push("Shipping labels and account-level charges are shown separately here and are included in Net Revenue.");
-  } else if (current.exactnessByMetric.netRevenue !== "exact") {
-    notes.push("Normalized mode keeps cross-marketplace reporting safe. BigCommerce and Shopify revenue stays visible, but fee-driven metrics remain partial where the source APIs do not expose exact fee detail.");
   }
 
   return {

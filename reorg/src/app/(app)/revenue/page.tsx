@@ -191,31 +191,15 @@ function KpiCard(props: { label: string; metric: RevenueKpiMetric; detail?: stri
   const isCountMetric = label === "Orders" || label === "Unique Buyers" || label === "Units Sold";
   return (
     <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">{label}</p>
-          <p className="mt-2 text-2xl font-semibold text-foreground">
-            {isCountMetric ? (metric.value ?? 0).toLocaleString() : formatCurrency(metric.value)}
-          </p>
-        </div>
-        <span
-          className={`rounded-full border px-2 py-1 text-[10px] font-semibold uppercase ${
-            metric.exact
-              ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
-              : "border-amber-500/30 bg-amber-500/10 text-amber-200"
-          }`}
-        >
-          {metric.exact ? "Exact" : "Partial"}
-        </span>
-      </div>
+      <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">{label}</p>
+      <p className="mt-2 text-2xl font-semibold text-foreground">
+        {isCountMetric ? (metric.value ?? 0).toLocaleString() : formatCurrency(metric.value)}
+      </p>
       <p className="mt-3 text-sm text-muted-foreground">
         {metric.deltaPercent == null ? "No prior comparison" : `${formatPercent(metric.deltaPercent)} vs prior period`}
       </p>
       {detail ? (
         <p className="mt-2 text-xs text-sky-200">{detail}</p>
-      ) : null}
-      {metric.unavailableReason ? (
-        <p className="mt-2 text-xs text-amber-200">{metric.unavailableReason}</p>
       ) : null}
     </div>
   );
@@ -669,16 +653,6 @@ export default function RevenuePage() {
           <p className="mt-1 text-sm text-muted-foreground">
             Manual-refresh analytics for gross revenue, fee visibility, top buyers, and top items sold across every connected marketplace.
           </p>
-          {data ? (
-            <div className="mt-2 inline-flex items-center gap-2 rounded-full border border-border bg-card px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-              <span
-                className={`inline-block h-2 w-2 rounded-full ${
-                  data.mode === "ebay_exact" ? "bg-emerald-400" : "bg-amber-300"
-                }`}
-              />
-              {data.mode === "ebay_exact" ? "eBay Exact Mode" : "Normalized Operational Mode"}
-            </div>
-          ) : null}
           <p className="mt-2 text-xs text-muted-foreground">
             Last refresh: {formatDateTime(visibleStatusData?.syncSummary.latestCompletedAt ?? null)}
           </p>
@@ -1232,7 +1206,6 @@ export default function RevenuePage() {
                       <tr key={store.platform} className="border-t border-border/70">
                         <td className="py-3 pr-4">
                           <div className="font-medium text-foreground">{store.label}</div>
-                          <div className="text-xs text-muted-foreground">{store.exactFeeCoverage ? "Exact fee coverage" : "Partial fee coverage"}</div>
                         </td>
                         <td className="py-3 pr-4 text-foreground">{formatCurrency(store.grossRevenue)}</td>
                         <td className="py-3 pr-4 text-muted-foreground">{store.orderCount.toLocaleString()}</td>
