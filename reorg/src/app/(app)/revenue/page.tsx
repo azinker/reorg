@@ -237,6 +237,15 @@ export default function RevenuePage() {
     return { fromDate, toDate };
   }, [customFrom, customTo, preset]);
 
+  const handlePresetChange = useCallback((nextPreset: RevenueRangePreset) => {
+    setPreset(nextPreset);
+    if (nextPreset === "custom") return;
+
+    const nextRange = rangeFromPreset(nextPreset);
+    setCustomFrom(nextRange.from);
+    setCustomTo(nextRange.to);
+  }, []);
+
   const selectedPlatformParam = useMemo(
     () => (selectedPlatforms.length > 0 ? selectedPlatforms.join(",") : ""),
     [selectedPlatforms],
@@ -696,7 +705,7 @@ export default function RevenuePage() {
               <button
                 key={value}
                 type="button"
-                onClick={() => setPreset(value)}
+                onClick={() => handlePresetChange(value)}
                 className={`cursor-pointer rounded-full border px-3 py-1.5 text-sm ${
                   preset === value
                     ? "border-primary/40 bg-primary/10 text-primary"
