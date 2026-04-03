@@ -25,6 +25,7 @@ import {
   ChevronLeft,
   ChevronRight,
   X,
+  PackageCheck,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { usePageVisibility } from "@/lib/use-page-visibility";
@@ -37,6 +38,7 @@ const navItems = [
   { href: "/revenue", label: "Revenue", icon: ChartNoAxesCombined },
   { href: "/profit-center", label: "Profit Center", icon: DollarSign },
   { href: "/sync", label: "Sync", icon: RefreshCw },
+  { href: "/ship-orders", label: "Ship Orders", icon: PackageCheck },
   { href: "/integrations", label: "Integrations", icon: Plug },
   { href: "/engine-room", label: "Engine Room", icon: Gauge },
   { href: "/public-network-transfer", label: "Public Network Transfer", icon: Globe },
