@@ -146,17 +146,59 @@ export async function GET() {
     result.shopifyPaymentsAccountRaw = { error: String(e) };
   }
 
-  // 4. Try the shared helper to see if it succeeds
+  // 4. Probe REST endpoints for Shopify Balance (separate product from Shopify Payments)
+  const restProbes = [
+    `/admin/api/${apiVersion}/shopify_payments/balance.json`,
+    `/admin/api/${apiVersion}/balance/transactions.json?limit=5`,
+    `/admin/api/${apiVersion}/balance_accounts.json`,
+    `/admin/api/${apiVersion}/finance/balance.json`,
+    `/admin/api/${apiVersion}/shopify_balance/balance.json`,
+  ];
+
+  result.restProbes = {};
+  for (const path of restProbes) {
+    try {
+      const r = await fetch(`https://${storeDomain}${path}`, {
+        headers: { "X-Shopify-Access-Token": resolvedToken, Accept: "application/json" },
+      });
+      const body = await r.text();
+      let parsed: unknown;
+      try { parsed = JSON.parse(body); } catch { parsed = body; }
+      (result.restProbes as Record<string, unknown>)[path] = { status: r.status, body: parsed };
+    } catch (e) {
+      (result.restProbes as Record<string, unknown>)[path] = { error: String(e) };
+    }
+  }
+
+  // 5. GraphQL balance_transactions to see if Shopify Balance transactions are there
+  const balanceTxQuery = `#graphql
+    query BalanceTx {
+      shopifyPaymentsAccount {
+        balance { amount currencyCode }
+        balanceTransactions(first: 5, reverse: true) {
+          nodes {
+            id
+            type
+            amount { amount currencyCode }
+            net { amount }
+            processedAt
+          }
+        }
+      }
+    }
+  `;
   try {
-    type ShopData = { shop: { name: string }; shopifyPaymentsAccount: unknown };
-    const data = await shopifyGraphQL<ShopData>(endpoint, resolvedToken, paymentsQuery);
-    result.helperResult = {
-      ok: true,
-      shopName: data.shop.name,
-      shopifyPaymentsAccountNull: data.shopifyPaymentsAccount === null,
-    };
+    const raw2 = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Shopify-Access-Token": resolvedToken,
+      },
+      body: JSON.stringify({ query: balanceTxQuery }),
+    });
+    result.balanceTxRaw = { httpStatus: raw2.status, body: await raw2.json() };
   } catch (e) {
-    result.helperResult = { ok: false, error: String(e) };
+    result.balanceTxRaw = { error: String(e) };
   }
 
   return NextResponse.json({ data: result });
