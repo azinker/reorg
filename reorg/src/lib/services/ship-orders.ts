@@ -771,44 +771,101 @@ async function shipShopify(
     Accept: "application/json",
   };
 
-  // Fetch the store's primary location — required by Shopify when the shop
-  // has location-based fulfillment (missing location_id causes 422).
-  let locationId: number | undefined;
-  const locRes = await fetchWithTimeout(
-    `https://${storeDomain}/admin/api/${apiVersion}/locations.json?limit=1`,
+  // ── Strategy 1: Fulfillment Orders API (works when token has
+  //    read_merchant_managed_fulfillment_orders scope, required in 2022-07+) ──
+  const foRes = await fetchWithTimeout(
+    `https://${storeDomain}/admin/api/${apiVersion}/orders/${platformOrderId}/fulfillment_orders.json`,
     { headers },
   );
-  if (locRes.ok) {
-    const locData = JSON.parse(locRes.body) as {
-      locations?: Array<{ id: number }>;
+
+  if (foRes.ok) {
+    const foData = JSON.parse(foRes.body) as {
+      fulfillment_orders?: Array<{ id: number; status: string }>;
     };
-    locationId = locData.locations?.[0]?.id;
+    const open = (foData.fulfillment_orders ?? []).filter(
+      (fo) => fo.status === "open" || fo.status === "in_progress",
+    );
+    if (open.length === 0) {
+      throw new Error(
+        `Shopify order ${platformOrderId} has no open fulfillment orders — it may already be fulfilled.`,
+      );
+    }
+
+    const res = await fetchWithTimeout(
+      `https://${storeDomain}/admin/api/${apiVersion}/fulfillments.json`,
+      {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          fulfillment: {
+            line_items_by_fulfillment_order: open.map((fo) => ({
+              fulfillment_order_id: fo.id,
+            })),
+            tracking_info: { number: trackingNumber, company: CARRIER },
+            notify_customer: true,
+          },
+        }),
+      },
+    );
+    if (!res.ok) {
+      let detail = res.body;
+      try {
+        const parsed = JSON.parse(res.body) as { errors?: unknown };
+        if (parsed.errors) detail = JSON.stringify(parsed.errors);
+      } catch { /* use raw */ }
+      throw new Error(`Shopify fulfillment failed (${res.status}): ${detail}`);
+    }
+    return;
   }
 
-  const fulfillmentPayload: Record<string, unknown> = {
-    tracking_number: trackingNumber,
-    tracking_company: CARRIER,
-    notify_customer: true,
-  };
-  if (locationId != null) fulfillmentPayload.location_id = locationId;
+  // ── Strategy 2: Legacy endpoint (token lacks fulfillment_orders scope).
+  //    Use API version 2021-07 where the endpoint still exists.
+  //    Fetch location_id first — required for location-based shops. ──
+  if (foRes.status === 401 || foRes.status === 403) {
+    const LEGACY_API = "2021-07";
 
-  const res = await fetchWithTimeout(
-    `https://${storeDomain}/admin/api/${apiVersion}/orders/${platformOrderId}/fulfillments.json`,
-    {
-      method: "POST",
-      headers,
-      body: JSON.stringify({ fulfillment: fulfillmentPayload }),
-    },
+    let locationId: number | undefined;
+    const locRes = await fetchWithTimeout(
+      `https://${storeDomain}/admin/api/${LEGACY_API}/locations.json?limit=1`,
+      { headers },
+    );
+    if (locRes.ok) {
+      const locData = JSON.parse(locRes.body) as {
+        locations?: Array<{ id: number }>;
+      };
+      locationId = locData.locations?.[0]?.id;
+    }
+
+    const payload: Record<string, unknown> = {
+      tracking_number: trackingNumber,
+      tracking_company: CARRIER,
+      notify_customer: true,
+    };
+    if (locationId != null) payload.location_id = locationId;
+
+    const res = await fetchWithTimeout(
+      `https://${storeDomain}/admin/api/${LEGACY_API}/orders/${platformOrderId}/fulfillments.json`,
+      {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ fulfillment: payload }),
+      },
+    );
+    if (!res.ok) {
+      let detail = res.body;
+      try {
+        const parsed = JSON.parse(res.body) as { errors?: unknown };
+        if (parsed.errors) detail = JSON.stringify(parsed.errors);
+      } catch { /* use raw */ }
+      throw new Error(`Shopify fulfillment failed (${res.status}): ${detail}`);
+    }
+    return;
+  }
+
+  // Fulfillment orders fetch failed for an unexpected reason
+  throw new Error(
+    `Shopify: could not fetch fulfillment orders for order ${platformOrderId} (${foRes.status})`,
   );
-
-  if (!res.ok) {
-    let detail = res.body;
-    try {
-      const parsed = JSON.parse(res.body) as { errors?: unknown };
-      if (parsed.errors) detail = JSON.stringify(parsed.errors);
-    } catch { /* use raw */ }
-    throw new Error(`Shopify fulfillment failed (${res.status}): ${detail}`);
-  }
 }
 
 // ─── executeShipments ─────────────────────────────────────────────────────────
