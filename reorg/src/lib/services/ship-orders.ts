@@ -446,9 +446,10 @@ async function shipAmazon(
     packageDetail: {
       packageReferenceId: "1",
       carrierCode: CARRIER,
+      shippingMethod: "Ground",
       trackingNumber,
       shipDate: new Date().toISOString(),
-      packageItems: orderItems.map((item) => ({
+      orderItems: orderItems.map((item) => ({
         orderItemId: item.orderItemId,
         quantity: item.quantity,
       })),
