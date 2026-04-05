@@ -56,6 +56,7 @@ const PLATFORM_TEXT_COLORS: Record<Platform, string> = {
   TT_EBAY: "text-emerald-900 dark:text-emerald-400",
   BIGCOMMERCE: "text-orange-900 dark:text-orange-400",
   SHOPIFY: "text-lime-900 dark:text-lime-400",
+  AMAZON: "text-amber-900 dark:text-amber-400",
 };
 
 const PLATFORM_INPUT_BORDERS: Record<Platform, string> = {
@@ -63,6 +64,7 @@ const PLATFORM_INPUT_BORDERS: Record<Platform, string> = {
   TT_EBAY: "border-emerald-500/50 focus:ring-emerald-500/50",
   BIGCOMMERCE: "border-orange-500/50 focus:ring-orange-500/50",
   SHOPIFY: "border-lime-500/50 focus:ring-lime-500/50",
+  AMAZON: "border-amber-500/50 focus:ring-amber-500/50",
 };
 
 type UpcQuickPushPhase =

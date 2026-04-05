@@ -30,6 +30,7 @@ const PLATFORM_META: Record<Platform, { label: string; color: string }> = {
   TT_EBAY: { label: "TT eBay", color: "bg-orange-500/20 text-orange-300 border-orange-500/30" },
   BIGCOMMERCE: { label: "BigCommerce", color: "bg-blue-500/20 text-blue-300 border-blue-500/30" },
   SHOPIFY: { label: "Shopify", color: "bg-green-500/20 text-green-300 border-green-500/30" },
+  AMAZON: { label: "Amazon", color: "bg-amber-500/20 text-amber-300 border-amber-500/30" },
 };
 
 function PlatformBadge({ platform }: { platform: Platform }) {

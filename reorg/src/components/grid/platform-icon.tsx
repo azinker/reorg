@@ -7,6 +7,7 @@ const LOGO_SRC: Record<Platform, string> = {
   TT_EBAY: "/logos/ebay.svg",
   BIGCOMMERCE: "/logos/bigcommerce.svg",
   SHOPIFY: "/logos/shopify.svg",
+  AMAZON: "/logos/amazon.svg",
 };
 
 const LOGO_ALT: Record<Platform, string> = {
@@ -14,6 +15,7 @@ const LOGO_ALT: Record<Platform, string> = {
   TT_EBAY: "eBay",
   BIGCOMMERCE: "BigCommerce",
   SHOPIFY: "Shopify",
+  AMAZON: "Amazon",
 };
 
 interface PlatformIconProps {
@@ -41,6 +43,7 @@ export function PlatformLabel({ platform }: { platform: Platform }) {
     TT_EBAY: "Telitetech (eBay)",
     BIGCOMMERCE: "BigCommerce",
     SHOPIFY: "Shopify",
+    AMAZON: "Amazon",
   };
 
   return (

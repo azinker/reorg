@@ -40,6 +40,9 @@ function getEnvConfig(platform: Platform) {
         accessToken: process.env.SHOPIFY_ACCESS_TOKEN,
         apiVersion: process.env.SHOPIFY_API_VERSION ?? "2026-01",
       };
+    case "AMAZON":
+      // Amazon is Ship Orders only — no catalog sync adapter
+      return {};
   }
 }
 
@@ -53,18 +56,20 @@ export function hasConnectedCredentials(
     case "TPP_EBAY":
     case "TT_EBAY":
       return !!(
-        getString(rawConfig.refreshToken) ?? getString(envConfig.refreshToken)
+        getString(rawConfig.refreshToken) ?? getString((envConfig as Record<string, unknown>).refreshToken)
       );
     case "BIGCOMMERCE":
       return !!(
-        (getString(rawConfig.storeHash) ?? getString(envConfig.storeHash)) &&
-        (getString(rawConfig.accessToken) ?? getString(envConfig.accessToken))
+        (getString(rawConfig.storeHash) ?? getString((envConfig as Record<string, unknown>).storeHash)) &&
+        (getString(rawConfig.accessToken) ?? getString((envConfig as Record<string, unknown>).accessToken))
       );
     case "SHOPIFY":
       return !!(
-        (getString(rawConfig.storeDomain) ?? getString(envConfig.storeDomain)) &&
-        (getString(rawConfig.accessToken) ?? getString(envConfig.accessToken))
+        (getString(rawConfig.storeDomain) ?? getString((envConfig as Record<string, unknown>).storeDomain)) &&
+        (getString(rawConfig.accessToken) ?? getString((envConfig as Record<string, unknown>).accessToken))
       );
+    case "AMAZON":
+      return !!getString(rawConfig.refreshToken);
   }
 }
 
@@ -72,21 +77,17 @@ export function buildAdapter(
   platform: Platform,
   rawConfig: Record<string, unknown>,
 ): MarketplaceAdapter {
-  const envConfig = getEnvConfig(platform);
+  const envConfig = getEnvConfig(platform) as Record<string, unknown>;
 
   switch (platform) {
     case "TPP_EBAY":
     case "TT_EBAY": {
       const appId = getString(rawConfig.appId) ?? getString(envConfig.appId);
-      const certId =
-        getString(rawConfig.certId) ?? getString(envConfig.certId);
+      const certId = getString(rawConfig.certId) ?? getString(envConfig.certId);
       const devId = getString(rawConfig.devId) ?? getString(envConfig.devId) ?? "";
-      const refreshToken =
-        getString(rawConfig.refreshToken) ?? getString(envConfig.refreshToken);
+      const refreshToken = getString(rawConfig.refreshToken) ?? getString(envConfig.refreshToken);
       const environment = (
-        getString(rawConfig.environment) ??
-        getString(envConfig.environment) ??
-        "PRODUCTION"
+        getString(rawConfig.environment) ?? getString(envConfig.environment) ?? "PRODUCTION"
       ) as "SANDBOX" | "PRODUCTION";
 
       if (!appId || !certId || !refreshToken) {
@@ -97,23 +98,13 @@ export function buildAdapter(
 
       return new EbayAdapter(
         platform,
-        platform === "TPP_EBAY"
-          ? "The Perfect Part (eBay)"
-          : "Telitetech (eBay)",
-        {
-          appId,
-          certId,
-          devId,
-          refreshToken,
-          environment,
-        },
+        platform === "TPP_EBAY" ? "The Perfect Part (eBay)" : "Telitetech (eBay)",
+        { appId, certId, devId, refreshToken, environment },
       );
     }
     case "BIGCOMMERCE": {
-      const storeHash =
-        getString(rawConfig.storeHash) ?? getString(envConfig.storeHash);
-      const accessToken =
-        getString(rawConfig.accessToken) ?? getString(envConfig.accessToken);
+      const storeHash = getString(rawConfig.storeHash) ?? getString(envConfig.storeHash);
+      const accessToken = getString(rawConfig.accessToken) ?? getString(envConfig.accessToken);
 
       if (!storeHash || !accessToken) {
         throw new Error(
@@ -124,14 +115,9 @@ export function buildAdapter(
       return new BigCommerceAdapter({ storeHash, accessToken });
     }
     case "SHOPIFY": {
-      const storeDomain =
-        getString(rawConfig.storeDomain) ?? getString(envConfig.storeDomain);
-      const accessToken =
-        getString(rawConfig.accessToken) ?? getString(envConfig.accessToken);
-      const apiVersion =
-        getString(rawConfig.apiVersion) ??
-        getString(envConfig.apiVersion) ??
-        "2026-01";
+      const storeDomain = getString(rawConfig.storeDomain) ?? getString(envConfig.storeDomain);
+      const accessToken = getString(rawConfig.accessToken) ?? getString(envConfig.accessToken);
+      const apiVersion = getString(rawConfig.apiVersion) ?? getString(envConfig.apiVersion) ?? "2026-01";
 
       if (!storeDomain || !accessToken) {
         throw new Error(
@@ -141,5 +127,7 @@ export function buildAdapter(
 
       return new ShopifyAdapter({ storeDomain, accessToken, apiVersion });
     }
+    case "AMAZON":
+      throw new Error("Amazon does not have a catalog sync adapter. Use Ship Orders instead.");
   }
 }

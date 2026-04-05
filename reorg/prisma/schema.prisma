@@ -20,6 +20,7 @@ enum Platform {
   TT_EBAY
   BIGCOMMERCE
   SHOPIFY
+  AMAZON
 }
 
 enum SyncStatus {
@@ -98,6 +99,7 @@ enum InventorySourceType {
 enum NetworkTransferChannel {
   CLIENT_API_RESPONSE
   MARKETPLACE_INBOUND
+  MARKETPLACE_OUTBOUND
   SYNC_JOB
   FORECAST
   OTHER

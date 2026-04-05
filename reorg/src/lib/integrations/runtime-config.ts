@@ -125,6 +125,19 @@ const DEFAULT_SYNC_PROFILES: Record<Platform, SyncProfile> = {
     incrementalStrategy: "bigcommerce_webhook_reconcile",
     skipUpcHydration: false,
   },
+  // Amazon is used for Ship Orders only in v1 — no catalog sync
+  AMAZON: {
+    autoSyncEnabled: false,
+    timezone: DEFAULT_TIMEZONE,
+    dayStartHour: 7,
+    dayEndHour: 21,
+    dayIntervalMinutes: 0,
+    overnightIntervalMinutes: 0,
+    preferredMode: "full",
+    fullReconcileIntervalHours: 0,
+    incrementalStrategy: "full_only",
+    skipUpcHydration: true,
+  },
 };
 
 const EMPTY_SYNC_STATE: SyncState = {

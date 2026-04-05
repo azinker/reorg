@@ -288,6 +288,7 @@ const ITEM_NUMBER_PLATFORM_ORDER: Record<Platform, number> = {
   TT_EBAY: 1,
   SHOPIFY: 2,
   BIGCOMMERCE: 3,
+  AMAZON: 4,
 };
 
 function sortItemNumbersForDisplay(items: StoreValue[]): StoreValue[] {

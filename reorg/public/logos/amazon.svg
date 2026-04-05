@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 102 31" fill="none">
+  <!-- Amazon wordmark in dark amber/orange, suitable for both light and dark backgrounds -->
+  <text x="1" y="24" font-family="Arial, sans-serif" font-size="22" font-weight="bold" fill="#FF9900" letter-spacing="-0.5">amazon</text>
+  <!-- Smile arrow -->
+  <path d="M16 27 Q33 33 50 27" stroke="#FF9900" stroke-width="2.5" stroke-linecap="round" fill="none"/>
+  <path d="M48 24 L50 27 L46 27" fill="#FF9900"/>
+</svg>

@@ -1,10 +1,11 @@
-export type Platform = "TPP_EBAY" | "TT_EBAY" | "BIGCOMMERCE" | "SHOPIFY";
+export type Platform = "TPP_EBAY" | "TT_EBAY" | "BIGCOMMERCE" | "SHOPIFY" | "AMAZON";
 
 export const PLATFORM_SHORT: Record<Platform, string> = {
   TPP_EBAY: "TPP",
   TT_EBAY: "TT",
   BIGCOMMERCE: "BC",
   SHOPIFY: "SHPFY",
+  AMAZON: "AMZ",
 };
 
 export const PLATFORM_DISPLAY_ORDER: Platform[] = [
@@ -19,6 +20,7 @@ export const PLATFORM_DISPLAY_INDEX: Record<Platform, number> = {
   TT_EBAY: 1,
   SHOPIFY: 2,
   BIGCOMMERCE: 3,
+  AMAZON: 4,
 };
 
 export const PLATFORM_FULL: Record<Platform, string> = {
@@ -26,6 +28,7 @@ export const PLATFORM_FULL: Record<Platform, string> = {
   TT_EBAY: "Telitetech (eBay)",
   BIGCOMMERCE: "BigCommerce",
   SHOPIFY: "Shopify",
+  AMAZON: "Amazon",
 };
 
 /** Light mode: solid-tint fills + strong borders for readability; dark keeps translucent pills. */
@@ -38,6 +41,8 @@ export const PLATFORM_COLORS: Record<Platform, string> = {
     "bg-orange-200/90 dark:bg-orange-500/15 text-orange-950 dark:text-orange-400 border-orange-500/80 dark:border-orange-500/30",
   SHOPIFY:
     "bg-lime-200/90 dark:bg-lime-500/15 text-lime-950 dark:text-lime-400 border-lime-500/80 dark:border-lime-500/30",
+  AMAZON:
+    "bg-amber-200/90 dark:bg-amber-500/15 text-amber-950 dark:text-amber-400 border-amber-500/80 dark:border-amber-500/30",
 };
 
 export const PLATFORM_COLORS_LIGHT: Record<Platform, string> = {
@@ -45,6 +50,7 @@ export const PLATFORM_COLORS_LIGHT: Record<Platform, string> = {
   TT_EBAY: "bg-emerald-200/90 text-emerald-950 border-emerald-500/80",
   BIGCOMMERCE: "bg-orange-200/90 text-orange-950 border-orange-500/80",
   SHOPIFY: "bg-lime-200/90 text-lime-950 border-lime-500/80",
+  AMAZON: "bg-amber-200/90 text-amber-950 border-amber-500/80",
 };
 
 export interface StoreValue {

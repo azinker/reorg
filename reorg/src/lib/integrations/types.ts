@@ -95,6 +95,7 @@ export const PLATFORM_LABELS: Record<Platform, string> = {
   TT_EBAY: "TT",
   BIGCOMMERCE: "BC",
   SHOPIFY: "SHPFY",
+  AMAZON: "AMZ",
 };
 
 export const PLATFORM_FULL_LABELS: Record<Platform, string> = {
@@ -102,6 +103,7 @@ export const PLATFORM_FULL_LABELS: Record<Platform, string> = {
   TT_EBAY: "Telitetech (eBay)",
   BIGCOMMERCE: "BigCommerce",
   SHOPIFY: "Shopify",
+  AMAZON: "Amazon",
 };
 
 const EBAY_STRIP_KEYS = new Set([

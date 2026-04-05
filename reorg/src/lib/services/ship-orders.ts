@@ -13,8 +13,10 @@
  */
 
 import { XMLParser } from "fast-xml-parser";
+import { createHash, createHmac } from "crypto";
 import { db } from "@/lib/db";
 import { checkWriteSafety } from "@/lib/safety";
+import { recordNetworkTransferSample } from "@/lib/services/network-transfer-samples";
 import type { Platform } from "@prisma/client";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -62,6 +64,10 @@ export type IdentifiedOrder = {
   bcProducts?: BcOrderProduct[];
   /** For BC: cached shipping address id */
   bcAddressId?: number;
+  /** For Amazon: order items needed for confirmShipment */
+  amazonOrderItems?: AmazonOrderItem[];
+  /** For Amazon: marketplace ID (e.g. ATVPDKIKX0DER for US) */
+  amazonMarketplaceId?: string;
   status: "found";
 };
 
@@ -93,12 +99,22 @@ interface BcOrderProduct {
   quantity: number;
 }
 
+interface AmazonOrderItem {
+  orderItemId: string;
+  quantity: number;
+}
+
 interface EbayConfig {
   appId: string;
   certId: string;
   refreshToken: string;
   accessToken?: string;
   accessTokenExpiresAt?: number;
+}
+
+interface AmazonConfig {
+  refreshToken: string;
+  sellerId?: string | null;
 }
 
 // ─── Low-level helpers ────────────────────────────────────────────────────────
@@ -218,10 +234,253 @@ function buildEbayConfig(config: Record<string, unknown>): EbayConfig {
   };
 }
 
+// ─── Amazon SP-API ────────────────────────────────────────────────────────────
+
+const SP_API_HOST = "sellingpartnerapi-na.amazon.com";
+const SP_API_REGION = "us-east-1";
+const SP_API_SERVICE = "execute-api";
+const AMAZON_LWA_TOKEN_URL = "https://api.amazon.com/auth/o2/token";
+const AMAZON_MARKETPLACE_ID_US = "ATVPDKIKX0DER";
+
+/** In-memory cache for LWA access tokens (per refreshToken). */
+const amazonTokenCache = new Map<string, { token: string; expiresAt: number }>();
+
+function hmacSha256(key: Buffer | string, data: string): Buffer {
+  return createHmac("sha256", key).update(data, "utf8").digest();
+}
+
+function sha256Hex(data: string): string {
+  return createHash("sha256").update(data, "utf8").digest("hex");
+}
+
+/**
+ * Sign an SP-API request with AWS Signature V4.
+ * Returns a headers object to merge into the fetch call.
+ */
+function awsSign(opts: {
+  method: string;
+  path: string;
+  query: string;
+  body: string;
+  accessKeyId: string;
+  secretAccessKey: string;
+}): Record<string, string> {
+  const { method, path, query, body, accessKeyId, secretAccessKey } = opts;
+
+  const now = new Date();
+  const amzDate =
+    now.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}/, "") + "";
+  // amzDate is like "20260405T123456Z" after removing dashes/colons
+  const dateStamp = amzDate.slice(0, 8);
+
+  const payloadHash = sha256Hex(body);
+
+  const canonHeaders: Record<string, string> = {
+    host: SP_API_HOST,
+    "x-amz-content-sha256": payloadHash,
+    "x-amz-date": amzDate,
+  };
+  const sortedKeys = Object.keys(canonHeaders).sort();
+  const canonicalHeaders = sortedKeys.map((k) => `${k}:${canonHeaders[k]}`).join("\n") + "\n";
+  const signedHeaders = sortedKeys.join(";");
+
+  const canonicalRequest = [method, path, query, canonicalHeaders, signedHeaders, payloadHash].join("\n");
+
+  const credentialScope = `${dateStamp}/${SP_API_REGION}/${SP_API_SERVICE}/aws4_request`;
+  const stringToSign = ["AWS4-HMAC-SHA256", amzDate, credentialScope, sha256Hex(canonicalRequest)].join("\n");
+
+  const signingKey = hmacSha256(
+    hmacSha256(
+      hmacSha256(hmacSha256(Buffer.from(`AWS4${secretAccessKey}`, "utf8"), dateStamp), SP_API_REGION),
+      SP_API_SERVICE,
+    ),
+    "aws4_request",
+  );
+
+  const signature = createHmac("sha256", signingKey).update(stringToSign, "utf8").digest("hex");
+
+  return {
+    ...canonHeaders,
+    Authorization: `AWS4-HMAC-SHA256 Credential=${accessKeyId}/${credentialScope}, SignedHeaders=${signedHeaders}, Signature=${signature}`,
+  };
+}
+
+/** Get a short-lived LWA access token using the stored refresh token. */
+async function getAmazonLwaToken(refreshToken: string): Promise<string> {
+  const cached = amazonTokenCache.get(refreshToken);
+  if (cached && cached.expiresAt > Date.now() + 60_000) return cached.token;
+
+  const clientId = process.env.AMAZON_LWA_CLIENT_ID;
+  const clientSecret = process.env.AMAZON_LWA_CLIENT_SECRET;
+  if (!clientId || !clientSecret) {
+    throw new Error("Amazon LWA credentials not configured (AMAZON_LWA_CLIENT_ID / AMAZON_LWA_CLIENT_SECRET)");
+  }
+
+  const res = await fetchWithTimeout(AMAZON_LWA_TOKEN_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      grant_type: "refresh_token",
+      refresh_token: refreshToken,
+      client_id: clientId,
+      client_secret: clientSecret,
+    }),
+  });
+
+  if (!res.ok) throw new Error(`Amazon LWA token refresh failed: ${res.status} ${res.body}`);
+
+  const data = JSON.parse(res.body) as { access_token: string; expires_in: number };
+  amazonTokenCache.set(refreshToken, { token: data.access_token, expiresAt: Date.now() + data.expires_in * 1000 });
+  return data.access_token;
+}
+
+/**
+ * Call the SP-API with AWS Signature V4 + LWA token.
+ */
+async function spApiRequest(opts: {
+  method: string;
+  path: string;
+  query?: string;
+  body?: string;
+  lwaToken: string;
+}): Promise<{ ok: boolean; status: number; body: string }> {
+  const { method, path, query = "", body = "", lwaToken } = opts;
+  const awsAccessKeyId = process.env.AMAZON_AWS_ACCESS_KEY_ID;
+  const awsSecretAccessKey = process.env.AMAZON_AWS_SECRET_ACCESS_KEY;
+  if (!awsAccessKeyId || !awsSecretAccessKey) {
+    throw new Error("Amazon AWS credentials not configured (AMAZON_AWS_ACCESS_KEY_ID / AMAZON_AWS_SECRET_ACCESS_KEY)");
+  }
+
+  const awsHeaders = awsSign({ method, path, query, body, accessKeyId: awsAccessKeyId, secretAccessKey: awsSecretAccessKey });
+
+  const url = `https://${SP_API_HOST}${path}${query ? `?${query}` : ""}`;
+  return fetchWithTimeout(url, {
+    method,
+    headers: {
+      ...awsHeaders,
+      "x-amz-access-token": lwaToken,
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    },
+    body: body || undefined,
+  });
+}
+
+interface AmazonIdentifyResult {
+  found: boolean;
+  orderId?: string;
+  marketplaceId?: string;
+  orderItems?: AmazonOrderItem[];
+  error?: string;
+}
+
+async function identifyAmazonOrder(
+  refreshToken: string,
+  orderNumber: string,
+): Promise<AmazonIdentifyResult> {
+  const lwaToken = await getAmazonLwaToken(refreshToken);
+
+  const ordersRes = await spApiRequest({
+    method: "GET",
+    path: "/orders/v0/orders",
+    query: `OrderIds=${encodeURIComponent(orderNumber)}`,
+    lwaToken,
+  });
+
+  if (!ordersRes.ok) {
+    return { found: false, error: `Amazon orders API error (${ordersRes.status}): ${ordersRes.body}` };
+  }
+
+  const ordersData = JSON.parse(ordersRes.body) as {
+    payload?: { Orders?: Array<{ AmazonOrderId: string; OrderStatus: string; MarketplaceId: string }> };
+  };
+
+  const orders = ordersData.payload?.Orders ?? [];
+  const matched = orders.find((o) => o.AmazonOrderId === orderNumber);
+  if (!matched) return { found: false };
+
+  const awaitingStatuses = new Set(["Unshipped", "PartiallyShipped"]);
+  if (!awaitingStatuses.has(matched.OrderStatus)) {
+    return { found: false, error: `Amazon order ${orderNumber} status is "${matched.OrderStatus}" (not awaiting shipment)` };
+  }
+
+  // Fetch order items (needed for confirmShipment)
+  const itemsRes = await spApiRequest({
+    method: "GET",
+    path: `/orders/v0/orders/${orderNumber}/orderItems`,
+    lwaToken,
+  });
+
+  if (!itemsRes.ok) {
+    return { found: false, error: `Amazon orderItems API error (${itemsRes.status}): ${itemsRes.body}` };
+  }
+
+  const itemsData = JSON.parse(itemsRes.body) as {
+    payload?: { OrderItems?: Array<{ OrderItemId: string; QuantityOrdered: number }> };
+  };
+
+  const orderItems: AmazonOrderItem[] = (itemsData.payload?.OrderItems ?? []).map((item) => ({
+    orderItemId: item.OrderItemId,
+    quantity: item.QuantityOrdered,
+  }));
+
+  return {
+    found: true,
+    orderId: matched.AmazonOrderId,
+    marketplaceId: matched.MarketplaceId || AMAZON_MARKETPLACE_ID_US,
+    orderItems,
+  };
+}
+
+async function shipAmazon(
+  refreshToken: string,
+  orderId: string,
+  trackingNumber: string,
+  marketplaceId: string,
+  orderItems: AmazonOrderItem[],
+): Promise<void> {
+  const lwaToken = await getAmazonLwaToken(refreshToken);
+
+  const body = JSON.stringify({
+    marketplaceId,
+    packageDetail: {
+      packageReferenceId: "1",
+      carrierCode: CARRIER,
+      trackingNumber,
+      shipDate: new Date().toISOString(),
+      packageItems: orderItems.map((item) => ({
+        orderItemId: item.orderItemId,
+        quantity: item.quantity,
+      })),
+    },
+  });
+
+  const res = await spApiRequest({
+    method: "POST",
+    path: `/orders/v0/orders/${orderId}/shipmentConfirmation`,
+    body,
+    lwaToken,
+  });
+
+  if (!res.ok) {
+    let detail = res.body;
+    try {
+      const parsed = JSON.parse(res.body) as { errors?: Array<{ message?: string; code?: string }> };
+      if (parsed.errors?.length) {
+        detail = parsed.errors.map((e) => `${e.code ? `[${e.code}] ` : ""}${e.message ?? ""}`).join("; ");
+      }
+    } catch { /* use raw */ }
+    throw new Error(`Amazon confirmShipment failed (${res.status}): ${detail}`);
+  }
+}
+
 // ─── Parsing ──────────────────────────────────────────────────────────────────
 
 /** eBay order numbers look like: `01-14458-12363` */
 const EBAY_ORDER_REGEX = /^\d{2}-\d{5}-\d{5}$/;
+
+/** Amazon order numbers look like: `114-3941689-8772232` */
+const AMAZON_ORDER_REGEX = /^\d{3}-\d{7}-\d{7}$/;
 
 export function parseInputLines(raw: string): ParsedLine[] {
   return raw
@@ -410,7 +669,7 @@ export async function identifyOrders(lines: ParsedLine[]): Promise<IdentifyResul
   if (lines.length === 0) return [];
 
   const integrations = await db.integration.findMany({
-    where: { platform: { in: ["TPP_EBAY", "TT_EBAY", "BIGCOMMERCE", "SHOPIFY"] }, enabled: true },
+    where: { platform: { in: ["TPP_EBAY", "TT_EBAY", "BIGCOMMERCE", "SHOPIFY", "AMAZON"] }, enabled: true },
     select: { id: true, platform: true, config: true },
   });
   const byPlatform = new Map(integrations.map((i) => [i.platform, i]));
@@ -419,17 +678,80 @@ export async function identifyOrders(lines: ParsedLine[]): Promise<IdentifyResul
   const ttRow = byPlatform.get("TT_EBAY");
   const bcRow = byPlatform.get("BIGCOMMERCE");
   const shopifyRow = byPlatform.get("SHOPIFY");
+  const amazonRow = byPlatform.get("AMAZON");
 
   const tpp = tppRow ? { id: tppRow.id, config: buildEbayConfig(tppRow.config as Record<string, unknown>) } : null;
   const tt = ttRow ? { id: ttRow.id, config: buildEbayConfig(ttRow.config as Record<string, unknown>) } : null;
 
-  // Separate eBay vs numeric lines
+  // Separate eBay vs Amazon vs numeric lines
   const ebayLines = lines.filter((l) => EBAY_ORDER_REGEX.test(l.orderNumber));
-  const numericLines = lines.filter((l) => !EBAY_ORDER_REGEX.test(l.orderNumber));
+  const amazonLines = lines.filter((l) => AMAZON_ORDER_REGEX.test(l.orderNumber));
+  const numericLines = lines.filter(
+    (l) => !EBAY_ORDER_REGEX.test(l.orderNumber) && !AMAZON_ORDER_REGEX.test(l.orderNumber),
+  );
 
   // Batch-identify all eBay orders in parallel
   const ebayOrderIds = [...new Set(ebayLines.map((l) => l.orderNumber))];
   const ebayPlatformMap = await identifyEbayOrders(ebayOrderIds, tpp, tt);
+
+  // Identify Amazon orders
+  const amazonResultMap = new Map<string, IdentifyResult>();
+  if (amazonRow && amazonLines.length > 0) {
+    const amazonCfg = amazonRow.config as Record<string, unknown>;
+    const refreshToken = amazonCfg.refreshToken as string | undefined;
+    if (refreshToken) {
+      await runConcurrently(amazonLines, SHOPIFY_CONCURRENCY, async (line) => {
+        const { orderNumber, trackingNumber } = line;
+        try {
+          const result = await identifyAmazonOrder(refreshToken, orderNumber);
+          if (result.found && result.orderId) {
+            amazonResultMap.set(orderNumber, {
+              orderNumber,
+              trackingNumber,
+              platform: "AMAZON",
+              integrationId: amazonRow.id,
+              platformOrderId: result.orderId,
+              amazonOrderItems: result.orderItems,
+              amazonMarketplaceId: result.marketplaceId,
+              status: "found",
+            });
+          } else {
+            amazonResultMap.set(orderNumber, {
+              orderNumber,
+              trackingNumber,
+              status: "not_found",
+              error: result.error,
+            });
+          }
+        } catch (err) {
+          amazonResultMap.set(orderNumber, {
+            orderNumber,
+            trackingNumber,
+            status: "error",
+            error: err instanceof Error ? err.message : "Unknown error",
+          });
+        }
+      });
+    } else {
+      for (const line of amazonLines) {
+        amazonResultMap.set(line.orderNumber, {
+          orderNumber: line.orderNumber,
+          trackingNumber: line.trackingNumber,
+          status: "error",
+          error: "Amazon integration not connected (no refresh token).",
+        });
+      }
+    }
+  } else if (amazonLines.length > 0) {
+    for (const line of amazonLines) {
+      amazonResultMap.set(line.orderNumber, {
+        orderNumber: line.orderNumber,
+        trackingNumber: line.trackingNumber,
+        status: "not_found",
+        error: "Amazon integration not enabled.",
+      });
+    }
+  }
 
   // Identify numeric (BC / Shopify) — Shopify rate limit applies here too,
   // so cap to SHOPIFY_CONCURRENCY even though BC is faster.
@@ -519,6 +841,16 @@ export async function identifyOrders(lines: ParsedLine[]): Promise<IdentifyResul
         platformOrderId: match.apiOrderId,
         status: "found" as const,
       };
+    }
+
+    if (AMAZON_ORDER_REGEX.test(orderNumber)) {
+      return (
+        amazonResultMap.get(orderNumber) ?? {
+          orderNumber,
+          trackingNumber,
+          status: "not_found" as const,
+        }
+      );
     }
 
     return (
@@ -886,10 +1218,14 @@ export async function executeShipments(
   const successfulEbayOrders: Array<{ orderNumber: string; trackingNumber: string; integrationId: string; platformOrderId: string; index: number }> = [];
 
   // Phase 1: Execute all shipments concurrently.
-  // Shopify has a strict 2 calls/second rate limit so Shopify orders run at
+  // Shopify has a strict 2 calls/second rate limit so Shopify + Amazon orders run at
   // SHOPIFY_CONCURRENCY; eBay and BC run at the higher EXECUTE_CONCURRENCY.
-  const nonShopifyOrders = orders.map((o, i) => ({ order: o, index: i })).filter(({ order }) => order.platform !== "SHOPIFY");
-  const shopifyOrders = orders.map((o, i) => ({ order: o, index: i })).filter(({ order }) => order.platform === "SHOPIFY");
+  const fastOrders = orders.map((o, i) => ({ order: o, index: i })).filter(
+    ({ order }) => order.platform !== "SHOPIFY" && order.platform !== "AMAZON",
+  );
+  const slowOrders = orders.map((o, i) => ({ order: o, index: i })).filter(
+    ({ order }) => order.platform === "SHOPIFY" || order.platform === "AMAZON",
+  );
 
   const executeOne = async ({ order, index }: { order: IdentifiedOrder; index: number }) => {
       const integration = byId.get(order.integrationId);
@@ -940,7 +1276,33 @@ export async function executeShipments(
             order.trackingNumber,
           );
           results[index] = { orderNumber: order.orderNumber, trackingNumber: order.trackingNumber, platform: order.platform, success: true, verificationStatus: "unverified" };
+        } else if (order.platform === "AMAZON") {
+          if (!order.amazonOrderItems?.length) {
+            throw new Error("Amazon order items not cached — re-identify the order and try again.");
+          }
+          await shipAmazon(
+            cfg.refreshToken as string,
+            order.platformOrderId,
+            order.trackingNumber,
+            order.amazonMarketplaceId ?? AMAZON_MARKETPLACE_ID_US,
+            order.amazonOrderItems,
+          );
+          results[index] = { orderNumber: order.orderNumber, trackingNumber: order.trackingNumber, platform: order.platform, success: true, verificationStatus: "unverified" };
         }
+
+        // Record outbound push in Public Network Transfer
+        const bodyEstimate = JSON.stringify({
+          orderId: order.platformOrderId,
+          trackingNumber: order.trackingNumber,
+          carrier: CARRIER,
+        }).length;
+        void recordNetworkTransferSample({
+          channel: "MARKETPLACE_OUTBOUND",
+          label: `ship_order / ${order.platform}`,
+          bytesEstimate: bodyEstimate,
+          integrationId: order.integrationId,
+          metadata: { platform: order.platform, orderNumber: order.orderNumber },
+        });
 
         await db.auditLog.create({
           data: {
@@ -967,9 +1329,9 @@ export async function executeShipments(
   };
 
   // eBay + BC: high concurrency (they have generous rate limits)
-  await runConcurrently(nonShopifyOrders, EXECUTE_CONCURRENCY, executeOne);
-  // Shopify: low concurrency to stay under 2 calls/second rate limit
-  await runConcurrently(shopifyOrders, SHOPIFY_CONCURRENCY, executeOne);
+  await runConcurrently(fastOrders, EXECUTE_CONCURRENCY, executeOne);
+  // Shopify + Amazon: low concurrency to respect rate limits
+  await runConcurrently(slowOrders, SHOPIFY_CONCURRENCY, executeOne);
 
   // Phase 2: Verify eBay tracking in batches
   if (successfulEbayOrders.length > 0) {

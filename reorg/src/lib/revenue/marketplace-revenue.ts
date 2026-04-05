@@ -215,12 +215,14 @@ function getEnvConfig(platform: Platform) {
         storeHash: process.env.BIGCOMMERCE_STORE_HASH,
         accessToken: process.env.BIGCOMMERCE_ACCESS_TOKEN,
       };
+    case "AMAZON":
+      return {};
   }
 }
 
 function resolveIntegrationConfig(integration: RevenueIntegration): IntegrationConfig {
   const rawConfig = asRecord(integration.config) ?? {};
-  const envConfig = getEnvConfig(integration.platform);
+  const envConfig = getEnvConfig(integration.platform) as Record<string, unknown>;
 
   switch (integration.platform) {
     case "TPP_EBAY":
@@ -249,6 +251,8 @@ function resolveIntegrationConfig(integration: RevenueIntegration): IntegrationC
       }
       return { storeDomain, accessToken, apiVersion };
     }
+    case "AMAZON":
+      throw new Error("Amazon does not support revenue sync in v1.");
     case "BIGCOMMERCE": {
       const storeHash =
         getString(rawConfig.storeHash) ?? getString(envConfig.storeHash);
