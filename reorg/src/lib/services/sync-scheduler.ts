@@ -75,9 +75,23 @@ function getMinutesUntilDue(now: Date, nextDueAt: Date | null) {
   return Math.max(0, Math.ceil((nextDueAt.getTime() - now.getTime()) / 60000));
 }
 
+/**
+ * Platforms that support listing sync (pull catalog from marketplace).
+ * Amazon is intentionally excluded — it is only used for Ship Orders and Payouts.
+ */
+const LISTING_SYNC_PLATFORMS = new Set([
+  "TPP_EBAY",
+  "TT_EBAY",
+  "SHOPIFY",
+  "BIGCOMMERCE",
+]);
+
 export async function planScheduledSyncs(now = new Date()) {
   const [integrations, runningJobs] = await Promise.all([
-    db.integration.findMany({ orderBy: { platform: "asc" } }),
+    db.integration.findMany({
+      where: { platform: { in: [...LISTING_SYNC_PLATFORMS] as string[] } },
+      orderBy: { platform: "asc" },
+    }),
     db.syncJob.findMany({
       where: { status: "RUNNING" },
       select: {

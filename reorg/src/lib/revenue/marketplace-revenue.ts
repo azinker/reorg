@@ -1,5 +1,6 @@
 import { XMLParser } from "fast-xml-parser";
 import type { Integration, Platform } from "@prisma/client";
+import { createHash, createHmac } from "crypto";
 import type {
   ForecastSaleLine,
   RevenueFinancialEventInput,
@@ -1513,6 +1514,220 @@ async function fetchBigCommerceRevenue(
   return { lines, financialEvents: [], exactSummary: null, syncStages: [], warnings: [] };
 }
 
+// ─── Amazon SP-API revenue ────────────────────────────────────────────────────
+
+function hmacSha256Rev(key: Buffer | string, data: string): Buffer {
+  return createHmac("sha256", key).update(data).digest();
+}
+function sha256HexRev(data: string): string {
+  return createHash("sha256").update(data).digest("hex");
+}
+
+function awsSignRev(opts: {
+  method: string; path: string; query: string;
+  accessKeyId: string; secretAccessKey: string;
+}): Record<string, string> {
+  const { method, path, query, accessKeyId, secretAccessKey } = opts;
+  const host = "sellingpartnerapi-na.amazon.com";
+  const region = "us-east-1";
+  const service = "execute-api";
+  const now = new Date();
+  const amzDate = now.toISOString().replace(/[:-]|\.\d{3}/g, "").slice(0, 15) + "Z";
+  const dateStamp = amzDate.slice(0, 8);
+  const payloadHash = sha256HexRev("");
+  const canonicalHeaders = `host:${host}\nx-amz-date:${amzDate}\n`;
+  const signedHeaders = "host;x-amz-date";
+  const canonicalRequest = [method, path, query, canonicalHeaders, signedHeaders, payloadHash].join("\n");
+  const credentialScope = `${dateStamp}/${region}/${service}/aws4_request`;
+  const stringToSign = ["AWS4-HMAC-SHA256", amzDate, credentialScope, sha256HexRev(canonicalRequest)].join("\n");
+  const signingKey = hmacSha256Rev(
+    hmacSha256Rev(hmacSha256Rev(hmacSha256Rev(`AWS4${secretAccessKey}`, dateStamp), region), service),
+    "aws4_request",
+  );
+  const signature = hmacSha256Rev(signingKey, stringToSign).toString("hex");
+  return {
+    Authorization: `AWS4-HMAC-SHA256 Credential=${accessKeyId}/${credentialScope}, SignedHeaders=${signedHeaders}, Signature=${signature}`,
+    "x-amz-date": amzDate,
+    host,
+  };
+}
+
+async function getAmazonLwaTokenRev(refreshToken: string): Promise<string> {
+  const clientId     = process.env.AMAZON_LWA_CLIENT_ID;
+  const clientSecret = process.env.AMAZON_LWA_CLIENT_SECRET;
+  if (!clientId || !clientSecret) throw new Error("Amazon LWA credentials not configured.");
+  const res = await fetch("https://api.amazon.com/auth/o2/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ grant_type: "refresh_token", refresh_token: refreshToken, client_id: clientId, client_secret: clientSecret }),
+  });
+  if (!res.ok) throw new Error(`Amazon LWA token refresh failed: ${res.status}`);
+  const data = (await res.json()) as { access_token: string };
+  return data.access_token;
+}
+
+type SpApiResponse = { payload?: { FinancialEvents?: AmazonFinancialEvents; NextToken?: string }; errors?: unknown[] };
+type AmazonFinancialEvents = {
+  ShipmentEventList?: AmazonShipmentEvent[];
+  RefundEventList?: AmazonShipmentEvent[];
+};
+type AmazonShipmentEvent = {
+  AmazonOrderId?: string;
+  PostedDate?: string;
+  ShipmentItemList?: AmazonShipmentItem[];
+};
+type AmazonShipmentItem = {
+  ASIN?: string;
+  SellerSKU?: string;
+  OrderItemIdentifier?: string;
+  QuantityShipped?: number;
+  ItemChargeList?: Array<{ ChargeType?: string; ChargeAmount?: { CurrencyCode?: string; CurrencyAmount?: number } }>;
+  ItemFeeList?: Array<{ FeeType?: string; FeeAmount?: { CurrencyCode?: string; CurrencyAmount?: number } }>;
+};
+
+async function spApiPagedFinancialEvents(
+  lwaToken: string,
+  from: Date,
+  to: Date,
+  signal?: AbortSignal,
+): Promise<AmazonFinancialEvents> {
+  const accessKeyId     = process.env.AMAZON_AWS_ACCESS_KEY_ID;
+  const secretAccessKey = process.env.AMAZON_AWS_SECRET_ACCESS_KEY;
+  if (!accessKeyId || !secretAccessKey) throw new Error("Amazon AWS credentials not configured.");
+
+  const spHost = "sellingpartnerapi-na.amazon.com";
+  const path   = "/finances/v0/financialEvents";
+  const allShipments: AmazonShipmentEvent[] = [];
+  const allRefunds:   AmazonShipmentEvent[] = [];
+  let nextToken: string | undefined;
+  let page = 0;
+  const MAX_PAGES = 20;
+
+  do {
+    const query = nextToken
+      ? `NextToken=${encodeURIComponent(nextToken)}`
+      : `PostedAfter=${encodeURIComponent(from.toISOString())}&PostedBefore=${encodeURIComponent(to.toISOString())}&MaxResultsPerPage=100`;
+
+    const awsHeaders = awsSignRev({ method: "GET", path, query, accessKeyId, secretAccessKey });
+    const res = await fetch(`https://${spHost}${path}?${query}`, {
+      headers: { ...awsHeaders, "x-amz-access-token": lwaToken, Accept: "application/json" },
+      signal,
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Amazon SP-API financial events failed: ${res.status} — ${text.slice(0, 200)}`);
+    }
+    const json = (await res.json()) as SpApiResponse;
+    if (json.errors?.length) throw new Error(`Amazon SP-API error: ${JSON.stringify(json.errors).slice(0, 200)}`);
+    allShipments.push(...(json.payload?.FinancialEvents?.ShipmentEventList ?? []));
+    allRefunds.push(...(json.payload?.FinancialEvents?.RefundEventList ?? []));
+    nextToken = json.payload?.NextToken;
+    page++;
+  } while (nextToken && page < MAX_PAGES);
+
+  return { ShipmentEventList: allShipments, RefundEventList: allRefunds };
+}
+
+function mapAmazonItemsToLines(
+  events: AmazonShipmentEvent[],
+  integrationId: string,
+  isRefund: boolean,
+): { lines: ForecastSaleLine[]; financialEvents: RevenueFinancialEventInput[] } {
+  const lines: ForecastSaleLine[] = [];
+  const financialEvents: RevenueFinancialEventInput[] = [];
+
+  for (const event of events) {
+    const orderId  = event.AmazonOrderId ?? "";
+    const postedAt = event.PostedDate ? new Date(event.PostedDate) : new Date();
+    const sign     = isRefund ? -1 : 1;
+
+    for (const [idx, item] of (event.ShipmentItemList ?? []).entries()) {
+      const sku      = item.SellerSKU ?? item.ASIN ?? "";
+      const lineId   = item.OrderItemIdentifier ?? `${orderId}-${idx}`;
+      const qty      = (item.QuantityShipped ?? 1) * sign;
+
+      const principal  = (item.ItemChargeList ?? []).find(c => c.ChargeType === "Principal")?.ChargeAmount?.CurrencyAmount ?? 0;
+      const tax        = (item.ItemChargeList ?? []).find(c => c.ChargeType === "Tax")?.ChargeAmount?.CurrencyAmount ?? 0;
+      const shipping   = (item.ItemChargeList ?? []).find(c => c.ChargeType === "ShippingCharge")?.ChargeAmount?.CurrencyAmount ?? 0;
+      const referral   = Math.abs((item.ItemFeeList ?? []).find(f => f.FeeType === "ReferralFee")?.FeeAmount?.CurrencyAmount ?? 0);
+      const otherFees  = (item.ItemFeeList ?? [])
+        .filter(f => f.FeeType !== "ReferralFee")
+        .reduce((s, f) => s + Math.abs(f.FeeAmount?.CurrencyAmount ?? 0), 0);
+      const currency   = item.ItemChargeList?.[0]?.ChargeAmount?.CurrencyCode ?? "USD";
+
+      lines.push({
+        platform: "AMAZON",
+        externalOrderId: orderId,
+        externalLineId: lineId,
+        orderDate: postedAt,
+        sku,
+        title: null,
+        quantity: qty,
+        currencyCode: currency,
+        grossRevenueAmount: principal * sign,
+        marketplaceFeeAmount: referral,
+        otherFeeAmount: otherFees,
+        taxAmount: tax * sign,
+        shippingAmount: shipping * sign,
+        netRevenueAmount: (principal - referral - otherFees) * sign,
+        isCancelled: false,
+        isReturn: isRefund,
+      });
+
+      if (principal !== 0) {
+        financialEvents.push({
+          integrationId,
+          platform: "AMAZON",
+          eventType: "TRANSACTION",
+          classification: isRefund ? "CREDIT" : "SALE",
+          externalEventId: lineId,
+          externalOrderId: orderId,
+          externalLineId: lineId,
+          platformItemId: item.ASIN ?? null,
+          sku: sku || null,
+          amount: principal * sign,
+          currencyCode: currency,
+          occurredAt: postedAt,
+        });
+      }
+    }
+  }
+
+  return { lines, financialEvents };
+}
+
+async function fetchAmazonRevenue(
+  integration: RevenueIntegration,
+  from: Date,
+  to: Date,
+  options?: RevenueFetchOptions,
+): Promise<RevenueFetchResult> {
+  const cfg = integration.config as Record<string, unknown>;
+  const refreshToken = cfg.refreshToken as string | undefined;
+  if (!refreshToken) throw new Error("Amazon refresh token not configured.");
+
+  const syncStages = buildSyncStages([
+    { key: "token",  label: "LWA Token" },
+    { key: "events", label: "Financial Events" },
+  ]);
+
+  await updateSyncStage(syncStages, "token", "RUNNING", "Refreshing Amazon LWA token.", options);
+  const lwaToken = await getAmazonLwaTokenRev(refreshToken);
+  await updateSyncStage(syncStages, "token", "COMPLETED", "Amazon LWA token ready.", options);
+
+  await updateSyncStage(syncStages, "events", "RUNNING", "Fetching Amazon financial events.", options);
+  const events = await spApiPagedFinancialEvents(lwaToken, from, to, options?.signal);
+  const shipResult   = mapAmazonItemsToLines(events.ShipmentEventList ?? [], integration.id, false);
+  const refundResult = mapAmazonItemsToLines(events.RefundEventList   ?? [], integration.id, true);
+  const allLines    = [...shipResult.lines,    ...refundResult.lines];
+  const allFinEvts  = [...shipResult.financialEvents, ...refundResult.financialEvents];
+  await updateSyncStage(syncStages, "events", "COMPLETED",
+    `${allLines.length} line items (${events.ShipmentEventList?.length ?? 0} shipment events, ${events.RefundEventList?.length ?? 0} refund events).`,
+    options);
+
+  return { lines: allLines, financialEvents: allFinEvts, exactSummary: null, syncStages, warnings: [] };
+}
+
 export async function fetchMarketplaceRevenue(
   integration: RevenueIntegration,
   from: Date,
@@ -1527,6 +1742,8 @@ export async function fetchMarketplaceRevenue(
       return fetchShopifyRevenue(integration, from, to, options);
     case "BIGCOMMERCE":
       return fetchBigCommerceRevenue(integration, from, to, options);
+    case "AMAZON":
+      return fetchAmazonRevenue(integration, from, to, options);
     default:
       return { lines: [], financialEvents: [], exactSummary: null, syncStages: [], warnings: [] };
   }

@@ -42,7 +42,7 @@ import { PlatformIcon } from "@/components/grid/platform-icon";
 import { PageTour } from "@/components/onboarding/page-tour";
 import { PAGE_TOUR_STEPS } from "@/components/onboarding/page-tour-steps";
 
-const PIE_COLORS = ["#8b5cf6", "#22c55e", "#f59e0b", "#38bdf8"];
+const PIE_COLORS = ["#8b5cf6", "#22c55e", "#f59e0b", "#38bdf8", "#FF9900"];
 const REVENUE_ANALYTICS_LOAD_TIMEOUT_MS = 120_000;
 const REVENUE_STATUS_TIMEOUT_MS = 10_000;
 const REVENUE_SYNC_REQUEST_TIMEOUT_MS = 15_000;
@@ -98,6 +98,7 @@ function formatMarketplaceBubbleLabel(platform: Platform) {
   if (platform === "TPP_EBAY") return "eBay TPP";
   if (platform === "TT_EBAY") return "eBay TT";
   if (platform === "BIGCOMMERCE") return "BigCommerce BC";
+  if (platform === "AMAZON") return "Amazon";
   return "Shopify SHPFY";
 }
 
@@ -105,6 +106,7 @@ function marketplaceCountClassName(platform: Platform) {
   if (platform === "TPP_EBAY") return "text-violet-300";
   if (platform === "TT_EBAY") return "text-sky-300";
   if (platform === "BIGCOMMERCE") return "text-amber-300";
+  if (platform === "AMAZON") return "text-orange-400";
   return "text-emerald-300";
 }
 
