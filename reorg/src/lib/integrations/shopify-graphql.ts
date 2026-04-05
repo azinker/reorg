@@ -26,7 +26,9 @@ export async function shopifyGraphQL<T>(
     errors?: Array<{ message?: string }>;
   };
 
-  if (json.errors?.length) {
+  // Shopify may return field-level errors alongside partial data (e.g. payoutSchedule
+  // not available for some accounts). Only throw if there is NO data at all.
+  if (json.errors?.length && !json.data) {
     throw new Error(
       json.errors.map((error) => error.message ?? "Unknown GraphQL error").join("; "),
     );
