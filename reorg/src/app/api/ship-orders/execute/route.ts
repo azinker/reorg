@@ -11,11 +11,16 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
 const VALID_PLATFORMS = new Set<string>([
-  "TPP_EBAY", "TT_EBAY", "BIGCOMMERCE", "SHOPIFY",
+  "TPP_EBAY", "TT_EBAY", "BIGCOMMERCE", "SHOPIFY", "AMAZON",
 ]);
 
 const bcProductSchema = z.object({
   order_product_id: z.number(),
+  quantity: z.number(),
+});
+
+const amazonOrderItemSchema = z.object({
+  orderItemId: z.string(),
   quantity: z.number(),
 });
 
@@ -29,6 +34,8 @@ const orderSchema = z.object({
   platformOrderId: z.string().min(1),
   bcProducts: z.array(bcProductSchema).optional(),
   bcAddressId: z.number().optional(),
+  amazonOrderItems: z.array(amazonOrderItemSchema).optional(),
+  amazonMarketplaceId: z.string().optional(),
 });
 
 const bodySchema = z.object({
