@@ -2,6 +2,9 @@ import { db } from "@/lib/db";
 import { Platform } from "@prisma/client";
 import { shopifyGraphQL } from "@/lib/integrations/shopify-graphql";
 
+// payoutSchedule is intentionally omitted — Shopify returns a field-level error
+// for some account types ("not available for this account") which can bubble up
+// and null the whole shopifyPaymentsAccount response.
 const WITHDRAW_FUNDS_QUERY = `#graphql
   query WithdrawFundsShopifySnapshot {
     shop {
@@ -15,11 +18,6 @@ const WITHDRAW_FUNDS_QUERY = `#graphql
       balance {
         amount
         currencyCode
-      }
-      payoutSchedule {
-        interval
-        monthlyAnchor
-        weeklyAnchor
       }
       bankAccounts(first: 10) {
         nodes {
@@ -55,7 +53,7 @@ export type WithdrawFundsShopifySnapshot = {
   adminUrls: {
     /** Settings → Payments (bank account, Shopify Payments). */
     paymentsSettings: string;
-    /** Finance → Payouts style view (logged-in Shopify session). */
+    /** Finance → Payouts view (logged-in Shopify session). */
     payoutsInAdmin: string;
   };
   paymentsAccount: {
@@ -63,11 +61,6 @@ export type WithdrawFundsShopifySnapshot = {
     country: string;
     defaultCurrency: string;
     balances: { amount: string; currencyCode: string }[];
-    payoutSchedule: {
-      interval: string;
-      monthlyAnchor: number | null;
-      weeklyAnchor: string | null;
-    } | null;
     bankAccounts: {
       bankName: string | null;
       lastDigits: string;
@@ -92,14 +85,13 @@ function normalizeStoreDomain(storeDomain: string): string {
   return t.includes(".") ? t : `${t}.myshopify.com`;
 }
 
-/** Admin URL store segment, e.g. `my-store` from `my-store.myshopify.com`. */
+/** Admin URL store segment, e.g. `fd7279` from `fd7279.myshopify.com`. */
 export function shopifyStoreHandleFromDomain(myshopifyDomain: string): string {
   const host = myshopifyDomain.trim().toLowerCase();
   if (host.endsWith(".myshopify.com")) {
     return host.slice(0, -".myshopify.com".length);
   }
-  const parts = host.split(".");
-  return parts[0] ?? host;
+  return host.split(".")[0] ?? host;
 }
 
 export async function getWithdrawFundsShopifySnapshot(): Promise<WithdrawFundsShopifySnapshot> {
@@ -140,11 +132,6 @@ export async function getWithdrawFundsShopifySnapshot(): Promise<WithdrawFundsSh
       country: string;
       defaultCurrency: string;
       balance: Array<{ amount: string; currencyCode: string }>;
-      payoutSchedule: {
-        interval: string;
-        monthlyAnchor: number | null;
-        weeklyAnchor: string | null;
-      } | null;
       bankAccounts: {
         nodes: Array<{
           bankName: string | null;
@@ -206,13 +193,6 @@ export async function getWithdrawFundsShopifySnapshot(): Promise<WithdrawFundsSh
         amount: b.amount,
         currencyCode: b.currencyCode,
       })),
-      payoutSchedule: acc.payoutSchedule
-        ? {
-            interval: acc.payoutSchedule.interval,
-            monthlyAnchor: acc.payoutSchedule.monthlyAnchor,
-            weeklyAnchor: acc.payoutSchedule.weeklyAnchor,
-          }
-        : null,
       bankAccounts: acc.bankAccounts.nodes.map((b) => ({
         bankName: b.bankName,
         lastDigits: b.accountNumberLastDigits,

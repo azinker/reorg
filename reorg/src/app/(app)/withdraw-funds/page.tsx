@@ -160,7 +160,7 @@ export default function WithdrawFundsPage() {
 
           {data.paymentsAccount && (
             <>
-              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+              <div className="grid gap-4 md:grid-cols-2">
                 <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
                   <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Available balance</p>
                   <ul className="mt-2 space-y-1">
@@ -181,32 +181,6 @@ export default function WithdrawFundsPage() {
                 </div>
 
                 <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
-                  <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Payout schedule</p>
-                  {data.paymentsAccount.payoutSchedule ? (
-                    <ul className="mt-2 space-y-1 text-sm text-foreground">
-                      <li>
-                        <span className="text-muted-foreground">Interval:</span>{" "}
-                        {data.paymentsAccount.payoutSchedule.interval}
-                      </li>
-                      {data.paymentsAccount.payoutSchedule.monthlyAnchor != null && (
-                        <li>
-                          <span className="text-muted-foreground">Monthly anchor:</span>{" "}
-                          {data.paymentsAccount.payoutSchedule.monthlyAnchor}
-                        </li>
-                      )}
-                      {data.paymentsAccount.payoutSchedule.weeklyAnchor && (
-                        <li>
-                          <span className="text-muted-foreground">Weekly anchor:</span>{" "}
-                          {data.paymentsAccount.payoutSchedule.weeklyAnchor}
-                        </li>
-                      )}
-                    </ul>
-                  ) : (
-                    <p className="mt-2 text-sm text-muted-foreground">No schedule returned.</p>
-                  )}
-                </div>
-
-                <div className="rounded-xl border border-border bg-card p-4 shadow-sm md:col-span-2 xl:col-span-1">
                   <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Payout bank accounts</p>
                   {data.paymentsAccount.bankAccounts.length === 0 ? (
                     <p className="mt-2 text-sm text-muted-foreground">None listed in the API response.</p>
