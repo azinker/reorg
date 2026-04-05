@@ -818,46 +818,14 @@ async function shipShopify(
     return;
   }
 
-  // ── Strategy 2: Legacy endpoint (token lacks fulfillment_orders scope).
-  //    Use API version 2021-07 where the endpoint still exists.
-  //    Fetch location_id first — required for location-based shops. ──
+  // fulfillment_orders endpoint failed — most likely missing scope
   if (foRes.status === 401 || foRes.status === 403) {
-    const LEGACY_API = "2021-07";
-
-    let locationId: number | undefined;
-    const locRes = await fetchWithTimeout(
-      `https://${storeDomain}/admin/api/${LEGACY_API}/locations.json?limit=1`,
-      { headers },
+    throw new Error(
+      `Shopify: token missing required scope "read_merchant_managed_fulfillment_orders". ` +
+      `Add it to your Shopify app, release a new version, reinstall on your store, and update the token in reorG Integrations.`,
     );
-    if (locRes.ok) {
-      const locData = JSON.parse(locRes.body) as {
-        locations?: Array<{ id: number }>;
-      };
-      locationId = locData.locations?.[0]?.id;
-    }
-
-    const payload: Record<string, unknown> = {
-      tracking_number: trackingNumber,
-      tracking_company: CARRIER,
-      notify_customer: true,
-    };
-    if (locationId != null) payload.location_id = locationId;
-
-    const res = await fetchWithTimeout(
-      `https://${storeDomain}/admin/api/${LEGACY_API}/orders/${platformOrderId}/fulfillments.json`,
-      {
-        method: "POST",
-        headers,
-        body: JSON.stringify({ fulfillment: payload }),
-      },
-    );
-    if (!res.ok) {
-      throw new Error(`Shopify fulfillment failed [strategy-2/legacy] (${res.status}): ${res.body}`);
-    }
-    return;
   }
 
-  // Fulfillment orders fetch failed for an unexpected reason — include full body for diagnosis
   throw new Error(
     `Shopify: fulfillment_orders endpoint returned ${foRes.status} for order ${platformOrderId}: ${foRes.body}`,
   );
