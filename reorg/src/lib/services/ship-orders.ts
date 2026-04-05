@@ -720,10 +720,12 @@ export async function identifyOrders(lines: ParsedLine[]): Promise<IdentifyResul
               status: "found",
             });
           } else {
+            // Use "error" status (not "not_found") when Amazon gave a specific reason,
+            // so the UI surfaces the message instead of the generic "Not found on any store"
             amazonResultMap.set(orderNumber, {
               orderNumber,
               trackingNumber,
-              status: "not_found",
+              status: result.error ? "error" : "not_found",
               error: result.error,
             });
           }
