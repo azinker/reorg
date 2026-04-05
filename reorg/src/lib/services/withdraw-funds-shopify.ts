@@ -217,7 +217,7 @@ export async function getWithdrawFundsShopifySnapshot(): Promise<WithdrawFundsSh
 
 function buildAdminUrls(storeHandle: string) {
   return {
-    shopifyBalance: `https://admin.shopify.com/store/${storeHandle}/shopify-balance`,
+    shopifyBalance: `https://admin.shopify.com/store/${storeHandle}/shopify-balance/account`,
     paymentsSettings: `https://admin.shopify.com/store/${storeHandle}/settings/payments`,
     payoutsInAdmin: "https://admin.shopify.com/payments/payouts",
   };

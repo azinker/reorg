@@ -148,11 +148,16 @@ export async function GET() {
 
   // 4. Probe REST endpoints for Shopify Balance (separate product from Shopify Payments)
   const restProbes = [
+    // Shopify Payments processing buffer (known: returns $0.00)
     `/admin/api/${apiVersion}/shopify_payments/balance.json`,
-    `/admin/api/${apiVersion}/balance/transactions.json?limit=5`,
+    // Shopify Balance — various plausible paths
+    `/admin/api/${apiVersion}/balance/transactions.json?limit=2`,
     `/admin/api/${apiVersion}/balance_accounts.json`,
-    `/admin/api/${apiVersion}/finance/balance.json`,
-    `/admin/api/${apiVersion}/shopify_balance/balance.json`,
+    `/admin/api/${apiVersion}/shopify_balance/accounts.json`,
+    `/admin/api/${apiVersion}/shopify_balance/account.json`,
+    `/admin/api/${apiVersion}/financial_accounts.json`,
+    `/admin/api/${apiVersion}/finances/balance.json`,
+    `/admin/api/${apiVersion}/balance.json`,
   ];
 
   result.restProbes = {};
@@ -170,35 +175,26 @@ export async function GET() {
     }
   }
 
-  // 5. GraphQL balance_transactions to see if Shopify Balance transactions are there
-  const balanceTxQuery = `#graphql
-    query BalanceTx {
-      shopifyPaymentsAccount {
-        balance { amount currencyCode }
-        balanceTransactions(first: 5, reverse: true) {
-          nodes {
-            id
-            type
-            amount { amount currencyCode }
-            net { amount }
-            processedAt
-          }
-        }
-      }
+  // 5. GraphQL probes for Shopify Balance
+  const gqlProbes: Record<string, string> = {
+    shopifyBalanceQuery: `{ shopifyBalance { id balance { amount currencyCode } } }`,
+    balanceTxQuery: `{ shopifyPaymentsAccount { balance { amount currencyCode } balanceTransactions(first: 3, reverse: true) { nodes { id type amount { amount currencyCode } net { amount } } } } }`,
+    businessEntityQuery: `{ businessEntities(first: 3) { nodes { id name shopifyPaymentsAccount { balance { amount currencyCode } } } } }`,
+    shopQuery: `{ shop { name balance { amount currencyCode } } }`,
+  };
+
+  result.gqlProbes = {};
+  for (const [key, query] of Object.entries(gqlProbes)) {
+    try {
+      const r = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Shopify-Access-Token": resolvedToken },
+        body: JSON.stringify({ query }),
+      });
+      (result.gqlProbes as Record<string, unknown>)[key] = { httpStatus: r.status, body: await r.json() };
+    } catch (e) {
+      (result.gqlProbes as Record<string, unknown>)[key] = { error: String(e) };
     }
-  `;
-  try {
-    const raw2 = await fetch(endpoint, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Shopify-Access-Token": resolvedToken,
-      },
-      body: JSON.stringify({ query: balanceTxQuery }),
-    });
-    result.balanceTxRaw = { httpStatus: raw2.status, body: await raw2.json() };
-  } catch (e) {
-    result.balanceTxRaw = { error: String(e) };
   }
 
   return NextResponse.json({ data: result });

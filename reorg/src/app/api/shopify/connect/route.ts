@@ -21,6 +21,8 @@ const SCOPES = [
   "read_shopify_payments_payouts",
   "read_shopify_payments_bank_accounts",
   "read_shopify_payments_disputes",
+  // Shopify Balance (banking wallet product)
+  "read_balance",
 ].join(",");
 
 export async function GET(request: NextRequest) {
