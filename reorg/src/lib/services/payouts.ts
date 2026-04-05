@@ -23,6 +23,8 @@ export type PayoutEntry = {
   status: string;
   /** e.g. DEPOSIT / WITHDRAWAL */
   type: string | null;
+  /** Destination bank account, e.g. "Bank of America ···2291" */
+  bankAccount: string | null;
 };
 
 export type PlatformPayouts = {
@@ -127,6 +129,11 @@ async function fetchEbayPayouts(platform: Platform, label: string): Promise<Plat
         payoutDate?: string;
         lastAttemptedPayoutDate?: string;
         amount?: { value?: string; currency?: string };
+        payoutInstrument?: {
+          instrumentType?: string;
+          accountLastFourDigits?: string;
+          nickname?: string;
+        };
       }>;
     };
 
@@ -137,15 +144,24 @@ async function fetchEbayPayouts(platform: Platform, label: string): Promise<Plat
       const db = new Date(b.lastAttemptedPayoutDate ?? b.payoutDate ?? 0).getTime();
       return db - da;
     });
-    const payouts: PayoutEntry[] = sorted.map((p) => ({
-      id: p.payoutId ?? "",
-      date: p.lastAttemptedPayoutDate ?? p.payoutDate ?? "",
-      grossAmount: null,
-      netAmount: Number(p.amount?.value ?? 0),
-      currency: p.amount?.currency ?? "USD",
-      status: p.payoutStatus ?? "",
-      type: "DEPOSIT",
-    }));
+    const payouts: PayoutEntry[] = sorted.map((p) => {
+      const inst = p.payoutInstrument;
+      let bankAccount: string | null = null;
+      if (inst?.accountLastFourDigits) {
+        const label = inst.nickname?.trim() || inst.instrumentType?.replace(/_/g, " ") || "Bank";
+        bankAccount = `${label} ···${inst.accountLastFourDigits}`;
+      }
+      return {
+        id: p.payoutId ?? "",
+        date: p.lastAttemptedPayoutDate ?? p.payoutDate ?? "",
+        grossAmount: null,
+        netAmount: Number(p.amount?.value ?? 0),
+        currency: p.amount?.currency ?? "USD",
+        status: p.payoutStatus ?? "",
+        type: "DEPOSIT",
+        bankAccount,
+      };
+    });
 
     return {
       platform: String(platform),
@@ -249,6 +265,8 @@ async function fetchShopifyPayouts(storeHandle: string): Promise<PlatformPayouts
         currency: p.net.currencyCode,
         status: p.status,
         type: p.transactionType,
+        // Shopify Payments always sweeps into Shopify Balance (internal wallet)
+        bankAccount: "Shopify Balance",
       };
     });
 
@@ -406,6 +424,7 @@ async function fetchAmazonPayouts(): Promise<PlatformPayouts> {
           currency,
           status: g.ProcessingStatus,
           type: "SETTLEMENT",
+          bankAccount: null,
         };
       });
 
@@ -469,18 +488,31 @@ async function fetchBigCommercePayouts(): Promise<PlatformPayouts> {
       amount: number;
       currency: string;
       description?: string | null;
+      destination?: {
+        bank_name?: string;
+        last4?: string;
+        routing_number?: string;
+      } | null;
     };
 
     const json = (await res.json()) as { data?: StripePayout[] };
-    const payouts: PayoutEntry[] = (json.data ?? []).map((p) => ({
-      id: p.id,
-      date: new Date(p.arrival_date * 1000).toISOString(),
-      grossAmount: null,
-      netAmount: p.amount / 100,
-      currency: p.currency.toUpperCase(),
-      status: p.status.toUpperCase(),
-      type: "DEPOSIT",
-    }));
+    const payouts: PayoutEntry[] = (json.data ?? []).map((p) => {
+      let bankAccount: string | null = null;
+      if (p.destination?.last4) {
+        const bankName = p.destination.bank_name?.trim() || "Bank";
+        bankAccount = `${bankName} ···${p.destination.last4}`;
+      }
+      return {
+        id: p.id,
+        date: new Date(p.arrival_date * 1000).toISOString(),
+        grossAmount: null,
+        netAmount: p.amount / 100,
+        currency: p.currency.toUpperCase(),
+        status: p.status.toUpperCase(),
+        type: "DEPOSIT",
+        bankAccount,
+      };
+    });
 
     return {
       platform: "BIGCOMMERCE",

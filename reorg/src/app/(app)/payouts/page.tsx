@@ -223,6 +223,7 @@ const NO_PAYOUT_HINT: Record<string, { title: string; body: string }> = {
 
 function PayoutsTable({ payouts, platform }: { payouts: PayoutEntry[]; platform: string }) {
   const showGross = payouts.some((p) => p.grossAmount != null);
+  const showBank  = payouts.some((p) => p.bankAccount != null);
   const cfg = PLATFORM_CONFIG[platform];
 
   return (
@@ -235,6 +236,7 @@ function PayoutsTable({ payouts, platform }: { payouts: PayoutEntry[]; platform:
             <th className="px-5 py-2.5 font-semibold">Net</th>
             <th className="px-5 py-2.5 font-semibold">Status</th>
             <th className="px-5 py-2.5 font-semibold">Type</th>
+            {showBank && <th className="px-5 py-2.5 font-semibold">Paid to</th>}
           </tr>
         </thead>
         <tbody>
@@ -263,6 +265,18 @@ function PayoutsTable({ payouts, platform }: { payouts: PayoutEntry[]; platform:
                   {p.type ?? "—"}
                 </span>
               </td>
+              {showBank && (
+                <td className="px-5 py-3">
+                  {p.bankAccount ? (
+                    <span className="inline-flex items-center gap-1.5 rounded-lg border border-border/50 bg-muted/30 px-2.5 py-1 text-xs font-medium text-foreground/80">
+                      <span className="h-1.5 w-1.5 rounded-full bg-emerald-400/70" />
+                      {p.bankAccount}
+                    </span>
+                  ) : (
+                    <span className="text-xs text-muted-foreground/50">—</span>
+                  )}
+                </td>
+              )}
             </tr>
           ))}
         </tbody>
