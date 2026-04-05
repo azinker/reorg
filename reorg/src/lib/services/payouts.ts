@@ -99,10 +99,19 @@ async function fetchEbayPayouts(platform: Platform, label: string): Promise<Plat
     const token = await getEbayToken({ appId, certId, refreshToken, environment: env });
     const base = env === "SANDBOX" ? "https://apiz.sandbox.ebay.com" : "https://apiz.ebay.com";
 
-    const res = await fetch(`${base}/sell/finances/v1/payout?limit=25&sort=LAST_ATTEMPTED_PAYOUT_DATE`, {
+    // Use a date range filter (same pattern as the revenue transactions endpoint).
+    // eBay sort params are camelCase with optional "-" prefix — avoid them to prevent 400s.
+    const since = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
+    const to = new Date().toISOString();
+    const url = new URL(`${base}/sell/finances/v1/payout`);
+    url.searchParams.set("limit", "25");
+    url.searchParams.set("filter", `payoutDate:[${since}..${to}]`);
+
+    const res = await fetch(url.toString(), {
       headers: {
         Authorization: `Bearer ${token}`,
         Accept: "application/json",
+        "Content-Type": "application/json",
       },
     });
 
@@ -122,7 +131,13 @@ async function fetchEbayPayouts(platform: Platform, label: string): Promise<Plat
     };
 
     const json = (await res.json()) as EbayPayoutResponse;
-    const payouts: PayoutEntry[] = (json.payouts ?? []).map((p) => ({
+    // Sort descending by date client-side (most recent first)
+    const sorted = (json.payouts ?? []).sort((a, b) => {
+      const da = new Date(a.lastAttemptedPayoutDate ?? a.payoutDate ?? 0).getTime();
+      const db = new Date(b.lastAttemptedPayoutDate ?? b.payoutDate ?? 0).getTime();
+      return db - da;
+    });
+    const payouts: PayoutEntry[] = sorted.map((p) => ({
       id: p.payoutId ?? "",
       date: p.lastAttemptedPayoutDate ?? p.payoutDate ?? "",
       grossAmount: null,
@@ -409,25 +424,81 @@ async function fetchAmazonPayouts(): Promise<PlatformPayouts> {
   }
 }
 
-// ─── BigCommerce (static link only) ──────────────────────────────────────────
+// ─── BigCommerce / Stripe ─────────────────────────────────────────────────────
 
 async function fetchBigCommercePayouts(): Promise<PlatformPayouts> {
-  const integration = await db.integration.findFirst({
-    where: { platform: Platform.BIGCOMMERCE, enabled: true },
-    select: { config: true },
-  });
-  return {
-    platform: "BIGCOMMERCE",
-    label: "BigCommerce (BC)",
-    payouts: [],
-    latestNet: null,
-    latestCurrency: "USD",
-    fetchError: integration
-      ? null
-      : "BigCommerce not connected.",
-    adminUrl: "https://dashboard.stripe.com/payouts",
-    adminUrlLabel: "View Stripe payouts",
-  };
+  const stripeKey = process.env.STRIPE_SECRET_KEY;
+
+  if (!stripeKey) {
+    return {
+      platform: "BIGCOMMERCE",
+      label: "BigCommerce (BC)",
+      payouts: [],
+      latestNet: null,
+      latestCurrency: "USD",
+      fetchError: "STRIPE_SECRET_KEY not configured — add it to your environment variables to see live payout data.",
+      adminUrl: "https://dashboard.stripe.com/payouts",
+      adminUrlLabel: "Open Stripe dashboard",
+    };
+  }
+
+  try {
+    const res = await fetch(
+      "https://api.stripe.com/v1/payouts?limit=25&expand[]=data.destination",
+      {
+        headers: {
+          Authorization: `Bearer ${stripeKey}`,
+          "Stripe-Version": "2024-11-20.acacia",
+        },
+      },
+    );
+
+    if (!res.ok) {
+      const text = await res.text();
+      return error(
+        Platform.BIGCOMMERCE,
+        "BigCommerce (BC)",
+        `Stripe payout fetch failed: ${res.status} — ${text.slice(0, 200)}`,
+      );
+    }
+
+    type StripePayout = {
+      id: string;
+      status: string;
+      arrival_date: number;
+      amount: number;
+      currency: string;
+      description?: string | null;
+    };
+
+    const json = (await res.json()) as { data?: StripePayout[] };
+    const payouts: PayoutEntry[] = (json.data ?? []).map((p) => ({
+      id: p.id,
+      date: new Date(p.arrival_date * 1000).toISOString(),
+      grossAmount: null,
+      netAmount: p.amount / 100,
+      currency: p.currency.toUpperCase(),
+      status: p.status.toUpperCase(),
+      type: "DEPOSIT",
+    }));
+
+    return {
+      platform: "BIGCOMMERCE",
+      label: "BigCommerce (BC)",
+      payouts,
+      latestNet: payouts[0]?.netAmount ?? null,
+      latestCurrency: payouts[0]?.currency ?? "USD",
+      fetchError: null,
+      adminUrl: "https://dashboard.stripe.com/payouts",
+      adminUrlLabel: "Open Stripe dashboard",
+    };
+  } catch (e) {
+    return error(
+      Platform.BIGCOMMERCE,
+      "BigCommerce (BC)",
+      e instanceof Error ? e.message : String(e),
+    );
+  }
 }
 
 // ─── Orchestrator ─────────────────────────────────────────────────────────────

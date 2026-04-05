@@ -105,7 +105,8 @@ function PayoutsTable({ payouts }: { payouts: PayoutEntry[] }) {
 function PlatformCard({ p }: { p: PayoutsSummary["platforms"][number] }) {
   const borderBg = PLATFORM_COLORS[p.platform] ?? "border-border bg-card";
   const accent = PLATFORM_ACCENT[p.platform] ?? "text-foreground";
-  const isBcPlaceholder = p.platform === "BIGCOMMERCE";
+  const isStripeNotConfigured =
+    p.platform === "BIGCOMMERCE" && p.fetchError?.includes("STRIPE_SECRET_KEY");
 
   return (
     <div className={cn("rounded-2xl border p-0 shadow-sm overflow-hidden", borderBg)}>
@@ -136,14 +137,14 @@ function PlatformCard({ p }: { p: PayoutsSummary["platforms"][number] }) {
         )}
       </div>
 
-      {p.fetchError ? (
+      {isStripeNotConfigured ? (
+        <div className="mx-5 mb-5 rounded-lg border border-sky-500/20 bg-sky-500/5 px-4 py-3 text-sm text-sky-200/70">
+          Stripe API key not configured yet. Add <code className="rounded bg-sky-500/10 px-1 py-0.5 text-xs text-sky-300">STRIPE_SECRET_KEY</code> to your environment variables once you have access, and live payout data will appear here automatically.
+        </div>
+      ) : p.fetchError ? (
         <div className="mx-5 mb-5 flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
           <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
           {p.fetchError}
-        </div>
-      ) : isBcPlaceholder ? (
-        <div className="mx-5 mb-5 rounded-lg border border-border bg-card/40 px-4 py-3 text-sm text-muted-foreground">
-          BigCommerce uses Stripe for payouts. Click the link above to view your Stripe payout dashboard.
         </div>
       ) : (
         <div className="border-t border-border/50">
