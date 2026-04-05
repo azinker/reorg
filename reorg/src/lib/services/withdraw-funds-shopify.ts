@@ -118,9 +118,9 @@ export async function getWithdrawFundsShopifySnapshot(): Promise<WithdrawFundsSh
       ? cfg.storeDomain.trim()
       : null;
   const accessToken =
-    typeof cfg.accessToken === "string" && cfg.accessToken.trim()
+    (typeof cfg.accessToken === "string" && cfg.accessToken.trim()
       ? cfg.accessToken.trim()
-      : null;
+      : null) ?? process.env.SHOPIFY_ACCESS_TOKEN ?? null;
   const apiVersion =
     typeof cfg.apiVersion === "string" && cfg.apiVersion.trim()
       ? cfg.apiVersion.trim()
