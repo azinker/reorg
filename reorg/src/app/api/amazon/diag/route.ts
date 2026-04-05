@@ -154,7 +154,7 @@ export async function GET() {
   } else {
     try {
       // Use a dummy order ID — we expect 400 (not found) or 200, NOT 403 (IAM issue) or 401
-      const probeQuery = "OrderIds=000-0000000-0000000";
+      const probeQuery = "OrderIds=000-0000000-0000000&MarketplaceIds=ATVPDKIKX0DER";
       const awsHeaders = awsSign({
         method: "GET",
         path: "/orders/v0/orders",

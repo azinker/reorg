@@ -383,7 +383,7 @@ async function identifyAmazonOrder(
   const ordersRes = await spApiRequest({
     method: "GET",
     path: "/orders/v0/orders",
-    query: `OrderIds=${encodeURIComponent(orderNumber)}`,
+    query: `OrderIds=${encodeURIComponent(orderNumber)}&MarketplaceIds=${AMAZON_MARKETPLACE_ID_US}`,
     lwaToken,
   });
 
@@ -397,7 +397,10 @@ async function identifyAmazonOrder(
 
   const orders = ordersData.payload?.Orders ?? [];
   const matched = orders.find((o) => o.AmazonOrderId === orderNumber);
-  if (!matched) return { found: false };
+  if (!matched) {
+    // Return full response body to help diagnose unexpected not-found cases
+    return { found: false, error: `Order not found in Amazon account. API returned: ${ordersRes.body.slice(0, 300)}` };
+  }
 
   const awaitingStatuses = new Set(["Unshipped", "PartiallyShipped"]);
   if (!awaitingStatuses.has(matched.OrderStatus)) {
