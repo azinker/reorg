@@ -765,12 +765,56 @@ async function shipShopify(
   platformOrderId: string,
   trackingNumber: string,
 ): Promise<void> {
+  const headers = {
+    "X-Shopify-Access-Token": accessToken,
+    "Content-Type": "application/json",
+    Accept: "application/json",
+  };
+
+  // Step 1: Fetch fulfillment orders for this order (required by Shopify API 2022-07+)
+  const foRes = await fetchWithTimeout(
+    `https://${storeDomain}/admin/api/${apiVersion}/orders/${platformOrderId}/fulfillment_orders.json`,
+    { headers },
+  );
+
+  if (!foRes.ok) {
+    throw new Error(
+      `Shopify: could not fetch fulfillment orders for order ${platformOrderId} (${foRes.status})`,
+    );
+  }
+
+  const foData = JSON.parse(foRes.body) as {
+    fulfillment_orders?: Array<{ id: number; status: string }>;
+  };
+
+  const openFulfillmentOrders = (foData.fulfillment_orders ?? []).filter(
+    (fo) => fo.status === "open" || fo.status === "in_progress",
+  );
+
+  if (openFulfillmentOrders.length === 0) {
+    throw new Error(
+      `Shopify order ${platformOrderId} has no open fulfillment orders — it may already be fulfilled.`,
+    );
+  }
+
+  // Step 2: Create fulfillment via the Fulfillment Orders API (modern Shopify flow)
   const res = await fetchWithTimeout(
-    `https://${storeDomain}/admin/api/${apiVersion}/orders/${platformOrderId}/fulfillments.json`,
+    `https://${storeDomain}/admin/api/${apiVersion}/fulfillments.json`,
     {
       method: "POST",
-      headers: { "X-Shopify-Access-Token": accessToken, "Content-Type": "application/json", Accept: "application/json" },
-      body: JSON.stringify({ fulfillment: { tracking_number: trackingNumber, tracking_company: CARRIER, notify_customer: true } }),
+      headers,
+      body: JSON.stringify({
+        fulfillment: {
+          line_items_by_fulfillment_order: openFulfillmentOrders.map((fo) => ({
+            fulfillment_order_id: fo.id,
+          })),
+          tracking_info: {
+            number: trackingNumber,
+            company: CARRIER,
+          },
+          notify_customer: true,
+        },
+      }),
     },
   );
 
