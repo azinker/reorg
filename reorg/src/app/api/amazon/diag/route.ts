@@ -66,7 +66,9 @@ function awsSign(opts: {
   };
 }
 
-export async function GET() {
+export async function GET(request: Request) {
+  const { searchParams } = new URL(request.url);
+  const testOrderId = searchParams.get("orderId");
   const result: Record<string, unknown> = {};
 
   // ── 1. Env vars ──────────────────────────────────────────────────────────────
@@ -199,7 +201,52 @@ export async function GET() {
     }
   }
 
-  // ── 5. Summary ───────────────────────────────────────────────────────────────
+  // ── 5. Order lookup test (pass ?orderId=111-XXXX-XXXX to test) ───────────────
+  if (testOrderId && lwaToken && awsKeyId && awsSecret) {
+    try {
+      // Step A: GetOrders
+      const ordersQuery = `OrderIds=${encodeURIComponent(testOrderId)}&MarketplaceIds=ATVPDKIKX0DER`;
+      const awsHeadersOrders = awsSign({
+        method: "GET", path: "/orders/v0/orders", query: ordersQuery, body: "",
+        accessKeyId: awsKeyId!, secretAccessKey: awsSecret!,
+      });
+      const ordersRes = await fetch(`https://${SP_API_HOST}/orders/v0/orders?${ordersQuery}`, {
+        method: "GET",
+        headers: { ...awsHeadersOrders, "x-amz-access-token": lwaToken, Accept: "application/json" },
+      });
+      const ordersBody = await ordersRes.text();
+      let ordersParsed: unknown;
+      try { ordersParsed = JSON.parse(ordersBody); } catch { ordersParsed = ordersBody; }
+      result.orderLookup = { orderId: testOrderId, getOrdersStatus: ordersRes.status, getOrdersResponse: ordersParsed };
+
+      // Step B: GetOrderItems (if order was found)
+      const ordersData = ordersParsed as { payload?: { Orders?: Array<{ AmazonOrderId: string; OrderStatus: string }> } };
+      const matched = ordersData?.payload?.Orders?.find((o) => o.AmazonOrderId === testOrderId);
+      if (matched) {
+        (result.orderLookup as Record<string, unknown>).orderStatus = matched.OrderStatus;
+        const itemsQuery = "";
+        const awsHeadersItems = awsSign({
+          method: "GET", path: `/orders/v0/orders/${testOrderId}/orderItems`, query: itemsQuery, body: "",
+          accessKeyId: awsKeyId!, secretAccessKey: awsSecret!,
+        });
+        const itemsRes = await fetch(`https://${SP_API_HOST}/orders/v0/orders/${testOrderId}/orderItems`, {
+          method: "GET",
+          headers: { ...awsHeadersItems, "x-amz-access-token": lwaToken, Accept: "application/json" },
+        });
+        const itemsBody = await itemsRes.text();
+        let itemsParsed: unknown;
+        try { itemsParsed = JSON.parse(itemsBody); } catch { itemsParsed = itemsBody; }
+        (result.orderLookup as Record<string, unknown>).getOrderItemsStatus = itemsRes.status;
+        (result.orderLookup as Record<string, unknown>).getOrderItemsResponse = itemsParsed;
+      }
+    } catch (e) {
+      result.orderLookup = { orderId: testOrderId, error: String(e) };
+    }
+  } else if (testOrderId) {
+    result.orderLookup = { skipped: true, reason: "LWA token unavailable — check earlier steps" };
+  }
+
+  // ── 6. Summary ───────────────────────────────────────────────────────────────
   const lwaOk = (result.lwaToken as Record<string, unknown>)?.ok === true;
   const spOk =
     [200, 400].includes((result.spApi as Record<string, unknown>)?.status as number);
