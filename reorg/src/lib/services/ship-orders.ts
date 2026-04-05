@@ -39,6 +39,10 @@ const IDENTIFY_CONCURRENCY = 10;
 const SHOPIFY_CONCURRENCY = 2;
 /** Max Shopify 429 retries before giving up. */
 const SHOPIFY_MAX_RETRIES = 5;
+/** Max Amazon SP-API 429 retries (rate limit: 0.5 req/sec, burst 30). */
+const AMAZON_MAX_RETRIES = 8;
+/** Amazon identify concurrency — kept low to respect 0.5 req/sec rate limit. */
+const AMAZON_CONCURRENCY = 1;
 
 const parser = new XMLParser({
   ignoreAttributes: true,
@@ -337,6 +341,11 @@ async function getAmazonLwaToken(refreshToken: string): Promise<string> {
 /**
  * Call the SP-API with AWS Signature V4 + LWA token.
  */
+/**
+ * Call the SP-API with AWS Signature V4 + LWA token.
+ * Retries automatically on 429 (rate limit) with exponential back-off.
+ * NOTE: AWS Sig V4 must be recomputed on every retry because x-amz-date changes.
+ */
 async function spApiRequest(opts: {
   method: string;
   path: string;
@@ -351,19 +360,36 @@ async function spApiRequest(opts: {
     throw new Error("Amazon AWS credentials not configured (AMAZON_AWS_ACCESS_KEY_ID / AMAZON_AWS_SECRET_ACCESS_KEY)");
   }
 
-  const awsHeaders = awsSign({ method, path, query, body, accessKeyId: awsAccessKeyId, secretAccessKey: awsSecretAccessKey });
-
   const url = `https://${SP_API_HOST}${path}${query ? `?${query}` : ""}`;
-  return fetchWithTimeout(url, {
-    method,
-    headers: {
-      ...awsHeaders,
-      "x-amz-access-token": lwaToken,
-      "Content-Type": "application/json",
-      Accept: "application/json",
-    },
-    body: body || undefined,
-  });
+  let attempt = 0;
+
+  while (true) {
+    // Recompute Sig V4 on every attempt — x-amz-date must match the actual send time
+    const awsHeaders = awsSign({ method, path, query, body, accessKeyId: awsAccessKeyId, secretAccessKey: awsSecretAccessKey });
+
+    const res = await fetchWithTimeout(url, {
+      method,
+      headers: {
+        ...awsHeaders,
+        "x-amz-access-token": lwaToken,
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: body || undefined,
+    });
+
+    if (res.status !== 429 || attempt >= AMAZON_MAX_RETRIES) return res;
+
+    // Back off: respect Retry-After header or use exponential delay (2s, 4s, 8s…)
+    let waitMs = Math.min(2000 * 2 ** attempt, 30_000);
+    try {
+      const parsed = JSON.parse(res.body) as { retryAfter?: number };
+      if (typeof parsed.retryAfter === "number") waitMs = parsed.retryAfter * 1000;
+    } catch { /* use default */ }
+
+    await new Promise((r) => setTimeout(r, waitMs));
+    attempt++;
+  }
 }
 
 interface AmazonIdentifyResult {
@@ -704,7 +730,7 @@ export async function identifyOrders(lines: ParsedLine[]): Promise<IdentifyResul
     const amazonCfg = amazonRow.config as Record<string, unknown>;
     const refreshToken = amazonCfg.refreshToken as string | undefined;
     if (refreshToken) {
-      await runConcurrently(amazonLines, SHOPIFY_CONCURRENCY, async (line) => {
+      await runConcurrently(amazonLines, AMAZON_CONCURRENCY, async (line) => {
         const { orderNumber, trackingNumber } = line;
         try {
           const result = await identifyAmazonOrder(refreshToken, orderNumber);
@@ -1229,8 +1255,11 @@ export async function executeShipments(
   const fastOrders = orders.map((o, i) => ({ order: o, index: i })).filter(
     ({ order }) => order.platform !== "SHOPIFY" && order.platform !== "AMAZON",
   );
-  const slowOrders = orders.map((o, i) => ({ order: o, index: i })).filter(
-    ({ order }) => order.platform === "SHOPIFY" || order.platform === "AMAZON",
+  const shopifyOrders = orders.map((o, i) => ({ order: o, index: i })).filter(
+    ({ order }) => order.platform === "SHOPIFY",
+  );
+  const amazonOrders = orders.map((o, i) => ({ order: o, index: i })).filter(
+    ({ order }) => order.platform === "AMAZON",
   );
 
   const executeOne = async ({ order, index }: { order: IdentifiedOrder; index: number }) => {
@@ -1334,10 +1363,12 @@ export async function executeShipments(
       }
   };
 
-  // eBay + BC: high concurrency (they have generous rate limits)
+  // eBay + BC: high concurrency (generous rate limits)
   await runConcurrently(fastOrders, EXECUTE_CONCURRENCY, executeOne);
-  // Shopify + Amazon: low concurrency to respect rate limits
-  await runConcurrently(slowOrders, SHOPIFY_CONCURRENCY, executeOne);
+  // Shopify: 2 concurrent to stay under 2 calls/sec
+  await runConcurrently(shopifyOrders, SHOPIFY_CONCURRENCY, executeOne);
+  // Amazon: 1 at a time with built-in 429 retry to respect 0.5 req/sec limit
+  await runConcurrently(amazonOrders, AMAZON_CONCURRENCY, executeOne);
 
   // Phase 2: Verify eBay tracking in batches
   if (successfulEbayOrders.length > 0) {
