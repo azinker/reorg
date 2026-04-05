@@ -136,7 +136,7 @@ export default function WithdrawFundsPage() {
                 <p className="text-xs uppercase tracking-[0.18em] text-emerald-300/80">Shopify Balance</p>
                 <p className="mt-1 text-2xl font-semibold text-foreground">View available balance</p>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  Opens your Shopify Balance account — transfer funds, send money, or add funds from there.
+                  Opens your Shopify Balance account — see your available balance, transfer funds to Bank of America or American Express, or send money.
                 </p>
               </div>
               <ExternalLink className="h-5 w-5 shrink-0 text-emerald-400 transition-transform group-hover:translate-x-0.5" />
@@ -173,54 +173,6 @@ export default function WithdrawFundsPage() {
 
           {data.paymentsAccount && (
             <>
-              {/* Info cards */}
-              <div className="grid gap-4 md:grid-cols-2">
-                <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
-                  <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">
-                    Shopify Payments — pending sweep
-                  </p>
-                  <ul className="mt-2 space-y-1">
-                    {data.paymentsAccount.balances.length === 0 ? (
-                      <li className="text-sm text-muted-foreground">No balance rows returned.</li>
-                    ) : (
-                      data.paymentsAccount.balances.map((b) => (
-                        <li key={`${b.currencyCode}-${b.amount}`} className="text-2xl font-semibold text-foreground">
-                          {formatMoney(b.amount, b.currencyCode)}
-                        </li>
-                      ))
-                    )}
-                  </ul>
-                  <p className="mt-2 text-xs text-muted-foreground">
-                    Amount earned but not yet swept into Shopify Balance. Resets to $0 after each daily payout.
-                  </p>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    Account {data.paymentsAccount.activated ? "activated" : "not activated"} ·{" "}
-                    {data.paymentsAccount.country} · Default {data.paymentsAccount.defaultCurrency}
-                  </p>
-                </div>
-
-                <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
-                  <p className="text-xs uppercase tracking-[0.18em] text-muted-foreground">Payout bank accounts</p>
-                  {data.paymentsAccount.bankAccounts.length === 0 ? (
-                    <p className="mt-2 text-sm text-muted-foreground">None listed.</p>
-                  ) : (
-                    <ul className="mt-2 space-y-2">
-                      {data.paymentsAccount.bankAccounts.map((b, i) => (
-                        <li key={`${b.lastDigits}-${i}`} className="text-sm">
-                          <span className="font-medium text-foreground">{b.bankName ?? "Bank account"}</span>
-                          <span className="text-muted-foreground">
-                            {" "}(···{b.lastDigits}) · {b.currency} ·{" "}
-                            <span className={b.status === "VALIDATED" ? "text-emerald-400" : "text-amber-400"}>
-                              {b.status}
-                            </span>
-                          </span>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
-              </div>
-
               {/* Payout history */}
               <div className="rounded-xl border border-border bg-card shadow-sm">
                 <div className="border-b border-border px-4 py-3">
