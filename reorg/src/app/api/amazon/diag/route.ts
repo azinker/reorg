@@ -204,24 +204,23 @@ export async function GET(request: Request) {
   // ── 5. Order lookup test (pass ?orderId=111-XXXX-XXXX to test) ───────────────
   if (testOrderId && lwaToken && awsKeyId && awsSecret) {
     try {
-      // Step A: GetOrders
-      const ordersQuery = `OrderIds=${encodeURIComponent(testOrderId)}&MarketplaceIds=ATVPDKIKX0DER`;
+      // Step A: GetOrder (single order by ID — no date filter needed)
       const awsHeadersOrders = awsSign({
-        method: "GET", path: "/orders/v0/orders", query: ordersQuery, body: "",
+        method: "GET", path: `/orders/v0/orders/${testOrderId}`, query: "", body: "",
         accessKeyId: awsKeyId!, secretAccessKey: awsSecret!,
       });
-      const ordersRes = await fetch(`https://${SP_API_HOST}/orders/v0/orders?${ordersQuery}`, {
+      const ordersRes = await fetch(`https://${SP_API_HOST}/orders/v0/orders/${testOrderId}`, {
         method: "GET",
         headers: { ...awsHeadersOrders, "x-amz-access-token": lwaToken, Accept: "application/json" },
       });
       const ordersBody = await ordersRes.text();
       let ordersParsed: unknown;
       try { ordersParsed = JSON.parse(ordersBody); } catch { ordersParsed = ordersBody; }
-      result.orderLookup = { orderId: testOrderId, getOrdersStatus: ordersRes.status, getOrdersResponse: ordersParsed };
+      result.orderLookup = { orderId: testOrderId, getOrderStatus: ordersRes.status, getOrderResponse: ordersParsed };
 
       // Step B: GetOrderItems (if order was found)
-      const ordersData = ordersParsed as { payload?: { Orders?: Array<{ AmazonOrderId: string; OrderStatus: string }> } };
-      const matched = ordersData?.payload?.Orders?.find((o) => o.AmazonOrderId === testOrderId);
+      const ordersData = ordersParsed as { payload?: { AmazonOrderId: string; OrderStatus: string } };
+      const matched = ordersData?.payload?.AmazonOrderId === testOrderId ? ordersData.payload : null;
       if (matched) {
         (result.orderLookup as Record<string, unknown>).orderStatus = matched.OrderStatus;
         const itemsQuery = "";

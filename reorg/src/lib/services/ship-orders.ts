@@ -380,25 +380,23 @@ async function identifyAmazonOrder(
 ): Promise<AmazonIdentifyResult> {
   const lwaToken = await getAmazonLwaToken(refreshToken);
 
+  // Use the single-order endpoint — no date filter required
   const ordersRes = await spApiRequest({
     method: "GET",
-    path: "/orders/v0/orders",
-    query: `OrderIds=${encodeURIComponent(orderNumber)}&MarketplaceIds=${AMAZON_MARKETPLACE_ID_US}`,
+    path: `/orders/v0/orders/${orderNumber}`,
     lwaToken,
   });
 
   if (!ordersRes.ok) {
-    return { found: false, error: `Amazon orders API error (${ordersRes.status}): ${ordersRes.body}` };
+    return { found: false, error: `Amazon getOrder API error (${ordersRes.status}): ${ordersRes.body}` };
   }
 
   const ordersData = JSON.parse(ordersRes.body) as {
-    payload?: { Orders?: Array<{ AmazonOrderId: string; OrderStatus: string; MarketplaceId: string }> };
+    payload?: { AmazonOrderId: string; OrderStatus: string; MarketplaceId: string };
   };
 
-  const orders = ordersData.payload?.Orders ?? [];
-  const matched = orders.find((o) => o.AmazonOrderId === orderNumber);
-  if (!matched) {
-    // Return full response body to help diagnose unexpected not-found cases
+  const matched = ordersData.payload;
+  if (!matched || matched.AmazonOrderId !== orderNumber) {
     return { found: false, error: `Order not found in Amazon account. API returned: ${ordersRes.body.slice(0, 300)}` };
   }
 
