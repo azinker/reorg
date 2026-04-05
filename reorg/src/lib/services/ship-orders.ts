@@ -29,10 +29,14 @@ const CARRIER = "USPS";
 const EBAY_IDENTIFY_BATCH_SIZE = 20;
 /** Max eBay order IDs per GetOrders verification call. */
 const EBAY_VERIFY_BATCH_SIZE = 20;
-/** Concurrent CompleteSale / shipment API calls during execute phase. */
+/** Concurrent CompleteSale / shipment API calls during execute phase (eBay + BC). */
 const EXECUTE_CONCURRENCY = 20;
 /** Concurrent GetOrders batches during identify and verify phases. */
 const IDENTIFY_CONCURRENCY = 10;
+/** Shopify allows 2 calls/second sustained (leaky bucket 40). Keep concurrency low. */
+const SHOPIFY_CONCURRENCY = 2;
+/** Max Shopify 429 retries before giving up. */
+const SHOPIFY_MAX_RETRIES = 5;
 
 const parser = new XMLParser({
   ignoreAttributes: true,
@@ -116,6 +120,31 @@ async function fetchWithTimeout(
     throw error;
   } finally {
     clearTimeout(timeout);
+  }
+}
+
+/**
+ * Shopify-specific fetch that retries on 429 (rate limit) using the
+ * Retry-After header value (or a default back-off).
+ */
+async function shopifyFetch(
+  url: string,
+  options: RequestInit = {},
+): Promise<{ ok: boolean; status: number; body: string }> {
+  let attempt = 0;
+  while (true) {
+    const res = await fetchWithTimeout(url, options);
+    if (res.status !== 429 || attempt >= SHOPIFY_MAX_RETRIES) return res;
+
+    // Parse Retry-After (seconds) from body or use exponential backoff
+    let waitMs = Math.min(1000 * 2 ** attempt, 16_000);
+    try {
+      const parsed = JSON.parse(res.body) as { retry_after?: number };
+      if (typeof parsed.retry_after === "number") waitMs = parsed.retry_after * 1000;
+    } catch { /* use default */ }
+
+    await new Promise((r) => setTimeout(r, waitMs));
+    attempt++;
   }
 }
 
@@ -364,7 +393,7 @@ async function queryShopifyOrder(
   apiVersion: string,
   orderNumber: string,
 ): Promise<{ found: boolean; platformOrderId: string | null }> {
-  const res = await fetchWithTimeout(
+  const res = await shopifyFetch(
     `https://${storeDomain}/admin/api/${apiVersion}/orders.json?name=%23${encodeURIComponent(orderNumber)}&status=any&limit=5`,
     { headers: { "X-Shopify-Access-Token": accessToken, Accept: "application/json" } },
   );
@@ -402,9 +431,10 @@ export async function identifyOrders(lines: ParsedLine[]): Promise<IdentifyResul
   const ebayOrderIds = [...new Set(ebayLines.map((l) => l.orderNumber))];
   const ebayPlatformMap = await identifyEbayOrders(ebayOrderIds, tpp, tt);
 
-  // Identify numeric (BC / Shopify) concurrently
+  // Identify numeric (BC / Shopify) — Shopify rate limit applies here too,
+  // so cap to SHOPIFY_CONCURRENCY even though BC is faster.
   const numericResultMap = new Map<string, IdentifyResult>();
-  await runConcurrently(numericLines, IDENTIFY_CONCURRENCY, async (line) => {
+  await runConcurrently(numericLines, SHOPIFY_CONCURRENCY, async (line) => {
     const { orderNumber, trackingNumber } = line;
     try {
       const [bcResult, shopifyResult] = await Promise.all([
@@ -771,9 +801,9 @@ async function shipShopify(
     Accept: "application/json",
   };
 
-  // ── Strategy 1: Fulfillment Orders API (works when token has
-  //    read_merchant_managed_fulfillment_orders scope, required in 2022-07+) ──
-  const foRes = await fetchWithTimeout(
+  // ── Strategy 1: Fulfillment Orders API (requires
+  //    read_merchant_managed_fulfillment_orders scope) ──
+  const foRes = await shopifyFetch(
     `https://${storeDomain}/admin/api/${apiVersion}/orders/${platformOrderId}/fulfillment_orders.json`,
     { headers },
   );
@@ -796,7 +826,7 @@ async function shipShopify(
       );
     }
 
-    const res = await fetchWithTimeout(
+    const res = await shopifyFetch(
       `https://${storeDomain}/admin/api/${apiVersion}/fulfillments.json`,
       {
         method: "POST",
@@ -813,7 +843,7 @@ async function shipShopify(
       },
     );
     if (!res.ok) {
-      throw new Error(`Shopify fulfillment failed [strategy-1] (${res.status}): ${res.body}`);
+      throw new Error(`Shopify fulfillment failed (${res.status}): ${res.body}`);
     }
     return;
   }
@@ -855,11 +885,13 @@ export async function executeShipments(
   const results: ShipResult[] = Array(orders.length).fill(null);
   const successfulEbayOrders: Array<{ orderNumber: string; trackingNumber: string; integrationId: string; platformOrderId: string; index: number }> = [];
 
-  // Phase 1: Execute all shipments concurrently
-  await runConcurrently(
-    orders.map((o, i) => ({ order: o, index: i })),
-    EXECUTE_CONCURRENCY,
-    async ({ order, index }) => {
+  // Phase 1: Execute all shipments concurrently.
+  // Shopify has a strict 2 calls/second rate limit so Shopify orders run at
+  // SHOPIFY_CONCURRENCY; eBay and BC run at the higher EXECUTE_CONCURRENCY.
+  const nonShopifyOrders = orders.map((o, i) => ({ order: o, index: i })).filter(({ order }) => order.platform !== "SHOPIFY");
+  const shopifyOrders = orders.map((o, i) => ({ order: o, index: i })).filter(({ order }) => order.platform === "SHOPIFY");
+
+  const executeOne = async ({ order, index }: { order: IdentifiedOrder; index: number }) => {
       const integration = byId.get(order.integrationId);
 
       if (!integration) {
@@ -932,8 +964,12 @@ export async function executeShipments(
           },
         });
       }
-    },
-  );
+  };
+
+  // eBay + BC: high concurrency (they have generous rate limits)
+  await runConcurrently(nonShopifyOrders, EXECUTE_CONCURRENCY, executeOne);
+  // Shopify: low concurrency to stay under 2 calls/second rate limit
+  await runConcurrently(shopifyOrders, SHOPIFY_CONCURRENCY, executeOne);
 
   // Phase 2: Verify eBay tracking in batches
   if (successfulEbayOrders.length > 0) {
