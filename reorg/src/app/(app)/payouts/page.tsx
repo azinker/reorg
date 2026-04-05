@@ -64,66 +64,80 @@ function amountColor(amount: number) {
 
 // ─── Brand Logos ──────────────────────────────────────────────────────────────
 
-function EbayLogo({ size = "md" }: { size?: "sm" | "md" | "lg" }) {
-  const cls = size === "lg" ? "text-2xl" : size === "sm" ? "text-base" : "text-xl";
+/** eBay — 4 coloured letters, scaled to fit the container */
+function EbayLogo() {
   return (
-    <span className={cn("font-black leading-none tracking-tighter", cls)}>
-      <span style={{ color: "#e53238" }}>e</span>
-      <span style={{ color: "#0064d2" }}>b</span>
-      <span style={{ color: "#f5af02" }}>a</span>
-      <span style={{ color: "#86b817" }}>y</span>
-    </span>
-  );
-}
-
-function ShopifyLogo({ size = "md" }: { size?: "sm" | "md" | "lg" }) {
-  const px = size === "lg" ? 28 : size === "sm" ? 18 : 22;
-  return (
-    <svg width={px} height={px} viewBox="0 0 109 124" fill="none" xmlns="http://www.w3.org/2000/svg">
-      <path d="M95.5 23.4c-.1-.7-.7-1.1-1.2-1.1s-10.5-.8-10.5-.8-7-6.8-7.7-7.5c-.7-.7-2.1-.5-2.6-.3 0 0-1.3.4-3.4 1.1C68 9.2 64.6 4 58.6 4c-.2 0-.3 0-.5.1C56.9 2.3 55.1 1.5 53.5 1.5c-11.7 0-17.3 14.6-19 22.1-4.5 1.4-7.7 2.4-8.1 2.5-2.5.8-2.6.8-2.9 3.1C23.3 31.5 10 131 10 131l73.9 13.9 24.8-6c.1 0-12.9-114.8-13.2-115.5zM66.7 17.4c-1.6.5-3.5 1.1-5.5 1.7v-1.2c0-3.7-.5-6.7-1.4-9.1 3.5.4 5.8 4.2 6.9 8.6zM53.2 9.3c1 2.3 1.6 5.6 1.6 10.1v.6c-3.8 1.2-8 2.5-12.1 3.7 2.3-8.9 6.7-13.3 10.5-14.4zm-3.7-3.4c.6 0 1.3.2 1.9.6-4.8 2.2-9.9 7.9-12.1 19.2l-9.1 2.8C32.5 20.6 37.9 5.9 49.5 5.9z" fill="#95BF47"/>
-      <path d="M94.3 22.3c-.5 0-10.5-.8-10.5-.8s-7-6.8-7.7-7.5c-.3-.3-.6-.4-.9-.4L83.9 145l24.8-6S95.3 23.8 95 23c-.2-.4-.4-.7-.7-.7z" fill="#5E8E3E"/>
-      <path d="M58.6 47.2l-3 11.4s-3.3-1.7-7.4-1.4c-5.9.4-5.9 4.1-5.9 5 .3 4.8 12.9 5.8 13.6 17 .6 8.8-4.7 14.8-12.2 15.3-9 .6-13.6-4.8-13.6-4.8l1.9-7.9s4.7 3.5 8.5 3.3c2.5-.2 3.4-2.2 3.3-3.6-.4-6.3-10.7-5.9-11.3-16.2-.6-8.7 5.2-17.5 17.8-18.3 4.9-.3 7.3.9 7.3.9v-.7z" fill="#fff"/>
+    <svg viewBox="0 0 52 20" width="46" height="18" aria-label="eBay">
+      <text x="0"  y="17" fontFamily="Arial Black,Arial,sans-serif" fontWeight="900" fontSize="20" fill="#e53238">e</text>
+      <text x="13" y="17" fontFamily="Arial Black,Arial,sans-serif" fontWeight="900" fontSize="20" fill="#0064d2">b</text>
+      <text x="26" y="17" fontFamily="Arial Black,Arial,sans-serif" fontWeight="900" fontSize="20" fill="#f5af02">a</text>
+      <text x="38" y="17" fontFamily="Arial Black,Arial,sans-serif" fontWeight="900" fontSize="20" fill="#86b817">y</text>
     </svg>
   );
 }
 
-function AmazonLogo({ size = "md" }: { size?: "sm" | "md" | "lg" }) {
-  const cls = size === "lg" ? "text-xl" : size === "sm" ? "text-sm" : "text-base";
+/** Shopify — green bag mark */
+function ShopifyLogo() {
   return (
-    <span className={cn("font-bold leading-none", cls)}>
-      <span style={{ color: "#FF9900" }}>amazon</span>
-      <span className="ml-0.5 inline-block" style={{ color: "#FF9900", fontSize: "0.65em", verticalAlign: "middle" }}>▸</span>
-    </span>
+    <svg viewBox="0 0 32 36" width="20" height="22" aria-label="Shopify" fill="none">
+      {/* handle */}
+      <path d="M10 12 C10 6.5 13 4 16 4 C19 4 22 6.5 22 12" stroke="#95BF47" strokeWidth="2.5" strokeLinecap="round" fill="none"/>
+      {/* bag body */}
+      <rect x="4" y="12" width="24" height="20" rx="3" fill="#95BF47"/>
+      {/* white S */}
+      <path d="M13.5 19.5 C13.5 18 14.5 17 16 17 C17.5 17 18.5 17.8 18.5 19 C18.5 20.2 17.5 20.8 16 21.3 C14.5 21.8 13.5 22.5 13.5 23.8 C13.5 25.1 14.5 26 16 26 C17.5 26 18.5 25.1 18.5 23.5" stroke="white" strokeWidth="1.8" strokeLinecap="round" fill="none"/>
+    </svg>
   );
 }
 
-function BigCommerceLogo({ size = "md" }: { size?: "sm" | "md" | "lg" }) {
-  const cls = size === "lg" ? "text-xl" : size === "sm" ? "text-sm" : "text-base";
+/** Amazon — wordmark + orange smile */
+function AmazonLogo() {
   return (
-    <span className={cn("font-black leading-none tracking-tight", cls)} style={{ color: "#34313F" }}>
-      <span className="rounded bg-[#34313F] px-1 py-0.5 text-white">bc</span>
-    </span>
+    <svg viewBox="0 0 58 26" width="52" height="22" aria-label="Amazon">
+      <text x="0" y="16" fontFamily="Arial,sans-serif" fontWeight="bold" fontSize="14" fill="#232f3e" letterSpacing="-0.3">amazon</text>
+      <path d="M4 21 Q29 29 54 21" stroke="#FF9900" strokeWidth="2" fill="none" strokeLinecap="round"/>
+      <path d="M50 19 L54 21 L51 24" stroke="#FF9900" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
+    </svg>
   );
 }
 
-function StripeLogo({ size = "md" }: { size?: "sm" | "md" | "lg" }) {
-  const cls = size === "lg" ? "text-xl" : size === "sm" ? "text-sm" : "text-base";
+/** BigCommerce — blue "BC" badge */
+function BigCommerceLogo() {
   return (
-    <span className={cn("font-bold leading-none", cls)} style={{ color: "#635bff" }}>
-      stripe
-    </span>
+    <svg viewBox="0 0 36 22" width="36" height="22" aria-label="BigCommerce">
+      <rect width="36" height="22" rx="4" fill="#183A7D"/>
+      <text x="18" y="16" textAnchor="middle" fontFamily="Arial Black,Arial,sans-serif" fontWeight="900" fontSize="13" fill="white" letterSpacing="0.5">BC</text>
+    </svg>
   );
 }
 
-function PlatformLogo({ platform, size = "md" }: { platform: string; size?: "sm" | "md" | "lg" }) {
+/** Stripe — purple wordmark */
+function StripeLogo() {
+  return (
+    <svg viewBox="0 0 42 16" width="40" height="15" aria-label="Stripe">
+      <text x="0" y="13" fontFamily="Arial,sans-serif" fontWeight="bold" fontSize="14" fill="#635bff" letterSpacing="-0.2">stripe</text>
+    </svg>
+  );
+}
+
+function PlatformLogo({ platform }: { platform: string }) {
   switch (platform) {
     case "TPP_EBAY":
-    case "TT_EBAY":    return <EbayLogo size={size} />;
-    case "SHOPIFY":    return <ShopifyLogo size={size} />;
-    case "AMAZON":     return <AmazonLogo size={size} />;
-    case "BIGCOMMERCE":return <BigCommerceLogo size={size} />;
-    default:           return null;
+    case "TT_EBAY":     return <EbayLogo />;
+    case "SHOPIFY":     return <ShopifyLogo />;
+    case "AMAZON":      return <AmazonLogo />;
+    case "BIGCOMMERCE": return <BigCommerceLogo />;
+    default:            return null;
   }
+}
+
+/** Logo used inside the hero mini-badge (slightly smaller) */
+function PlatformLogoHero({ platform }: { platform: string }) {
+  return (
+    <span className="flex items-center justify-center" style={{ transform: "scale(0.82)", transformOrigin: "center" }}>
+      <PlatformLogo platform={platform} />
+    </span>
+  );
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -338,8 +352,9 @@ function PlatformCard({ p, selectedDate }: { p: PlatformData; selectedDate: stri
         {/* Top row: logo + label + external link */}
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-2.5 min-w-0">
-            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-border/60 bg-card/80">
-              <PlatformLogo platform={p.platform} size="sm" />
+            {/* Logo frame — wide enough for text-based logos */}
+            <div className="flex h-9 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-border/60 bg-card/80 px-2">
+              <PlatformLogo platform={p.platform} />
             </div>
             <p className={cn("truncate text-[11px] font-bold uppercase tracking-[0.14em]", cfg.accent)}>
               {p.label}
@@ -414,18 +429,46 @@ function PlatformCard({ p, selectedDate }: { p: PlatformData; selectedDate: stri
               <div
                 key={payout.id}
                 className={cn(
-                  "flex items-center justify-between gap-2 border-b border-border/25 px-4 py-2.5 last:border-0 transition-colors hover:bg-white/[0.025]",
+                  "border-b border-border/25 px-4 py-2.5 last:border-0 transition-colors hover:bg-white/[0.025]",
                   i === 0 && "bg-white/[0.015]",
                 )}
               >
-                <span className="shrink-0 text-[11px] text-foreground/60">{formatDateShort(payout.date)}</span>
-                <span className={cn("flex-1 text-right text-sm font-bold tabular-nums", amountColor(payout.netAmount))}>
-                  {payout.netAmount > 0 ? "+" : ""}{formatMoney(payout.netAmount, payout.currency)}
-                </span>
-                <span className={cn(
-                  "shrink-0 h-1.5 w-1.5 rounded-full",
-                  scfg?.dot ?? "bg-muted-foreground",
-                )} title={payout.status} />
+                {/* Row 1: date + net amount */}
+                <div className="flex items-baseline justify-between gap-2">
+                  <span className="shrink-0 text-[11px] font-medium text-foreground/60">
+                    {formatDateShort(payout.date)}
+                  </span>
+                  <div className="text-right">
+                    {payout.grossAmount != null && (
+                      <span className="block text-[10px] text-muted-foreground/50">
+                        gross {formatMoney(payout.grossAmount, payout.currency)}
+                      </span>
+                    )}
+                    <span className={cn("text-sm font-bold tabular-nums", amountColor(payout.netAmount))}>
+                      {payout.netAmount > 0 ? "+" : ""}{formatMoney(payout.netAmount, payout.currency)}
+                    </span>
+                  </div>
+                </div>
+                {/* Row 2: type + status + bank */}
+                <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                  {payout.type && (
+                    <span className={cn(
+                      "rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide border",
+                      cfg?.badgeBg, cfg?.badgeText,
+                    )}>
+                      {payout.type}
+                    </span>
+                  )}
+                  <span className={cn("inline-flex items-center gap-1 text-[10px] font-semibold", scfg?.text ?? "text-muted-foreground")}>
+                    <span className={cn("h-1.5 w-1.5 rounded-full", scfg?.dot ?? "bg-muted-foreground")} />
+                    {payout.status}
+                  </span>
+                  {payout.bankAccount && (
+                    <span className="text-[10px] text-muted-foreground/50 truncate max-w-[110px]" title={payout.bankAccount}>
+                      → {payout.bankAccount}
+                    </span>
+                  )}
+                </div>
               </div>
             );
           })
@@ -685,9 +728,9 @@ export default function PayoutsPage() {
                     const currency = dayPayouts?.[0]?.currency ?? p.latestCurrency;
                     const hasAmount = amount != null && (!selectedDate || (dayPayouts?.length ?? 0) > 0);
                     return (
-                      <div key={p.platform} className={cn("rounded-xl border px-3.5 py-2.5", cfg?.badgeBg ?? "border-border bg-card/60")}>
-                        <div className="mb-1">
-                          <PlatformLogo platform={p.platform} size="sm" />
+                      <div key={p.platform} className={cn("rounded-xl border px-3 py-2.5", cfg?.badgeBg ?? "border-border bg-card/60")}>
+                        <div className="mb-1.5 flex items-center justify-center overflow-hidden">
+                          <PlatformLogoHero platform={p.platform} />
                         </div>
                         <p className={cn("text-sm font-bold tabular-nums", hasAmount ? amountColor(amount!) : "text-muted-foreground")}>
                           {hasAmount ? (amount! > 0 ? "+" : "") + formatMoney(amount!, currency) : "—"}

@@ -10,6 +10,7 @@
 import { db } from "@/lib/db";
 import { Platform } from "@prisma/client";
 import { createHash, createHmac } from "crypto";
+import { recordNetworkTransferSample } from "@/lib/services/network-transfer-samples";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -137,7 +138,14 @@ async function fetchEbayPayouts(platform: Platform, label: string): Promise<Plat
       }>;
     };
 
-    const json = (await res.json()) as EbayPayoutResponse;
+    const rawText = await res.text();
+    void recordNetworkTransferSample({
+      channel: "MARKETPLACE_INBOUND",
+      label: `Payouts page — eBay Finances API (${label})`,
+      bytesEstimate: new TextEncoder().encode(rawText).length,
+      metadata: { platform: String(platform), source: "payouts-page" },
+    });
+    const json = JSON.parse(rawText) as EbayPayoutResponse;
     // Sort descending by date client-side (most recent first)
     const sorted = (json.payouts ?? []).sort((a, b) => {
       const da = new Date(a.lastAttemptedPayoutDate ?? a.payoutDate ?? 0).getTime();
@@ -231,6 +239,15 @@ async function fetchShopifyPayouts(storeHandle: string): Promise<PlatformPayouts
 
     if (!res.ok) throw new Error(`Shopify GraphQL HTTP ${res.status}`);
 
+    const rawText = await res.text();
+    void recordNetworkTransferSample({
+      channel: "MARKETPLACE_INBOUND",
+      label: "Payouts page — Shopify GraphQL (payouts)",
+      bytesEstimate: new TextEncoder().encode(rawText).length,
+      metadata: { platform: "SHOPIFY", source: "payouts-page" },
+    });
+    const rawJson = JSON.parse(rawText) as unknown;
+
     type ShopifyPayoutResponse = {
       data?: {
         shopifyPaymentsAccount?: {
@@ -251,7 +268,7 @@ async function fetchShopifyPayouts(storeHandle: string): Promise<PlatformPayouts
       };
     };
 
-    const json = (await res.json()) as ShopifyPayoutResponse;
+    const json = rawJson as ShopifyPayoutResponse;
     const nodes = json.data?.shopifyPaymentsAccount?.payouts?.nodes ?? [];
 
     const payouts: PayoutEntry[] = nodes.map((p) => {
@@ -388,10 +405,17 @@ async function fetchAmazonPayouts(): Promise<PlatformPayouts> {
       },
     );
 
+    const spRawText = await spRes.text();
     if (!spRes.ok) {
-      const text = await spRes.text();
-      return error(Platform.AMAZON, "Amazon", `SP-API failed: ${spRes.status} — ${text.slice(0, 200)}`);
+      return error(Platform.AMAZON, "Amazon", `SP-API failed: ${spRes.status} — ${spRawText.slice(0, 200)}`);
     }
+
+    void recordNetworkTransferSample({
+      channel: "MARKETPLACE_INBOUND",
+      label: "Payouts page — Amazon SP-API (financial event groups)",
+      bytesEstimate: new TextEncoder().encode(spRawText).length,
+      metadata: { platform: "AMAZON", source: "payouts-page" },
+    });
 
     type AmazonGroup = {
       FinancialEventGroupId: string;
@@ -402,7 +426,7 @@ async function fetchAmazonPayouts(): Promise<PlatformPayouts> {
       BeginningBalance?: { CurrencyAmount: number };
     };
 
-    const spJson = (await spRes.json()) as {
+    const spJson = JSON.parse(spRawText) as {
       payload?: { FinancialEventGroupList?: AmazonGroup[] };
     };
 
@@ -472,14 +496,21 @@ async function fetchBigCommercePayouts(): Promise<PlatformPayouts> {
       },
     );
 
+    const stripeRawText = await res.text();
     if (!res.ok) {
-      const text = await res.text();
       return error(
         Platform.BIGCOMMERCE,
         "BigCommerce (BC)",
-        `Stripe payout fetch failed: ${res.status} — ${text.slice(0, 200)}`,
+        `Stripe payout fetch failed: ${res.status} — ${stripeRawText.slice(0, 200)}`,
       );
     }
+
+    void recordNetworkTransferSample({
+      channel: "MARKETPLACE_INBOUND",
+      label: "Payouts page — Stripe API (payouts)",
+      bytesEstimate: new TextEncoder().encode(stripeRawText).length,
+      metadata: { platform: "BIGCOMMERCE", source: "payouts-page" },
+    });
 
     type StripePayout = {
       id: string;
@@ -495,7 +526,7 @@ async function fetchBigCommercePayouts(): Promise<PlatformPayouts> {
       } | null;
     };
 
-    const json = (await res.json()) as { data?: StripePayout[] };
+    const json = JSON.parse(stripeRawText) as { data?: StripePayout[] };
     const payouts: PayoutEntry[] = (json.data ?? []).map((p) => {
       let bankAccount: string | null = null;
       if (p.destination?.last4) {
