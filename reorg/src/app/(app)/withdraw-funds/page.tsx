@@ -97,7 +97,7 @@ export default function WithdrawFundsPage() {
             Shopify Balance &amp; Payments
           </h1>
           <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
-            To see your available balance or move money, open Shopify Balance below. reorG shows your recent payout history from Shopify Payments.
+            Shopify does not expose your Balance account balance via any API — it can only be viewed inside Shopify admin. Click the card below to go straight there. reorG shows your Shopify Payments payout history below.
           </p>
         </div>
         <button
