@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import { getAppEnv } from "@/lib/app-env";
 import { getIntegrationConfig } from "@/lib/integrations/runtime-config";
 import { getExpectedWebhookBaseUrl } from "@/lib/webhook-health";
+import { shopifyGraphQL } from "@/lib/integrations/shopify-graphql";
 
 const SHOPIFY_TOPICS = [
   "PRODUCTS_CREATE",
@@ -71,45 +72,6 @@ async function saveWebhookState(
       } as unknown as Prisma.InputJsonValue,
     },
   });
-}
-
-async function shopifyGraphQL<T>(
-  endpoint: string,
-  accessToken: string,
-  query: string,
-  variables?: Record<string, unknown>,
-): Promise<T> {
-  const response = await fetch(endpoint, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Shopify-Access-Token": accessToken,
-    },
-    body: JSON.stringify({ query, variables }),
-  });
-
-  if (!response.ok) {
-    throw new Error(`Shopify webhook registration failed with HTTP ${response.status}.`);
-  }
-
-  const json = (await response.json()) as {
-    data?: T;
-    errors?: Array<{ message?: string }>;
-  };
-
-  if (json.errors?.length) {
-    throw new Error(
-      `Shopify webhook registration failed: ${json.errors
-        .map((error) => error.message ?? "Unknown GraphQL error")
-        .join("; ")}`,
-    );
-  }
-
-  if (!json.data) {
-    throw new Error("Shopify webhook registration returned no data.");
-  }
-
-  return json.data;
 }
 
 function assertSafeWebhookDestination(_destination: string) {

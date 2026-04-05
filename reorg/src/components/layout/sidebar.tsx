@@ -26,6 +26,7 @@ import {
   ChevronRight,
   X,
   PackageCheck,
+  Wallet,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { usePageVisibility } from "@/lib/use-page-visibility";
@@ -37,6 +38,7 @@ const navItems = [
   { href: "/tasks", label: "Tasks", icon: ClipboardList },
   { href: "/revenue", label: "Revenue", icon: ChartNoAxesCombined },
   { href: "/profit-center", label: "Profit Center", icon: DollarSign },
+  { href: "/withdraw-funds", label: "Withdraw Funds", icon: Wallet },
   { href: "/sync", label: "Sync", icon: RefreshCw },
   { href: "/ship-orders", label: "Ship Orders", icon: PackageCheck },
   { href: "/integrations", label: "Integrations", icon: Plug },
@@ -166,7 +168,8 @@ export function Sidebar({ mobile = false, onNavigate, userRole }: SidebarProps) 
           {navItems
             .filter(
               (item) =>
-                item.href !== "/public-network-transfer" || userRole !== "OPERATOR",
+                (item.href !== "/public-network-transfer" && item.href !== "/withdraw-funds") ||
+                userRole !== "OPERATOR",
             )
             .map((item) => {
             const isActive =
