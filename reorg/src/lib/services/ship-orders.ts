@@ -771,50 +771,33 @@ async function shipShopify(
     Accept: "application/json",
   };
 
-  // Step 1: Fetch fulfillment orders for this order (required by Shopify API 2022-07+)
-  const foRes = await fetchWithTimeout(
-    `https://${storeDomain}/admin/api/${apiVersion}/orders/${platformOrderId}/fulfillment_orders.json`,
+  // Fetch the store's primary location — required by Shopify when the shop
+  // has location-based fulfillment (missing location_id causes 422).
+  let locationId: number | undefined;
+  const locRes = await fetchWithTimeout(
+    `https://${storeDomain}/admin/api/${apiVersion}/locations.json?limit=1`,
     { headers },
   );
-
-  if (!foRes.ok) {
-    throw new Error(
-      `Shopify: could not fetch fulfillment orders for order ${platformOrderId} (${foRes.status})`,
-    );
+  if (locRes.ok) {
+    const locData = JSON.parse(locRes.body) as {
+      locations?: Array<{ id: number }>;
+    };
+    locationId = locData.locations?.[0]?.id;
   }
 
-  const foData = JSON.parse(foRes.body) as {
-    fulfillment_orders?: Array<{ id: number; status: string }>;
+  const fulfillmentPayload: Record<string, unknown> = {
+    tracking_number: trackingNumber,
+    tracking_company: CARRIER,
+    notify_customer: true,
   };
+  if (locationId != null) fulfillmentPayload.location_id = locationId;
 
-  const openFulfillmentOrders = (foData.fulfillment_orders ?? []).filter(
-    (fo) => fo.status === "open" || fo.status === "in_progress",
-  );
-
-  if (openFulfillmentOrders.length === 0) {
-    throw new Error(
-      `Shopify order ${platformOrderId} has no open fulfillment orders — it may already be fulfilled.`,
-    );
-  }
-
-  // Step 2: Create fulfillment via the Fulfillment Orders API (modern Shopify flow)
   const res = await fetchWithTimeout(
-    `https://${storeDomain}/admin/api/${apiVersion}/fulfillments.json`,
+    `https://${storeDomain}/admin/api/${apiVersion}/orders/${platformOrderId}/fulfillments.json`,
     {
       method: "POST",
       headers,
-      body: JSON.stringify({
-        fulfillment: {
-          line_items_by_fulfillment_order: openFulfillmentOrders.map((fo) => ({
-            fulfillment_order_id: fo.id,
-          })),
-          tracking_info: {
-            number: trackingNumber,
-            company: CARRIER,
-          },
-          notify_customer: true,
-        },
-      }),
+      body: JSON.stringify({ fulfillment: fulfillmentPayload }),
     },
   );
 
