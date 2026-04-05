@@ -489,7 +489,9 @@ export function parseInputLines(raw: string): ParsedLine[] {
     .map((l) => l.trim())
     .filter(Boolean)
     .flatMap((line) => {
-      const parts = line.split(/\t| {2,}/).map((p) => p.trim()).filter(Boolean);
+      // Split on any whitespace (single space, tab, multiple spaces) —
+      // order numbers and tracking numbers never contain spaces themselves.
+      const parts = line.split(/\s+/).filter(Boolean);
       if (parts.length < 2) return [];
       const orderNumber = parts[0]!;
       const trackingNumber = parts[1]!;
