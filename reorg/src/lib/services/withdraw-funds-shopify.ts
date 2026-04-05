@@ -51,6 +51,8 @@ export type WithdrawFundsShopifySnapshot = {
   };
   storeHandle: string;
   adminUrls: {
+    /** Shopify Balance account page — shows the real available balance ($607 etc). */
+    shopifyBalance: string;
     /** Settings → Payments (bank account, Shopify Payments). */
     paymentsSettings: string;
     /** Finance → Payouts view (logged-in Shopify session). */
@@ -215,6 +217,7 @@ export async function getWithdrawFundsShopifySnapshot(): Promise<WithdrawFundsSh
 
 function buildAdminUrls(storeHandle: string) {
   return {
+    shopifyBalance: `https://admin.shopify.com/store/${storeHandle}/shopify-balance`,
     paymentsSettings: `https://admin.shopify.com/store/${storeHandle}/settings/payments`,
     payoutsInAdmin: "https://admin.shopify.com/payments/payouts",
   };
