@@ -782,12 +782,17 @@ async function shipShopify(
     const foData = JSON.parse(foRes.body) as {
       fulfillment_orders?: Array<{ id: number; status: string }>;
     };
-    const open = (foData.fulfillment_orders ?? []).filter(
-      (fo) => fo.status === "open" || fo.status === "in_progress",
+    const allFo = foData.fulfillment_orders ?? [];
+    const open = allFo.filter(
+      (fo) =>
+        fo.status === "open" ||
+        fo.status === "in_progress" ||
+        fo.status === "scheduled",
     );
     if (open.length === 0) {
+      const statuses = allFo.map((fo) => fo.status).join(", ") || "none";
       throw new Error(
-        `Shopify order ${platformOrderId} has no open fulfillment orders — it may already be fulfilled.`,
+        `Shopify order ${platformOrderId} has no open fulfillment orders (statuses found: ${statuses}) — it may already be fulfilled.`,
       );
     }
 
@@ -808,12 +813,7 @@ async function shipShopify(
       },
     );
     if (!res.ok) {
-      let detail = res.body;
-      try {
-        const parsed = JSON.parse(res.body) as { errors?: unknown };
-        if (parsed.errors) detail = JSON.stringify(parsed.errors);
-      } catch { /* use raw */ }
-      throw new Error(`Shopify fulfillment failed (${res.status}): ${detail}`);
+      throw new Error(`Shopify fulfillment failed [strategy-1] (${res.status}): ${res.body}`);
     }
     return;
   }
@@ -852,19 +852,14 @@ async function shipShopify(
       },
     );
     if (!res.ok) {
-      let detail = res.body;
-      try {
-        const parsed = JSON.parse(res.body) as { errors?: unknown };
-        if (parsed.errors) detail = JSON.stringify(parsed.errors);
-      } catch { /* use raw */ }
-      throw new Error(`Shopify fulfillment failed (${res.status}): ${detail}`);
+      throw new Error(`Shopify fulfillment failed [strategy-2/legacy] (${res.status}): ${res.body}`);
     }
     return;
   }
 
-  // Fulfillment orders fetch failed for an unexpected reason
+  // Fulfillment orders fetch failed for an unexpected reason — include full body for diagnosis
   throw new Error(
-    `Shopify: could not fetch fulfillment orders for order ${platformOrderId} (${foRes.status})`,
+    `Shopify: fulfillment_orders endpoint returned ${foRes.status} for order ${platformOrderId}: ${foRes.body}`,
   );
 }
 
