@@ -285,9 +285,20 @@ function PayoutsTable({ payouts, platform }: { payouts: PayoutEntry[]; platform:
   );
 }
 
-// ─── Platform Card ────────────────────────────────────────────────────────────
+// ─── Platform Card (compact column tile) ─────────────────────────────────────
 
 type PlatformData = PayoutsSummary["platforms"][number];
+
+/** Short date like "Apr 6" */
+function formatDateShort(iso: string) {
+  try {
+    return new Intl.DateTimeFormat("en-US", {
+      timeZone: "America/New_York",
+      month: "short",
+      day: "numeric",
+    }).format(new Date(iso));
+  } catch { return iso.slice(0, 10); }
+}
 
 function PlatformCard({ p, selectedDate }: { p: PlatformData; selectedDate: string | null }) {
   const cfg = PLATFORM_CONFIG[p.platform] ?? {
@@ -302,96 +313,122 @@ function PlatformCard({ p, selectedDate }: { p: PlatformData; selectedDate: stri
 
   const filteredPayouts = selectedDate
     ? p.payouts.filter((payout) => toETDate(payout.date) === selectedDate)
-    : p.payouts.slice(0, 15);
+    : p.payouts.slice(0, 20);
 
-  const dateTotal = filteredPayouts.reduce((s, payout) => s + payout.netAmount, 0);
+  const dateTotal   = filteredPayouts.reduce((s, payout) => s + payout.netAmount, 0);
   const dateHasPayouts = filteredPayouts.length > 0;
-  const displayAmount = selectedDate
-    ? dateHasPayouts ? dateTotal : null
-    : p.latestNet;
+  const displayAmount  = selectedDate ? (dateHasPayouts ? dateTotal : null) : p.latestNet;
   const displayCurrency = filteredPayouts[0]?.currency ?? p.latestCurrency;
+  const latestDate  = p.payouts[0]?.date ? formatDateShort(p.payouts[0].date) : null;
+
+  // Primary bank account (use the most common across payouts)
+  const primaryBank = p.payouts.find((payout) => payout.bankAccount)?.bankAccount ?? null;
 
   const hint = NO_PAYOUT_HINT[p.platform];
-  const latestPayoutDate = p.payouts[0]?.date ? formatDateCell(p.payouts[0].date) : null;
 
   return (
-    <div className={cn("rounded-2xl border overflow-hidden shadow-sm bg-card/40 backdrop-blur-sm", cfg.border)}>
+    <div className={cn(
+      "flex flex-col rounded-2xl border overflow-hidden shadow-sm bg-card/40 backdrop-blur-sm",
+      cfg.border,
+    )}>
 
-      {/* Header */}
-      <div className={cn("flex items-center justify-between gap-4 px-5 py-4", cfg.headerBg)}>
-        <div className="flex items-center gap-4">
-          {/* Logo block */}
-          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-border/60 bg-card/80 shadow-sm">
-            <PlatformLogo platform={p.platform} size="sm" />
-          </div>
+      {/* ── Card header ── */}
+      <div className={cn("flex flex-col gap-3 p-4", cfg.headerBg)}>
 
-          <div>
-            <div className="flex items-center gap-2">
-              <p className={cn("text-[11px] font-bold uppercase tracking-[0.15em]", cfg.accent)}>
-                {p.label}
-              </p>
-              {!selectedDate && latestPayoutDate && !p.fetchError && (
-                <span className="rounded-full bg-muted/50 px-2 py-0.5 text-[10px] text-muted-foreground">
-                  latest: {latestPayoutDate}
-                </span>
-              )}
+        {/* Top row: logo + label + external link */}
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-border/60 bg-card/80">
+              <PlatformLogo platform={p.platform} size="sm" />
             </div>
+            <p className={cn("truncate text-[11px] font-bold uppercase tracking-[0.14em]", cfg.accent)}>
+              {p.label}
+            </p>
+          </div>
+          {p.adminUrl && (
+            <a
+              href={p.adminUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="shrink-0 cursor-pointer rounded-md border border-border/50 bg-card/60 p-1.5 text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
+              title={p.adminUrlLabel ?? "Open"}
+            >
+              <ExternalLink className="h-3 w-3" />
+            </a>
+          )}
+        </div>
+
+        {/* Amount */}
+        {!p.fetchError ? (
+          <div>
             <p className={cn(
-              "mt-0.5 text-2xl font-bold tabular-nums leading-none",
+              "text-2xl font-black tabular-nums leading-none",
               displayAmount != null ? amountColor(displayAmount) : "text-muted-foreground",
             )}>
               {displayAmount != null
                 ? (displayAmount > 0 ? "+" : "") + formatMoney(displayAmount, displayCurrency)
                 : "—"}
             </p>
+            <p className="mt-1 text-[11px] text-muted-foreground/70">
+              {selectedDate ? "on this date" : latestDate ? `latest · ${latestDate}` : "no data"}
+            </p>
           </div>
-        </div>
+        ) : (
+          <p className="text-lg font-bold text-muted-foreground">—</p>
+        )}
 
-        {p.adminUrl && (
-          <a
-            href={p.adminUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex shrink-0 cursor-pointer items-center gap-1.5 rounded-lg border border-border/60 bg-card/60 px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:border-border hover:bg-muted/60 hover:text-foreground"
-          >
-            {p.adminUrlLabel ?? "Open"}
-            <ExternalLink className="h-3 w-3" />
-          </a>
+        {/* Bank badge */}
+        {primaryBank && !p.fetchError && (
+          <span className="inline-flex w-fit items-center gap-1.5 rounded-lg border border-border/50 bg-muted/30 px-2 py-1 text-[11px] font-medium text-foreground/70">
+            <span className="h-1.5 w-1.5 rounded-full bg-emerald-400/70" />
+            {primaryBank}
+          </span>
         )}
       </div>
 
-      {/* Body */}
-      <div className="border-t border-border/30">
+      {/* ── Card body: compact payout rows ── */}
+      <div className="flex-1 overflow-y-auto border-t border-border/30" style={{ maxHeight: 260 }}>
         {isStripeNotConfigured ? (
-          <div className="flex items-start gap-3 px-5 py-4">
-            <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#635bff]/15">
-              <StripeLogo size="sm" />
-            </div>
-            <p className="text-sm text-muted-foreground">
-              Add{" "}
-              <code className="rounded border border-[#635bff]/30 bg-[#635bff]/10 px-1.5 py-0.5 text-xs font-mono text-[#635bff]">
-                STRIPE_SECRET_KEY
-              </code>{" "}
-              to your environment variables to see live Stripe payout data here.
-            </p>
+          <div className="px-4 py-3 text-xs text-muted-foreground/70">
+            Add <code className="rounded bg-[#635bff]/10 px-1 text-[#635bff]">STRIPE_SECRET_KEY</code> to see live data.
           </div>
         ) : p.fetchError ? (
-          <div className="flex items-start gap-2.5 px-5 py-4 text-sm text-amber-200/80">
-            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" />
-            {p.fetchError}
+          <div className="flex items-start gap-2 px-4 py-3 text-xs text-amber-200/80">
+            <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-400" />
+            <span>{p.fetchError}</span>
           </div>
         ) : selectedDate && !dateHasPayouts ? (
-          <div className="flex items-start gap-3 px-5 py-4">
-            <Info className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground/50" />
+          <div className="flex items-start gap-2 px-4 py-3">
+            <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground/40" />
             <div>
-              <p className="text-sm font-medium text-muted-foreground">{hint?.title ?? "No payout on this date"}</p>
-              <p className="mt-0.5 text-xs text-muted-foreground/60">{hint?.body}</p>
+              <p className="text-xs font-medium text-muted-foreground">{hint?.title ?? "No payout"}</p>
+              <p className="mt-0.5 text-[11px] leading-relaxed text-muted-foreground/60">{hint?.body}</p>
             </div>
           </div>
         ) : filteredPayouts.length === 0 ? (
-          <p className="px-5 py-4 text-sm text-muted-foreground">No payout history available.</p>
+          <p className="px-4 py-3 text-xs text-muted-foreground">No data available.</p>
         ) : (
-          <PayoutsTable payouts={filteredPayouts} platform={p.platform} />
+          filteredPayouts.map((payout, i) => {
+            const scfg = STATUS_CONFIG[payout.status];
+            return (
+              <div
+                key={payout.id}
+                className={cn(
+                  "flex items-center justify-between gap-2 border-b border-border/25 px-4 py-2.5 last:border-0 transition-colors hover:bg-white/[0.025]",
+                  i === 0 && "bg-white/[0.015]",
+                )}
+              >
+                <span className="shrink-0 text-[11px] text-foreground/60">{formatDateShort(payout.date)}</span>
+                <span className={cn("flex-1 text-right text-sm font-bold tabular-nums", amountColor(payout.netAmount))}>
+                  {payout.netAmount > 0 ? "+" : ""}{formatMoney(payout.netAmount, payout.currency)}
+                </span>
+                <span className={cn(
+                  "shrink-0 h-1.5 w-1.5 rounded-full",
+                  scfg?.dot ?? "bg-muted-foreground",
+                )} title={payout.status} />
+              </div>
+            );
+          })
         )}
       </div>
     </div>
@@ -677,8 +714,8 @@ export default function PayoutsPage() {
             </p>
           )}
 
-          {/* Platform cards — vertical stack */}
-          <div className="flex flex-col gap-3.5">
+          {/* Platform cards — horizontal 5-col grid */}
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
             {data.platforms.map((p) => (
               <PlatformCard key={p.platform} p={p} selectedDate={selectedDate} />
             ))}
