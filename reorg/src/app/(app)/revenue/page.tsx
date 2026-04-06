@@ -620,8 +620,17 @@ export default function RevenuePage() {
   async function handleManualRefresh() {
     setSyncing(true);
     setWatchingRefresh(false);
-    setBanner("Refreshing revenue data. This can take a few minutes for eBay. Watch Refresh Status below for live job updates.");
     setError("");
+
+    // Always sync at least 90 days so a single refresh covers both the 30D and
+    // 90D views. If the user is on 365D or a custom range further back, use
+    // that wider window instead.
+    const minSyncFrom = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
+    minSyncFrom.setHours(0, 0, 0, 0);
+    const syncFrom = queryRange.fromDate < minSyncFrom ? queryRange.fromDate : minSyncFrom;
+    const syncDays = Math.round((queryRange.toDate.getTime() - syncFrom.getTime()) / (24 * 60 * 60 * 1000));
+
+    setBanner(`Refreshing ${syncDays}-day revenue window. This can take a few minutes for eBay. Watch Refresh Status below for live job updates.`);
 
     try {
       const platforms =
@@ -634,7 +643,7 @@ export default function RevenuePage() {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            from: queryRange.fromDate.toISOString(),
+            from: syncFrom.toISOString(),
             to: queryRange.toDate.toISOString(),
             platforms,
           }),
