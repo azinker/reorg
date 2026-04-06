@@ -1,5 +1,5 @@
 import { db } from "@/lib/db";
-import { Prisma } from "@prisma/client";
+import { Prisma, Platform } from "@prisma/client";
 import {
   getIntegrationConfig,
   type SyncMode,
@@ -79,17 +79,17 @@ function getMinutesUntilDue(now: Date, nextDueAt: Date | null) {
  * Platforms that support listing sync (pull catalog from marketplace).
  * Amazon is intentionally excluded — it is only used for Ship Orders and Payouts.
  */
-const LISTING_SYNC_PLATFORMS = new Set([
-  "TPP_EBAY",
-  "TT_EBAY",
-  "SHOPIFY",
-  "BIGCOMMERCE",
-]);
+const LISTING_SYNC_PLATFORMS: Platform[] = [
+  Platform.TPP_EBAY,
+  Platform.TT_EBAY,
+  Platform.SHOPIFY,
+  Platform.BIGCOMMERCE,
+];
 
 export async function planScheduledSyncs(now = new Date()) {
   const [integrations, runningJobs] = await Promise.all([
     db.integration.findMany({
-      where: { platform: { in: [...LISTING_SYNC_PLATFORMS] as string[] } },
+      where: { platform: { in: LISTING_SYNC_PLATFORMS } },
       orderBy: { platform: "asc" },
     }),
     db.syncJob.findMany({
