@@ -1567,9 +1567,11 @@ async function getAmazonLwaTokenRev(refreshToken: string): Promise<string> {
 }
 
 type SpApiResponse = { payload?: { FinancialEvents?: AmazonFinancialEvents; NextToken?: string }; errors?: unknown[] };
+type AmazonMoney = { CurrencyCode?: string; CurrencyAmount?: number };
 type AmazonFinancialEvents = {
   ShipmentEventList?: AmazonShipmentEvent[];
   RefundEventList?: AmazonShipmentEvent[];
+  AdvertisingTransactionEventList?: AmazonAdvertisingEvent[];
 };
 type AmazonShipmentEvent = {
   AmazonOrderId?: string;
@@ -1581,9 +1583,31 @@ type AmazonShipmentItem = {
   SellerSKU?: string;
   OrderItemIdentifier?: string;
   QuantityShipped?: number;
-  ItemChargeList?: Array<{ ChargeType?: string; ChargeAmount?: { CurrencyCode?: string; CurrencyAmount?: number } }>;
-  ItemFeeList?: Array<{ FeeType?: string; FeeAmount?: { CurrencyCode?: string; CurrencyAmount?: number } }>;
+  ItemChargeList?: Array<{ ChargeType?: string; ChargeAmount?: AmazonMoney }>;
+  ItemFeeList?: Array<{ FeeType?: string; FeeAmount?: AmazonMoney }>;
 };
+type AmazonAdvertisingEvent = {
+  PostedDate?: string;
+  TransactionType?: string;
+  InvoiceId?: string;
+  BaseValue?: AmazonMoney;
+  TaxValue?: AmazonMoney;
+  TransactionValue?: AmazonMoney;
+};
+
+/**
+ * Classify an Amazon fee type string into revenue categories.
+ * Amazon returns negative CurrencyAmount values for costs; callers should
+ * Math.abs() before accumulating.
+ */
+function classifyAmazonFeeType(feeType: string | null | undefined): "ADVERTISING_FEE" | "MARKETPLACE_FEE" | "OTHER" {
+  const n = (feeType ?? "").toUpperCase();
+  if (n.includes("ADVERTIS") || n.includes("SPONSOR") || n.includes("PROMOTED")) return "ADVERTISING_FEE";
+  // FBA/fulfillment fees are a marketplace cost but shown separately in KPIs
+  if (n.includes("FBA") || n.includes("FULFILLMENT") || n.includes("WEIGHT_BASED") || n.includes("PLACEMENT")) return "OTHER";
+  // Everything else (ReferralFee, Commission, VariableClosingFee, PerItemFee, FixedClosingFee, etc.) is a marketplace fee
+  return "MARKETPLACE_FEE";
+}
 
 async function spApiPagedFinancialEvents(
   lwaToken: string,
@@ -1602,6 +1626,7 @@ async function spApiPagedFinancialEvents(
   const path   = "/finances/v0/financialEvents";
   const allShipments: AmazonShipmentEvent[] = [];
   const allRefunds:   AmazonShipmentEvent[] = [];
+  const allAdEvents:  AmazonAdvertisingEvent[] = [];
   let nextToken: string | undefined;
   let page = 0;
   const MAX_PAGES = 20;
@@ -1624,11 +1649,12 @@ async function spApiPagedFinancialEvents(
     if (json.errors?.length) throw new Error(`Amazon SP-API error: ${JSON.stringify(json.errors).slice(0, 200)}`);
     allShipments.push(...(json.payload?.FinancialEvents?.ShipmentEventList ?? []));
     allRefunds.push(...(json.payload?.FinancialEvents?.RefundEventList ?? []));
+    allAdEvents.push(...(json.payload?.FinancialEvents?.AdvertisingTransactionEventList ?? []));
     nextToken = json.payload?.NextToken;
     page++;
   } while (nextToken && page < MAX_PAGES);
 
-  return { ShipmentEventList: allShipments, RefundEventList: allRefunds };
+  return { ShipmentEventList: allShipments, RefundEventList: allRefunds, AdvertisingTransactionEventList: allAdEvents };
 }
 
 function mapAmazonItemsToLines(
@@ -1645,18 +1671,43 @@ function mapAmazonItemsToLines(
     const sign     = isRefund ? -1 : 1;
 
     for (const [idx, item] of (event.ShipmentItemList ?? []).entries()) {
-      const sku      = item.SellerSKU ?? item.ASIN ?? "";
-      const lineId   = item.OrderItemIdentifier ?? `${orderId}-${idx}`;
-      const qty      = (item.QuantityShipped ?? 1) * sign;
+      const sku    = item.SellerSKU ?? item.ASIN ?? "";
+      const lineId = item.OrderItemIdentifier ?? `${orderId}-${idx}`;
+      const qty    = (item.QuantityShipped ?? 1) * sign;
 
-      const principal  = (item.ItemChargeList ?? []).find(c => c.ChargeType === "Principal")?.ChargeAmount?.CurrencyAmount ?? 0;
-      const tax        = (item.ItemChargeList ?? []).find(c => c.ChargeType === "Tax")?.ChargeAmount?.CurrencyAmount ?? 0;
-      const shipping   = (item.ItemChargeList ?? []).find(c => c.ChargeType === "ShippingCharge")?.ChargeAmount?.CurrencyAmount ?? 0;
-      const referral   = Math.abs((item.ItemFeeList ?? []).find(f => f.FeeType === "ReferralFee")?.FeeAmount?.CurrencyAmount ?? 0);
-      const otherFees  = (item.ItemFeeList ?? [])
-        .filter(f => f.FeeType !== "ReferralFee")
-        .reduce((s, f) => s + Math.abs(f.FeeAmount?.CurrencyAmount ?? 0), 0);
-      const currency   = item.ItemChargeList?.[0]?.ChargeAmount?.CurrencyCode ?? "USD";
+      const principal = (item.ItemChargeList ?? []).find(c => c.ChargeType === "Principal")?.ChargeAmount?.CurrencyAmount ?? 0;
+      const tax       = (item.ItemChargeList ?? []).find(c => c.ChargeType === "Tax")?.ChargeAmount?.CurrencyAmount ?? 0;
+      const shipping  = (item.ItemChargeList ?? []).find(c => c.ChargeType === "ShippingCharge")?.ChargeAmount?.CurrencyAmount ?? 0;
+      const currency  = item.ItemChargeList?.[0]?.ChargeAmount?.CurrencyCode ?? item.ItemFeeList?.[0]?.FeeAmount?.CurrencyCode ?? "USD";
+
+      // Classify all fee line items using the Amazon fee classifier
+      let marketplaceFee = 0;
+      let advertisingFee = 0;
+      let otherFee = 0;
+      for (const fee of (item.ItemFeeList ?? [])) {
+        const abs = Math.abs(fee.FeeAmount?.CurrencyAmount ?? 0);
+        const cls = classifyAmazonFeeType(fee.FeeType);
+        if (cls === "ADVERTISING_FEE") advertisingFee += abs;
+        else if (cls === "MARKETPLACE_FEE") marketplaceFee += abs;
+        else otherFee += abs;
+
+        // Emit a per-fee financial event for precise KPI tracking
+        if (abs > 0) {
+          financialEvents.push({
+            integrationId,
+            platform: "AMAZON",
+            eventType: "TRANSACTION",
+            classification: cls,
+            externalEventId: `${lineId}-fee-${fee.FeeType ?? idx}`,
+            externalOrderId: orderId,
+            externalLineId: lineId,
+            sku: sku || null,
+            amount: abs,
+            currencyCode: currency,
+            occurredAt: postedAt,
+          });
+        }
+      }
 
       lines.push({
         platform: "AMAZON",
@@ -1668,11 +1719,12 @@ function mapAmazonItemsToLines(
         quantity: qty,
         currencyCode: currency,
         grossRevenueAmount: principal * sign,
-        marketplaceFeeAmount: referral,
-        otherFeeAmount: otherFees,
+        marketplaceFeeAmount: marketplaceFee > 0 ? marketplaceFee : null,
+        advertisingFeeAmount: advertisingFee > 0 ? advertisingFee : null,
+        otherFeeAmount: otherFee > 0 ? otherFee : null,
         taxAmount: tax * sign,
         shippingAmount: shipping * sign,
-        netRevenueAmount: (principal - referral - otherFees) * sign,
+        netRevenueAmount: (principal - marketplaceFee - advertisingFee - otherFee) * sign,
         isCancelled: false,
         isReturn: isRefund,
       });
@@ -1699,6 +1751,33 @@ function mapAmazonItemsToLines(
   return { lines, financialEvents };
 }
 
+/**
+ * Map AdvertisingTransactionEventList entries to ADVERTISING_FEE financial events.
+ * These are account-level ad charges not tied to individual orders.
+ */
+function mapAmazonAdvertisingEvents(
+  events: AmazonAdvertisingEvent[],
+  integrationId: string,
+): RevenueFinancialEventInput[] {
+  return events.flatMap((ev, idx) => {
+    const postedAt = ev.PostedDate ? new Date(ev.PostedDate) : new Date();
+    // Use BaseValue (before tax) for the ad spend amount; it's negative in Amazon's data
+    const amount = Math.abs(ev.BaseValue?.CurrencyAmount ?? ev.TransactionValue?.CurrencyAmount ?? 0);
+    if (amount === 0) return [];
+    const currency = ev.BaseValue?.CurrencyCode ?? ev.TransactionValue?.CurrencyCode ?? "USD";
+    return [{
+      integrationId,
+      platform: "AMAZON" as const,
+      eventType: "BILLING_ACTIVITY" as const,
+      classification: "ADVERTISING_FEE" as const,
+      externalEventId: ev.InvoiceId ?? `ad-event-${idx}-${postedAt.toISOString()}`,
+      amount,
+      currencyCode: currency,
+      occurredAt: postedAt,
+    }];
+  });
+}
+
 async function fetchAmazonRevenue(
   integration: RevenueIntegration,
   from: Date,
@@ -1722,10 +1801,12 @@ async function fetchAmazonRevenue(
   const events = await spApiPagedFinancialEvents(lwaToken, from, to, options?.signal);
   const shipResult   = mapAmazonItemsToLines(events.ShipmentEventList ?? [], integration.id, false);
   const refundResult = mapAmazonItemsToLines(events.RefundEventList   ?? [], integration.id, true);
-  const allLines    = [...shipResult.lines,    ...refundResult.lines];
-  const allFinEvts  = [...shipResult.financialEvents, ...refundResult.financialEvents];
+  const adFinEvts    = mapAmazonAdvertisingEvents(events.AdvertisingTransactionEventList ?? [], integration.id);
+  const allLines     = [...shipResult.lines, ...refundResult.lines];
+  const allFinEvts   = [...shipResult.financialEvents, ...refundResult.financialEvents, ...adFinEvts];
+  const adEventCount = events.AdvertisingTransactionEventList?.length ?? 0;
   await updateSyncStage(syncStages, "events", "COMPLETED",
-    `${allLines.length} line items (${events.ShipmentEventList?.length ?? 0} shipment events, ${events.RefundEventList?.length ?? 0} refund events).`,
+    `${allLines.length} line items (${events.ShipmentEventList?.length ?? 0} shipment, ${events.RefundEventList?.length ?? 0} refund, ${adEventCount} advertising events).`,
     options);
 
   return { lines: allLines, financialEvents: allFinEvts, exactSummary: null, syncStages, warnings: [] };
