@@ -1572,6 +1572,13 @@ type AmazonFinancialEvents = {
   ShipmentEventList?: AmazonShipmentEvent[];
   RefundEventList?: AmazonShipmentEvent[];
   AdvertisingTransactionEventList?: AmazonAdvertisingEvent[];
+  ProductAdsPaymentEventList?: AmazonAdvertisingEvent[];
+  AdjustmentEventList?: AmazonAdjustmentEvent[];
+};
+type AmazonAdjustmentEvent = {
+  AdjustmentType?: string;
+  PostedDate?: string;
+  AdjustmentAmount?: AmazonMoney;
 };
 type AmazonShipmentEvent = {
   AmazonOrderId?: string;
@@ -1624,9 +1631,10 @@ async function spApiPagedFinancialEvents(
 
   const spHost = "sellingpartnerapi-na.amazon.com";
   const path   = "/finances/v0/financialEvents";
-  const allShipments: AmazonShipmentEvent[] = [];
-  const allRefunds:   AmazonShipmentEvent[] = [];
-  const allAdEvents:  AmazonAdvertisingEvent[] = [];
+  const allShipments:   AmazonShipmentEvent[] = [];
+  const allRefunds:     AmazonShipmentEvent[] = [];
+  const allAdEvents:    AmazonAdvertisingEvent[] = [];
+  const allAdjustments: AmazonAdjustmentEvent[] = [];
   let nextToken: string | undefined;
   let page = 0;
   const MAX_PAGES = 20;
@@ -1649,12 +1657,20 @@ async function spApiPagedFinancialEvents(
     if (json.errors?.length) throw new Error(`Amazon SP-API error: ${JSON.stringify(json.errors).slice(0, 200)}`);
     allShipments.push(...(json.payload?.FinancialEvents?.ShipmentEventList ?? []));
     allRefunds.push(...(json.payload?.FinancialEvents?.RefundEventList ?? []));
+    // AdvertisingTransactionEventList = legacy field; ProductAdsPaymentEventList = current field
     allAdEvents.push(...(json.payload?.FinancialEvents?.AdvertisingTransactionEventList ?? []));
+    allAdEvents.push(...(json.payload?.FinancialEvents?.ProductAdsPaymentEventList ?? []));
+    allAdjustments.push(...(json.payload?.FinancialEvents?.AdjustmentEventList ?? []));
     nextToken = json.payload?.NextToken;
     page++;
   } while (nextToken && page < MAX_PAGES);
 
-  return { ShipmentEventList: allShipments, RefundEventList: allRefunds, AdvertisingTransactionEventList: allAdEvents };
+  return {
+    ShipmentEventList: allShipments,
+    RefundEventList: allRefunds,
+    AdvertisingTransactionEventList: allAdEvents,
+    AdjustmentEventList: allAdjustments,
+  };
 }
 
 function mapAmazonItemsToLines(
@@ -1752,8 +1768,9 @@ function mapAmazonItemsToLines(
 }
 
 /**
- * Map AdvertisingTransactionEventList entries to ADVERTISING_FEE financial events.
- * These are account-level ad charges not tied to individual orders.
+ * Map AdvertisingTransactionEventList / ProductAdsPaymentEventList entries to
+ * ADVERTISING_FEE financial events. These are account-level ad charges not
+ * tied to individual orders.
  */
 function mapAmazonAdvertisingEvents(
   events: AmazonAdvertisingEvent[],
@@ -1761,7 +1778,7 @@ function mapAmazonAdvertisingEvents(
 ): RevenueFinancialEventInput[] {
   return events.flatMap((ev, idx) => {
     const postedAt = ev.PostedDate ? new Date(ev.PostedDate) : new Date();
-    // Use BaseValue (before tax) for the ad spend amount; it's negative in Amazon's data
+    // Use BaseValue (before tax) for the ad spend; amounts are negative in Amazon's data
     const amount = Math.abs(ev.BaseValue?.CurrencyAmount ?? ev.TransactionValue?.CurrencyAmount ?? 0);
     if (amount === 0) return [];
     const currency = ev.BaseValue?.CurrencyCode ?? ev.TransactionValue?.CurrencyCode ?? "USD";
@@ -1771,6 +1788,47 @@ function mapAmazonAdvertisingEvents(
       eventType: "BILLING_ACTIVITY" as const,
       classification: "ADVERTISING_FEE" as const,
       externalEventId: ev.InvoiceId ?? `ad-event-${idx}-${postedAt.toISOString()}`,
+      amount,
+      currencyCode: currency,
+      occurredAt: postedAt,
+    }];
+  });
+}
+
+/**
+ * Map AdjustmentEventList entries to financial events.
+ * Captures return postage billing, refunds, and other account-level adjustments.
+ * Only negative amounts (real costs) are captured; positive adjustments are credits.
+ */
+function mapAmazonAdjustmentEvents(
+  events: AmazonAdjustmentEvent[],
+  integrationId: string,
+): RevenueFinancialEventInput[] {
+  return events.flatMap((ev, idx) => {
+    const postedAt = ev.PostedDate ? new Date(ev.PostedDate) : new Date();
+    const raw = ev.AdjustmentAmount?.CurrencyAmount ?? 0;
+    if (raw === 0) return [];
+    const amount = Math.abs(raw);
+    const currency = ev.AdjustmentAmount?.CurrencyCode ?? "USD";
+    const adjType = (ev.AdjustmentType ?? "").toUpperCase();
+
+    // Classify the adjustment
+    let classification: RevenueFinancialEventInput["classification"];
+    if (adjType.includes("POSTAGE") || adjType.includes("SHIPPING") || adjType.includes("FUELSURCHARGE") || adjType.includes("FUEL")) {
+      classification = "SHIPPING_LABEL";
+    } else if (raw > 0) {
+      // Positive adjustments = credits back to seller
+      classification = "CREDIT";
+    } else {
+      classification = "OTHER";
+    }
+
+    return [{
+      integrationId,
+      platform: "AMAZON" as const,
+      eventType: "BILLING_ACTIVITY" as const,
+      classification,
+      externalEventId: `adj-${ev.AdjustmentType ?? "unknown"}-${idx}-${postedAt.toISOString()}`,
       amount,
       currencyCode: currency,
       occurredAt: postedAt,
@@ -1802,11 +1860,13 @@ async function fetchAmazonRevenue(
   const shipResult   = mapAmazonItemsToLines(events.ShipmentEventList ?? [], integration.id, false);
   const refundResult = mapAmazonItemsToLines(events.RefundEventList   ?? [], integration.id, true);
   const adFinEvts    = mapAmazonAdvertisingEvents(events.AdvertisingTransactionEventList ?? [], integration.id);
+  const adjFinEvts   = mapAmazonAdjustmentEvents(events.AdjustmentEventList ?? [], integration.id);
   const allLines     = [...shipResult.lines, ...refundResult.lines];
-  const allFinEvts   = [...shipResult.financialEvents, ...refundResult.financialEvents, ...adFinEvts];
+  const allFinEvts   = [...shipResult.financialEvents, ...refundResult.financialEvents, ...adFinEvts, ...adjFinEvts];
   const adEventCount = events.AdvertisingTransactionEventList?.length ?? 0;
+  const adjEventCount = events.AdjustmentEventList?.length ?? 0;
   await updateSyncStage(syncStages, "events", "COMPLETED",
-    `${allLines.length} line items (${events.ShipmentEventList?.length ?? 0} shipment, ${events.RefundEventList?.length ?? 0} refund, ${adEventCount} advertising events).`,
+    `${allLines.length} line items (${events.ShipmentEventList?.length ?? 0} shipment, ${events.RefundEventList?.length ?? 0} refund, ${adEventCount} ad, ${adjEventCount} adjustment events).`,
     options);
 
   return { lines: allLines, financialEvents: allFinEvts, exactSummary: null, syncStages, warnings: [] };
