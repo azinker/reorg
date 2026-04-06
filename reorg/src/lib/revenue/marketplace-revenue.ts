@@ -1588,9 +1588,12 @@ type AmazonShipmentItem = {
 async function spApiPagedFinancialEvents(
   lwaToken: string,
   from: Date,
-  to: Date,
+  toRaw: Date,
   signal?: AbortSignal,
 ): Promise<AmazonFinancialEvents> {
+  // SP-API rejects PostedBefore values that are within 2 minutes of now — cap to 3 min ago.
+  const safeMax = new Date(Date.now() - 3 * 60 * 1000);
+  const to = toRaw > safeMax ? safeMax : toRaw;
   const accessKeyId     = process.env.AMAZON_AWS_ACCESS_KEY_ID;
   const secretAccessKey = process.env.AMAZON_AWS_SECRET_ACCESS_KEY;
   if (!accessKeyId || !secretAccessKey) throw new Error("Amazon AWS credentials not configured.");
