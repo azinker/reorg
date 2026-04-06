@@ -13,7 +13,7 @@ import {
   RevenueServiceError,
 } from "@/lib/services/revenue";
 
-const platformSchema = z.enum(["TPP_EBAY", "TT_EBAY", "SHOPIFY", "BIGCOMMERCE"]);
+const platformSchema = z.enum(["TPP_EBAY", "TT_EBAY", "SHOPIFY", "BIGCOMMERCE", "AMAZON"]);
 
 const revenueQuerySchema = z.object({
   preset: z.enum(REVENUE_RANGE_PRESETS).default("30d"),

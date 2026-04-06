@@ -746,7 +746,7 @@ async function getEnabledRevenueIntegrations(): Promise<RevenueIntegrationRecord
   return db.integration.findMany({
     where: {
       enabled: true,
-      platform: { in: ["TPP_EBAY", "TT_EBAY", "SHOPIFY", "BIGCOMMERCE"] },
+      platform: { in: ["TPP_EBAY", "TT_EBAY", "SHOPIFY", "BIGCOMMERCE", "AMAZON"] },
     },
     select: { id: true, platform: true, label: true, config: true },
     orderBy: { createdAt: "asc" },
@@ -768,7 +768,7 @@ async function getRevenueSyncIntegrations(
     where: {
       enabled: true,
       platform: {
-        in: request.platforms.length ? request.platforms : ["TPP_EBAY", "TT_EBAY", "SHOPIFY", "BIGCOMMERCE"],
+        in: request.platforms.length ? request.platforms : ["TPP_EBAY", "TT_EBAY", "SHOPIFY", "BIGCOMMERCE", "AMAZON"],
       },
     },
     select: { id: true, platform: true, label: true, config: true },

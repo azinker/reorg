@@ -12,7 +12,7 @@ const syncSchema = z.object({
   from: z.string().datetime(),
   to: z.string().datetime(),
   platforms: z
-    .array(z.enum(["TPP_EBAY", "TT_EBAY", "SHOPIFY", "BIGCOMMERCE"]))
+    .array(z.enum(["TPP_EBAY", "TT_EBAY", "SHOPIFY", "BIGCOMMERCE", "AMAZON"]))
     .optional()
     .default([]),
 });
