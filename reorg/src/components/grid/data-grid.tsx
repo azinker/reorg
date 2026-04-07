@@ -2023,7 +2023,7 @@ export function DataGrid({
         // Guard against sibling-variant bleed: if the push result targets a specific
         // variant and this entry belongs to a different variant, don't apply it.
         const safelyPushed =
-          pushed && (!pushed.variantId || !entry.variantId || pushed.variantId === entry.variantId)
+          pushed && (!pushed.platformVariantId || !entry.variantId || pushed.platformVariantId === entry.variantId)
             ? pushed
             : undefined;
         return safelyPushed
@@ -2040,7 +2040,7 @@ export function DataGrid({
         }).map((key) => successMap.get(key)).find(Boolean);
         // Same guard as salePrices — don't bleed a variant-specific push to siblings.
         const safelyPushed =
-          pushed && (!pushed.variantId || !entry.variantId || pushed.variantId === entry.variantId)
+          pushed && (!pushed.platformVariantId || !entry.variantId || pushed.platformVariantId === entry.variantId)
             ? pushed
             : undefined;
         return safelyPushed

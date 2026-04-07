@@ -41,6 +41,7 @@ type PushResultItem = {
   marketplaceListingId: string;
   platform: Platform;
   listingId: string;
+  platformVariantId?: string | null;
   field: string;
   oldValue: number | string | null;
   newValue: number | string;
