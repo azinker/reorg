@@ -1133,23 +1133,38 @@ async function shipBigCommerce(
   };
   if (addressId != null) payload.order_address_id = addressId;
 
-  const res = await fetchWithTimeout(
-    `https://api.bigcommerce.com/stores/${storeHash}/v2/orders/${orderId}/shipments`,
-    {
-      method: "POST",
-      headers: { "X-Auth-Token": accessToken, "Content-Type": "application/json", Accept: "application/json" },
-      body: JSON.stringify(payload),
-    },
-  );
+  const url = `https://api.bigcommerce.com/stores/${storeHash}/v2/orders/${orderId}/shipments`;
+  const reqInit = {
+    method: "POST" as const,
+    headers: { "X-Auth-Token": accessToken, "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify(payload),
+  };
 
-  if (!res.ok) {
+  // Retry on 429 with up to 3 attempts and exponential back-off
+  const MAX_BC_ATTEMPTS = 3;
+  let lastError: Error | null = null;
+  for (let attempt = 1; attempt <= MAX_BC_ATTEMPTS; attempt++) {
+    const res = await fetchWithTimeout(url, reqInit);
+    if (res.ok) return;
+
+    if (res.status === 429 && attempt < MAX_BC_ATTEMPTS) {
+      const retryAfterMs = Math.min(
+        Number(res.body.match(/"retry_after":(\d+)/)?.[1] ?? 0) * 1000 || 0,
+        30_000,
+      ) || attempt * 2_000;
+      await new Promise((r) => setTimeout(r, retryAfterMs));
+      continue;
+    }
+
     let detail = res.body;
     try {
       const parsed = JSON.parse(res.body) as Array<Record<string, unknown>>;
       detail = parsed.map((e) => String(e.message ?? e.title ?? "")).join("; ");
     } catch { /* use raw */ }
-    throw new Error(`BigCommerce shipment failed (${res.status}): ${detail}`);
+    lastError = new Error(`BigCommerce shipment failed (${res.status}): ${detail}`);
+    break;
   }
+  if (lastError) throw lastError;
 }
 
 async function shipShopify(

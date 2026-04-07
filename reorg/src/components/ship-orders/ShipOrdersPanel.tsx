@@ -13,6 +13,8 @@ import {
   ShieldCheck,
   ShieldAlert,
   ShieldOff,
+  Copy,
+  Check,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { IdentifyResult, ShipResult } from "@/lib/services/ship-orders";
@@ -112,6 +114,49 @@ type RowState =
   | { phase: "shipped"; data: ShipApiResult }
   | { phase: "failed"; data: ShipApiResult };
 
+// ─── Retry callout ────────────────────────────────────────────────────────────
+
+function CopyableRetryBox({
+  title,
+  icon,
+  colorClass,
+  entries,
+}: {
+  title: string;
+  icon: React.ReactNode;
+  colorClass: string; // e.g. "border-red-500/30 bg-red-500/10 text-red-300"
+  entries: Array<{ orderNumber: string; trackingNumber: string }>;
+}) {
+  const [copied, setCopied] = useState(false);
+  const text = entries.map((e) => `${e.orderNumber}  ${e.trackingNumber}`).join("\n");
+
+  function handleCopy() {
+    void navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  }
+
+  return (
+    <div className={cn("rounded border px-4 py-3 space-y-2", colorClass)}>
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2 text-sm font-medium">
+          {icon}
+          {title}
+        </div>
+        <button
+          onClick={handleCopy}
+          className="flex items-center gap-1.5 rounded px-2.5 py-1 text-xs font-medium bg-white/10 hover:bg-white/20 transition-colors cursor-pointer"
+        >
+          {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
+          {copied ? "Copied!" : "Copy to retry"}
+        </button>
+      </div>
+      <pre className="font-mono text-xs leading-relaxed opacity-80 select-all">{text}</pre>
+    </div>
+  );
+}
+
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export function ShipOrdersPanel() {
@@ -127,12 +172,17 @@ export function ShipOrdersPanel() {
     .filter((r): r is { phase: "identified"; data: IdentifyResult } => r.phase === "identified")
     .map((r) => r.data);
   const readyToShip = identified.filter((d) => d.status === "found");
+  const notFoundOrders = identified.filter(
+    (d): d is { orderNumber: string; trackingNumber: string; status: "not_found" | "ambiguous" | "error"; error?: string } =>
+      d.status !== "found",
+  );
   const hasResults = rows.length > 0;
   const allDone =
     rows.length > 0 &&
     rows.every((r) => r.phase === "shipped" || r.phase === "failed");
 
   const shippedRows = rows.filter((r): r is { phase: "shipped"; data: ShipApiResult } => r.phase === "shipped");
+  const failedRows = rows.filter((r): r is { phase: "failed"; data: ShipApiResult } => r.phase === "failed");
   const verifiedCount = shippedRows.filter((r) => r.data.verificationStatus === "verified").length;
   const mismatchCount = shippedRows.filter((r) => r.data.verificationStatus === "mismatch").length;
 
@@ -350,6 +400,29 @@ export function ShipOrdersPanel() {
           )}
         </div>
       </div>
+
+      {/* Not-found retry callout — shown while still in identify phase (before shipping) */}
+      {notFoundOrders.length > 0 && !allDone && (
+        <CopyableRetryBox
+          title={`${notFoundOrders.length} order${notFoundOrders.length !== 1 ? "s" : ""} not found — paste back to retry`}
+          icon={<XCircle className="h-4 w-4 shrink-0" />}
+          colorClass="border-red-500/30 bg-red-500/10 text-red-300"
+          entries={notFoundOrders}
+        />
+      )}
+
+      {/* Failed retry callout — shown after shipping attempt */}
+      {allDone && failedRows.length > 0 && (
+        <CopyableRetryBox
+          title={`${failedRows.length} order${failedRows.length !== 1 ? "s" : ""} failed — paste back to retry`}
+          icon={<AlertTriangle className="h-4 w-4 shrink-0" />}
+          colorClass="border-amber-500/30 bg-amber-500/10 text-amber-300"
+          entries={failedRows.map((r) => ({
+            orderNumber: r.data.orderNumber,
+            trackingNumber: r.data.trackingNumber,
+          }))}
+        />
+      )}
 
       {/* Results table */}
       {hasResults && (
