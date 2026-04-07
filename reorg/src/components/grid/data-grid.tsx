@@ -2020,8 +2020,14 @@ export function DataGrid({
           variantId: entry.variantId,
           field: "salePrice",
         }).map((key) => successMap.get(key)).find(Boolean);
-        return pushed
-          ? { ...entry, value: pushed.newValue, stagedValue: undefined }
+        // Guard against sibling-variant bleed: if the push result targets a specific
+        // variant and this entry belongs to a different variant, don't apply it.
+        const safelyPushed =
+          pushed && (!pushed.variantId || !entry.variantId || pushed.variantId === entry.variantId)
+            ? pushed
+            : undefined;
+        return safelyPushed
+          ? { ...entry, value: safelyPushed.newValue, stagedValue: undefined }
           : entry;
       });
       const adRates = row.adRates.map((entry) => {
@@ -2032,8 +2038,13 @@ export function DataGrid({
           variantId: entry.variantId,
           field: "adRate",
         }).map((key) => successMap.get(key)).find(Boolean);
-        return pushed
-          ? { ...entry, value: pushed.newValue, stagedValue: undefined }
+        // Same guard as salePrices — don't bleed a variant-specific push to siblings.
+        const safelyPushed =
+          pushed && (!pushed.variantId || !entry.variantId || pushed.variantId === entry.variantId)
+            ? pushed
+            : undefined;
+        return safelyPushed
+          ? { ...entry, value: safelyPushed.newValue, stagedValue: undefined }
           : entry;
       });
       const childRows = row.childRows?.map((child) => applyToRow(child));
