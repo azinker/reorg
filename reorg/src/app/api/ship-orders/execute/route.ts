@@ -79,23 +79,7 @@ export async function POST(request: NextRequest) {
 
     const { results, autoResponderStatus } = await executeShipments(orders, actorUserId);
 
-    // Process all auto-responder jobs inline (fire-and-forget HTTP was unreliable on Vercel)
-    if (autoResponderStatus.queued > 0) {
-      try {
-        const { processAutoResponderJobs } = await import("@/lib/services/auto-responder");
-        let totalSent = 0, totalFailed = 0;
-        for (let pass = 0; pass < 60; pass++) {
-          const arResult = await processAutoResponderJobs();
-          totalSent += arResult.sent;
-          totalFailed += arResult.failed;
-          if (arResult.processed === 0) break;
-        }
-        console.log(`[ship-orders] auto-responder done: ${totalSent} sent, ${totalFailed} failed`);
-      } catch (arErr) {
-        console.error("[ship-orders] auto-responder inline process failed:", arErr);
-      }
-    }
-
+    // Jobs are in the DB. The scheduler tick (every minute) will process them.
     return NextResponse.json({ data: { results, autoResponderStatus } });
   } catch (error) {
     console.error("[ship-orders/execute] Failed", error);

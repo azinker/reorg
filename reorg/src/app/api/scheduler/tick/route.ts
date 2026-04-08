@@ -146,8 +146,17 @@ async function handleSchedulerTick(request: NextRequest, dryRun: boolean) {
     try {
       const { processAutoResponderJobs, runReconciliation } = await import("@/lib/services/auto-responder");
 
-      const arProcessResult = await processAutoResponderJobs();
-      autoResponderResult = { process: arProcessResult };
+      let totalSent = 0, totalFailed = 0, totalProcessed = 0;
+      const arStart = Date.now();
+      for (let pass = 0; pass < 40; pass++) {
+        if (Date.now() - arStart > 90_000) break; // leave headroom for reconciliation + response
+        const batch = await processAutoResponderJobs();
+        totalProcessed += batch.processed;
+        totalSent += batch.sent;
+        totalFailed += batch.failed;
+        if (batch.processed === 0) break;
+      }
+      autoResponderResult = { processed: totalProcessed, sent: totalSent, failed: totalFailed };
 
       // Reconcile every 6 hours
       const lastRecon = await db.appSetting.findUnique({ where: { key: "auto_responder_last_reconciliation" } });
