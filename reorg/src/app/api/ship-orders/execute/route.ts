@@ -79,17 +79,22 @@ export async function POST(request: NextRequest) {
 
     const results = await executeShipments(orders, actorUserId);
 
-    // Fire-and-forget: process any auto-responder jobs that were enqueued
+    // Kick off auto-responder processing (jobs are already in DB via createMany).
+    // This starts the first batch; the scheduler tick handles the rest.
     try {
       const baseUrl = process.env.AUTH_URL?.replace(/\/$/, "") ??
         (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : null);
       const cronSecret = process.env.CRON_SECRET;
       if (baseUrl && cronSecret) {
-        void fetch(`${baseUrl}/api/auto-responder/process`, {
+        fetch(`${baseUrl}/api/auto-responder/process`, {
           method: "POST",
           headers: { Authorization: `Bearer ${cronSecret}` },
           signal: AbortSignal.timeout(15_000),
-        }).catch(() => {});
+        }).then((r) => {
+          console.log(`[ship-orders] auto-responder/process → ${r.status}`);
+        }).catch((e) => {
+          console.error("[ship-orders] auto-responder/process trigger failed:", e);
+        });
       }
     } catch { /* best-effort */ }
 

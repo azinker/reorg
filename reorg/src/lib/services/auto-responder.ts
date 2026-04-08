@@ -16,6 +16,7 @@ import type {
   AutoResponderVersion,
   AutoResponderSendLog,
   AutoResponderJob,
+  Prisma,
 } from "@prisma/client";
 
 // ─── Constants ───────────────────────────────────────────────────────────────
@@ -312,21 +313,32 @@ export async function enqueueAutoResponderJob(params: {
   responderId?: string;
   responderVersionId?: string;
 }): Promise<{ queued: boolean; reason?: string }> {
-  const paused = await isAutoResponderPaused();
-  if (paused) return { queued: false, reason: "kill_switch_active" };
+  console.log(`[auto-responder] enqueueAutoResponderJob called: order=${params.orderNumber} channel=${params.channel} source=${params.source}`);
 
-  // Find active responder (or use provided override for test sends)
+  const paused = await isAutoResponderPaused();
+  if (paused) {
+    console.log("[auto-responder] kill switch is active, skipping enqueue");
+    return { queued: false, reason: "kill_switch_active" };
+  }
+
   let responderId = params.responderId;
   let responderVersionId = params.responderVersionId;
   let integrationId: string | undefined;
 
   if (!responderId) {
     const active = await getActiveResponderForChannel(params.channel);
-    if (!active) return { queued: false, reason: "no_active_responder" };
-    if (!active.latestVersion) return { queued: false, reason: "no_version" };
+    if (!active) {
+      console.log(`[auto-responder] no active responder for ${params.channel}`);
+      return { queued: false, reason: "no_active_responder" };
+    }
+    if (!active.latestVersion) {
+      console.log(`[auto-responder] responder ${active.id} has no version`);
+      return { queued: false, reason: "no_version" };
+    }
     responderId = active.id;
     responderVersionId = active.latestVersion.id;
     integrationId = active.integrationId;
+    console.log(`[auto-responder] found active responder: ${responderId} v${active.latestVersion.versionNumber}`);
   } else {
     const responder = await db.autoResponder.findUnique({ where: { id: responderId } });
     if (!responder) return { queued: false, reason: "responder_not_found" };
@@ -340,14 +352,17 @@ export async function enqueueAutoResponderJob(params: {
     }
   }
 
-  if (!responderVersionId || !integrationId) return { queued: false, reason: "missing_version_or_integration" };
+  if (!responderVersionId || !integrationId) {
+    console.log("[auto-responder] missing version or integration, cannot enqueue");
+    return { queued: false, reason: "missing_version_or_integration" };
+  }
 
-  // Check dedupe — does a send log already exist for this order+channel?
   const existingLog = await db.autoResponderSendLog.findUnique({
     where: { auto_responder_dedupe: { orderNumber: params.orderNumber, channel: params.channel } },
   });
 
   if (existingLog && params.source !== "TESTING_AREA") {
+    console.log(`[auto-responder] duplicate prevented for ${params.orderNumber}/${params.channel}`);
     return { queued: false, reason: "duplicate_prevented" };
   }
 
@@ -369,7 +384,92 @@ export async function enqueueAutoResponderJob(params: {
     },
   });
 
+  console.log(`[auto-responder] job created for ${params.orderNumber}/${params.channel}`);
   return { queued: true };
+}
+
+// ─── Bulk enqueue (optimized for Ship Orders batches of 800-1500) ────────────
+
+export async function bulkEnqueueAutoResponderJobs(
+  orders: Array<{
+    channel: Platform;
+    orderNumber: string;
+    trackingNumber?: string;
+    carrier?: string;
+  }>,
+): Promise<{ queued: number; skipped: number; reasons: Record<string, number> }> {
+  if (orders.length === 0) return { queued: 0, skipped: 0, reasons: {} };
+
+  const reasons: Record<string, number> = {};
+  const incReason = (r: string, n = 1) => { reasons[r] = (reasons[r] ?? 0) + n; };
+
+  const paused = await isAutoResponderPaused();
+  if (paused) {
+    console.log(`[auto-responder] bulk: kill switch active, skipping ${orders.length} orders`);
+    return { queued: 0, skipped: orders.length, reasons: { kill_switch_active: orders.length } };
+  }
+
+  // Group orders by channel so we look up each responder only once
+  const byChannel = new Map<Platform, typeof orders>();
+  for (const o of orders) {
+    let arr = byChannel.get(o.channel);
+    if (!arr) { arr = []; byChannel.set(o.channel, arr); }
+    arr.push(o);
+  }
+
+  const jobsToCreate: Prisma.AutoResponderJobCreateManyInput[] = [];
+
+  for (const [channel, channelOrders] of byChannel) {
+    const active = await getActiveResponderForChannel(channel);
+    if (!active) {
+      incReason("no_active_responder", channelOrders.length);
+      continue;
+    }
+    if (!active.latestVersion) {
+      incReason("no_version", channelOrders.length);
+      continue;
+    }
+
+    // Bulk dedupe: one query per channel instead of one per order
+    const orderNumbers = channelOrders.map((o) => o.orderNumber);
+    const existingLogs = await db.autoResponderSendLog.findMany({
+      where: { orderNumber: { in: orderNumbers }, channel },
+      select: { orderNumber: true },
+    });
+    const alreadySent = new Set(existingLogs.map((l) => l.orderNumber));
+
+    for (const o of channelOrders) {
+      if (alreadySent.has(o.orderNumber)) {
+        incReason("duplicate_prevented");
+        continue;
+      }
+
+      jobsToCreate.push({
+        responderId: active.id,
+        responderVersionId: active.latestVersion.id,
+        integrationId: active.integrationId,
+        channel,
+        orderNumber: o.orderNumber,
+        trackingNumber: o.trackingNumber,
+        carrier: o.carrier,
+        source: "SHIP_ORDERS",
+        status: "PENDING",
+      });
+    }
+  }
+
+  if (jobsToCreate.length > 0) {
+    // Prisma createMany is a single INSERT ... VALUES (...), (...), ...
+    await db.autoResponderJob.createMany({ data: jobsToCreate });
+  }
+
+  const skipped = orders.length - jobsToCreate.length;
+  console.log(
+    `[auto-responder] bulk enqueue: ${jobsToCreate.length} queued, ${skipped} skipped` +
+    (Object.keys(reasons).length > 0 ? ` (${JSON.stringify(reasons)})` : ""),
+  );
+
+  return { queued: jobsToCreate.length, skipped, reasons };
 }
 
 // ─── Job processing ──────────────────────────────────────────────────────────
@@ -381,7 +481,10 @@ export async function processAutoResponderJobs(): Promise<{
   skipped: number;
 }> {
   const paused = await isAutoResponderPaused();
-  if (paused) return { processed: 0, sent: 0, failed: 0, skipped: 0 };
+  if (paused) {
+    console.log("[auto-responder] processJobs: kill switch active, skipping");
+    return { processed: 0, sent: 0, failed: 0, skipped: 0 };
+  }
 
   const jobs = await db.autoResponderJob.findMany({
     where: {
@@ -396,6 +499,8 @@ export async function processAutoResponderJobs(): Promise<{
       integration: true,
     },
   });
+
+  console.log(`[auto-responder] processJobs: found ${jobs.length} pending jobs`);
 
   let sent = 0;
   let failed = 0;
