@@ -23,7 +23,8 @@ import type {
 
 const MAX_RETRY_COUNT = 3;
 const RETRY_BACKOFF_MS = [5_000, 30_000, 120_000];
-const JOBS_PER_BATCH = 10;
+const JOBS_PER_BATCH = 50;
+const SEND_CONCURRENCY = 5;
 const SEND_LOG_RETENTION_DAYS = 30;
 const EBAY_CHANNELS: Platform[] = ["TPP_EBAY", "TT_EBAY"];
 
@@ -508,30 +509,61 @@ export async function processAutoResponderJobs(): Promise<{
     },
   });
 
+  if (jobs.length === 0) return { processed: 0, sent: 0, failed: 0, skipped: 0 };
   console.log(`[auto-responder] processJobs: found ${jobs.length} pending jobs`);
 
+  // Mark all as PROCESSING in bulk
+  await db.autoResponderJob.updateMany({
+    where: { id: { in: jobs.map((j) => j.id) } },
+    data: { status: "PROCESSING" },
+  });
+
+  // ── Phase 1: Bulk enrichment (1 eBay API call per integration) ──
+  const byIntegration = new Map<string, JobWithRelations[]>();
+  for (const job of jobs) {
+    const group = byIntegration.get(job.integrationId) ?? [];
+    group.push(job);
+    byIntegration.set(job.integrationId, group);
+  }
+
+  const enrichmentMap = new Map<string, EbayOrderDetails>();
+  for (const [integrationId, groupJobs] of byIntegration) {
+    const needsEnrichment = groupJobs.filter((j) => !j.ebayBuyerUserId || !j.ebayItemId);
+    if (needsEnrichment.length === 0) continue;
+    try {
+      const config = buildEbayConfig(groupJobs[0].integration);
+      const details = await fetchEbayOrderDetails(
+        integrationId,
+        config,
+        needsEnrichment.map((j) => j.orderNumber),
+      );
+      for (const [orderNum, det] of details) {
+        enrichmentMap.set(orderNum, det);
+      }
+      console.log(`[auto-responder] bulk-enriched ${details.size}/${needsEnrichment.length} orders for integration ${integrationId}`);
+    } catch (err) {
+      console.error(`[auto-responder] bulk enrichment failed for integration ${integrationId}:`, err);
+    }
+  }
+
+  // ── Phase 2: Send messages with controlled concurrency ──
   let sent = 0;
   let failed = 0;
   let skipped = 0;
 
-  for (const job of jobs) {
-    await db.autoResponderJob.update({
-      where: { id: job.id },
-      data: { status: "PROCESSING" },
-    });
-
-    try {
-      console.log(`[auto-responder] processing job ${job.id} for order ${job.orderNumber}/${job.channel}`);
-      const result = await processOneJob(job);
-      console.log(`[auto-responder] job ${job.id} → ${result}`);
-      if (result === "sent") sent++;
-      else if (result === "failed") failed++;
-      else skipped++;
-    } catch (err) {
-      failed++;
-      const errorMsg = err instanceof Error ? err.message : "Unknown error";
-      console.error(`[auto-responder] job ${job.id} threw: ${errorMsg}`);
-      await handleJobFailure(job, errorMsg);
+  for (let i = 0; i < jobs.length; i += SEND_CONCURRENCY) {
+    const chunk = jobs.slice(i, i + SEND_CONCURRENCY);
+    const results = await Promise.allSettled(
+      chunk.map((job) => sendOneJob(job, enrichmentMap)),
+    );
+    for (const r of results) {
+      if (r.status === "fulfilled") {
+        if (r.value === "sent") sent++;
+        else if (r.value === "failed") failed++;
+        else skipped++;
+      } else {
+        failed++;
+      }
     }
   }
 
@@ -545,96 +577,114 @@ type JobWithRelations = AutoResponderJob & {
   integration: { id: string; config: unknown; label: string; enabled: boolean };
 };
 
-async function processOneJob(job: JobWithRelations): Promise<"sent" | "failed" | "skipped"> {
-  if (!job.integration.enabled) {
-    await autoDisableResponder(job.responderId, "integration_disabled");
-    await logSendEvent(job, "INTEGRATION_DISABLED", "SHIP_ORDERS", null, "Integration disabled");
-    await db.autoResponderJob.update({ where: { id: job.id }, data: { status: "FAILED", lastError: "Integration disabled" } });
-    return "skipped";
-  }
-
-  // Enrich order details if missing
-  let buyerUserId = job.ebayBuyerUserId;
-  let itemId = job.ebayItemId;
-  let buyerName = job.buyerName;
-  let itemTitle = job.itemTitle;
-
-  if (!buyerUserId || !itemId) {
-    const config = buildEbayConfig(job.integration);
-    const details = await fetchEbayOrderDetails(job.integrationId, config, [job.orderNumber]);
-    const orderDetails = details.get(job.orderNumber);
-    if (orderDetails) {
-      buyerUserId = buyerUserId || orderDetails.buyerUserId;
-      itemId = itemId || orderDetails.itemId;
-      buyerName = buyerName || orderDetails.buyerName;
-      itemTitle = itemTitle || orderDetails.itemTitle;
+async function sendOneJob(
+  job: JobWithRelations,
+  enrichmentMap: Map<string, EbayOrderDetails>,
+): Promise<"sent" | "failed" | "skipped"> {
+  try {
+    if (!job.integration.enabled) {
+      await autoDisableResponder(job.responderId, "integration_disabled");
+      await logSendEvent(job, "INTEGRATION_DISABLED", "SHIP_ORDERS", null, "Integration disabled");
+      await db.autoResponderJob.update({ where: { id: job.id }, data: { status: "FAILED", lastError: "Integration disabled" } });
+      return "skipped";
     }
-  }
 
-  if (!buyerUserId || !itemId) {
-    await logSendEvent(job, "SKIPPED", job.source, null, "Missing buyer or item data");
-    await db.autoResponderJob.update({ where: { id: job.id }, data: { status: "FAILED", lastError: "Missing buyer or item data" } });
-    return "skipped";
-  }
+    let buyerUserId = job.ebayBuyerUserId;
+    let itemId = job.ebayItemId;
+    let buyerName = job.buyerName;
+    let itemTitle = job.itemTitle;
 
-  const ctx: RenderContext = {
-    buyerName,
-    orderId: job.orderNumber,
-    itemName: itemTitle,
-    trackingNumber: job.trackingNumber,
-    carrier: job.carrier ?? "USPS",
-    storeName: job.integration.label,
-  };
-
-  const renderedSubject = renderTemplate(job.responderVersion.subjectTemplate, ctx);
-  const renderedBody = renderTemplate(job.responderVersion.bodyTemplate, ctx);
-
-  const config = buildEbayConfig(job.integration);
-  const sendResult = await sendEbayMessage(
-    job.integrationId,
-    config,
-    itemId,
-    buyerUserId,
-    renderedSubject,
-    renderedBody,
-  );
-
-  if (sendResult.success) {
-    // Log as sent — the unique constraint enforces dedupe
-    try {
-      await db.autoResponderSendLog.create({
-        data: {
-          responderId: job.responderId,
-          responderVersionId: job.responderVersionId,
-          integrationId: job.integrationId,
-          channel: job.channel,
-          orderNumber: job.orderNumber,
-          eventType: "SENT",
-          source: job.source,
-          renderedSubject,
-          renderedBody,
-          status: "sent",
-          ebayItemId: itemId,
-          ebayBuyerUserId: buyerUserId,
-          queuedAt: job.createdAt,
-          attemptedAt: new Date(),
-          sentAt: new Date(),
-        },
-      });
-    } catch (err) {
-      // Unique constraint violation = duplicate
-      const isDupe = err instanceof Error && err.message.includes("Unique constraint");
-      if (isDupe) {
-        await db.autoResponderJob.update({ where: { id: job.id }, data: { status: "COMPLETED" } });
-        return "skipped";
+    // Use pre-fetched enrichment data
+    if (!buyerUserId || !itemId) {
+      const cached = enrichmentMap.get(job.orderNumber);
+      if (cached) {
+        buyerUserId = buyerUserId || cached.buyerUserId;
+        itemId = itemId || cached.itemId;
+        buyerName = buyerName || cached.buyerName;
+        itemTitle = itemTitle || cached.itemTitle;
       }
-      throw err;
     }
 
-    await db.autoResponderJob.update({ where: { id: job.id }, data: { status: "COMPLETED" } });
-    return "sent";
-  } else {
-    await handleJobFailure(job, sendResult.error ?? "Send failed");
+    // Fallback: individual fetch if bulk enrichment missed this order
+    if (!buyerUserId || !itemId) {
+      const config = buildEbayConfig(job.integration);
+      const details = await fetchEbayOrderDetails(job.integrationId, config, [job.orderNumber]);
+      const orderDetails = details.get(job.orderNumber);
+      if (orderDetails) {
+        buyerUserId = buyerUserId || orderDetails.buyerUserId;
+        itemId = itemId || orderDetails.itemId;
+        buyerName = buyerName || orderDetails.buyerName;
+        itemTitle = itemTitle || orderDetails.itemTitle;
+      }
+    }
+
+    if (!buyerUserId || !itemId) {
+      await logSendEvent(job, "SKIPPED", job.source, null, "Missing buyer or item data");
+      await db.autoResponderJob.update({ where: { id: job.id }, data: { status: "FAILED", lastError: "Missing buyer or item data" } });
+      return "skipped";
+    }
+
+    const ctx: RenderContext = {
+      buyerName,
+      orderId: job.orderNumber,
+      itemName: itemTitle,
+      trackingNumber: job.trackingNumber,
+      carrier: job.carrier ?? "USPS",
+      storeName: job.integration.label,
+    };
+
+    const renderedSubject = renderTemplate(job.responderVersion.subjectTemplate, ctx);
+    const renderedBody = renderTemplate(job.responderVersion.bodyTemplate, ctx);
+
+    const config = buildEbayConfig(job.integration);
+    const sendResult = await sendEbayMessage(
+      job.integrationId,
+      config,
+      itemId,
+      buyerUserId,
+      renderedSubject,
+      renderedBody,
+    );
+
+    if (sendResult.success) {
+      try {
+        await db.autoResponderSendLog.create({
+          data: {
+            responderId: job.responderId,
+            responderVersionId: job.responderVersionId,
+            integrationId: job.integrationId,
+            channel: job.channel,
+            orderNumber: job.orderNumber,
+            eventType: "SENT",
+            source: job.source,
+            renderedSubject,
+            renderedBody,
+            status: "sent",
+            ebayItemId: itemId,
+            ebayBuyerUserId: buyerUserId,
+            queuedAt: job.createdAt,
+            attemptedAt: new Date(),
+            sentAt: new Date(),
+          },
+        });
+      } catch (err) {
+        const isDupe = err instanceof Error && err.message.includes("Unique constraint");
+        if (isDupe) {
+          await db.autoResponderJob.update({ where: { id: job.id }, data: { status: "COMPLETED" } });
+          return "skipped";
+        }
+        throw err;
+      }
+      await db.autoResponderJob.update({ where: { id: job.id }, data: { status: "COMPLETED" } });
+      return "sent";
+    } else {
+      await handleJobFailure(job, sendResult.error ?? "Send failed");
+      return "failed";
+    }
+  } catch (err) {
+    const errorMsg = err instanceof Error ? err.message : "Unknown error";
+    console.error(`[auto-responder] job ${job.id} threw: ${errorMsg}`);
+    await handleJobFailure(job, errorMsg);
     return "failed";
   }
 }

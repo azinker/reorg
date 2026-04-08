@@ -79,24 +79,22 @@ export async function POST(request: NextRequest) {
 
     const { results, autoResponderStatus } = await executeShipments(orders, actorUserId);
 
-    // Kick off auto-responder processing (jobs are already in DB via createMany).
-    // This starts the first batch; the scheduler tick handles the rest.
-    try {
-      const baseUrl = process.env.AUTH_URL?.replace(/\/$/, "") ??
-        (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : null);
-      const cronSecret = process.env.CRON_SECRET;
-      if (baseUrl && cronSecret && autoResponderStatus.queued > 0) {
-        fetch(`${baseUrl}/api/auto-responder/process`, {
-          method: "POST",
-          headers: { Authorization: `Bearer ${cronSecret}` },
-          signal: AbortSignal.timeout(15_000),
-        }).then((r) => {
-          console.log(`[ship-orders] auto-responder/process → ${r.status}`);
-        }).catch((e) => {
-          console.error("[ship-orders] auto-responder/process trigger failed:", e);
-        });
+    // Process all auto-responder jobs inline (fire-and-forget HTTP was unreliable on Vercel)
+    if (autoResponderStatus.queued > 0) {
+      try {
+        const { processAutoResponderJobs } = await import("@/lib/services/auto-responder");
+        let totalSent = 0, totalFailed = 0;
+        for (let pass = 0; pass < 60; pass++) {
+          const arResult = await processAutoResponderJobs();
+          totalSent += arResult.sent;
+          totalFailed += arResult.failed;
+          if (arResult.processed === 0) break;
+        }
+        console.log(`[ship-orders] auto-responder done: ${totalSent} sent, ${totalFailed} failed`);
+      } catch (arErr) {
+        console.error("[ship-orders] auto-responder inline process failed:", arErr);
       }
-    } catch { /* best-effort */ }
+    }
 
     return NextResponse.json({ data: { results, autoResponderStatus } });
   } catch (error) {
