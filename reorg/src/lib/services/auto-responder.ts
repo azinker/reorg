@@ -486,6 +486,14 @@ export async function processAutoResponderJobs(): Promise<{
     return { processed: 0, sent: 0, failed: 0, skipped: 0 };
   }
 
+  // Recover stuck jobs: any job PROCESSING for > 5 minutes is likely orphaned
+  const stuckCutoff = new Date(Date.now() - 5 * 60 * 1000);
+  const { count: unstuck } = await db.autoResponderJob.updateMany({
+    where: { status: "PROCESSING", updatedAt: { lt: stuckCutoff } },
+    data: { status: "PENDING" },
+  });
+  if (unstuck > 0) console.log(`[auto-responder] recovered ${unstuck} stuck PROCESSING jobs`);
+
   const jobs = await db.autoResponderJob.findMany({
     where: {
       status: "PENDING",
@@ -513,17 +521,21 @@ export async function processAutoResponderJobs(): Promise<{
     });
 
     try {
+      console.log(`[auto-responder] processing job ${job.id} for order ${job.orderNumber}/${job.channel}`);
       const result = await processOneJob(job);
+      console.log(`[auto-responder] job ${job.id} → ${result}`);
       if (result === "sent") sent++;
       else if (result === "failed") failed++;
       else skipped++;
     } catch (err) {
       failed++;
       const errorMsg = err instanceof Error ? err.message : "Unknown error";
+      console.error(`[auto-responder] job ${job.id} threw: ${errorMsg}`);
       await handleJobFailure(job, errorMsg);
     }
   }
 
+  console.log(`[auto-responder] processJobs done: ${sent} sent, ${failed} failed, ${skipped} skipped`);
   return { processed: jobs.length, sent, failed, skipped };
 }
 

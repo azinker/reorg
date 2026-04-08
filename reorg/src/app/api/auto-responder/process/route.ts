@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { processAutoResponderJobs } from "@/lib/services/auto-responder";
 
 export const runtime = "nodejs";
-export const maxDuration = 60;
+export const maxDuration = 300;
 export const dynamic = "force-dynamic";
 
 function isAuthorized(request: NextRequest): boolean {
