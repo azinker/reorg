@@ -79,6 +79,20 @@ export async function POST(request: NextRequest) {
 
     const results = await executeShipments(orders, actorUserId);
 
+    // Fire-and-forget: process any auto-responder jobs that were enqueued
+    try {
+      const baseUrl = process.env.AUTH_URL?.replace(/\/$/, "") ??
+        (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : null);
+      const cronSecret = process.env.CRON_SECRET;
+      if (baseUrl && cronSecret) {
+        void fetch(`${baseUrl}/api/auto-responder/process`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${cronSecret}` },
+          signal: AbortSignal.timeout(15_000),
+        }).catch(() => {});
+      }
+    } catch { /* best-effort */ }
+
     return NextResponse.json({ data: { results } });
   } catch (error) {
     console.error("[ship-orders/execute] Failed", error);

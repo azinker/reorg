@@ -140,6 +140,41 @@ async function handleSchedulerTick(request: NextRequest, dryRun: boolean) {
 
     const result = await executeScheduledSyncs();
     const snapshotResult = await captureDailyInventorySnapshots();
+
+    // Auto Responder: process pending jobs every tick, reconcile every 6 hours
+    let autoResponderResult: Record<string, unknown> | null = null;
+    try {
+      const baseUrl = process.env.AUTH_URL?.replace(/\/$/, "") ??
+        (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : null);
+      const cronSecret = process.env.CRON_SECRET;
+      if (baseUrl && cronSecret) {
+        // Always drain pending auto-responder jobs
+        void fetch(`${baseUrl}/api/auto-responder/process`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${cronSecret}` },
+          signal: AbortSignal.timeout(15_000),
+        }).catch(() => {});
+
+        // Reconcile every 6 hours (check last run timestamp)
+        const lastRecon = await db.appSetting.findUnique({ where: { key: "auto_responder_last_reconciliation" } });
+        const lastReconTime = lastRecon?.value ? Number(lastRecon.value) : 0;
+        const sixHoursMs = 6 * 60 * 60 * 1000;
+        if (Date.now() - lastReconTime >= sixHoursMs) {
+          await db.appSetting.upsert({
+            where: { key: "auto_responder_last_reconciliation" },
+            update: { value: Date.now() },
+            create: { key: "auto_responder_last_reconciliation", value: Date.now() },
+          });
+          void fetch(`${baseUrl}/api/auto-responder/reconcile`, {
+            method: "POST",
+            headers: { Authorization: `Bearer ${cronSecret}` },
+            signal: AbortSignal.timeout(30_000),
+          }).catch(() => {});
+          autoResponderResult = { reconciliationDispatched: true };
+        }
+      }
+    } catch { /* auto-responder dispatch is best-effort */ }
+
     const status: Parameters<typeof saveSchedulerStatus>[0] = {
       tickedAt: new Date().toISOString(),
       outcome: "completed",
@@ -156,6 +191,7 @@ async function handleSchedulerTick(request: NextRequest, dryRun: boolean) {
         dispatchedCount: result.dispatched.length,
         dispatched: result.dispatched,
         inventorySnapshots: snapshotResult,
+        autoResponder: autoResponderResult,
         plan: result.plan,
       },
     });

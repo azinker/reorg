@@ -27,6 +27,7 @@ import {
   X,
   PackageCheck,
   Wallet,
+  MessageSquareText,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { usePageVisibility } from "@/lib/use-page-visibility";
@@ -41,6 +42,7 @@ const navItems = [
   { href: "/payouts", label: "Payouts", icon: Wallet },
   { href: "/sync", label: "Sync", icon: RefreshCw },
   { href: "/ship-orders", label: "Ship Orders", icon: PackageCheck },
+  { href: "/auto-responder", label: "Auto Responder", icon: MessageSquareText },
   { href: "/integrations", label: "Integrations", icon: Plug },
   { href: "/engine-room", label: "Engine Room", icon: Gauge },
   { href: "/public-network-transfer", label: "Public Network Transfer", icon: Globe },

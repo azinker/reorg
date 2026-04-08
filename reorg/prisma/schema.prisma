@@ -102,7 +102,43 @@ enum NetworkTransferChannel {
   MARKETPLACE_OUTBOUND
   SYNC_JOB
   FORECAST
+  AUTO_RESPONDER
   OTHER
+}
+
+enum AutoResponderStatus {
+  ACTIVE
+  INACTIVE
+  ARCHIVED
+  INVALID
+}
+
+enum AutoResponderEventType {
+  QUEUED
+  SENT
+  FAILED
+  SKIPPED
+  DUPLICATE_PREVENTED
+  NO_ACTIVE_RESPONDER
+  PREVIEW
+  TEST_SEND
+  INTEGRATION_DISABLED
+  RESPONDER_AUTO_DISABLED
+}
+
+enum AutoResponderSource {
+  SHIP_ORDERS
+  RECONCILIATION
+  PREVIEW
+  TESTING_AREA
+}
+
+enum AutoResponderJobStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  PAUSED
 }
 
 enum TaskStatus {
@@ -170,6 +206,9 @@ model User {
   revenueSyncJobs RevenueSyncJob[] @relation("RevenueSyncJobTrigger")
   forecastRuns   ForecastRun[]
   supplierOrders SupplierOrder[]
+  createdAutoResponders  AutoResponder[] @relation("AutoResponderCreator")
+  updatedAutoResponders  AutoResponder[] @relation("AutoResponderUpdater")
+  autoResponderVersions  AutoResponderVersion[] @relation("AutoResponderVersionCreator")
 
   @@map("users")
 }
@@ -234,6 +273,9 @@ model Integration {
   revenueSyncJobs          RevenueSyncJob[]
   revenueFinancialEvents   RevenueFinancialEvent[]
   networkTransferSamples   NetworkTransferSample[]
+  autoResponders           AutoResponder[]
+  autoResponderSendLogs    AutoResponderSendLog[]     @relation("SendLogIntegration")
+  autoResponderJobs        AutoResponderJob[]         @relation("JobIntegration")
 
   @@map("integrations")
 }
@@ -791,4 +833,123 @@ model SupplierOrderLine {
   @@index([masterRowId])
   @@index([title])
   @@map("supplier_order_lines")
+}
+
+// ─── Auto Responder ──────────────────────────────────────────────────────────
+
+model AutoResponder {
+  id              String              @id @default(cuid())
+  messageName     String
+  channel         Platform
+  integrationId   String
+  subjectTemplate String
+  bodyTemplate    String              @db.Text
+  status          AutoResponderStatus @default(INACTIVE)
+  activatedAt     DateTime?
+  deactivatedAt   DateTime?
+  archivedAt      DateTime?
+  createdById     String
+  updatedById     String
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+
+  integration Integration            @relation(fields: [integrationId], references: [id])
+  createdBy   User                   @relation("AutoResponderCreator", fields: [createdById], references: [id])
+  updatedBy   User                   @relation("AutoResponderUpdater", fields: [updatedById], references: [id])
+  versions    AutoResponderVersion[]
+  sendLogs    AutoResponderSendLog[] @relation("SendLogResponder")
+  jobs        AutoResponderJob[]     @relation("JobResponder")
+
+  @@index([channel, status])
+  @@index([integrationId])
+  @@index([status])
+  @@map("auto_responders")
+}
+
+model AutoResponderVersion {
+  id               String @id @default(cuid())
+  responderId      String
+  versionNumber    Int
+  subjectTemplate  String
+  bodyTemplate     String @db.Text
+  validationStatus String @default("valid")
+  createdById      String
+  createdAt        DateTime @default(now())
+
+  responder AutoResponder        @relation(fields: [responderId], references: [id], onDelete: Cascade)
+  createdBy User                 @relation("AutoResponderVersionCreator", fields: [createdById], references: [id])
+  sendLogs  AutoResponderSendLog[] @relation("SendLogVersion")
+  jobs      AutoResponderJob[]     @relation("JobVersion")
+
+  @@unique([responderId, versionNumber])
+  @@index([responderId, createdAt])
+  @@map("auto_responder_versions")
+}
+
+model AutoResponderSendLog {
+  id                  String                  @id @default(cuid())
+  responderId         String?
+  responderVersionId  String?
+  integrationId       String
+  channel             Platform
+  orderNumber         String
+  eventType           AutoResponderEventType
+  source              AutoResponderSource
+  renderedSubject     String?
+  renderedBody        String?                 @db.Text
+  status              String?
+  reason              String?
+  externalMessageId   String?
+  ebayItemId          String?
+  ebayBuyerUserId     String?
+  queuedAt            DateTime?
+  attemptedAt         DateTime?
+  sentAt              DateTime?
+  failedAt            DateTime?
+  retryCount          Int                     @default(0)
+  bytesEstimate       Int?
+  createdAt           DateTime                @default(now())
+
+  responder        AutoResponder?        @relation("SendLogResponder", fields: [responderId], references: [id], onDelete: SetNull)
+  responderVersion AutoResponderVersion? @relation("SendLogVersion", fields: [responderVersionId], references: [id], onDelete: SetNull)
+  integration      Integration           @relation("SendLogIntegration", fields: [integrationId], references: [id])
+
+  @@unique([orderNumber, channel], name: "auto_responder_dedupe")
+  @@index([channel, createdAt])
+  @@index([responderId, createdAt])
+  @@index([eventType, createdAt])
+  @@index([orderNumber])
+  @@index([createdAt])
+  @@map("auto_responder_send_logs")
+}
+
+model AutoResponderJob {
+  id                 String                 @id @default(cuid())
+  responderId        String
+  responderVersionId String
+  integrationId      String
+  channel            Platform
+  orderNumber        String
+  trackingNumber     String?
+  carrier            String?
+  ebayItemId         String?
+  ebayBuyerUserId    String?
+  buyerName          String?
+  itemTitle          String?
+  source             AutoResponderSource
+  status             AutoResponderJobStatus @default(PENDING)
+  retryCount         Int                    @default(0)
+  lastError          String?
+  processAfter       DateTime               @default(now())
+  createdAt          DateTime               @default(now())
+  updatedAt          DateTime               @updatedAt
+
+  responder        AutoResponder        @relation("JobResponder", fields: [responderId], references: [id], onDelete: Cascade)
+  responderVersion AutoResponderVersion @relation("JobVersion", fields: [responderVersionId], references: [id], onDelete: Cascade)
+  integration      Integration          @relation("JobIntegration", fields: [integrationId], references: [id])
+
+  @@index([status, processAfter])
+  @@index([channel, status])
+  @@index([orderNumber])
+  @@map("auto_responder_jobs")
 }

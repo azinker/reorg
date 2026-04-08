@@ -1422,5 +1422,28 @@ export async function executeShipments(
     }
   }
 
+  // ── Auto Responder: enqueue jobs for successfully shipped eBay orders ──
+  try {
+    const { enqueueAutoResponderJob } = await import("@/lib/services/auto-responder");
+    const ebayPlatforms = new Set<Platform>(["TPP_EBAY", "TT_EBAY"]);
+
+    for (let i = 0; i < results.length; i++) {
+      const r = results[i];
+      if (!r || !r.success || !r.platform || !ebayPlatforms.has(r.platform)) continue;
+      const order = orders[i];
+      if (!order) continue;
+
+      void enqueueAutoResponderJob({
+        channel: r.platform,
+        orderNumber: r.orderNumber,
+        trackingNumber: r.trackingNumber,
+        carrier: CARRIER,
+        source: "SHIP_ORDERS",
+      }).catch(() => {});
+    }
+  } catch {
+    // Auto Responder integration is best-effort — never block shipments
+  }
+
   return results as ShipResult[];
 }

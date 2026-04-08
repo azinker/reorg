@@ -22,6 +22,7 @@ const CHANNEL_KEYS = [
   "MARKETPLACE_INBOUND",
   "SYNC_JOB",
   "FORECAST",
+  "AUTO_RESPONDER",
   "OTHER",
 ] as const;
 
@@ -31,6 +32,7 @@ const CHANNEL_LABEL: Record<(typeof CHANNEL_KEYS)[number], string> = {
   /** One category for all pull-sync telemetry; each row’s Label + Result say completed vs failed. */
   SYNC_JOB: "Pull sync jobs",
   FORECAST: "Inventory Forecaster (page load, runs, Excel, saves, order export)",
+  AUTO_RESPONDER: "Auto Responder (send, preview, reconciliation, test)",
   OTHER: "Other",
 };
 
@@ -40,6 +42,7 @@ const CHANNEL_LEGEND_LABEL: Record<(typeof CHANNEL_KEYS)[number], string> = {
   MARKETPLACE_INBOUND: "Marketplace HTTP (eBay)",
   SYNC_JOB: "Pull syncs",
   FORECAST: "Forecaster",
+  AUTO_RESPONDER: "Auto Responder",
   OTHER: "Other",
 };
 
@@ -60,6 +63,7 @@ const CHANNEL_STROKE: Record<(typeof CHANNEL_KEYS)[number], string> = {
   MARKETPLACE_INBOUND: "hsl(199, 89%, 48%)",
   SYNC_JOB: "hsl(142, 71%, 45%)",
   FORECAST: "hsl(38, 92%, 50%)",
+  AUTO_RESPONDER: "hsl(300, 70%, 60%)",
   OTHER: "hsl(215, 20%, 55%)",
 };
 

@@ -20,7 +20,9 @@ function isPublicPath(pathname: string) {
     pathname.startsWith("/api/sync/") && pathname.endsWith("/execute") ||
     pathname.startsWith("/api/webhooks/") ||
     pathname.startsWith("/api/ebay/callback") ||
-    pathname.startsWith("/api/shopify/callback")
+    pathname.startsWith("/api/shopify/callback") ||
+    pathname === "/api/auto-responder/process" ||
+    pathname === "/api/auto-responder/reconcile"
   );
 }
 
