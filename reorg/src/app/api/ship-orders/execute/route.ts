@@ -77,7 +77,7 @@ export async function POST(request: NextRequest) {
       status: "found" as const,
     }));
 
-    const results = await executeShipments(orders, actorUserId);
+    const { results, autoResponderStatus } = await executeShipments(orders, actorUserId);
 
     // Kick off auto-responder processing (jobs are already in DB via createMany).
     // This starts the first batch; the scheduler tick handles the rest.
@@ -85,7 +85,7 @@ export async function POST(request: NextRequest) {
       const baseUrl = process.env.AUTH_URL?.replace(/\/$/, "") ??
         (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : null);
       const cronSecret = process.env.CRON_SECRET;
-      if (baseUrl && cronSecret) {
+      if (baseUrl && cronSecret && autoResponderStatus.queued > 0) {
         fetch(`${baseUrl}/api/auto-responder/process`, {
           method: "POST",
           headers: { Authorization: `Bearer ${cronSecret}` },
@@ -98,7 +98,7 @@ export async function POST(request: NextRequest) {
       }
     } catch { /* best-effort */ }
 
-    return NextResponse.json({ data: { results } });
+    return NextResponse.json({ data: { results, autoResponderStatus } });
   } catch (error) {
     console.error("[ship-orders/execute] Failed", error);
     return NextResponse.json({ error: "Failed to execute shipments" }, { status: 500 });

@@ -15,6 +15,7 @@ import {
   ShieldOff,
   Copy,
   Check,
+  MessageSquareText,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { IdentifyResult, ShipResult } from "@/lib/services/ship-orders";
@@ -166,6 +167,7 @@ export function ShipOrdersPanel() {
   const [progress, setProgress] = useState<ProgressState | null>(null);
   const [rows, setRows] = useState<RowState[]>([]);
   const [identifyError, setIdentifyError] = useState<string | null>(null);
+  const [arStatus, setArStatus] = useState<{ queued: number; skipped: number; error?: string } | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const identified = rows
@@ -229,6 +231,7 @@ export function ShipOrdersPanel() {
     if (toShip.length === 0) return;
 
     setShipping(true);
+    setArStatus(null);
     setProgress({ phase: "shipping", done: 0, total: toShip.length });
 
     // Mark every "found" row as shipping immediately
@@ -255,11 +258,21 @@ export function ShipOrdersPanel() {
             body: JSON.stringify({ orders: chunk }),
           });
           const json = (await res.json()) as {
-            data?: { results: ShipApiResult[] };
+            data?: { results: ShipApiResult[]; autoResponderStatus?: { queued: number; skipped: number; error?: string } };
             error?: string;
           };
 
           if (res.ok && json.data) {
+            if (json.data.autoResponderStatus) {
+              setArStatus((prev) => {
+                if (!prev) return json.data!.autoResponderStatus!;
+                return {
+                  queued: prev.queued + (json.data!.autoResponderStatus!.queued ?? 0),
+                  skipped: prev.skipped + (json.data!.autoResponderStatus!.skipped ?? 0),
+                  error: json.data!.autoResponderStatus!.error ?? prev.error,
+                };
+              });
+            }
             const resultMap = new Map(json.data.results.map((r) => [r.orderNumber, r]));
             setRows((prev) =>
               prev.map((r) => {
@@ -476,6 +489,25 @@ export function ShipOrdersPanel() {
               </button>
             )}
           </div>
+
+          {allDone && arStatus && (
+            <div className="px-5 py-2 border-b border-white/10 text-xs flex items-center gap-2">
+              <MessageSquareText className="h-3.5 w-3.5 text-white/40 shrink-0" />
+              {arStatus.error ? (
+                <span className="text-amber-400">
+                  Auto Responder: {arStatus.queued} queued, {arStatus.skipped} skipped — {arStatus.error}
+                </span>
+              ) : arStatus.queued > 0 ? (
+                <span className="text-emerald-400">
+                  Auto Responder: {arStatus.queued} message{arStatus.queued !== 1 ? "s" : ""} queued
+                </span>
+              ) : (
+                <span className="text-white/40">
+                  Auto Responder: no eligible eBay orders
+                </span>
+              )}
+            </div>
+          )}
 
           <div className="divide-y divide-white/5">
             {rows.map((row, i) => (

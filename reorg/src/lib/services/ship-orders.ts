@@ -1245,7 +1245,7 @@ async function shipShopify(
 export async function executeShipments(
   orders: IdentifiedOrder[],
   actorUserId: string,
-): Promise<ShipResult[]> {
+): Promise<{ results: ShipResult[]; autoResponderStatus: { queued: number; skipped: number; error?: string } }> {
   const integrationIds = [...new Set(orders.map((o) => o.integrationId))];
   const integrations = await db.integration.findMany({
     where: { id: { in: integrationIds } },
@@ -1423,6 +1423,7 @@ export async function executeShipments(
   }
 
   // ── Auto Responder: bulk-enqueue jobs for successfully shipped eBay orders ──
+  let autoResponderStatus: { queued: number; skipped: number; error?: string } = { queued: 0, skipped: 0 };
   try {
     const { bulkEnqueueAutoResponderJobs } = await import("@/lib/services/auto-responder");
     const ebayPlatforms = new Set<Platform>(["TPP_EBAY", "TT_EBAY"]);
@@ -1438,12 +1439,20 @@ export async function executeShipments(
       });
     }
 
+    console.log(`[auto-responder] eligible eBay orders for enqueue: ${ebayOrders.length}`);
+
     if (ebayOrders.length > 0) {
-      await bulkEnqueueAutoResponderJobs(ebayOrders);
+      const result = await bulkEnqueueAutoResponderJobs(ebayOrders);
+      autoResponderStatus = { queued: result.queued, skipped: result.skipped };
+      if (Object.keys(result.reasons).length > 0) {
+        autoResponderStatus.error = JSON.stringify(result.reasons);
+      }
     }
   } catch (err) {
-    console.error("[auto-responder] bulk enqueue failed:", err);
+    const msg = err instanceof Error ? err.message : "Unknown error";
+    console.error("[auto-responder] bulk enqueue failed:", msg, err);
+    autoResponderStatus.error = msg;
   }
 
-  return results as ShipResult[];
+  return { results: results as ShipResult[], autoResponderStatus };
 }
