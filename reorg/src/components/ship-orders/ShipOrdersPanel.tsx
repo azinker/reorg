@@ -337,7 +337,10 @@ export function ShipOrdersPanel() {
   const hasResults = rows.length > 0;
   const allDone =
     rows.length > 0 &&
-    rows.every((r) => r.phase === "shipped" || r.phase === "failed");
+    rows.some((r) => r.phase === "shipped" || r.phase === "failed") &&
+    rows.every(
+      (r) => r.phase === "shipped" || r.phase === "failed" || r.phase === "identified",
+    );
 
   const shippedRows = rows.filter((r): r is { phase: "shipped"; data: ShipApiResult } => r.phase === "shipped");
   const failedRows = rows.filter((r): r is { phase: "failed"; data: ShipApiResult } => r.phase === "failed");
@@ -401,6 +404,7 @@ export function ShipOrdersPanel() {
     );
 
     let done = 0;
+    let totalArQueued = 0;
 
     try {
       for (let i = 0; i < toShip.length; i += SHIP_CHUNK_SIZE) {
@@ -420,6 +424,7 @@ export function ShipOrdersPanel() {
 
           if (res.ok && json.data) {
             if (json.data.autoResponderStatus) {
+              totalArQueued += json.data.autoResponderStatus.queued ?? 0;
               setArStatus((prev) => {
                 if (!prev) return json.data!.autoResponderStatus!;
                 return {
@@ -478,6 +483,11 @@ export function ShipOrdersPanel() {
 
         done += chunk.length;
         setProgress({ phase: "shipping", done, total: toShip.length });
+      }
+
+      // Fire kick immediately — don't depend on the tracker component mounting
+      if (totalArQueued > 0) {
+        fetch("/api/auto-responder/kick", { method: "POST" }).catch(() => {});
       }
     } finally {
       setShipping(false);

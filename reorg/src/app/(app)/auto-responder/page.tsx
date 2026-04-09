@@ -23,6 +23,7 @@ import {
   Play,
   Search,
   Send,
+  Bug,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { Platform } from "@prisma/client";
@@ -105,25 +106,37 @@ export default function AutoResponderPage() {
         </div>
       </div>
 
-      <div className="flex gap-1 border-b border-white/10">
-        <button
-          onClick={() => setTab("responders")}
-          className={cn(
-            "px-4 py-2 text-sm font-medium transition-colors cursor-pointer",
-            tab === "responders" ? "text-white border-b-2 border-white" : "text-white/50 hover:text-white/80",
-          )}
+      <div className="flex items-center justify-between border-b border-white/10">
+        <div className="flex gap-1">
+          <button
+            onClick={() => setTab("responders")}
+            className={cn(
+              "px-4 py-2 text-sm font-medium transition-colors cursor-pointer",
+              tab === "responders" ? "text-white border-b-2 border-white" : "text-white/50 hover:text-white/80",
+            )}
+          >
+            Responders
+          </button>
+          <button
+            onClick={() => setTab("logs")}
+            className={cn(
+              "px-4 py-2 text-sm font-medium transition-colors cursor-pointer",
+              tab === "logs" ? "text-white border-b-2 border-white" : "text-white/50 hover:text-white/80",
+            )}
+          >
+            Logs
+          </button>
+        </div>
+        <a
+          href="/api/auto-responder/debug"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-white/30 hover:text-white/60 transition-colors cursor-pointer"
+          title="View debug endpoint (JSON)"
         >
-          Responders
-        </button>
-        <button
-          onClick={() => setTab("logs")}
-          className={cn(
-            "px-4 py-2 text-sm font-medium transition-colors cursor-pointer",
-            tab === "logs" ? "text-white border-b-2 border-white" : "text-white/50 hover:text-white/80",
-          )}
-        >
-          Logs
-        </button>
+          <Bug className="h-3 w-3" />
+          Debug
+        </a>
       </div>
 
       {tab === "responders" ? <RespondersTab /> : <LogsTab />}
