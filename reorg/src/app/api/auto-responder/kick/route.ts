@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
+import { db } from "@/lib/db";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -10,6 +11,15 @@ export async function POST() {
   if (!session?.user?.id) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+
+  // Re-queue FAILED jobs that haven't exhausted the new retry limit (5)
+  const requeued = await db.autoResponderJob.updateMany({
+    where: { status: "FAILED", retryCount: { lt: 5 } },
+    data: {
+      status: "PENDING",
+      processAfter: new Date(Date.now() + 5_000),
+    },
+  });
 
   const { processAutoResponderJobs } = await import("@/lib/services/auto-responder");
 
@@ -31,6 +41,7 @@ export async function POST() {
     processed: totalProcessed,
     sent: totalSent,
     failed: totalFailed,
+    requeued: requeued.count,
     elapsedMs: Date.now() - startMs,
   });
 }

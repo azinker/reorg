@@ -21,8 +21,8 @@ import type {
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
-const MAX_RETRY_COUNT = 3;
-const RETRY_BACKOFF_MS = [5_000, 30_000, 120_000];
+const MAX_RETRY_COUNT = 5;
+const RETRY_BACKOFF_MS = [5_000, 30_000, 120_000, 600_000, 1_800_000];
 const JOBS_PER_BATCH = 50;
 const SEND_CONCURRENCY = 5;
 const SEND_LOG_RETENTION_DAYS = 30;
