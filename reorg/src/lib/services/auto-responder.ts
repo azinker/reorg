@@ -398,6 +398,7 @@ export async function bulkEnqueueAutoResponderJobs(
     trackingNumber?: string;
     carrier?: string;
   }>,
+  batchId?: string,
 ): Promise<{ queued: number; skipped: number; reasons: Record<string, number> }> {
   if (orders.length === 0) return { queued: 0, skipped: 0, reasons: {} };
 
@@ -455,6 +456,7 @@ export async function bulkEnqueueAutoResponderJobs(
         carrier: o.carrier,
         source: "SHIP_ORDERS",
         status: "PENDING",
+        ...(batchId ? { batchId } : {}),
       });
     }
   }

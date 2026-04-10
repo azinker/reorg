@@ -1245,6 +1245,7 @@ async function shipShopify(
 export async function executeShipments(
   orders: IdentifiedOrder[],
   actorUserId: string,
+  batchId?: string,
 ): Promise<{ results: ShipResult[]; autoResponderStatus: { queued: number; skipped: number; error?: string } }> {
   const integrationIds = [...new Set(orders.map((o) => o.integrationId))];
   const integrations = await db.integration.findMany({
@@ -1442,7 +1443,7 @@ export async function executeShipments(
     console.log(`[auto-responder] eligible eBay orders for enqueue: ${ebayOrders.length}`);
 
     if (ebayOrders.length > 0) {
-      const result = await bulkEnqueueAutoResponderJobs(ebayOrders);
+      const result = await bulkEnqueueAutoResponderJobs(ebayOrders, batchId);
       autoResponderStatus = { queued: result.queued, skipped: result.skipped };
       if (Object.keys(result.reasons).length > 0) {
         autoResponderStatus.error = JSON.stringify(result.reasons);

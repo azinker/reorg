@@ -77,9 +77,9 @@ export async function POST(request: NextRequest) {
       status: "found" as const,
     }));
 
-    const { results, autoResponderStatus } = await executeShipments(orders, actorUserId);
+    const batchId = (json as { batchId?: string }).batchId ?? undefined;
+    const { results, autoResponderStatus } = await executeShipments(orders, actorUserId, batchId);
 
-    // Jobs are in the DB. The scheduler tick (every minute) will process them.
     return NextResponse.json({ data: { results, autoResponderStatus } });
   } catch (error) {
     console.error("[ship-orders/execute] Failed", error);

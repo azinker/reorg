@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef } from "react";
 import {
   CheckCircle2,
   XCircle,
@@ -16,7 +16,6 @@ import {
   Copy,
   Check,
   MessageSquareText,
-  Send,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { IdentifyResult, ShipResult } from "@/lib/services/ship-orders";
@@ -105,153 +104,6 @@ function ProgressBar({ progress }: { progress: ProgressState }) {
   );
 }
 
-// ─── AR Queue Status ──────────────────────────────────────────────────────────
-
-type ArQueueStatus = {
-  pending: number;
-  processing: number;
-  completed: number;
-  failed: number;
-  channels: Record<string, { pending: number; processing: number }>;
-};
-
-const CHANNEL_LABELS: Record<string, string> = {
-  TPP_EBAY: "TPP eBay",
-  TT_EBAY: "TT eBay",
-};
-
-function AutoResponderTracker({
-  totalQueued,
-  onComplete,
-}: {
-  totalQueued: number;
-  onComplete: () => void;
-}) {
-  const [status, setStatus] = useState<ArQueueStatus | null>(null);
-  const [kicking, setKicking] = useState(false);
-  const [kickDone, setKickDone] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const completedBaseRef = useRef<number | null>(null);
-
-  const pollStatus = useCallback(async () => {
-    try {
-      const res = await fetch("/api/auto-responder/status");
-      if (!res.ok) return;
-      const data = (await res.json()) as ArQueueStatus;
-      if (completedBaseRef.current === null) {
-        completedBaseRef.current = data.completed;
-      }
-      setStatus(data);
-      setError(null);
-    } catch {
-      setError("Failed to fetch status");
-    }
-  }, []);
-
-  useEffect(() => {
-    if (totalQueued === 0) {
-      onComplete();
-      return;
-    }
-
-    void pollStatus();
-
-    setKicking(true);
-    fetch("/api/auto-responder/kick", { method: "POST" })
-      .then(async (res) => {
-        if (res.ok) {
-          setKickDone(true);
-          await pollStatus();
-        }
-      })
-      .catch(() => {})
-      .finally(() => setKicking(false));
-
-    intervalRef.current = setInterval(pollStatus, 3000);
-    return () => {
-      if (intervalRef.current) clearInterval(intervalRef.current);
-    };
-  }, [totalQueued, onComplete, pollStatus]);
-
-  useEffect(() => {
-    if (!status || !kickDone) return;
-    const remaining = status.pending + status.processing;
-    if (remaining === 0) {
-      if (intervalRef.current) clearInterval(intervalRef.current);
-      const timer = setTimeout(onComplete, 1500);
-      return () => clearTimeout(timer);
-    }
-  }, [status, kickDone, onComplete]);
-
-  const sentInSession =
-    status && completedBaseRef.current !== null
-      ? status.completed - completedBaseRef.current
-      : 0;
-  const remaining = status ? status.pending + status.processing : totalQueued;
-  const total = sentInSession + remaining + (status?.failed ?? 0);
-  const pct = total > 0 ? Math.round((sentInSession / total) * 100) : 0;
-  const isDone = kickDone && remaining === 0;
-
-  return (
-    <div className="px-5 py-3 border-b border-white/10 space-y-2.5">
-      <div className="flex items-center gap-2 text-xs font-medium text-white/70">
-        {isDone ? (
-          <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
-        ) : (
-          <Send className="h-3.5 w-3.5 text-white/40 shrink-0" />
-        )}
-        <span>
-          Auto Responder{" "}
-          {isDone
-            ? `— ${sentInSession} message${sentInSession !== 1 ? "s" : ""} sent`
-            : kicking
-              ? "— sending messages…"
-              : `— ${remaining} remaining`}
-        </span>
-        {kicking && <Loader2 className="h-3 w-3 animate-spin text-white/30" />}
-      </div>
-
-      {!isDone && (
-        <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/10">
-          <div
-            className="h-full rounded-full bg-gradient-to-r from-blue-600 to-blue-400 transition-all duration-700 ease-out"
-            style={{ width: `${pct}%` }}
-          />
-        </div>
-      )}
-
-      {status && Object.keys(status.channels).length > 0 && (
-        <div className="flex items-center gap-4 text-xs text-white/50">
-          {Object.entries(status.channels).map(([ch, counts]) => {
-            const pending = counts.pending + counts.processing;
-            return (
-              <span key={ch} className="flex items-center gap-1.5">
-                <span className={cn(
-                  "inline-block h-1.5 w-1.5 rounded-full",
-                  ch === "TPP_EBAY" ? "bg-yellow-400" : "bg-orange-400",
-                )} />
-                {CHANNEL_LABELS[ch] ?? ch}:{" "}
-                {pending > 0 ? (
-                  <span className="text-white/70">{pending} pending</span>
-                ) : (
-                  <span className="text-emerald-400/70">done</span>
-                )}
-              </span>
-            );
-          })}
-          {(status.failed ?? 0) > 0 && (
-            <span className="text-red-400">{status.failed} failed</span>
-          )}
-        </div>
-      )}
-
-      {error && (
-        <div className="text-xs text-amber-400">{error}</div>
-      )}
-    </div>
-  );
-}
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -317,14 +169,7 @@ export function ShipOrdersPanel() {
   const [rows, setRows] = useState<RowState[]>([]);
   const [identifyError, setIdentifyError] = useState<string | null>(null);
   const [arStatus, setArStatus] = useState<{ queued: number; skipped: number; error?: string } | null>(null);
-  const [arTrackingActive, setArTrackingActive] = useState(false);
-  const [arTrackingDone, setArTrackingDone] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-
-  const handleArTrackingComplete = useCallback(() => {
-    setArTrackingActive(false);
-    setArTrackingDone(true);
-  }, []);
 
   const identified = rows
     .filter((r): r is { phase: "identified"; data: IdentifyResult } => r.phase === "identified")
@@ -393,6 +238,8 @@ export function ShipOrdersPanel() {
     setArStatus(null);
     setProgress({ phase: "shipping", done: 0, total: toShip.length });
 
+    const batchId = `ship-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
     // Mark every "found" row as shipping immediately
     setRows((prev) =>
       prev.map((r) => {
@@ -415,7 +262,7 @@ export function ShipOrdersPanel() {
           const res = await fetch("/api/ship-orders/execute", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ orders: chunk }),
+            body: JSON.stringify({ orders: chunk, batchId }),
           });
           const json = (await res.json()) as {
             data?: { results: ShipApiResult[]; autoResponderStatus?: { queued: number; skipped: number; error?: string } };
@@ -492,8 +339,6 @@ export function ShipOrdersPanel() {
     } finally {
       setShipping(false);
       setProgress(null);
-      setArTrackingActive(true);
-      setArTrackingDone(false);
     }
   }
 
@@ -504,8 +349,6 @@ export function ShipOrdersPanel() {
     setRawInput("");
     setIdentifyError(null);
     setArStatus(null);
-    setArTrackingActive(false);
-    setArTrackingDone(false);
     textareaRef.current?.focus();
   }
 
@@ -661,14 +504,7 @@ export function ShipOrdersPanel() {
             )}
           </div>
 
-          {allDone && arTrackingActive && arStatus && arStatus.queued > 0 && (
-            <AutoResponderTracker
-              totalQueued={arStatus.queued}
-              onComplete={handleArTrackingComplete}
-            />
-          )}
-
-          {allDone && !arTrackingActive && arStatus && (
+          {allDone && arStatus && (
             <div className="px-5 py-2 border-b border-white/10 text-xs flex items-center gap-2">
               <MessageSquareText className="h-3.5 w-3.5 text-white/40 shrink-0" />
               {arStatus.error ? (
@@ -676,8 +512,9 @@ export function ShipOrdersPanel() {
                   Auto Responder: {arStatus.queued} queued, {arStatus.skipped} skipped — {arStatus.error}
                 </span>
               ) : arStatus.queued > 0 ? (
-                <span className="text-emerald-400">
-                  Auto Responder: {arStatus.queued} message{arStatus.queued !== 1 ? "s" : ""} {arTrackingDone ? "sent" : "queued"}
+                <span className="text-emerald-400/80">
+                  Auto Responder: {arStatus.queued} message{arStatus.queued !== 1 ? "s" : ""} queued — track progress on the{" "}
+                  <a href="/auto-responder" className="underline hover:text-emerald-300 transition-colors">Auto Responder</a> page
                 </span>
               ) : (
                 <span className="text-white/40">

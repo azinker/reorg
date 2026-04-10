@@ -940,6 +940,7 @@ model AutoResponderJob {
   status             AutoResponderJobStatus @default(PENDING)
   retryCount         Int                    @default(0)
   lastError          String?
+  batchId            String?
   processAfter       DateTime               @default(now())
   createdAt          DateTime               @default(now())
   updatedAt          DateTime               @updatedAt
@@ -951,5 +952,6 @@ model AutoResponderJob {
   @@index([status, processAfter])
   @@index([channel, status])
   @@index([orderNumber])
+  @@index([batchId])
   @@map("auto_responder_jobs")
 }

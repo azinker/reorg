@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import Link from "next/link";
 import {
   MessageSquareText,
@@ -24,6 +24,9 @@ import {
   Search,
   Send,
   Bug,
+  Clock,
+  CheckCircle2,
+  RefreshCw,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { Platform } from "@prisma/client";
@@ -92,7 +95,7 @@ function formatDate(d: string | null): string {
 // ─── Main page ───────────────────────────────────────────────────────────────
 
 export default function AutoResponderPage() {
-  const [tab, setTab] = useState<"responders" | "logs">("responders");
+  const [tab, setTab] = useState<"responders" | "logs" | "batches">("responders");
 
   return (
     <div className="flex flex-col gap-6 px-6 py-6 max-w-6xl mx-auto w-full">
@@ -118,6 +121,15 @@ export default function AutoResponderPage() {
             Responders
           </button>
           <button
+            onClick={() => setTab("batches")}
+            className={cn(
+              "px-4 py-2 text-sm font-medium transition-colors cursor-pointer",
+              tab === "batches" ? "text-white border-b-2 border-white" : "text-white/50 hover:text-white/80",
+            )}
+          >
+            Batches
+          </button>
+          <button
             onClick={() => setTab("logs")}
             className={cn(
               "px-4 py-2 text-sm font-medium transition-colors cursor-pointer",
@@ -139,7 +151,218 @@ export default function AutoResponderPage() {
         </a>
       </div>
 
-      {tab === "responders" ? <RespondersTab /> : <LogsTab />}
+      {tab === "responders" ? <RespondersTab /> : tab === "batches" ? <BatchesTab /> : <LogsTab />}
+    </div>
+  );
+}
+
+// ─── Batches Tab ─────────────────────────────────────────────────────────────
+
+interface BatchRow {
+  id: string;
+  label: string;
+  startedAt: string;
+  lastUpdatedAt: string;
+  total: number;
+  completed: number;
+  failed: number;
+  pending: number;
+  processing: number;
+  paused: number;
+  channels: Record<string, { pending: number; processing: number; completed: number; failed: number }>;
+  isDone: boolean;
+  statusText: string;
+}
+
+const BATCH_CHANNEL_LABELS: Record<string, { label: string; dotColor: string }> = {
+  TPP_EBAY: { label: "TPP eBay", dotColor: "bg-yellow-400" },
+  TT_EBAY: { label: "TT eBay", dotColor: "bg-orange-400" },
+};
+
+function BatchesTab() {
+  const [batches, setBatches] = useState<BatchRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      const res = await fetch("/api/auto-responder/batches");
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error ?? "Failed to load");
+      setBatches(json.batches);
+      setError("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+    intervalRef.current = setInterval(load, 5000);
+    return () => {
+      if (intervalRef.current) clearInterval(intervalRef.current);
+    };
+  }, [load]);
+
+  const hasActiveBatches = batches.some((b) => !b.isDone);
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <p className="text-xs text-white/30">
+          Each Ship Orders submission creates a batch. Progress updates automatically.
+        </p>
+        {hasActiveBatches && (
+          <div className="flex items-center gap-1.5 text-xs text-blue-400/70">
+            <RefreshCw className="h-3 w-3 animate-spin" />
+            Live
+          </div>
+        )}
+      </div>
+
+      {error && (
+        <div className="flex items-center gap-2 rounded border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-300">
+          <AlertTriangle className="h-4 w-4 shrink-0" />
+          {error}
+        </div>
+      )}
+
+      {loading ? (
+        <div className="flex items-center justify-center py-12">
+          <Loader2 className="h-5 w-5 animate-spin text-white/30" />
+        </div>
+      ) : batches.length === 0 ? (
+        <div className="text-center py-12 text-white/40 text-sm">
+          No batches yet. Ship some orders and they&apos;ll appear here.
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {batches.map((batch) => (
+            <BatchCard key={batch.id} batch={batch} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function BatchCard({ batch }: { batch: BatchRow }) {
+  const pct = batch.total > 0 ? Math.round((batch.completed / batch.total) * 100) : 0;
+  const isActive = !batch.isDone;
+
+  return (
+    <div
+      className={cn(
+        "rounded-lg border overflow-hidden transition-colors",
+        isActive
+          ? "border-blue-500/30 bg-blue-500/5"
+          : batch.failed > 0
+            ? "border-white/10 bg-white/[0.03]"
+            : "border-white/10 bg-white/[0.03]",
+      )}
+    >
+      {/* Header */}
+      <div className="flex items-center justify-between px-4 py-3">
+        <div className="flex items-center gap-3">
+          {batch.isDone ? (
+            batch.failed > 0 ? (
+              <AlertTriangle className="h-4 w-4 text-amber-400 shrink-0" />
+            ) : (
+              <CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0" />
+            )
+          ) : (
+            <Clock className="h-4 w-4 text-blue-400 shrink-0" />
+          )}
+          <div>
+            <div className="text-sm font-medium text-white/90">
+              {formatDate(batch.startedAt)}
+            </div>
+            <div className="text-xs text-white/40 mt-0.5">
+              {batch.total} message{batch.total !== 1 ? "s" : ""}
+            </div>
+          </div>
+        </div>
+
+        <div className="text-right">
+          <div className="text-sm font-medium tabular-nums text-white/80">
+            {batch.completed}/{batch.total}
+            {batch.failed > 0 && (
+              <span className="text-red-400 ml-1.5">({batch.failed} failed)</span>
+            )}
+          </div>
+          <div className="text-xs text-white/40 tabular-nums">{pct}%</div>
+        </div>
+      </div>
+
+      {/* Progress bar */}
+      <div className="px-4 pb-1">
+        <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/10">
+          <div className="h-full flex">
+            {batch.completed > 0 && (
+              <div
+                className="h-full bg-emerald-500 transition-all duration-700"
+                style={{ width: `${(batch.completed / batch.total) * 100}%` }}
+              />
+            )}
+            {batch.failed > 0 && (
+              <div
+                className="h-full bg-red-500 transition-all duration-700"
+                style={{ width: `${(batch.failed / batch.total) * 100}%` }}
+              />
+            )}
+            {(batch.processing > 0) && (
+              <div
+                className="h-full bg-blue-500 animate-pulse transition-all duration-700"
+                style={{ width: `${(batch.processing / batch.total) * 100}%` }}
+              />
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Status text */}
+      <div className="px-4 pb-3 pt-1.5">
+        <div className={cn(
+          "text-xs",
+          isActive ? "text-blue-300/80" : batch.failed > 0 ? "text-amber-300/70" : "text-emerald-400/70",
+        )}>
+          {batch.statusText}
+        </div>
+      </div>
+
+      {/* Channel breakdown */}
+      {Object.keys(batch.channels).length > 0 && (
+        <div className="border-t border-white/5 px-4 py-2.5 flex items-center gap-4">
+          {Object.entries(batch.channels).map(([ch, counts]) => {
+            const meta = BATCH_CHANNEL_LABELS[ch];
+            const chTotal = counts.pending + counts.processing + counts.completed + counts.failed;
+            const chDone = counts.completed;
+            const chPct = chTotal > 0 ? Math.round((chDone / chTotal) * 100) : 0;
+
+            return (
+              <div key={ch} className="flex items-center gap-2 text-xs text-white/50">
+                <span className={cn("inline-block h-1.5 w-1.5 rounded-full shrink-0", meta?.dotColor ?? "bg-white/30")} />
+                <span className="text-white/60">{meta?.label ?? ch}</span>
+                <span className="tabular-nums">
+                  {chDone}/{chTotal}
+                </span>
+                {counts.failed > 0 && (
+                  <span className="text-red-400 tabular-nums">({counts.failed} failed)</span>
+                )}
+                {counts.pending + counts.processing > 0 && (
+                  <span className="text-blue-400/60 tabular-nums">{chPct}%</span>
+                )}
+                {counts.pending === 0 && counts.processing === 0 && (
+                  <CheckCircle2 className="h-3 w-3 text-emerald-400/60" />
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
