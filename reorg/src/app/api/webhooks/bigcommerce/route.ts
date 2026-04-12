@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { db } from "@/lib/db";
 import { safeCompareText } from "@/lib/security";
 import { handleMarketplaceWebhook } from "@/lib/services/webhook-sync";
+import { recordNetworkTransferSample, estimateJsonBytes } from "@/lib/services/network-transfer-samples";
 
 export const runtime = "nodejs";
 
@@ -122,6 +123,13 @@ export async function POST(request: NextRequest) {
   const payload = (await request.json().catch(() => null)) as
     | Record<string, unknown>
     | null;
+
+  void recordNetworkTransferSample({
+    channel: "WEBHOOK_INBOUND",
+    label: "BigCommerce webhook inbound",
+    bytesEstimate: estimateJsonBytes(payload),
+    metadata: { topic: typeof payload?.scope === "string" ? payload.scope : request.headers.get("x-bc-topic") },
+  });
 
   const topic =
     typeof payload?.scope === "string"

@@ -2,12 +2,13 @@ import { NextResponse, type NextRequest } from "next/server";
 import { auth } from "@/lib/auth";
 import {
   getNetworkTransferSeries,
+  getTopCostDrivers,
   getTotalsByChannel,
   listNetworkTransferSamples,
   NETWORK_TRANSFER_RETENTION_DAYS,
   parseNetworkTransferQuery,
   pivotNetworkTransferSeries,
-  pruneOldNetworkTransferSamples,
+  rollUpAndPruneSamples,
 } from "@/lib/services/network-transfer-samples";
 
 export const runtime = "nodejs";
@@ -23,12 +24,12 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const pruned = await pruneOldNetworkTransferSamples();
+    const { rolledUp, pruned } = await rollUpAndPruneSamples();
     const sp = request.nextUrl.searchParams;
     const { from, to, bucket, channelFilter } = parseNetworkTransferQuery(sp);
     const page = Math.max(1, parseInt(sp.get("page") ?? "1", 10) || 1);
 
-    const [seriesRows, totalsByChannel, listResult] = await Promise.all([
+    const [seriesRows, totalsByChannel, listResult, topCostDrivers] = await Promise.all([
       getNetworkTransferSeries({ from, to, bucket, channel: channelFilter }),
       getTotalsByChannel({ from, to, channel: channelFilter }),
       listNetworkTransferSamples({
@@ -38,6 +39,7 @@ export async function GET(request: NextRequest) {
         page,
         channel: channelFilter,
       }),
+      getTopCostDrivers({ from, to, limit: 25 }),
     ]);
 
     const chartSeries = pivotNetworkTransferSeries(seriesRows);
@@ -46,6 +48,7 @@ export async function GET(request: NextRequest) {
       data: {
         retentionDays: NETWORK_TRANSFER_RETENTION_DAYS,
         prunedCount: pruned,
+        rolledUpCount: rolledUp,
         range: { from: from.toISOString(), to: to.toISOString(), bucket },
         chartSeries,
         seriesRows: seriesRows.map((r) => ({
@@ -55,6 +58,7 @@ export async function GET(request: NextRequest) {
           bytesSum: Number(r.bytesSum),
         })),
         totalsByChannel,
+        topCostDrivers,
         samples: listResult.items.map((s) => ({
           id: s.id,
           createdAt: s.createdAt.toISOString(),

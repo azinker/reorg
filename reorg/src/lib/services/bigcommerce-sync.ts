@@ -4,6 +4,7 @@ import { BigCommerceAdapter } from "@/lib/integrations/bigcommerce";
 import { runSync, type SyncResult } from "@/lib/services/sync";
 import type { SyncExecutionOptions } from "@/lib/services/sync-control";
 import { buildCompletedSyncConfigFromLatest } from "@/lib/services/sync-control";
+import { runWithMarketplaceTelemetry } from "@/lib/server/marketplace-telemetry";
 import {
   matchListings,
   saveUnmatchedListings,
@@ -63,7 +64,10 @@ export async function runBigCommerceSync(
 ): Promise<SyncResult> {
   const { integration, adapter } = await getBigCommerceSyncContext();
 
-  return runSync(adapter, integration.id, options);
+  return runWithMarketplaceTelemetry(
+    { syncJobId: options.existingJobId ?? "bc-sync", integrationId: integration.id, platform: Platform.BIGCOMMERCE },
+    () => runSync(adapter, integration.id, options),
+  );
 }
 
 export async function runBigCommerceWebhookReconcile(
@@ -75,6 +79,23 @@ export async function runBigCommerceWebhookReconcile(
   options: SyncExecutionOptions = {},
 ): Promise<SyncResult> {
   const { integration, adapter } = await getBigCommerceSyncContext();
+
+  return runWithMarketplaceTelemetry(
+    { syncJobId: options.existingJobId ?? "bc-reconcile", integrationId: integration.id, platform: Platform.BIGCOMMERCE },
+    () => runBigCommerceWebhookReconcileInner(integration, adapter, input, options),
+  );
+}
+
+async function runBigCommerceWebhookReconcileInner(
+  integration: NonNullable<Awaited<ReturnType<typeof db.integration.findUnique>>>,
+  adapter: BigCommerceAdapter,
+  input: {
+    productIds?: string[];
+    deletedProductIds?: string[];
+    changedVariantIds?: string[];
+  },
+  options: SyncExecutionOptions = {},
+): Promise<SyncResult> {
   const productIds = [...new Set((input.productIds ?? []).filter(Boolean))];
   const deletedProductIds = [...new Set((input.deletedProductIds ?? []).filter(Boolean))];
   const changedVariantIds = [

@@ -103,6 +103,8 @@ enum NetworkTransferChannel {
   SYNC_JOB
   FORECAST
   AUTO_RESPONDER
+  DATABASE_IO
+  WEBHOOK_INBOUND
   OTHER
 }
 
@@ -479,6 +481,22 @@ model NetworkTransferSample {
   @@index([channel])
   @@index([integrationId])
   @@map("network_transfer_samples")
+}
+
+model NetworkTransferDailySummary {
+  id            String                 @id @default(cuid())
+  date          DateTime               @db.Date
+  channel       NetworkTransferChannel
+  label         String
+  eventCount    Int
+  bytesSum      BigInt
+  avgDurationMs Int?
+  createdAt     DateTime               @default(now())
+
+  @@unique([date, channel, label])
+  @@index([date])
+  @@index([channel, date])
+  @@map("network_transfer_daily_summaries")
 }
 
 // ─── Backups ─────────────────────────────────────────────────────────────────

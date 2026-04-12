@@ -3,6 +3,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { db } from "@/lib/db";
 import { safeCompareText } from "@/lib/security";
 import { handleMarketplaceWebhook } from "@/lib/services/webhook-sync";
+import { recordNetworkTransferSample } from "@/lib/services/network-transfer-samples";
 
 export const runtime = "nodejs";
 
@@ -213,6 +214,14 @@ export async function POST(request: NextRequest) {
 
   const topic = request.headers.get("x-shopify-topic");
   const payload = rawBody ? (JSON.parse(rawBody) as unknown) : null;
+
+  void recordNetworkTransferSample({
+    channel: "WEBHOOK_INBOUND",
+    label: "Shopify webhook inbound",
+    bytesEstimate: rawBody ? Buffer.byteLength(rawBody, "utf8") : null,
+    metadata: { topic },
+  });
+
   const targets = await resolveShopifyTargets(payload);
   const sourceLabel = request.headers.get("x-shopify-shop-domain");
   const externalId =

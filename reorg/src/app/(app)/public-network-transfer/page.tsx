@@ -12,7 +12,17 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { Loader2, RefreshCw } from "lucide-react";
+import {
+  ArrowDownWideNarrow,
+  ChevronDown,
+  ChevronRight,
+  Database,
+  Globe,
+  Loader2,
+  RefreshCw,
+  Server,
+  Zap,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 import { PageTour } from "@/components/onboarding/page-tour";
 import { PAGE_TOUR_STEPS } from "@/components/onboarding/page-tour-steps";
@@ -20,51 +30,75 @@ import { PAGE_TOUR_STEPS } from "@/components/onboarding/page-tour-steps";
 const CHANNEL_KEYS = [
   "CLIENT_API_RESPONSE",
   "MARKETPLACE_INBOUND",
+  "MARKETPLACE_OUTBOUND",
   "SYNC_JOB",
   "FORECAST",
   "AUTO_RESPONDER",
+  "DATABASE_IO",
+  "WEBHOOK_INBOUND",
   "OTHER",
 ] as const;
 
-const CHANNEL_LABEL: Record<(typeof CHANNEL_KEYS)[number], string> = {
-  CLIENT_API_RESPONSE: "App API and file responses (JSON, downloads, image proxy, exports)",
-  MARKETPLACE_INBOUND: "Marketplace HTTP (eBay response bodies, sync)",
-  /** One category for all pull-sync telemetry; each row’s Label + Result say completed vs failed. */
-  SYNC_JOB: "Pull sync jobs",
-  FORECAST: "Inventory Forecaster (page load, runs, Excel, saves, order export)",
-  AUTO_RESPONDER: "Auto Responder (send, preview, reconciliation, test)",
-  OTHER: "Other",
-};
+type ChannelKey = (typeof CHANNEL_KEYS)[number];
 
-/** Shorter legend text (Recharts legend is narrow). */
-const CHANNEL_LEGEND_LABEL: Record<(typeof CHANNEL_KEYS)[number], string> = {
-  CLIENT_API_RESPONSE: "App responses",
-  MARKETPLACE_INBOUND: "Marketplace HTTP (eBay)",
-  SYNC_JOB: "Pull syncs",
-  FORECAST: "Forecaster",
+const CHANNEL_LABEL: Record<ChannelKey, string> = {
+  CLIENT_API_RESPONSE: "App API Responses",
+  MARKETPLACE_INBOUND: "Marketplace HTTP Inbound",
+  MARKETPLACE_OUTBOUND: "Marketplace HTTP Outbound",
+  SYNC_JOB: "Pull Sync Jobs",
+  FORECAST: "Inventory Forecaster",
   AUTO_RESPONDER: "Auto Responder",
+  DATABASE_IO: "Database I/O (Neon)",
+  WEBHOOK_INBOUND: "Webhook Inbound",
   OTHER: "Other",
 };
 
-function syncResultFromMetadata(
-  channel: string,
-  meta: unknown,
-): "Completed" | "Failed" | null {
-  if (channel !== "SYNC_JOB") return null;
-  if (!meta || typeof meta !== "object") return null;
-  const st = (meta as Record<string, unknown>).status;
-  if (st === "COMPLETED") return "Completed";
-  if (st === "FAILED") return "Failed";
-  return null;
-}
+const CHANNEL_DESCRIPTION: Record<ChannelKey, string> = {
+  CLIENT_API_RESPONSE: "JSON responses, file downloads, image proxy, exports served to the browser",
+  MARKETPLACE_INBOUND: "HTTP response bodies from eBay, BigCommerce, Shopify APIs during sync",
+  MARKETPLACE_OUTBOUND: "HTTP request bodies sent to marketplace APIs (push operations)",
+  SYNC_JOB: "Pull sync job telemetry (timing and item counts)",
+  FORECAST: "Forecaster page loads, runs, Excel exports, saves, order data",
+  AUTO_RESPONDER: "Message sends, previews, reconciliation, test messages",
+  DATABASE_IO: "Prisma query round-trips to Neon PostgreSQL",
+  WEBHOOK_INBOUND: "Incoming webhook payloads from eBay, BigCommerce, Shopify",
+  OTHER: "Uncategorized network transfer events",
+};
 
-const CHANNEL_STROKE: Record<(typeof CHANNEL_KEYS)[number], string> = {
+const CHANNEL_ICON: Record<ChannelKey, typeof Globe> = {
+  CLIENT_API_RESPONSE: Globe,
+  MARKETPLACE_INBOUND: Server,
+  MARKETPLACE_OUTBOUND: Server,
+  SYNC_JOB: RefreshCw,
+  FORECAST: ArrowDownWideNarrow,
+  AUTO_RESPONDER: Zap,
+  DATABASE_IO: Database,
+  WEBHOOK_INBOUND: Server,
+  OTHER: Globe,
+};
+
+const CHANNEL_STROKE: Record<ChannelKey, string> = {
   CLIENT_API_RESPONSE: "hsl(262, 83%, 68%)",
   MARKETPLACE_INBOUND: "hsl(199, 89%, 48%)",
+  MARKETPLACE_OUTBOUND: "hsl(170, 70%, 45%)",
   SYNC_JOB: "hsl(142, 71%, 45%)",
   FORECAST: "hsl(38, 92%, 50%)",
   AUTO_RESPONDER: "hsl(300, 70%, 60%)",
+  DATABASE_IO: "hsl(0, 75%, 55%)",
+  WEBHOOK_INBOUND: "hsl(220, 70%, 55%)",
   OTHER: "hsl(215, 20%, 55%)",
+};
+
+const CHANNEL_LEGEND_LABEL: Record<ChannelKey, string> = {
+  CLIENT_API_RESPONSE: "App Responses",
+  MARKETPLACE_INBOUND: "Marketplace In",
+  MARKETPLACE_OUTBOUND: "Marketplace Out",
+  SYNC_JOB: "Pull Syncs",
+  FORECAST: "Forecaster",
+  AUTO_RESPONDER: "Auto Responder",
+  DATABASE_IO: "Database I/O",
+  WEBHOOK_INBOUND: "Webhooks",
+  OTHER: "Other",
 };
 
 function formatBytes(n: number): string {
@@ -89,50 +123,36 @@ function formatNyTime(iso: string, bucket: "hour" | "day"): string {
   }).format(d);
 }
 
-/** Recharts default Brush traveller draws white lines on a stroke-colored rect — theme-aware handles. */
 function NetworkBrushTraveller(props: { x: number; y: number; width: number; height: number }) {
   const { x, y, width, height } = props;
   const lineY = Math.floor(y + height / 2) - 1;
   return (
     <g>
-      <rect
-        x={x}
-        y={y}
-        width={width}
-        height={height}
-        fill="var(--card)"
-        stroke="var(--border)"
-        strokeWidth={1}
-        rx={3}
-      />
-      <line
-        x1={x + 2}
-        y1={lineY}
-        x2={x + width - 2}
-        y2={lineY}
-        stroke="var(--muted-foreground)"
-        strokeWidth={1.5}
-      />
-      <line
-        x1={x + 2}
-        y1={lineY + 2}
-        x2={x + width - 2}
-        y2={lineY + 2}
-        stroke="var(--muted-foreground)"
-        strokeWidth={1.5}
-      />
+      <rect x={x} y={y} width={width} height={height} fill="var(--card)" stroke="var(--border)" strokeWidth={1} rx={3} />
+      <line x1={x + 2} y1={lineY} x2={x + width - 2} y2={lineY} stroke="var(--muted-foreground)" strokeWidth={1.5} />
+      <line x1={x + 2} y1={lineY + 2} x2={x + width - 2} y2={lineY + 2} stroke="var(--muted-foreground)" strokeWidth={1.5} />
     </g>
   );
 }
 
 type RangePreset = "24h" | "7d" | "30d";
 
+type TopCostDriver = {
+  label: string;
+  channel: ChannelKey;
+  eventCount: number;
+  bytesSum: number;
+  avgBytesPerEvent: number;
+};
+
 type ApiPayload = {
   retentionDays: number;
   prunedCount: number;
+  rolledUpCount?: number;
   range: { from: string; to: string; bucket: "hour" | "day" };
   chartSeries: Record<string, string | number>[];
   totalsByChannel: { channel: string; eventCount: number; bytesSum: number }[];
+  topCostDrivers: TopCostDriver[];
   samples: {
     id: string;
     createdAt: string;
@@ -155,6 +175,7 @@ export default function PublicNetworkTransferPage() {
   const [error, setError] = useState<string | null>(null);
   const [forbidden, setForbidden] = useState(false);
   const [data, setData] = useState<ApiPayload | null>(null);
+  const [expandedChannels, setExpandedChannels] = useState<Set<string>>(new Set());
 
   const rangeParams = useMemo(() => {
     const to = new Date();
@@ -217,6 +238,35 @@ export default function PublicNetworkTransferPage() {
     }));
   }, [data?.chartSeries, data?.range.bucket]);
 
+  const totalBytes = useMemo(() => {
+    if (!data?.totalsByChannel) return 0;
+    return data.totalsByChannel.reduce((sum, t) => sum + t.bytesSum, 0);
+  }, [data?.totalsByChannel]);
+
+  const sortedTotals = useMemo(() => {
+    if (!data?.totalsByChannel) return [];
+    return [...data.totalsByChannel].sort((a, b) => b.bytesSum - a.bytesSum);
+  }, [data?.totalsByChannel]);
+
+  const groupedSamples = useMemo(() => {
+    const groups: Record<string, typeof filteredSamples> = {};
+    for (const s of filteredSamples) {
+      const ch = s.channel;
+      if (!groups[ch]) groups[ch] = [];
+      groups[ch].push(s);
+    }
+    return groups;
+  }, [filteredSamples]);
+
+  const toggleChannel = (ch: string) => {
+    setExpandedChannels((prev) => {
+      const next = new Set(prev);
+      if (next.has(ch)) next.delete(ch);
+      else next.add(ch);
+      return next;
+    });
+  };
+
   if (forbidden) {
     return (
       <div className="flex min-h-[50vh] flex-col items-center justify-center gap-3 p-6 text-center">
@@ -232,13 +282,16 @@ export default function PublicNetworkTransferPage() {
     <div className="flex min-h-0 flex-1 flex-col gap-6 p-4 md:p-6" data-tour="network-transfer-root">
       <PageTour page="publicNetworkTransfer" steps={PAGE_TOUR_STEPS.publicNetworkTransfer} />
 
+      {/* Header */}
       <div className="flex flex-col gap-2 border-b border-border pb-4 md:flex-row md:items-end md:justify-between">
         <div>
           <h1 className="text-xl font-semibold tracking-tight text-foreground md:text-2xl">
             Public Network Transfer
           </h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Site-wide app telemetry for public network transfer, measured inside reorG so we can spot heavy routes and downloads.
+            Comprehensive telemetry across all network channels.
+            Estimates from reorG — actual Neon billing may differ.
+            Samples older than {data?.retentionDays ?? 10} days are rolled up into daily summaries, then pruned.
           </p>
         </div>
         <button
@@ -252,45 +305,20 @@ export default function PublicNetworkTransferPage() {
         </button>
       </div>
 
-      <div
-        data-tour="network-transfer-disclaimer"
-        className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-foreground"
-      >
-        <strong className="font-semibold">How to read this page:</strong> These are{" "}
-        <strong>estimates</strong> from reorG (JSON and binary response sizes — grid, Chrome extension zip,
-        lookup-item, etc. — eBay HTTP bodies during sync, plus{" "}
-        <strong>pull sync job</strong> rows for timing and item counts). Neon’s invoice uses its own
-        network accounting — numbers here will not match exactly.{" "}
-        <strong>Pull sync jobs</strong> do not carry a byte estimate (they show “—” and 0 B on the chart)
-        because we record duration and processed counts, not total download size. The{" "}
-        <strong>Result</strong> column shows Completed vs Failed; successful BigCommerce/eBay/Shopify syncs
-        still appear under Pull sync jobs — that category means “a sync run was recorded,” not “something
-        failed.” If you still see an older channel name like “Sync jobs completed / failed,” refresh after
-        deploy — that wording grouped both outcomes in one bucket; it did not mean every row failed.{" "}
-        <strong>Inventory Forecaster</strong> rows appear when you open the forecaster, run a forecast,
-        export or save, or load supplier-order Excel data — read the <strong>Label</strong> column for the
-        exact action. Samples older than {data?.retentionDays ?? 10} days are pruned automatically.
-      </div>
-
       {error && (
         <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
           {error}
         </div>
       )}
 
-      <div
-        data-tour="network-transfer-controls"
-        className="flex flex-wrap items-center gap-3 text-sm"
-      >
+      {/* Controls */}
+      <div data-tour="network-transfer-controls" className="flex flex-wrap items-center gap-3 text-sm">
         <span className="text-muted-foreground">Range:</span>
         {(["24h", "7d", "30d"] as const).map((p) => (
           <button
             key={p}
             type="button"
-            onClick={() => {
-              setPreset(p);
-              setPage(1);
-            }}
+            onClick={() => { setPreset(p); setPage(1); }}
             className={cn(
               "cursor-pointer rounded-md px-3 py-1.5 font-medium transition-colors",
               preset === p
@@ -302,20 +330,15 @@ export default function PublicNetworkTransferPage() {
           </button>
         ))}
         <label className="ml-2 flex items-center gap-2 text-muted-foreground">
-          Log channel
+          Channel
           <select
             value={channelFilter}
-            onChange={(e) => {
-              setChannelFilter(e.target.value);
-              setPage(1);
-            }}
+            onChange={(e) => { setChannelFilter(e.target.value); setPage(1); }}
             className="cursor-pointer rounded-md border border-border bg-background px-2 py-1.5 text-foreground"
           >
-            <option value="">All</option>
+            <option value="">All channels</option>
             {CHANNEL_KEYS.map((k) => (
-              <option key={k} value={k}>
-                {CHANNEL_LABEL[k]}
-              </option>
+              <option key={k} value={k}>{CHANNEL_LABEL[k]}</option>
             ))}
           </select>
         </label>
@@ -327,30 +350,67 @@ export default function PublicNetworkTransferPage() {
         </div>
       ) : (
         <>
-          <div
-            data-tour="network-transfer-chart"
-            className="rounded-xl border border-border bg-card p-4 shadow-sm"
-          >
+          {/* Section 1: Cost Overview Cards */}
+          {data && sortedTotals.length > 0 && (
+            <div data-tour="network-transfer-overview">
+              <div className="mb-3 flex items-baseline gap-3">
+                <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+                  Cost Overview
+                </h2>
+                <span className="text-lg font-bold text-foreground">{formatBytes(totalBytes)}</span>
+                <span className="text-xs text-muted-foreground">total estimated transfer</span>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                {sortedTotals.map((t) => {
+                  const ch = t.channel as ChannelKey;
+                  const Icon = CHANNEL_ICON[ch] ?? Globe;
+                  const pct = totalBytes > 0 ? ((t.bytesSum / totalBytes) * 100).toFixed(1) : "0.0";
+                  const color = CHANNEL_STROKE[ch] ?? "hsl(215, 20%, 55%)";
+                  return (
+                    <div
+                      key={t.channel}
+                      className="relative overflow-hidden rounded-lg border border-border bg-card px-4 py-3 shadow-sm"
+                    >
+                      <div
+                        className="absolute inset-y-0 left-0 w-1"
+                        style={{ backgroundColor: color }}
+                      />
+                      <div className="flex items-start gap-2">
+                        <Icon className="mt-0.5 h-4 w-4 shrink-0" style={{ color }} />
+                        <div className="min-w-0 flex-1">
+                          <div className="text-xs font-medium text-muted-foreground">
+                            {CHANNEL_LABEL[ch] ?? ch}
+                          </div>
+                          <div className="mt-1 font-mono text-lg font-semibold text-foreground">
+                            {formatBytes(t.bytesSum)}
+                          </div>
+                          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                            <span>{t.eventCount} events</span>
+                            <span className="font-medium" style={{ color }}>{pct}%</span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Section 2: Stacked Area Chart */}
+          <div data-tour="network-transfer-chart" className="rounded-xl border border-border bg-card p-4 shadow-sm">
             <h2 className="mb-1 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-              Estimated bytes by time bucket
+              Transfer by Channel Over Time
             </h2>
             <p className="mb-4 text-xs text-muted-foreground">
               {chartData.length >= 2
-                ? "Stacked areas — use the slim range bar under the chart to zoom (theme-colored, not white). Hover points for details."
-                : "Only one time bucket in this range so far — the chart will fill in as more activity is recorded. Hover the point for details."}
+                ? "Stacked areas — drag the range bar below the chart to zoom. Hover points for details."
+                : "Only one time bucket so far — the chart fills in as more activity is recorded."}
             </p>
             <div className="h-[400px] w-full min-w-0 [&_.recharts-cartesian-axis-tick_text]:fill-muted-foreground [&_.recharts-legend-item-text]:fill-muted-foreground">
               <ResponsiveContainer width="100%" height="100%">
-                <AreaChart
-                  data={chartData}
-                  margin={{ top: 8, right: 16, left: 4, bottom: chartData.length >= 2 ? 4 : 8 }}
-                >
-                  <CartesianGrid
-                    strokeDasharray="3 3"
-                    stroke="var(--border)"
-                    strokeOpacity={0.45}
-                    vertical={false}
-                  />
+                <AreaChart data={chartData} margin={{ top: 8, right: 16, left: 4, bottom: chartData.length >= 2 ? 4 : 8 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" strokeOpacity={0.45} vertical={false} />
                   <XAxis
                     dataKey="labelNy"
                     tick={{ fontSize: 11, fill: "var(--muted-foreground)" }}
@@ -380,7 +440,7 @@ export default function PublicNetworkTransferPage() {
                               if (v <= 0) return null;
                               return (
                                 <li key={k} className="flex justify-between gap-4">
-                                  <span style={{ color: CHANNEL_STROKE[k] }}>{CHANNEL_LABEL[k]}</span>
+                                  <span style={{ color: CHANNEL_STROKE[k] }}>{CHANNEL_LEGEND_LABEL[k]}</span>
                                   <span className="font-mono">{formatBytes(v)}</span>
                                 </li>
                               );
@@ -396,9 +456,7 @@ export default function PublicNetworkTransferPage() {
                   />
                   <Legend
                     wrapperStyle={{ fontSize: 11, color: "var(--muted-foreground)" }}
-                    formatter={(value) =>
-                      CHANNEL_LEGEND_LABEL[value as (typeof CHANNEL_KEYS)[number]] ?? value
-                    }
+                    formatter={(value) => CHANNEL_LEGEND_LABEL[value as ChannelKey] ?? value}
                   />
                   {CHANNEL_KEYS.map((k, i) => (
                     <Area
@@ -408,7 +466,7 @@ export default function PublicNetworkTransferPage() {
                       stackId="1"
                       stroke={CHANNEL_STROKE[k]}
                       fill={CHANNEL_STROKE[k]}
-                      fillOpacity={0.35 - i * 0.04}
+                      fillOpacity={0.35 - i * 0.03}
                       name={k}
                       isAnimationActive={chartData.length < 80 && chartData.length > 1}
                       dot={
@@ -436,106 +494,151 @@ export default function PublicNetworkTransferPage() {
             </div>
           </div>
 
-          {data && data.totalsByChannel.length > 0 && (
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              {data.totalsByChannel.map((t) => (
-                <div
-                  key={t.channel}
-                  className="rounded-lg border border-border bg-card px-4 py-3 text-sm shadow-sm"
-                >
-                  <div className="text-muted-foreground">
-                    {CHANNEL_LABEL[t.channel as (typeof CHANNEL_KEYS)[number]] ?? t.channel}
-                  </div>
-                  <div className="mt-1 font-mono text-lg font-semibold text-foreground">
-                    {formatBytes(t.bytesSum)}
-                  </div>
-                  {t.channel === "SYNC_JOB" && t.bytesSum === 0 ? (
-                    <p className="mt-1 text-[11px] leading-snug text-muted-foreground">
-                      No byte estimate for this channel — open the log for duration and item counts.
-                    </p>
-                  ) : null}
-                  <div className="text-xs text-muted-foreground">{t.eventCount} events</div>
-                </div>
-              ))}
+          {/* Section 3: Top Cost Drivers */}
+          {data && data.topCostDrivers && data.topCostDrivers.length > 0 && (
+            <div className="rounded-xl border border-border bg-card shadow-sm">
+              <div className="border-b border-border p-4">
+                <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+                  Top Cost Drivers
+                </h2>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Routes and operations ranked by total estimated bytes. Focus optimization here.
+                </p>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[640px] border-collapse text-left text-sm">
+                  <thead>
+                    <tr className="border-b border-border bg-muted/30 text-xs uppercase tracking-wide text-muted-foreground">
+                      <th className="px-3 py-2 font-medium">#</th>
+                      <th className="px-3 py-2 font-medium">Route / Label</th>
+                      <th className="px-3 py-2 font-medium">Channel</th>
+                      <th className="px-3 py-2 font-medium text-right">Total Bytes</th>
+                      <th className="px-3 py-2 font-medium text-right">Events</th>
+                      <th className="px-3 py-2 font-medium text-right">Avg / Event</th>
+                      <th className="px-3 py-2 font-medium text-right">% of Total</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.topCostDrivers.map((d, i) => {
+                      const pct = totalBytes > 0 ? ((d.bytesSum / totalBytes) * 100).toFixed(1) : "0.0";
+                      const color = CHANNEL_STROKE[d.channel] ?? "hsl(215, 20%, 55%)";
+                      return (
+                        <tr key={`${d.channel}-${d.label}`} className="border-b border-border/80 hover:bg-muted/20">
+                          <td className="px-3 py-2 text-muted-foreground">{i + 1}</td>
+                          <td className="max-w-[300px] truncate px-3 py-2 font-mono text-xs text-foreground" title={d.label}>
+                            {d.label}
+                          </td>
+                          <td className="whitespace-nowrap px-3 py-2">
+                            <span
+                              className="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium"
+                              style={{ backgroundColor: `${color}20`, color }}
+                            >
+                              <span className="inline-block h-1.5 w-1.5 rounded-full" style={{ backgroundColor: color }} />
+                              {CHANNEL_LEGEND_LABEL[d.channel] ?? d.channel}
+                            </span>
+                          </td>
+                          <td className="whitespace-nowrap px-3 py-2 text-right font-mono text-foreground">
+                            {formatBytes(d.bytesSum)}
+                          </td>
+                          <td className="whitespace-nowrap px-3 py-2 text-right text-muted-foreground">
+                            {d.eventCount.toLocaleString()}
+                          </td>
+                          <td className="whitespace-nowrap px-3 py-2 text-right font-mono text-xs text-muted-foreground">
+                            {formatBytes(d.avgBytesPerEvent)}
+                          </td>
+                          <td className="whitespace-nowrap px-3 py-2 text-right font-medium" style={{ color }}>
+                            {pct}%
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
 
-          <div
-            data-tour="network-transfer-table"
-            className="min-h-0 flex-1 rounded-xl border border-border bg-card shadow-sm"
-          >
+          {/* Section 4: Event Log (grouped by channel, collapsible) */}
+          <div data-tour="network-transfer-table" className="min-h-0 flex-1 rounded-xl border border-border bg-card shadow-sm">
             <div className="flex flex-col gap-3 border-b border-border p-4 sm:flex-row sm:items-center sm:justify-between">
               <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-                Event log
+                Event Log
               </h2>
               <input
                 type="search"
-                placeholder="Filter by label…"
+                placeholder="Filter by label..."
                 value={searchLabel}
                 onChange={(e) => setSearchLabel(e.target.value)}
                 className="w-full max-w-xs rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground sm:w-72"
               />
             </div>
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[720px] border-collapse text-left text-sm">
-                <thead>
-                  <tr className="border-b border-border bg-muted/30 text-xs uppercase tracking-wide text-muted-foreground">
-                    <th className="px-3 py-2 font-medium">Time (NY)</th>
-                    <th className="px-3 py-2 font-medium">UTC ISO</th>
-                    <th className="px-3 py-2 font-medium">Channel</th>
-                    <th className="px-3 py-2 font-medium">Result</th>
-                    <th className="px-3 py-2 font-medium">Label</th>
-                    <th className="px-3 py-2 font-medium">Bytes (est.)</th>
-                    <th className="px-3 py-2 font-medium">Duration</th>
-                    <th className="px-3 py-2 font-medium">Store</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredSamples.map((s) => (
-                    <tr key={s.id} className="border-b border-border/80 hover:bg-muted/20">
-                      <td className="whitespace-nowrap px-3 py-2 text-foreground">
-                        {formatNyTime(s.createdAt, "hour")}
-                      </td>
-                      <td className="max-w-[200px] truncate px-3 py-2 font-mono text-xs text-muted-foreground">
-                        {s.createdAt}
-                      </td>
-                      <td className="whitespace-nowrap px-3 py-2 text-xs">
-                        {CHANNEL_LABEL[s.channel as (typeof CHANNEL_KEYS)[number]] ?? s.channel}
-                      </td>
-                      <td className="whitespace-nowrap px-3 py-2 text-xs">
-                        {(() => {
-                          const r = syncResultFromMetadata(s.channel, s.metadata);
-                          if (!r) return <span className="text-muted-foreground">-</span>;
-                          return (
-                            <span
-                              className={cn(
-                                "font-medium",
-                                r === "Failed" ? "text-destructive" : "text-emerald-500 dark:text-emerald-400",
-                              )}
-                            >
-                              {r}
-                            </span>
-                          );
-                        })()}
-                      </td>
-                      <td className="max-w-[280px] px-3 py-2 text-foreground">{s.label}</td>
-                      <td className="whitespace-nowrap px-3 py-2 font-mono text-xs">
-                        {s.bytesEstimate != null ? formatBytes(s.bytesEstimate) : "—"}
-                      </td>
-                      <td className="whitespace-nowrap px-3 py-2 text-xs text-muted-foreground">
-                        {s.durationMs != null ? `${s.durationMs} ms` : "—"}
-                      </td>
-                      <td className="whitespace-nowrap px-3 py-2 text-xs text-muted-foreground">
-                        {s.integration?.label ?? "—"}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              {filteredSamples.length === 0 && (
-                <p className="p-6 text-center text-sm text-muted-foreground">No events in this range.</p>
-              )}
-            </div>
+
+            {Object.keys(groupedSamples).length === 0 ? (
+              <p className="p-6 text-center text-sm text-muted-foreground">No events in this range.</p>
+            ) : (
+              <div>
+                {CHANNEL_KEYS.filter((ch) => groupedSamples[ch]?.length).map((ch) => {
+                  const samples = groupedSamples[ch]!;
+                  const isExpanded = expandedChannels.has(ch);
+                  const color = CHANNEL_STROKE[ch];
+                  return (
+                    <div key={ch} className="border-b border-border/60 last:border-b-0">
+                      <button
+                        type="button"
+                        onClick={() => toggleChannel(ch)}
+                        className="flex w-full cursor-pointer items-center gap-3 px-4 py-3 text-left hover:bg-muted/20"
+                      >
+                        {isExpanded ? (
+                          <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
+                        ) : (
+                          <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
+                        )}
+                        <span className="inline-block h-2.5 w-2.5 rounded-full shrink-0" style={{ backgroundColor: color }} />
+                        <span className="text-sm font-medium text-foreground">{CHANNEL_LABEL[ch]}</span>
+                        <span className="text-xs text-muted-foreground">({samples.length} events)</span>
+                      </button>
+                      {isExpanded && (
+                        <div className="overflow-x-auto">
+                          <table className="w-full min-w-[640px] border-collapse text-left text-sm">
+                            <thead>
+                              <tr className="border-b border-border bg-muted/20 text-xs uppercase tracking-wide text-muted-foreground">
+                                <th className="px-3 py-1.5 font-medium">Time (NY)</th>
+                                <th className="px-3 py-1.5 font-medium">Label</th>
+                                <th className="px-3 py-1.5 font-medium">Bytes</th>
+                                <th className="px-3 py-1.5 font-medium">Duration</th>
+                                <th className="px-3 py-1.5 font-medium">Store</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {samples.map((s) => (
+                                <tr key={s.id} className="border-b border-border/50 hover:bg-muted/10">
+                                  <td className="whitespace-nowrap px-3 py-2 text-foreground">
+                                    {formatNyTime(s.createdAt, "hour")}
+                                  </td>
+                                  <td className="max-w-[300px] truncate px-3 py-2 text-foreground" title={s.label}>
+                                    {s.label}
+                                  </td>
+                                  <td className="whitespace-nowrap px-3 py-2 font-mono text-xs">
+                                    {s.bytesEstimate != null ? formatBytes(s.bytesEstimate) : "—"}
+                                  </td>
+                                  <td className="whitespace-nowrap px-3 py-2 text-xs text-muted-foreground">
+                                    {s.durationMs != null ? `${s.durationMs} ms` : "—"}
+                                  </td>
+                                  <td className="whitespace-nowrap px-3 py-2 text-xs text-muted-foreground">
+                                    {s.integration?.label ?? "—"}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
             {data && data.pagination.totalPages > 1 && (
               <div className="flex items-center justify-center gap-2 border-t border-border p-3 text-sm">
                 <button

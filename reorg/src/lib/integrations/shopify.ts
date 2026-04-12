@@ -11,6 +11,7 @@ import {
   trimRawDataForStorage,
 } from "@/lib/integrations/types";
 import type { Platform } from "@prisma/client";
+import { addMarketplaceInboundBytes } from "@/lib/server/marketplace-telemetry";
 
 interface ShopifyConfig {
   storeDomain: string;
@@ -71,6 +72,11 @@ export class ShopifyAdapter implements MarketplaceAdapter {
       throw new Error(
         `Shopify rate limit hit. Retry after ${retryAfter}s`
       );
+    }
+
+    const contentLength = response.headers.get("content-length");
+    if (contentLength) {
+      addMarketplaceInboundBytes(parseInt(contentLength, 10));
     }
 
     return response;

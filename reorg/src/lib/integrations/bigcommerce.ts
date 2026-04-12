@@ -11,6 +11,7 @@ import {
   PushResult,
 } from "@/lib/integrations/types";
 import type { Platform } from "@prisma/client";
+import { addMarketplaceInboundBytes } from "@/lib/server/marketplace-telemetry";
 
 interface BigCommerceConfig {
   storeHash: string;
@@ -76,6 +77,11 @@ export class BigCommerceAdapter implements MarketplaceAdapter {
       throw new Error(
         `BigCommerce rate limit hit. Retry after ${retryAfter}ms`
       );
+    }
+
+    const contentLength = response.headers.get("content-length");
+    if (contentLength) {
+      addMarketplaceInboundBytes(parseInt(contentLength, 10));
     }
 
     return response;

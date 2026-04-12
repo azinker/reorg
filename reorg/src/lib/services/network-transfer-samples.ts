@@ -193,11 +193,15 @@ export type SeriesRow = {
   bytesSum: bigint;
 };
 
-const ALL_CHANNELS: NetworkTransferChannel[] = [
+export const ALL_CHANNELS: NetworkTransferChannel[] = [
   "CLIENT_API_RESPONSE",
   "MARKETPLACE_INBOUND",
+  "MARKETPLACE_OUTBOUND",
   "SYNC_JOB",
   "FORECAST",
+  "AUTO_RESPONDER",
+  "DATABASE_IO",
+  "WEBHOOK_INBOUND",
   "OTHER",
 ];
 
@@ -386,8 +390,126 @@ export function parseNetworkTransferQuery(searchParams: URLSearchParams): {
   const bucket = bucketParsed.success ? bucketParsed.data : defaultBucket;
   const ch = searchParams.get("channel");
   const channelFilter =
-    ch && ["CLIENT_API_RESPONSE", "MARKETPLACE_INBOUND", "SYNC_JOB", "FORECAST", "OTHER"].includes(ch)
+    ch && ALL_CHANNELS.includes(ch as NetworkTransferChannel)
       ? (ch as NetworkTransferChannel)
       : null;
   return { from, to, bucket, channelFilter };
+}
+
+export type TopCostDriver = {
+  label: string;
+  channel: NetworkTransferChannel;
+  eventCount: number;
+  bytesSum: number;
+  avgBytesPerEvent: number;
+};
+
+export async function getTopCostDrivers(params: {
+  from: Date;
+  to: Date;
+  limit?: number;
+}): Promise<TopCostDriver[]> {
+  type Row = {
+    label: string;
+    channel: NetworkTransferChannel;
+    event_count: bigint;
+    bytes_sum: bigint;
+  };
+  const limit = params.limit ?? 25;
+  const rows = await db.$queryRaw<Row[]>`
+    SELECT
+      "label",
+      "channel",
+      COUNT(*)::bigint AS event_count,
+      COALESCE(SUM("bytesEstimate"), 0)::bigint AS bytes_sum
+    FROM network_transfer_samples
+    WHERE "createdAt" >= ${params.from} AND "createdAt" <= ${params.to}
+    GROUP BY "label", "channel"
+    ORDER BY bytes_sum DESC
+    LIMIT ${limit}
+  `;
+  return rows.map((r) => {
+    const eventCount = Number(r.event_count);
+    const bytesSum = Number(r.bytes_sum);
+    return {
+      label: r.label,
+      channel: r.channel,
+      eventCount,
+      bytesSum,
+      avgBytesPerEvent: eventCount > 0 ? Math.round(bytesSum / eventCount) : 0,
+    };
+  });
+}
+
+export async function rollUpAndPruneSamples(): Promise<{ rolledUp: number; pruned: number }> {
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - NETWORK_TRANSFER_RETENTION_DAYS);
+
+  const oldSamples = await db.networkTransferSample.findMany({
+    where: { createdAt: { lt: cutoff } },
+    select: { createdAt: true, channel: true, label: true, bytesEstimate: true, durationMs: true },
+  });
+
+  if (oldSamples.length === 0) return { rolledUp: 0, pruned: 0 };
+
+  const buckets = new Map<
+    string,
+    { date: Date; channel: NetworkTransferChannel; label: string; count: number; bytes: bigint; durationSum: number; durationCount: number }
+  >();
+
+  for (const s of oldSamples) {
+    const dateStr = s.createdAt.toISOString().slice(0, 10);
+    const key = `${dateStr}|${s.channel}|${s.label}`;
+    let b = buckets.get(key);
+    if (!b) {
+      b = {
+        date: new Date(dateStr + "T00:00:00.000Z"),
+        channel: s.channel,
+        label: s.label,
+        count: 0,
+        bytes: BigInt(0),
+        durationSum: 0,
+        durationCount: 0,
+      };
+      buckets.set(key, b);
+    }
+    b.count += 1;
+    b.bytes += BigInt(s.bytesEstimate ?? 0);
+    if (s.durationMs != null) {
+      b.durationSum += s.durationMs;
+      b.durationCount += 1;
+    }
+  }
+
+  let rolledUp = 0;
+  for (const b of buckets.values()) {
+    try {
+      await db.networkTransferDailySummary.upsert({
+        where: {
+          date_channel_label: { date: b.date, channel: b.channel, label: b.label },
+        },
+        create: {
+          date: b.date,
+          channel: b.channel,
+          label: b.label,
+          eventCount: b.count,
+          bytesSum: b.bytes,
+          avgDurationMs: b.durationCount > 0 ? Math.round(b.durationSum / b.durationCount) : null,
+        },
+        update: {
+          eventCount: { increment: b.count },
+          bytesSum: { increment: b.bytes },
+        },
+      });
+      rolledUp += b.count;
+    } catch {
+      console.error(`[network-transfer] failed to roll up bucket for ${b.label}`);
+    }
+  }
+
+  const deleteResult = await db.networkTransferSample.deleteMany({
+    where: { createdAt: { lt: cutoff } },
+  });
+
+  return { rolledUp, pruned: deleteResult.count };
 }

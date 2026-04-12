@@ -6,6 +6,7 @@ import {
   getEbayAccountDeletionVerificationToken,
   resolveEbayAccountDeletionEndpoint,
 } from "@/lib/ebay-account-deletion";
+import { recordNetworkTransferSample } from "@/lib/services/network-transfer-samples";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -89,6 +90,13 @@ export async function POST(request: NextRequest) {
       payload = rawBody;
     }
   }
+
+  void recordNetworkTransferSample({
+    channel: "WEBHOOK_INBOUND",
+    label: "eBay account deletion webhook inbound",
+    bytesEstimate: rawBody ? Buffer.byteLength(rawBody, "utf8") : null,
+    metadata: { type: "account_deletion" },
+  });
 
   await writeAuditLog({
     action: "ebay_account_deletion_notification",

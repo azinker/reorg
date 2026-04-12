@@ -28,6 +28,7 @@ import {
   throwIfSyncJobStopped,
 } from "@/lib/services/sync-jobs";
 import { recordSyncJobNetworkSample } from "@/lib/services/network-transfer-samples";
+import { runWithMarketplaceTelemetry } from "@/lib/server/marketplace-telemetry";
 
 interface SyncProgress {
   jobId: string;
@@ -231,6 +232,18 @@ export async function runShopifySync(
   options: SyncExecutionOptions = {},
 ): Promise<SyncProgress> {
   const { integration, adapter } = await getShopifySyncContext();
+
+  return runWithMarketplaceTelemetry(
+    { syncJobId: options.existingJobId ?? "shopify-sync", integrationId: integration.id, platform: Platform.SHOPIFY },
+    () => runShopifySyncInner(integration, adapter, options),
+  );
+}
+
+async function runShopifySyncInner(
+  integration: NonNullable<Awaited<ReturnType<typeof db.integration.findUnique>>>,
+  adapter: ShopifyAdapter,
+  options: SyncExecutionOptions,
+): Promise<SyncProgress> {
   const resumeContinuation = options.resumeContinuation === true;
   const icfg = getIntegrationConfig(integration);
   const resumeState = icfg.syncState.catalogPullResume;
@@ -524,6 +537,23 @@ export async function runShopifyWebhookReconcile(
   options: SyncExecutionOptions = {},
 ): Promise<SyncProgress> {
   const { integration, adapter } = await getShopifySyncContext();
+
+  return runWithMarketplaceTelemetry(
+    { syncJobId: options.existingJobId ?? "shopify-reconcile", integrationId: integration.id, platform: Platform.SHOPIFY },
+    () => runShopifyWebhookReconcileInner(integration, adapter, input, options),
+  );
+}
+
+async function runShopifyWebhookReconcileInner(
+  integration: NonNullable<Awaited<ReturnType<typeof db.integration.findUnique>>>,
+  adapter: ShopifyAdapter,
+  input: {
+    productIds?: string[];
+    deletedProductIds?: string[];
+    changedVariantIds?: string[];
+  },
+  options: SyncExecutionOptions = {},
+): Promise<SyncProgress> {
   const productIds = [...new Set((input.productIds ?? []).filter(Boolean))];
   const deletedProductIds = [...new Set((input.deletedProductIds ?? []).filter(Boolean))];
   const changedVariantIds = [
