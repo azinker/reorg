@@ -13,7 +13,7 @@ const syncProfileSchema = z
     dayStartHour: z.number().int().min(0).max(23).optional(),
     dayEndHour: z.number().int().min(1).max(24).optional(),
     dayIntervalMinutes: z.number().int().positive().optional(),
-    overnightIntervalMinutes: z.number().int().positive().optional(),
+    overnightIntervalMinutes: z.number().int().min(0).optional(),
     preferredMode: z.enum(["full", "incremental"]).optional(),
     fullReconcileIntervalHours: z.number().int().positive().optional(),
     incrementalStrategy: z
