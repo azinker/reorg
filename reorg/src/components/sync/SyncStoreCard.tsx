@@ -152,7 +152,7 @@ function ScheduleParams({
         />
         <ScheduleParamRow
           label="Overnight"
-          value={`Every ${formatIntervalShort(overnightInterval)}`}
+          value={overnightInterval === 0 ? "Off" : `Every ${formatIntervalShort(overnightInterval)}`}
           completed={false}
         />
         <ScheduleParamRow

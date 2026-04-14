@@ -77,6 +77,11 @@ const INTERVAL_OPTIONS = [
   { value: 1440, label: "Every 24 hours" },
 ];
 
+const OVERNIGHT_INTERVAL_OPTIONS = [
+  { value: 0, label: "Off — no overnight syncs" },
+  ...INTERVAL_OPTIONS,
+];
+
 const FULL_SYNC_INTERVAL_OPTIONS = [
   { value: 12, label: "Every 12 hours" },
   { value: 24, label: "Every 24 hours" },
@@ -346,8 +351,8 @@ function SyncScheduleSection() {
                         Overnight Sync Frequency
                       </label>
                       <p className="mb-2 text-[11px] text-muted-foreground">
-                        Same as Normal Sync but runs <strong>outside active hours</strong> ({formatHour(profile.dayEndHour)} – {formatHour(profile.dayStartHour)}).
-                        Set higher if you don&apos;t need frequent overnight updates.
+                        How often a <strong>normal (incremental) sync</strong> runs <strong>outside active hours</strong> ({formatHour(profile.dayEndHour)} – {formatHour(profile.dayStartHour)}).
+                        Set to &quot;Off&quot; to stop all normal syncs overnight — only Full Sync will still run if it&apos;s due.
                       </p>
                       <select
                         value={profile.overnightIntervalMinutes}
@@ -358,7 +363,7 @@ function SyncScheduleSection() {
                         }
                         className="h-8 w-full cursor-pointer rounded-md border border-input bg-background px-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
                       >
-                        {INTERVAL_OPTIONS.map((opt) => (
+                        {OVERNIGHT_INTERVAL_OPTIONS.map((opt) => (
                           <option key={opt.value} value={opt.value}>{opt.label}</option>
                         ))}
                       </select>
@@ -397,7 +402,11 @@ function SyncScheduleSection() {
                   <Clock className="mt-0.5 h-3 w-3 shrink-0 text-muted-foreground" />
                   <span className="text-[11px] leading-relaxed text-muted-foreground">
                     <strong>{formatHour(profile.dayStartHour)} – {formatHour(profile.dayEndHour)}:</strong> Normal sync every <strong>{formatInterval(profile.dayIntervalMinutes)}</strong>.
-                    {" "}<strong>{formatHour(profile.dayEndHour)} – {formatHour(profile.dayStartHour)}:</strong> Normal sync every <strong>{formatInterval(profile.overnightIntervalMinutes)}</strong>.
+                    {" "}<strong>{formatHour(profile.dayEndHour)} – {formatHour(profile.dayStartHour)}:</strong>{" "}
+                    {profile.overnightIntervalMinutes === 0
+                      ? <><strong>No overnight syncs</strong> (only Full Sync runs if due).</>
+                      : <>Normal sync every <strong>{formatInterval(profile.overnightIntervalMinutes)}</strong>.</>
+                    }
                     {" "}Full sync every <strong>{profile.fullReconcileIntervalHours}h</strong> (anytime).
                   </span>
                 </div>

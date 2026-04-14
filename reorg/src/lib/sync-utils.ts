@@ -112,11 +112,13 @@ export function getNextPullAt(profile: SyncProfile, now: Date, _platform?: strin
       candidates.push(zonedDateTimeToUtc(profile.timezone, dayParts.year, dayParts.month, dayParts.day, Math.floor(m / 60), m % 60));
     }
 
-    const overnightEnd = profile.dayStartHour * 60 + 24 * 60;
-    for (let m = profile.dayEndHour * 60; m < overnightEnd; m += profile.overnightIntervalMinutes) {
-      const tp = m >= 24 * 60 ? addDaysToParts(dayParts, 1, profile.timezone) : dayParts;
-      const nm = m % (24 * 60);
-      candidates.push(zonedDateTimeToUtc(profile.timezone, tp.year, tp.month, tp.day, Math.floor(nm / 60), nm % 60));
+    if (profile.overnightIntervalMinutes > 0) {
+      const overnightEnd = profile.dayStartHour * 60 + 24 * 60;
+      for (let m = profile.dayEndHour * 60; m < overnightEnd; m += profile.overnightIntervalMinutes) {
+        const tp = m >= 24 * 60 ? addDaysToParts(dayParts, 1, profile.timezone) : dayParts;
+        const nm = m % (24 * 60);
+        candidates.push(zonedDateTimeToUtc(profile.timezone, tp.year, tp.month, tp.day, Math.floor(nm / 60), nm % 60));
+      }
     }
   }
 
@@ -137,15 +139,20 @@ export function formatCountdown(target: Date | null, now: number) {
 }
 
 export function formatSchedule(profile: SyncProfile, _platform?: string) {
+  const daytimeLabel =
+    profile.dayIntervalMinutes >= 60 && profile.dayIntervalMinutes % 60 === 0
+      ? `Every ${profile.dayIntervalMinutes / 60}h`
+      : `Every ${profile.dayIntervalMinutes}m`;
+
+  if (profile.overnightIntervalMinutes === 0) {
+    return `${daytimeLabel} (${profile.dayStartHour}:00\u2013${profile.dayEndHour}:00), no overnight syncs`;
+  }
+
   const overnightWindowMinutes = (24 - profile.dayEndHour + profile.dayStartHour) * 60;
   const overnightLabel =
     profile.overnightIntervalMinutes >= overnightWindowMinutes ? "Once overnight"
       : profile.overnightIntervalMinutes >= 60 && profile.overnightIntervalMinutes % 60 === 0
         ? `Every ${profile.overnightIntervalMinutes / 60}h overnight`
         : `Every ${profile.overnightIntervalMinutes}m overnight`;
-  const daytimeLabel =
-    profile.dayIntervalMinutes >= 60 && profile.dayIntervalMinutes % 60 === 0
-      ? `Every ${profile.dayIntervalMinutes / 60}h`
-      : `Every ${profile.dayIntervalMinutes}m`;
   return `${daytimeLabel} (${profile.dayStartHour}:00\u2013${profile.dayEndHour}:00), ${overnightLabel}`;
 }

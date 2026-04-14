@@ -32,15 +32,16 @@ export function getCurrentSyncIntervalMinutes(
   date: Date,
   config: Pick<IntegrationConfigRecord, "syncProfile">,
   _platform?: Platform | string,
-) {
+): number | null {
   const hour = getHourInTimeZone(date, config.syncProfile.timezone);
   const isDaytime =
     hour >= config.syncProfile.dayStartHour &&
     hour < config.syncProfile.dayEndHour;
 
-  return isDaytime
-    ? config.syncProfile.dayIntervalMinutes
-    : config.syncProfile.overnightIntervalMinutes;
+  if (isDaytime) return config.syncProfile.dayIntervalMinutes;
+
+  const overnight = config.syncProfile.overnightIntervalMinutes;
+  return overnight === 0 ? null : overnight;
 }
 
 /**

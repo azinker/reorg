@@ -145,9 +145,10 @@ export async function planScheduledSyncs(now = new Date()) {
       integration,
       config.syncProfile.preferredMode,
     );
+    const displayInterval = intervalMinutes ?? 0;
 
     if (!integration.enabled) {
-      const nextDueAt = getNextDueAt(now, lastRunAt, intervalMinutes, false);
+      const nextDueAt = getNextDueAt(now, lastRunAt, displayInterval, false);
       return {
         integrationId: integration.id,
         platform: integration.platform,
@@ -155,7 +156,7 @@ export async function planScheduledSyncs(now = new Date()) {
         autoSyncEnabled: config.syncProfile.autoSyncEnabled,
         due: false,
         running: false,
-        intervalMinutes,
+        intervalMinutes: displayInterval,
         requestedMode: modes.requestedMode,
         effectiveMode: modes.effectiveMode,
         fallbackReason: modes.fallbackReason,
@@ -167,7 +168,7 @@ export async function planScheduledSyncs(now = new Date()) {
     }
 
     if (!config.syncProfile.autoSyncEnabled) {
-      const nextDueAt = getNextDueAt(now, lastRunAt, intervalMinutes, false);
+      const nextDueAt = getNextDueAt(now, lastRunAt, displayInterval, false);
       return {
         integrationId: integration.id,
         platform: integration.platform,
@@ -175,7 +176,7 @@ export async function planScheduledSyncs(now = new Date()) {
         autoSyncEnabled: false,
         due: false,
         running: false,
-        intervalMinutes,
+        intervalMinutes: displayInterval,
         requestedMode: modes.requestedMode,
         effectiveMode: modes.effectiveMode,
         fallbackReason: modes.fallbackReason,
@@ -187,7 +188,7 @@ export async function planScheduledSyncs(now = new Date()) {
     }
 
     if (runningIds.has(integration.id)) {
-      const nextDueAt = getNextDueAt(now, lastRunAt, intervalMinutes, false);
+      const nextDueAt = getNextDueAt(now, lastRunAt, displayInterval, false);
       return {
         integrationId: integration.id,
         platform: integration.platform,
@@ -195,7 +196,7 @@ export async function planScheduledSyncs(now = new Date()) {
         autoSyncEnabled: true,
         due: false,
         running: true,
-        intervalMinutes,
+        intervalMinutes: displayInterval,
         requestedMode: modes.requestedMode,
         effectiveMode: modes.effectiveMode,
         fallbackReason: modes.fallbackReason,
@@ -224,7 +225,7 @@ export async function planScheduledSyncs(now = new Date()) {
         autoSyncEnabled: true,
         due: false,
         running: false,
-        intervalMinutes,
+        intervalMinutes: displayInterval,
         requestedMode: modes.requestedMode,
         effectiveMode: modes.effectiveMode,
         fallbackReason: modes.fallbackReason,
@@ -234,6 +235,60 @@ export async function planScheduledSyncs(now = new Date()) {
         reason: liveRateLimitCooldownUntil
           ? "Waiting for the eBay Trading API reset window based on live Analytics API usage data."
           : "Cooling down after an eBay API usage-limit response before the next retry.",
+      };
+    }
+
+    // Overnight syncs are off — only trigger if a full reconcile is overdue
+    if (intervalMinutes === null) {
+      const lastFullAt = config.syncState.lastFullSyncAt
+        ? new Date(config.syncState.lastFullSyncAt)
+        : null;
+      const hoursSinceLastFull =
+        lastFullAt == null || Number.isNaN(lastFullAt.getTime())
+          ? Number.POSITIVE_INFINITY
+          : (now.getTime() - lastFullAt.getTime()) / 3600000;
+      const fullDue =
+        config.syncProfile.fullReconcileIntervalHours > 0 &&
+        hoursSinceLastFull >= config.syncProfile.fullReconcileIntervalHours;
+
+      if (fullDue) {
+        return {
+          integrationId: integration.id,
+          platform: integration.platform,
+          label: integration.label,
+          autoSyncEnabled: true,
+          due: true,
+          running: false,
+          intervalMinutes: 0,
+          requestedMode: "full",
+          effectiveMode: "full",
+          fallbackReason: null,
+          lastScheduledSyncAt: config.syncState.lastScheduledSyncAt,
+          nextDueAt: now.toISOString(),
+          minutesUntilDue: 0,
+          reason: "Overnight normal syncs are off. Full sync is overdue.",
+        };
+      }
+
+      const fullReconcileMs = config.syncProfile.fullReconcileIntervalHours * 3600000;
+      const nextFullAt = lastFullAt
+        ? new Date(lastFullAt.getTime() + fullReconcileMs)
+        : null;
+      return {
+        integrationId: integration.id,
+        platform: integration.platform,
+        label: integration.label,
+        autoSyncEnabled: true,
+        due: false,
+        running: false,
+        intervalMinutes: 0,
+        requestedMode: modes.requestedMode,
+        effectiveMode: modes.effectiveMode,
+        fallbackReason: modes.fallbackReason,
+        lastScheduledSyncAt: config.syncState.lastScheduledSyncAt,
+        nextDueAt: nextFullAt?.toISOString() ?? null,
+        minutesUntilDue: nextFullAt ? getMinutesUntilDue(now, nextFullAt) : null,
+        reason: "Overnight normal syncs are off. Waiting for full sync timer.",
       };
     }
 
