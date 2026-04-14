@@ -70,6 +70,7 @@ export type SyncJobInfo = {
   errors: SyncError[];
   startedAt: string | null;
   completedAt: string | null;
+  triggeredBy: string | null;
 };
 
 export type RateLimitMethod = {

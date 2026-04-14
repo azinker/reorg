@@ -8,6 +8,7 @@ import {
   CheckCircle2,
   Clock,
   Circle,
+  User,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Tip } from "@/components/ui/tip";
@@ -98,16 +99,25 @@ function ScheduleParamRow({
   );
 }
 
+function parseTriggeredBy(triggeredBy: string | null | undefined) {
+  if (!triggeredBy) return { source: "unknown", mode: "unknown" };
+  const isScheduler = triggeredBy.startsWith("scheduler:");
+  const mode = triggeredBy.includes("full") ? "full" : triggeredBy.includes("incremental") ? "incremental" : "unknown";
+  return { source: isScheduler ? "scheduler" : "manual", mode };
+}
+
 function ScheduleParams({
   syncProfile,
   syncState,
   nowMs,
   isEbay,
+  liveJob,
 }: {
   syncProfile: SyncProfile;
   syncState: IntegrationSyncState | null;
   nowMs: number;
   isEbay: boolean;
+  liveJob: SyncJobInfo | null;
 }) {
   const normalInterval = syncProfile.dayIntervalMinutes;
   const overnightInterval = syncProfile.overnightIntervalMinutes;
@@ -118,6 +128,11 @@ function ScheduleParams({
 
   const normalDone = wasCompletedWithin(lastIncremental, normalInterval * 60 * 1000, nowMs);
   const fullDone = wasCompletedWithin(lastFull, fullInterval * 60 * 60 * 1000, nowMs);
+
+  const jobDone = liveJob && (liveJob.status === "COMPLETED" || liveJob.status === "FAILED");
+  const { source, mode } = parseTriggeredBy(liveJob?.triggeredBy);
+  const isManual = jobDone && source === "manual";
+  const manualTimestamp = isManual ? (liveJob.completedAt ?? liveJob.startedAt) : null;
 
   return (
     <div className="mt-3 rounded-lg border border-border/60 bg-muted/20 px-3 py-2.5">
@@ -153,6 +168,25 @@ function ScheduleParams({
           completed={false}
         />
       </div>
+
+      {isManual && manualTimestamp && (
+        <div className="mt-2.5 flex items-center gap-1.5 rounded-md border border-blue-500/20 bg-blue-500/5 px-2.5 py-1.5 dark:bg-blue-500/10">
+          <User className="h-3 w-3 shrink-0 text-blue-400" />
+          <span className="text-[11px] text-blue-300">
+            <span className="font-semibold">Manual {mode === "full" ? "Full Sync" : "Normal Sync"}</span>
+            {" \u2014 "}
+            {liveJob.status === "COMPLETED" ? (
+              <CheckCircle2 className="inline h-3 w-3 text-emerald-500" />
+            ) : (
+              <XCircle className="inline h-3 w-3 text-red-400" />
+            )}
+            {" "}
+            {liveJob.status === "COMPLETED" ? "succeeded" : "failed"}
+            {" \u00B7 "}
+            {formatRelativeTime(manualTimestamp, nowMs)}
+          </span>
+        </div>
+      )}
     </div>
   );
 }
@@ -315,6 +349,7 @@ export function SyncStoreCard({
             syncState={syncState}
             nowMs={nowMs}
             isEbay={isEbay}
+            liveJob={liveJob}
           />
         )}
 

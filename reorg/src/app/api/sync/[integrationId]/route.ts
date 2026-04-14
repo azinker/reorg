@@ -482,6 +482,7 @@ export async function GET(
               errors: normalizeSyncErrors(lastJob.errors),
               startedAt: lastJob.startedAt,
               completedAt: lastJob.completedAt,
+              triggeredBy: lastJob.triggeredBy ?? null,
             }
           : null,
       },
