@@ -23,7 +23,6 @@ import {
   Sparkles,
   RefreshCw,
   Clock,
-  Info,
   Loader2,
   Check,
 } from "lucide-react";
@@ -222,15 +221,6 @@ function SyncScheduleSection() {
         </div>
       </div>
 
-      <div className="mb-4 flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 dark:bg-amber-500/10">
-        <Info className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
-        <p className="text-xs text-muted-foreground">
-          <strong>eBay stores</strong> have additional scheduling rules: syncs only run during
-          business hours (9 AM – 10 PM) and pause overnight to conserve API quota.
-          The intervals you set below apply within that active window.
-        </p>
-      </div>
-
       {/* Per-integration schedule cards */}
       <div className="space-y-4">
         {integrations.map((integration) => {
@@ -239,7 +229,6 @@ function SyncScheduleSection() {
           const profile = integration.syncProfile;
           const isSaving = saving[integration.platform];
           const isSaved = saved[integration.platform];
-          const isEbay = integration.platform === "TPP_EBAY" || integration.platform === "TT_EBAY";
 
           return (
             <div
@@ -325,7 +314,7 @@ function SyncScheduleSection() {
                       ))}
                     </select>
                     <p className="mt-1 text-[10px] text-muted-foreground">
-                      Outside active hours{isEbay ? " (paused for eBay)" : ""}
+                      Outside active hours
                     </p>
                   </div>
 
@@ -402,7 +391,6 @@ function SyncScheduleSection() {
                     {" "}{formatHour(profile.dayStartHour)}–{formatHour(profile.dayEndHour)},
                     {" "}every <strong>{formatInterval(profile.overnightIntervalMinutes)}</strong> overnight.
                     {" "}Full sync every <strong>{profile.fullReconcileIntervalHours}h</strong>.
-                    {isEbay && " eBay overnight pause applies."}
                   </span>
                 </div>
               )}

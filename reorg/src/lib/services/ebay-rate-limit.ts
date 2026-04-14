@@ -31,15 +31,8 @@ function getHourInTimeZone(date: Date, timeZone: string): number {
 export function getCurrentSyncIntervalMinutes(
   date: Date,
   config: Pick<IntegrationConfigRecord, "syncProfile">,
-  platform?: Platform | string,
+  _platform?: Platform | string,
 ) {
-  if (platform === "TPP_EBAY" || platform === "TT_EBAY") {
-    return (
-      getEbayAutoSyncIntervalMinutes(date, config.syncProfile.timezone) ??
-      config.syncProfile.overnightIntervalMinutes
-    );
-  }
-
   const hour = getHourInTimeZone(date, config.syncProfile.timezone);
   const isDaytime =
     hour >= config.syncProfile.dayStartHour &&

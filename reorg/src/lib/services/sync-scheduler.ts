@@ -15,11 +15,6 @@ import {
   getEbayCooldownUntilFromSnapshot,
   getEbayTradingRateLimitSnapshotForIntegration,
 } from "@/lib/services/ebay-analytics";
-import {
-  formatEbayAutoSyncSchedule,
-  getEbayAutoSyncIntervalMinutes,
-  getNextEbayAutoSyncAt,
-} from "@/lib/services/ebay-sync-policy";
 import { dispatchCatalogSyncContinuation } from "@/lib/services/sync-continuation";
 
 function getInternalBaseUrl(): string {
@@ -136,10 +131,6 @@ export async function planScheduledSyncs(now = new Date()) {
 
   const items: SchedulerPlanItem[] = integrations.map((integration) => {
     const config = getIntegrationConfig(integration);
-    const ebayIntervalMinutes =
-      integration.platform === "TPP_EBAY" || integration.platform === "TT_EBAY"
-        ? getEbayAutoSyncIntervalMinutes(now, config.syncProfile.timezone)
-        : null;
     const intervalMinutes = getCurrentSyncIntervalMinutes(
       now,
       config,
@@ -192,29 +183,6 @@ export async function planScheduledSyncs(now = new Date()) {
         nextDueAt: nextDueAt?.toISOString() ?? null,
         minutesUntilDue: getMinutesUntilDue(now, nextDueAt),
         reason: "Auto sync is disabled for this integration.",
-      };
-    }
-
-    if (
-      (integration.platform === "TPP_EBAY" || integration.platform === "TT_EBAY") &&
-      ebayIntervalMinutes == null
-    ) {
-      const nextDueAt = getNextEbayAutoSyncAt(now, config.syncProfile.timezone);
-      return {
-        integrationId: integration.id,
-        platform: integration.platform,
-        label: integration.label,
-        autoSyncEnabled: true,
-        due: false,
-        running: false,
-        intervalMinutes,
-        requestedMode: modes.requestedMode,
-        effectiveMode: modes.effectiveMode,
-        fallbackReason: modes.fallbackReason,
-        lastScheduledSyncAt: config.syncState.lastScheduledSyncAt,
-        nextDueAt: nextDueAt.toISOString(),
-        minutesUntilDue: getMinutesUntilDue(now, nextDueAt),
-        reason: `Paused outside eBay business hours. ${formatEbayAutoSyncSchedule()}.`,
       };
     }
 

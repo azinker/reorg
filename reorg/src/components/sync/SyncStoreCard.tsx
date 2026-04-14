@@ -152,7 +152,7 @@ function ScheduleParams({
         />
         <ScheduleParamRow
           label="Overnight"
-          value={`Every ${formatIntervalShort(overnightInterval)}${isEbay ? " (eBay pauses)" : ""}`}
+          value={`Every ${formatIntervalShort(overnightInterval)}`}
           completed={false}
         />
         <ScheduleParamRow

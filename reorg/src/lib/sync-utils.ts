@@ -1,8 +1,4 @@
 import type { CompletionTone, IntegrationSyncState, SyncJobInfo, SyncProfile } from "@/lib/sync-types";
-import {
-  formatEbayAutoSyncSchedule,
-  getNextEbayAutoSyncAt,
-} from "@/lib/services/ebay-sync-policy";
 
 export function formatDurationMs(ms: number) {
   if (!Number.isFinite(ms) || ms <= 0) return "0s";
@@ -103,9 +99,8 @@ function addDaysToParts(parts: ReturnType<typeof getLocalDateTimeParts>, days: n
   return getLocalDateTimeParts(b, tz);
 }
 
-export function getNextPullAt(profile: SyncProfile, now: Date, platform: string) {
+export function getNextPullAt(profile: SyncProfile, now: Date, _platform?: string) {
   if (!profile.autoSyncEnabled) return null;
-  if (platform === "TPP_EBAY" || platform === "TT_EBAY") return getNextEbayAutoSyncAt(now, profile.timezone);
 
   const nowParts = getLocalDateTimeParts(now, profile.timezone);
   const candidates: Date[] = [];
@@ -141,8 +136,7 @@ export function formatCountdown(target: Date | null, now: number) {
   return `${m}m ${s}s`;
 }
 
-export function formatSchedule(profile: SyncProfile, platform: string) {
-  if (platform === "TPP_EBAY" || platform === "TT_EBAY") return formatEbayAutoSyncSchedule();
+export function formatSchedule(profile: SyncProfile, _platform?: string) {
   const overnightWindowMinutes = (24 - profile.dayEndHour + profile.dayStartHour) * 60;
   const overnightLabel =
     profile.overnightIntervalMinutes >= overnightWindowMinutes ? "Once overnight"
