@@ -271,81 +271,17 @@ function SyncScheduleSection() {
               </div>
 
               {profile.autoSyncEnabled && (
-                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                  {/* Normal sync interval */}
-                  <div>
-                    <label className="mb-1.5 block text-xs font-medium text-muted-foreground">
-                      Normal Sync Interval
-                    </label>
-                    <select
-                      value={profile.dayIntervalMinutes}
-                      onChange={(e) =>
-                        void updateProfile(integration.platform, {
-                          dayIntervalMinutes: Number(e.target.value),
-                        })
-                      }
-                      className="h-8 w-full cursor-pointer rounded-md border border-input bg-background px-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-                    >
-                      {INTERVAL_OPTIONS.map((opt) => (
-                        <option key={opt.value} value={opt.value}>{opt.label}</option>
-                      ))}
-                    </select>
-                    <p className="mt-1 text-[10px] text-muted-foreground">
-                      During active hours ({formatHour(profile.dayStartHour)} – {formatHour(profile.dayEndHour)})
-                    </p>
-                  </div>
-
-                  {/* Overnight interval */}
-                  <div>
-                    <label className="mb-1.5 block text-xs font-medium text-muted-foreground">
-                      Overnight Interval
-                    </label>
-                    <select
-                      value={profile.overnightIntervalMinutes}
-                      onChange={(e) =>
-                        void updateProfile(integration.platform, {
-                          overnightIntervalMinutes: Number(e.target.value),
-                        })
-                      }
-                      className="h-8 w-full cursor-pointer rounded-md border border-input bg-background px-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-                    >
-                      {INTERVAL_OPTIONS.map((opt) => (
-                        <option key={opt.value} value={opt.value}>{opt.label}</option>
-                      ))}
-                    </select>
-                    <p className="mt-1 text-[10px] text-muted-foreground">
-                      Outside active hours
-                    </p>
-                  </div>
-
-                  {/* Full sync interval */}
-                  <div>
-                    <label className="mb-1.5 block text-xs font-medium text-muted-foreground">
-                      Full Sync Interval
-                    </label>
-                    <select
-                      value={profile.fullReconcileIntervalHours}
-                      onChange={(e) =>
-                        void updateProfile(integration.platform, {
-                          fullReconcileIntervalHours: Number(e.target.value),
-                        })
-                      }
-                      className="h-8 w-full cursor-pointer rounded-md border border-input bg-background px-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-                    >
-                      {FULL_SYNC_INTERVAL_OPTIONS.map((opt) => (
-                        <option key={opt.value} value={opt.value}>{opt.label}</option>
-                      ))}
-                    </select>
-                    <p className="mt-1 text-[10px] text-muted-foreground">
-                      Full re-download of all listings
-                    </p>
-                  </div>
-
-                  {/* Active hours */}
-                  <div>
-                    <label className="mb-1.5 block text-xs font-medium text-muted-foreground">
+                <div className="space-y-4">
+                  {/* Row 1: Active Hours — explain first since it governs the other two */}
+                  <div className="rounded-md border border-border/60 bg-muted/20 p-3">
+                    <label className="mb-1 block text-xs font-semibold">
                       Active Hours
                     </label>
+                    <p className="mb-2 text-[11px] text-muted-foreground">
+                      Defines your business hours. The <strong>Normal Sync</strong> frequency below
+                      only applies during this window. Outside these hours, the <strong>Overnight</strong> frequency
+                      is used instead. Full Sync runs anytime it&apos;s due, regardless of this window.
+                    </p>
                     <div className="flex items-center gap-1.5">
                       <select
                         value={profile.dayStartHour}
@@ -354,7 +290,7 @@ function SyncScheduleSection() {
                             dayStartHour: Number(e.target.value),
                           })
                         }
-                        className="h-8 w-full cursor-pointer rounded-md border border-input bg-background px-1.5 text-xs ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                        className="h-8 w-full max-w-[130px] cursor-pointer rounded-md border border-input bg-background px-1.5 text-xs ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
                       >
                         {Array.from({ length: 24 }, (_, i) => (
                           <option key={i} value={i}>{formatHour(i)}</option>
@@ -368,29 +304,101 @@ function SyncScheduleSection() {
                             dayEndHour: Number(e.target.value),
                           })
                         }
-                        className="h-8 w-full cursor-pointer rounded-md border border-input bg-background px-1.5 text-xs ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                        className="h-8 w-full max-w-[130px] cursor-pointer rounded-md border border-input bg-background px-1.5 text-xs ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
                       >
                         {Array.from({ length: 24 }, (_, i) => i + 1).map((h) => (
                           <option key={h} value={h}>{formatHour(h)}</option>
                         ))}
                       </select>
+                      <span className="text-[10px] text-muted-foreground">(your timezone)</span>
                     </div>
-                    <p className="mt-1 text-[10px] text-muted-foreground">
-                      Window for daytime sync frequency
-                    </p>
+                  </div>
+
+                  {/* Row 2: Three intervals side by side */}
+                  <div className="grid gap-4 sm:grid-cols-3">
+                    {/* Normal sync interval */}
+                    <div className="rounded-md border border-blue-500/20 bg-blue-500/5 p-3 dark:bg-blue-500/10">
+                      <label className="mb-1 block text-xs font-semibold">
+                        Normal Sync Frequency
+                      </label>
+                      <p className="mb-2 text-[11px] text-muted-foreground">
+                        How often an incremental sync runs <strong>during active hours</strong> ({formatHour(profile.dayStartHour)} – {formatHour(profile.dayEndHour)}).
+                        Only pulls listings that changed since the last sync.
+                      </p>
+                      <select
+                        value={profile.dayIntervalMinutes}
+                        onChange={(e) =>
+                          void updateProfile(integration.platform, {
+                            dayIntervalMinutes: Number(e.target.value),
+                          })
+                        }
+                        className="h-8 w-full cursor-pointer rounded-md border border-input bg-background px-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                      >
+                        {INTERVAL_OPTIONS.map((opt) => (
+                          <option key={opt.value} value={opt.value}>{opt.label}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Overnight interval */}
+                    <div className="rounded-md border border-indigo-500/20 bg-indigo-500/5 p-3 dark:bg-indigo-500/10">
+                      <label className="mb-1 block text-xs font-semibold">
+                        Overnight Sync Frequency
+                      </label>
+                      <p className="mb-2 text-[11px] text-muted-foreground">
+                        Same as Normal Sync but runs <strong>outside active hours</strong> ({formatHour(profile.dayEndHour)} – {formatHour(profile.dayStartHour)}).
+                        Set higher if you don&apos;t need frequent overnight updates.
+                      </p>
+                      <select
+                        value={profile.overnightIntervalMinutes}
+                        onChange={(e) =>
+                          void updateProfile(integration.platform, {
+                            overnightIntervalMinutes: Number(e.target.value),
+                          })
+                        }
+                        className="h-8 w-full cursor-pointer rounded-md border border-input bg-background px-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                      >
+                        {INTERVAL_OPTIONS.map((opt) => (
+                          <option key={opt.value} value={opt.value}>{opt.label}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Full sync interval */}
+                    <div className="rounded-md border border-purple-500/20 bg-purple-500/5 p-3 dark:bg-purple-500/10">
+                      <label className="mb-1 block text-xs font-semibold">
+                        Full Sync Frequency
+                      </label>
+                      <p className="mb-2 text-[11px] text-muted-foreground">
+                        How often a <strong>complete re-download</strong> of all listings runs.
+                        Runs anytime it&apos;s due — day or night. Catches anything normal sync missed.
+                      </p>
+                      <select
+                        value={profile.fullReconcileIntervalHours}
+                        onChange={(e) =>
+                          void updateProfile(integration.platform, {
+                            fullReconcileIntervalHours: Number(e.target.value),
+                          })
+                        }
+                        className="h-8 w-full cursor-pointer rounded-md border border-input bg-background px-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                      >
+                        {FULL_SYNC_INTERVAL_OPTIONS.map((opt) => (
+                          <option key={opt.value} value={opt.value}>{opt.label}</option>
+                        ))}
+                      </select>
+                    </div>
                   </div>
                 </div>
               )}
 
               {/* Summary line */}
               {profile.autoSyncEnabled && (
-                <div className="mt-3 flex items-center gap-1.5 rounded-md bg-muted/50 px-3 py-1.5">
-                  <Clock className="h-3 w-3 text-muted-foreground" />
-                  <span className="text-[11px] text-muted-foreground">
-                    Normal sync every <strong>{formatInterval(profile.dayIntervalMinutes)}</strong> during
-                    {" "}{formatHour(profile.dayStartHour)}–{formatHour(profile.dayEndHour)},
-                    {" "}every <strong>{formatInterval(profile.overnightIntervalMinutes)}</strong> overnight.
-                    {" "}Full sync every <strong>{profile.fullReconcileIntervalHours}h</strong>.
+                <div className="mt-3 flex items-start gap-1.5 rounded-md bg-muted/50 px-3 py-2">
+                  <Clock className="mt-0.5 h-3 w-3 shrink-0 text-muted-foreground" />
+                  <span className="text-[11px] leading-relaxed text-muted-foreground">
+                    <strong>{formatHour(profile.dayStartHour)} – {formatHour(profile.dayEndHour)}:</strong> Normal sync every <strong>{formatInterval(profile.dayIntervalMinutes)}</strong>.
+                    {" "}<strong>{formatHour(profile.dayEndHour)} – {formatHour(profile.dayStartHour)}:</strong> Normal sync every <strong>{formatInterval(profile.overnightIntervalMinutes)}</strong>.
+                    {" "}Full sync every <strong>{profile.fullReconcileIntervalHours}h</strong> (anytime).
                   </span>
                 </div>
               )}
