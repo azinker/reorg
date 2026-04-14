@@ -1,5 +1,6 @@
 "use client";
 
+import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useTheme } from "@/components/providers/theme-provider";
 import { useSettings } from "@/lib/use-settings";
@@ -8,6 +9,7 @@ import { ONBOARDING_PAGES } from "@/lib/onboarding-pages";
 import { PageTour } from "@/components/onboarding/page-tour";
 import { PAGE_TOUR_STEPS } from "@/components/onboarding/page-tour-steps";
 import type { Density, RowHeight, SortColumn } from "@/lib/settings-store";
+import type { SyncProfile } from "@/lib/sync-types";
 import { cn } from "@/lib/utils";
 import {
   Sun,
@@ -19,6 +21,11 @@ import {
   Shield,
   Crown,
   Sparkles,
+  RefreshCw,
+  Clock,
+  Info,
+  Loader2,
+  Check,
 } from "lucide-react";
 
 const TIMEZONES = [
@@ -57,6 +64,359 @@ function ToggleSwitch({
         )}
       />
     </button>
+  );
+}
+
+const INTERVAL_OPTIONS = [
+  { value: 60, label: "Every 1 hour" },
+  { value: 120, label: "Every 2 hours" },
+  { value: 180, label: "Every 3 hours" },
+  { value: 240, label: "Every 4 hours" },
+  { value: 360, label: "Every 6 hours" },
+  { value: 480, label: "Every 8 hours" },
+  { value: 720, label: "Every 12 hours" },
+  { value: 1440, label: "Every 24 hours" },
+];
+
+const FULL_SYNC_INTERVAL_OPTIONS = [
+  { value: 12, label: "Every 12 hours" },
+  { value: 24, label: "Every 24 hours" },
+  { value: 48, label: "Every 48 hours" },
+  { value: 72, label: "Every 3 days" },
+  { value: 168, label: "Every 7 days" },
+];
+
+const STORE_META: Record<string, { name: string; acronym: string; logo: string }> = {
+  TPP_EBAY: { name: "The Perfect Part", acronym: "TPP", logo: "/logos/ebay.svg" },
+  TT_EBAY: { name: "Telitetech", acronym: "TT", logo: "/logos/ebay.svg" },
+  BIGCOMMERCE: { name: "BigCommerce", acronym: "BC", logo: "/logos/bigcommerce.svg" },
+  SHOPIFY: { name: "Shopify", acronym: "SHPFY", logo: "/logos/shopify.svg" },
+};
+
+type IntegrationScheduleData = {
+  platform: string;
+  label: string;
+  enabled: boolean;
+  connected: boolean;
+  syncProfile: SyncProfile;
+};
+
+function formatInterval(minutes: number) {
+  if (minutes >= 1440) return `${Math.round(minutes / 1440)}d`;
+  if (minutes >= 60) return `${Math.round(minutes / 60)}h`;
+  return `${minutes}m`;
+}
+
+function formatHour(hour: number) {
+  if (hour === 0 || hour === 24) return "12:00 AM";
+  if (hour === 12) return "12:00 PM";
+  return hour < 12 ? `${hour}:00 AM` : `${hour - 12}:00 PM`;
+}
+
+function SyncScheduleSection() {
+  const [integrations, setIntegrations] = useState<IntegrationScheduleData[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState<Record<string, boolean>>({});
+  const [saved, setSaved] = useState<Record<string, boolean>>({});
+
+  const fetchIntegrations = useCallback(async () => {
+    try {
+      const res = await fetch("/api/integrations");
+      const json = await res.json();
+      const items = (json.data ?? json) as IntegrationScheduleData[];
+      setIntegrations(
+        items.filter((i) => STORE_META[i.platform] && i.platform !== "AMAZON")
+      );
+    } catch {
+      /* will show empty state */
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { void fetchIntegrations(); }, [fetchIntegrations]);
+
+  async function updateProfile(
+    platform: string,
+    patch: Partial<SyncProfile>,
+  ) {
+    setSaving((prev) => ({ ...prev, [platform]: true }));
+    setSaved((prev) => ({ ...prev, [platform]: false }));
+    try {
+      await fetch(`/api/integrations/${platform}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ config: { syncProfile: patch } }),
+      });
+      setIntegrations((prev) =>
+        prev.map((i) =>
+          i.platform === platform
+            ? { ...i, syncProfile: { ...i.syncProfile, ...patch } }
+            : i
+        )
+      );
+      setSaved((prev) => ({ ...prev, [platform]: true }));
+      setTimeout(() => setSaved((prev) => ({ ...prev, [platform]: false })), 2000);
+    } catch {
+      /* error state could be added */
+    } finally {
+      setSaving((prev) => ({ ...prev, [platform]: false }));
+    }
+  }
+
+  if (loading) {
+    return (
+      <section className="rounded-lg border border-border bg-card p-6 shadow-sm">
+        <h2 className="mb-5 flex items-center gap-2 text-lg font-semibold">
+          <RefreshCw className="h-5 w-5 text-muted-foreground" />
+          Automatic Sync Schedule
+        </h2>
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          Loading integration schedules...
+        </div>
+      </section>
+    );
+  }
+
+  return (
+    <section className="rounded-lg border border-border bg-card p-6 shadow-sm" data-tour="settings-sync-schedule">
+      <h2 className="mb-3 flex items-center gap-2 text-lg font-semibold">
+        <RefreshCw className="h-5 w-5 text-muted-foreground" />
+        Automatic Sync Schedule
+      </h2>
+      <p className="mb-5 text-sm text-muted-foreground">
+        Control how often reorG automatically pulls data from each marketplace.
+        These are <strong>pull-only</strong> operations — sync never writes to any marketplace.
+      </p>
+
+      {/* Explanation cards */}
+      <div className="mb-6 grid gap-3 sm:grid-cols-2">
+        <div className="rounded-lg border border-blue-500/30 bg-blue-500/5 p-4 dark:bg-blue-500/10">
+          <div className="mb-2 flex items-center gap-2">
+            <RefreshCw className="h-4 w-4 text-blue-500" />
+            <span className="text-sm font-semibold text-blue-600 dark:text-blue-400">Normal Sync (Incremental)</span>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Pulls only listings that <strong>changed since the last sync</strong>.
+            Fast and lightweight — usually takes seconds.
+          </p>
+          <p className="mt-2 text-xs text-muted-foreground italic">
+            Example: A buyer purchases an item on eBay at 2:00 PM. At the next normal sync,
+            reorG picks up the updated quantity — without re-downloading your entire catalog.
+          </p>
+        </div>
+        <div className="rounded-lg border border-purple-500/30 bg-purple-500/5 p-4 dark:bg-purple-500/10">
+          <div className="mb-2 flex items-center gap-2">
+            <Clock className="h-4 w-4 text-purple-500" />
+            <span className="text-sm font-semibold text-purple-600 dark:text-purple-400">Full Sync (Reconcile)</span>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Re-downloads <strong>every listing</strong> from the marketplace and compares it
+            against what reorG has stored. Catches anything a normal sync might miss.
+          </p>
+          <p className="mt-2 text-xs text-muted-foreground italic">
+            Example: You bulk-edited 200 titles directly on eBay. A full sync picks up all 200
+            changes at once, even if the incremental API missed some.
+          </p>
+        </div>
+      </div>
+
+      <div className="mb-4 flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 dark:bg-amber-500/10">
+        <Info className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
+        <p className="text-xs text-muted-foreground">
+          <strong>eBay stores</strong> have additional scheduling rules: syncs only run during
+          business hours (9 AM – 10 PM) and pause overnight to conserve API quota.
+          The intervals you set below apply within that active window.
+        </p>
+      </div>
+
+      {/* Per-integration schedule cards */}
+      <div className="space-y-4">
+        {integrations.map((integration) => {
+          const meta = STORE_META[integration.platform];
+          if (!meta) return null;
+          const profile = integration.syncProfile;
+          const isSaving = saving[integration.platform];
+          const isSaved = saved[integration.platform];
+          const isEbay = integration.platform === "TPP_EBAY" || integration.platform === "TT_EBAY";
+
+          return (
+            <div
+              key={integration.platform}
+              className={cn(
+                "rounded-lg border p-4 transition-colors",
+                integration.connected
+                  ? "border-border bg-background/50"
+                  : "border-border/50 bg-muted/30 opacity-60"
+              )}
+            >
+              {/* Store header */}
+              <div className="mb-4 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={meta.logo} alt={meta.name} className="h-6 w-6" />
+                  <div>
+                    <span className="text-sm font-semibold">{meta.name}</span>
+                    <span className="ml-2 inline-flex items-center rounded-full border border-border bg-muted px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide">
+                      {meta.acronym}
+                    </span>
+                  </div>
+                  {!integration.connected && (
+                    <span className="text-xs text-muted-foreground">(not connected)</span>
+                  )}
+                </div>
+                <div className="flex items-center gap-3">
+                  {isSaving && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
+                  {isSaved && <Check className="h-3.5 w-3.5 text-green-500" />}
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-muted-foreground">Auto sync</span>
+                    <ToggleSwitch
+                      checked={profile.autoSyncEnabled}
+                      onCheckedChange={(v) =>
+                        void updateProfile(integration.platform, { autoSyncEnabled: v })
+                      }
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {profile.autoSyncEnabled && (
+                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                  {/* Normal sync interval */}
+                  <div>
+                    <label className="mb-1.5 block text-xs font-medium text-muted-foreground">
+                      Normal Sync Interval
+                    </label>
+                    <select
+                      value={profile.dayIntervalMinutes}
+                      onChange={(e) =>
+                        void updateProfile(integration.platform, {
+                          dayIntervalMinutes: Number(e.target.value),
+                        })
+                      }
+                      className="h-8 w-full cursor-pointer rounded-md border border-input bg-background px-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                    >
+                      {INTERVAL_OPTIONS.map((opt) => (
+                        <option key={opt.value} value={opt.value}>{opt.label}</option>
+                      ))}
+                    </select>
+                    <p className="mt-1 text-[10px] text-muted-foreground">
+                      During active hours ({formatHour(profile.dayStartHour)} – {formatHour(profile.dayEndHour)})
+                    </p>
+                  </div>
+
+                  {/* Overnight interval */}
+                  <div>
+                    <label className="mb-1.5 block text-xs font-medium text-muted-foreground">
+                      Overnight Interval
+                    </label>
+                    <select
+                      value={profile.overnightIntervalMinutes}
+                      onChange={(e) =>
+                        void updateProfile(integration.platform, {
+                          overnightIntervalMinutes: Number(e.target.value),
+                        })
+                      }
+                      className="h-8 w-full cursor-pointer rounded-md border border-input bg-background px-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                    >
+                      {INTERVAL_OPTIONS.map((opt) => (
+                        <option key={opt.value} value={opt.value}>{opt.label}</option>
+                      ))}
+                    </select>
+                    <p className="mt-1 text-[10px] text-muted-foreground">
+                      Outside active hours{isEbay ? " (paused for eBay)" : ""}
+                    </p>
+                  </div>
+
+                  {/* Full sync interval */}
+                  <div>
+                    <label className="mb-1.5 block text-xs font-medium text-muted-foreground">
+                      Full Sync Interval
+                    </label>
+                    <select
+                      value={profile.fullReconcileIntervalHours}
+                      onChange={(e) =>
+                        void updateProfile(integration.platform, {
+                          fullReconcileIntervalHours: Number(e.target.value),
+                        })
+                      }
+                      className="h-8 w-full cursor-pointer rounded-md border border-input bg-background px-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                    >
+                      {FULL_SYNC_INTERVAL_OPTIONS.map((opt) => (
+                        <option key={opt.value} value={opt.value}>{opt.label}</option>
+                      ))}
+                    </select>
+                    <p className="mt-1 text-[10px] text-muted-foreground">
+                      Full re-download of all listings
+                    </p>
+                  </div>
+
+                  {/* Active hours */}
+                  <div>
+                    <label className="mb-1.5 block text-xs font-medium text-muted-foreground">
+                      Active Hours
+                    </label>
+                    <div className="flex items-center gap-1.5">
+                      <select
+                        value={profile.dayStartHour}
+                        onChange={(e) =>
+                          void updateProfile(integration.platform, {
+                            dayStartHour: Number(e.target.value),
+                          })
+                        }
+                        className="h-8 w-full cursor-pointer rounded-md border border-input bg-background px-1.5 text-xs ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                      >
+                        {Array.from({ length: 24 }, (_, i) => (
+                          <option key={i} value={i}>{formatHour(i)}</option>
+                        ))}
+                      </select>
+                      <span className="shrink-0 text-xs text-muted-foreground">to</span>
+                      <select
+                        value={profile.dayEndHour}
+                        onChange={(e) =>
+                          void updateProfile(integration.platform, {
+                            dayEndHour: Number(e.target.value),
+                          })
+                        }
+                        className="h-8 w-full cursor-pointer rounded-md border border-input bg-background px-1.5 text-xs ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                      >
+                        {Array.from({ length: 24 }, (_, i) => i + 1).map((h) => (
+                          <option key={h} value={h}>{formatHour(h)}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <p className="mt-1 text-[10px] text-muted-foreground">
+                      Window for daytime sync frequency
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* Summary line */}
+              {profile.autoSyncEnabled && (
+                <div className="mt-3 flex items-center gap-1.5 rounded-md bg-muted/50 px-3 py-1.5">
+                  <Clock className="h-3 w-3 text-muted-foreground" />
+                  <span className="text-[11px] text-muted-foreground">
+                    Normal sync every <strong>{formatInterval(profile.dayIntervalMinutes)}</strong> during
+                    {" "}{formatHour(profile.dayStartHour)}–{formatHour(profile.dayEndHour)},
+                    {" "}every <strong>{formatInterval(profile.overnightIntervalMinutes)}</strong> overnight.
+                    {" "}Full sync every <strong>{profile.fullReconcileIntervalHours}h</strong>.
+                    {isEbay && " eBay overnight pause applies."}
+                  </span>
+                </div>
+              )}
+
+              {!profile.autoSyncEnabled && (
+                <p className="text-xs text-muted-foreground italic">
+                  Automatic sync is off — you&apos;ll need to run syncs manually from the Sync page.
+                </p>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </section>
   );
 }
 
@@ -379,6 +739,9 @@ export default function SettingsPage() {
           </div>
         </section>
 
+        {/* SECTION 3: Automatic Sync Schedule */}
+        <SyncScheduleSection />
+
         {/* Guided tour */}
         <section className="rounded-lg border border-border bg-card p-6 shadow-sm" data-tour="settings-tour">
           <h2 className="mb-5 flex items-center gap-2 text-lg font-semibold">
@@ -408,7 +771,7 @@ export default function SettingsPage() {
           </button>
         </section>
 
-        {/* SECTION 3: Master Store (Danger Zone) */}
+        {/* SECTION 5: Master Store (Danger Zone) */}
         <section className="rounded-lg border-2 border-destructive/50 bg-destructive/5 p-6 dark:bg-destructive/10">
           <h2 className="mb-5 flex items-center gap-2 text-lg font-semibold text-destructive">
             <AlertTriangle className="h-5 w-5" />

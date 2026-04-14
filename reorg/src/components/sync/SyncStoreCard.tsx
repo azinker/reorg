@@ -5,6 +5,9 @@ import {
   XCircle,
   Loader2,
   AlertTriangle,
+  CheckCircle2,
+  Clock,
+  Circle,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Tip } from "@/components/ui/tip";
@@ -21,6 +24,7 @@ import type {
   SyncError,
 } from "@/lib/sync-types";
 import { LOGO_MAP } from "@/lib/sync-types";
+import type { IntegrationSyncState, SyncProfile } from "@/lib/sync-types";
 import {
   formatRelativeTime,
   formatCountdown,
@@ -31,6 +35,112 @@ import {
   getCompletionSummary,
   getNextPullAt,
 } from "@/lib/sync-utils";
+
+function formatHour(h: number) {
+  if (h === 0 || h === 24) return "12 AM";
+  if (h === 12) return "12 PM";
+  return h < 12 ? `${h} AM` : `${h - 12} PM`;
+}
+
+function formatIntervalShort(minutes: number) {
+  if (minutes >= 1440) return `${Math.round(minutes / 1440)}d`;
+  if (minutes >= 60) return `${Math.round(minutes / 60)}h`;
+  return `${minutes}m`;
+}
+
+function wasCompletedWithin(
+  isoTimestamp: string | null | undefined,
+  thresholdMs: number,
+  nowMs: number,
+) {
+  if (!isoTimestamp) return false;
+  const elapsed = nowMs - new Date(isoTimestamp).getTime();
+  return elapsed >= 0 && elapsed < thresholdMs;
+}
+
+function ScheduleParamRow({
+  label,
+  value,
+  completed,
+}: {
+  label: string;
+  value: string;
+  completed: boolean;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-2">
+      <div className="flex items-center gap-1.5">
+        {completed ? (
+          <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-500" />
+        ) : (
+          <Circle className="h-3.5 w-3.5 shrink-0 text-muted-foreground/40" />
+        )}
+        <span className="text-[11px] text-muted-foreground">{label}</span>
+      </div>
+      <span className={cn(
+        "text-[11px] font-semibold tabular-nums",
+        completed ? "text-emerald-400" : "text-foreground/70",
+      )}>
+        {value}
+      </span>
+    </div>
+  );
+}
+
+function ScheduleParams({
+  syncProfile,
+  syncState,
+  nowMs,
+  isEbay,
+}: {
+  syncProfile: SyncProfile;
+  syncState: IntegrationSyncState | null;
+  nowMs: number;
+  isEbay: boolean;
+}) {
+  const normalInterval = syncProfile.dayIntervalMinutes;
+  const overnightInterval = syncProfile.overnightIntervalMinutes;
+  const fullInterval = syncProfile.fullReconcileIntervalHours;
+
+  const lastIncremental = syncState?.lastIncrementalSyncAt;
+  const lastFull = syncState?.lastFullSyncAt;
+
+  const normalDone = wasCompletedWithin(lastIncremental, normalInterval * 60 * 1000, nowMs);
+  const fullDone = wasCompletedWithin(lastFull, fullInterval * 60 * 60 * 1000, nowMs);
+
+  return (
+    <div className="mt-3 rounded-lg border border-border/60 bg-muted/20 px-3 py-2.5">
+      <div className="mb-2 flex items-center gap-1.5">
+        <Clock className="h-3 w-3 text-muted-foreground" />
+        <span className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
+          Schedule
+        </span>
+      </div>
+      <div className="space-y-1.5">
+        <ScheduleParamRow
+          label="Normal sync"
+          value={`Every ${formatIntervalShort(normalInterval)}`}
+          completed={normalDone}
+        />
+        <ScheduleParamRow
+          label="Overnight"
+          value={isEbay ? "Paused" : `Every ${formatIntervalShort(overnightInterval)}`}
+          completed={false}
+        />
+        <ScheduleParamRow
+          label="Full sync"
+          value={`Every ${fullInterval}h`}
+          completed={fullDone}
+        />
+        <ScheduleParamRow
+          label="Active hours"
+          value={`${formatHour(syncProfile.dayStartHour)} – ${formatHour(syncProfile.dayEndHour)}`}
+          completed={false}
+        />
+      </div>
+    </div>
+  );
+}
 
 type Props = {
   store: StoreEntry;
@@ -182,6 +292,16 @@ export function SyncStoreCard({
             </div>
           </div>
         </div>
+
+        {/* Schedule parameters */}
+        {syncProfile && (
+          <ScheduleParams
+            syncProfile={syncProfile}
+            syncState={syncState}
+            nowMs={nowMs}
+            isEbay={isEbay}
+          />
+        )}
 
         {/* Attention / delayed detail */}
         {(healthStatus === "attention" || healthStatus === "delayed") && healthItem && !isSyncing && (
