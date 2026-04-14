@@ -97,7 +97,8 @@ function isIntentionallyDeferredSync(planItem: SchedulerPlanItem) {
     ) ||
     planItem.reason.startsWith(
       "Cooling down after an eBay API usage-limit response before the next retry.",
-    )
+    ) ||
+    planItem.reason.startsWith("Overnight normal syncs are off")
   );
 }
 
@@ -191,7 +192,9 @@ function getSyncHealthStatus(
       syncStatus: "fresh" as const,
       minutesSinceSync,
       syncMessage:
-        planItem.reason.startsWith("Paused outside eBay business hours.")
+        planItem.reason.startsWith("Overnight normal syncs are off")
+          ? "Overnight normal syncs are off. Only full sync runs if due."
+        : planItem.reason.startsWith("Paused outside eBay business hours.")
           ? "Pulls are paused outside the scheduled eBay business window."
         : "Pulls are waiting for the next allowed eBay retry window.",
     };

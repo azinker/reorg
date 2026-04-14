@@ -126,7 +126,13 @@ function ScheduleParams({
   const lastIncremental = syncState?.lastIncrementalSyncAt;
   const lastFull = syncState?.lastFullSyncAt;
 
-  const normalDone = wasCompletedWithin(lastIncremental, normalInterval * 60 * 1000, nowMs);
+  const overnightWindowMinutes =
+    (24 - syncProfile.dayEndHour + syncProfile.dayStartHour) * 60;
+  const normalThresholdMs =
+    overnightInterval === 0
+      ? (overnightWindowMinutes + normalInterval) * 60 * 1000
+      : normalInterval * 60 * 1000;
+  const normalDone = wasCompletedWithin(lastIncremental, normalThresholdMs, nowMs);
   const fullDone = wasCompletedWithin(lastFull, fullInterval * 60 * 60 * 1000, nowMs);
 
   const jobDone = liveJob && (liveJob.status === "COMPLETED" || liveJob.status === "FAILED");
