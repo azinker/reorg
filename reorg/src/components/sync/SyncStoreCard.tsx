@@ -62,11 +62,19 @@ function ScheduleParamRow({
   label,
   value,
   completed,
+  lastAt,
+  nowMs,
 }: {
   label: string;
   value: string;
   completed: boolean;
+  lastAt?: string | null;
+  nowMs?: number;
 }) {
+  const timestamp = completed && lastAt && nowMs
+    ? formatRelativeTime(lastAt, nowMs)
+    : null;
+
   return (
     <div className="flex items-center justify-between gap-2">
       <div className="flex items-center gap-1.5">
@@ -76,6 +84,9 @@ function ScheduleParamRow({
           <Circle className="h-3.5 w-3.5 shrink-0 text-muted-foreground/40" />
         )}
         <span className="text-[11px] text-muted-foreground">{label}</span>
+        {timestamp && (
+          <span className="text-[10px] text-emerald-500/70">{timestamp}</span>
+        )}
       </div>
       <span className={cn(
         "text-[11px] font-semibold tabular-nums",
@@ -121,16 +132,20 @@ function ScheduleParams({
           label="Normal sync"
           value={`Every ${formatIntervalShort(normalInterval)}`}
           completed={normalDone}
+          lastAt={lastIncremental}
+          nowMs={nowMs}
         />
         <ScheduleParamRow
           label="Overnight"
-          value={isEbay ? "Paused" : `Every ${formatIntervalShort(overnightInterval)}`}
+          value={`Every ${formatIntervalShort(overnightInterval)}${isEbay ? " (eBay pauses)" : ""}`}
           completed={false}
         />
         <ScheduleParamRow
           label="Full sync"
           value={`Every ${fullInterval}h`}
           completed={fullDone}
+          lastAt={lastFull}
+          nowMs={nowMs}
         />
         <ScheduleParamRow
           label="Active hours"
