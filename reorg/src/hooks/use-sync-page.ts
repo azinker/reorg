@@ -29,7 +29,7 @@ export type UseSyncPageReturn = {
   getStatus: (apiPlatform: string) => IntegrationStatus | undefined;
   syncStore: (apiPlatform: string, mode?: "full" | "incremental") => Promise<void>;
   cancelSync: (apiPlatform: string) => Promise<void>;
-  syncAll: () => Promise<void>;
+  syncAll: (mode?: "full" | "incremental") => Promise<void>;
   copyErrors: (apiPlatform: string) => void;
   toggleErrors: (apiPlatform: string) => void;
   setSyncMeta: React.Dispatch<React.SetStateAction<Record<string, SyncRouteData | null>>>;
@@ -307,10 +307,10 @@ export function useSyncPage(): UseSyncPageReturn {
     [fetchSchedulerStatus, loadStoreStatus],
   );
 
-  const syncAll = useCallback(async () => {
+  const syncAll = useCallback(async (mode?: "full" | "incremental") => {
     setSyncAllRunning(true);
     const connected = STORES.filter((s) => integrations.find((i) => i.platform === s.apiPlatform)?.connected);
-    await Promise.allSettled(connected.map((s) => syncStore(s.apiPlatform)));
+    await Promise.allSettled(connected.map((s) => syncStore(s.apiPlatform, mode)));
     setSyncAllRunning(false);
   }, [integrations, syncStore]);
 
