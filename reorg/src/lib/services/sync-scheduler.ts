@@ -259,7 +259,7 @@ export async function planScheduledSyncs(now = new Date()) {
           autoSyncEnabled: true,
           due: true,
           running: false,
-          intervalMinutes: 0,
+          intervalMinutes: config.syncProfile.fullReconcileIntervalHours * 60,
           requestedMode: "full",
           effectiveMode: "full",
           fallbackReason: null,
