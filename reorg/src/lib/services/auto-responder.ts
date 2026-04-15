@@ -358,11 +358,16 @@ export async function enqueueAutoResponderJob(params: {
     return { queued: false, reason: "missing_version_or_integration" };
   }
 
-  const existingLog = await db.autoResponderSendLog.findUnique({
-    where: { auto_responder_dedupe: { orderNumber: params.orderNumber, channel: params.channel } },
-  });
+  const [existingLog, existingJob] = await Promise.all([
+    db.autoResponderSendLog.findUnique({
+      where: { auto_responder_dedupe: { orderNumber: params.orderNumber, channel: params.channel } },
+    }),
+    db.autoResponderJob.findFirst({
+      where: { orderNumber: params.orderNumber, channel: params.channel },
+    }),
+  ]);
 
-  if (existingLog && params.source !== "TESTING_AREA") {
+  if ((existingLog || existingJob) && params.source !== "TESTING_AREA") {
     console.log(`[auto-responder] duplicate prevented for ${params.orderNumber}/${params.channel}`);
     return { queued: false, reason: "duplicate_prevented" };
   }
@@ -434,14 +439,23 @@ export async function bulkEnqueueAutoResponderJobs(
 
     // Bulk dedupe: one query per channel instead of one per order
     const orderNumbers = channelOrders.map((o) => o.orderNumber);
-    const existingLogs = await db.autoResponderSendLog.findMany({
-      where: { orderNumber: { in: orderNumbers }, channel },
-      select: { orderNumber: true },
-    });
-    const alreadySent = new Set(existingLogs.map((l) => l.orderNumber));
+    const [existingLogs, existingJobs] = await Promise.all([
+      db.autoResponderSendLog.findMany({
+        where: { orderNumber: { in: orderNumbers }, channel },
+        select: { orderNumber: true },
+      }),
+      db.autoResponderJob.findMany({
+        where: { orderNumber: { in: orderNumbers }, channel },
+        select: { orderNumber: true },
+      }),
+    ]);
+    const alreadyHandled = new Set([
+      ...existingLogs.map((l) => l.orderNumber),
+      ...existingJobs.map((j) => j.orderNumber),
+    ]);
 
     for (const o of channelOrders) {
-      if (alreadySent.has(o.orderNumber)) {
+      if (alreadyHandled.has(o.orderNumber)) {
         incReason("duplicate_prevented");
         continue;
       }
