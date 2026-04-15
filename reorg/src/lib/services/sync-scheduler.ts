@@ -145,7 +145,24 @@ export async function planScheduledSyncs(now = new Date()) {
       integration,
       config.syncProfile.preferredMode,
     );
-    const displayInterval = intervalMinutes ?? 0;
+
+    // When overnight syncs are off and we're in daytime, the real gap since
+    // the last expected sync includes the entire overnight window.  Use that
+    // as the health-threshold interval so the system doesn't flag ATTENTION
+    // the moment active hours begin.
+    let displayInterval: number;
+    if (intervalMinutes === null) {
+      displayInterval = 0;
+    } else if (
+      config.syncProfile.overnightIntervalMinutes === 0 &&
+      intervalMinutes === config.syncProfile.dayIntervalMinutes
+    ) {
+      const overnightWindowMinutes =
+        (24 - config.syncProfile.dayEndHour + config.syncProfile.dayStartHour) * 60;
+      displayInterval = overnightWindowMinutes + config.syncProfile.dayIntervalMinutes;
+    } else {
+      displayInterval = intervalMinutes;
+    }
 
     if (!integration.enabled) {
       const nextDueAt = getNextDueAt(now, lastRunAt, displayInterval, false);
