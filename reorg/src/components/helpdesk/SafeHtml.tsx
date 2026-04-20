@@ -510,6 +510,75 @@ function scheduleIdle(cb: () => void, timeoutMs = 250): () => void {
   return () => window.clearTimeout(id);
 }
 
+/* ────────────────────────────────────────────────────────────────────────── *
+ * Serialised processing queue.
+ *
+ * `requestIdleCallback` happily runs every queued callback in a single idle
+ * slice if there's enough budget — which means 5 SafeHtml instances scheduled
+ * in the same React commit can chain into one ~1.5 second long task instead
+ * of 5 separate small ones. The whole point of deferring sanitisation is to
+ * keep individual frames short, so we explicitly serialise: at most ONE
+ * sanitisation runs per macrotask, and we yield to the event loop (and to
+ * paint) between each one.
+ *
+ * We use `MessageChannel` to schedule the next item — it's faster than
+ * setTimeout(..., 0) (no 4ms clamp), runs after the current macrotask
+ * completes, and lets the browser interleave input + paint work.
+ * ────────────────────────────────────────────────────────────────────────── */
+type SanitiseTask = () => void;
+const sanitiseQueue: SanitiseTask[] = [];
+let sanitiseFlushScheduled = false;
+let sanitiseChannel: MessageChannel | null = null;
+
+function flushSanitiseQueue() {
+  sanitiseFlushScheduled = false;
+  // Pop one task. Even big eBay bodies are <250ms; one per macrotask keeps
+  // frame budgets healthy and lets paint/input get a turn between bubbles.
+  const task = sanitiseQueue.shift();
+  if (task) {
+    try {
+      task();
+    } catch {
+      // swallow — the failing component will fall back to its placeholder
+    }
+  }
+  if (sanitiseQueue.length > 0) scheduleSanitiseFlush();
+}
+
+function scheduleSanitiseFlush() {
+  if (sanitiseFlushScheduled) return;
+  sanitiseFlushScheduled = true;
+  if (typeof window === "undefined") {
+    flushSanitiseQueue();
+    return;
+  }
+  if (!sanitiseChannel) {
+    try {
+      sanitiseChannel = new MessageChannel();
+      sanitiseChannel.port1.onmessage = () => flushSanitiseQueue();
+    } catch {
+      sanitiseChannel = null;
+    }
+  }
+  if (sanitiseChannel) {
+    sanitiseChannel.port2.postMessage(0);
+  } else {
+    window.setTimeout(flushSanitiseQueue, 0);
+  }
+}
+
+function enqueueSanitise(cb: SanitiseTask): () => void {
+  sanitiseQueue.push(cb);
+  scheduleSanitiseFlush();
+  let cancelled = false;
+  return () => {
+    if (cancelled) return;
+    cancelled = true;
+    const idx = sanitiseQueue.indexOf(cb);
+    if (idx >= 0) sanitiseQueue.splice(idx, 1);
+  };
+}
+
 export function SafeHtml({ html, forceHtml, className }: SafeHtmlProps) {
   const { isHtml, decoded } = useMemo(
     () => detectHtml(html ?? "", forceHtml),
@@ -533,11 +602,13 @@ export function SafeHtml({ html, forceHtml, className }: SafeHtmlProps) {
       if (cached !== sanitised) setSanitised(cached);
       return;
     }
-    // Uncached → process during the next idle slice. The bubble shows a
+    // Uncached → enqueue for serialised idle processing. The bubble shows a
     // shimmer placeholder until the result is ready, but the click that
-    // opened this ticket has long since resolved.
+    // opened this ticket has long since resolved. Multiple bubbles in the
+    // same thread run one-per-macrotask so they don't chain into one
+    // multi-second long task.
     let cancelled = false;
-    const cancel = scheduleIdle(() => {
+    const cancel = enqueueSanitise(() => {
       if (cancelled) return;
       const result = computeSanitised(decoded);
       lruSet(decoded, result);
