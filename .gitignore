@@ -22,3 +22,16 @@ reorg/.env
 reorg/.env.local
 reorg/.env.*.local
 .vercel
+
+# Local dev/test artifacts (Playwright runs, ad-hoc patches, snapshot dumps)
+.playwright-cli/
+reorg/.playwright-cli/
+*.patch
+reorg/snapshot-*.txt
+reorg/qa-thread-*
+# Help Desk visual QA screenshots (kept locally only)
+reorg/helpdesk-*.png
+reorg/help-desk-*.png
+reorg/order-info-*.png
+# User-specific Cursor keybindings (different per machine)
+keybindings.json

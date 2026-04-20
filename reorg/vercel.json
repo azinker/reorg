@@ -4,6 +4,26 @@
     {
       "path": "/api/scheduler/tick",
       "schedule": "*/15 * * * *"
+    },
+    {
+      "path": "/api/cron/helpdesk-poll",
+      "schedule": "*/5 13-22 * * 1-5"
+    },
+    {
+      "path": "/api/cron/helpdesk-poll",
+      "schedule": "*/15 0-12,23 * * *"
+    },
+    {
+      "path": "/api/cron/helpdesk-poll",
+      "schedule": "*/15 * * * 0,6"
+    },
+    {
+      "path": "/api/cron/helpdesk-outbound",
+      "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/cron/helpdesk-housekeeping",
+      "schedule": "0 6 * * *"
     }
   ]
 }

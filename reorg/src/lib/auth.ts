@@ -87,12 +87,25 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
 
       return true;
     },
-    async jwt({ token, user }) {
+    async jwt({ token, user, trigger }) {
       if (user) {
         token.role = isAdminEmail(user.email)
           ? "ADMIN"
           : (user as { role?: string }).role ?? "OPERATOR";
         token.id = user.id!;
+      }
+      if (token.id && (trigger === "update" || token.pagePermissions === undefined)) {
+        try {
+          const dbUser = await db.user.findUnique({
+            where: { id: token.id as string },
+            select: { pagePermissions: true, role: true },
+          });
+          if (dbUser) {
+            token.role = dbUser.role;
+            token.pagePermissions = (dbUser.pagePermissions as string[] | null) ?? null;
+          }
+        } catch {
+        }
       }
       return token;
     },
@@ -100,6 +113,8 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       if (session.user) {
         session.user.id = token.id as string;
         (session.user as { role: string }).role = token.role as string;
+        (session.user as { pagePermissions?: string[] | null }).pagePermissions =
+          (token.pagePermissions as string[] | null | undefined) ?? null;
       }
       return session;
     },

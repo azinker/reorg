@@ -31,6 +31,15 @@
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
   --color-sidebar-border: var(--sidebar-border);
 
+  /* Helpdesk + brand tokens — defined per theme so light/dark both stay readable. */
+  --color-brand: var(--brand);
+  --color-brand-foreground: var(--brand-foreground);
+  --color-brand-muted: var(--brand-muted);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-hairline: var(--hairline);
+  --color-hairline-strong: var(--hairline-strong);
+
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
@@ -40,41 +49,60 @@
 :root {
   --radius: 0.5rem;
 
-  /* Light mode */
+  /* ── Light mode ──────────────────────────────────────────────────────────
+   * Tuned for high contrast on standard monitors:
+   *   - background: subtle neutral, not pure white (less eye strain)
+   *   - foreground: near-black (~OKLCH 0.18) for AA on body text
+   *   - muted-foreground: dark-enough grey to read on cards (~OKLCH 0.42)
+   *   - border: visible at a glance, not a ghost line (~OKLCH 0.84)
+   *   - hairline tokens: neutral div lines that work where dark used `border-white/10`
+   *   - brand: deeper red so `text-brand` reads on white (~OKLCH 0.50)
+   */
   --background: oklch(0.985 0 0);
-  --foreground: oklch(0.145 0.015 285);
+  --foreground: oklch(0.18 0.015 285);
   --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0.015 285);
+  --card-foreground: oklch(0.18 0.015 285);
   --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0.015 285);
+  --popover-foreground: oklch(0.18 0.015 285);
   --primary: oklch(0.38 0.14 285);
   --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.94 0.01 265);
-  --secondary-foreground: oklch(0.205 0.015 285);
-  --muted: oklch(0.94 0.01 265);
-  --muted-foreground: oklch(0.48 0.02 265);
-  --accent: oklch(0.94 0.01 265);
-  --accent-foreground: oklch(0.205 0.015 285);
+  --secondary: oklch(0.93 0.01 265);
+  --secondary-foreground: oklch(0.18 0.015 285);
+  --muted: oklch(0.93 0.01 265);
+  --muted-foreground: oklch(0.42 0.02 265);
+  --accent: oklch(0.93 0.01 265);
+  --accent-foreground: oklch(0.18 0.015 285);
   --destructive: oklch(0.55 0.22 29);
   --destructive-foreground: oklch(0.985 0 0);
-  --border: oklch(0.88 0.01 265);
-  --input: oklch(0.88 0.01 265);
+  --border: oklch(0.84 0.012 265);
+  --input: oklch(0.84 0.012 265);
   --ring: oklch(0.38 0.14 285);
   --staged: oklch(0.55 0.18 295);
   --staged-foreground: oklch(0.985 0 0);
 
-  --sidebar: oklch(0.97 0.005 265);
-  --sidebar-foreground: oklch(0.205 0.015 285);
-  --sidebar-accent: oklch(0.94 0.01 265);
-  --sidebar-accent-foreground: oklch(0.205 0.015 285);
-  --sidebar-border: oklch(0.88 0.01 265);
+  --sidebar: oklch(0.965 0.005 265);
+  --sidebar-foreground: oklch(0.18 0.015 285);
+  --sidebar-accent: oklch(0.92 0.01 265);
+  --sidebar-accent-foreground: oklch(0.18 0.015 285);
+  --sidebar-border: oklch(0.84 0.012 265);
 
-  --scrollbar-track: oklch(0.93 0.01 265 / 0.9);
-  --scrollbar-track-edge: oklch(0.84 0.012 265 / 0.95);
-  --scrollbar-thumb: oklch(0.56 0.12 182 / 0.92);
-  --scrollbar-thumb-hover: oklch(0.50 0.14 182 / 0.96);
-  --scrollbar-thumb-active: oklch(0.44 0.15 182 / 0.98);
-  --scrollbar-shadow: oklch(0.40 0.04 260 / 0.12);
+  /* Brand red — readable on light AND visible on dark (defined separately below). */
+  --brand: oklch(0.50 0.18 25);          /* text-brand on light */
+  --brand-foreground: oklch(0.99 0 0);   /* white text on brand bg */
+  --brand-muted: oklch(0.50 0.18 25 / 0.12);
+
+  /* Neutral surface tokens — replace ad-hoc bg-white/5, bg-[#171922]. */
+  --surface: oklch(0.97 0.005 265);      /* card body */
+  --surface-2: oklch(0.93 0.01 265);     /* recessed / hover */
+  --hairline: oklch(0.84 0.012 265);     /* default divider */
+  --hairline-strong: oklch(0.76 0.015 265); /* prominent divider */
+
+  --scrollbar-track: oklch(0.91 0.01 265 / 0.95);
+  --scrollbar-track-edge: oklch(0.80 0.014 265 / 0.95);
+  --scrollbar-thumb: oklch(0.50 0.12 182 / 0.92);
+  --scrollbar-thumb-hover: oklch(0.44 0.14 182 / 0.96);
+  --scrollbar-thumb-active: oklch(0.38 0.15 182 / 0.98);
+  --scrollbar-shadow: oklch(0.40 0.04 260 / 0.18);
 }
 
 .dark {
@@ -105,6 +133,17 @@
   --sidebar-accent: oklch(0.18 0.02 275);
   --sidebar-accent-foreground: oklch(0.93 0.005 265);
   --sidebar-border: oklch(0.22 0.02 275);
+
+  /* Brand red — lighter on dark so it pops against deep surfaces. */
+  --brand: oklch(0.78 0.14 25);
+  --brand-foreground: oklch(0.99 0 0);
+  --brand-muted: oklch(0.78 0.14 25 / 0.16);
+
+  /* Surface tokens — replace bg-white/5, bg-[#171922], border-white/10. */
+  --surface: oklch(0.18 0.02 275);
+  --surface-2: oklch(0.22 0.02 275);
+  --hairline: oklch(0.26 0.02 275);
+  --hairline-strong: oklch(0.34 0.02 275);
 
   --scrollbar-track: oklch(0.18 0.02 275 / 0.92);
   --scrollbar-track-edge: oklch(0.28 0.03 275 / 0.98);
@@ -235,4 +274,128 @@
 }
 .grid-row-data .scalable-text {
   font-size: var(--row-font-size, 12px);
+}
+
+/* ─── Help Desk: rendered email/HTML body ───────────────────────────────────
+ * Sanitised HTML from buyer emails / eBay shipping confirmations gets
+ * dropped into `.helpdesk-html-body`. eBay's templates rely heavily on
+ * inline tables and white backgrounds. These styles tame the worst
+ * offenders without stripping the content, and use theme tokens so they
+ * read correctly in both light and dark modes. */
+.helpdesk-html-body {
+  word-break: break-word;
+  color: var(--foreground);
+}
+.helpdesk-html-body table {
+  max-width: 100%;
+  border-collapse: collapse;
+  margin: 0.5rem 0;
+}
+.helpdesk-html-body td,
+.helpdesk-html-body th {
+  padding: 0.25rem 0.5rem;
+  vertical-align: top;
+}
+.helpdesk-html-body img {
+  max-width: 100%;
+  /* Cap inline images so a single attached photo (or a leftover banner) can
+   * never blow out the chat bubble vertically. Click-through still works for
+   * larger originals. */
+  max-height: 280px;
+  width: auto;
+  height: auto;
+  border-radius: 4px;
+  object-fit: contain;
+}
+.helpdesk-html-body a {
+  color: var(--brand);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.helpdesk-html-body a:hover {
+  color: color-mix(in oklab, var(--brand) 70%, var(--foreground) 30%);
+}
+.helpdesk-html-body p { margin: 0.5rem 0; }
+.helpdesk-html-body h1,
+.helpdesk-html-body h2,
+.helpdesk-html-body h3 {
+  margin: 0.75rem 0 0.5rem;
+  font-weight: 600;
+}
+.helpdesk-html-body ul,
+.helpdesk-html-body ol {
+  margin: 0.5rem 0 0.5rem 1.25rem;
+  list-style-position: outside;
+}
+.helpdesk-html-body ul { list-style-type: disc; }
+.helpdesk-html-body ol { list-style-type: decimal; }
+.helpdesk-html-body blockquote {
+  border-left: 3px solid var(--hairline);
+  padding-left: 0.75rem;
+  margin: 0.5rem 0;
+  color: var(--muted-foreground);
+}
+.helpdesk-html-body pre,
+.helpdesk-html-body code {
+  background: var(--surface-2);
+  border-radius: 4px;
+  padding: 0.1rem 0.3rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.85em;
+}
+.helpdesk-html-body pre {
+  padding: 0.5rem 0.75rem;
+  overflow-x: auto;
+}
+
+/* Collapsed quoted history toggle. Renders as a subtle pill the agent can
+ * click to expand the prior thread. eBay packs every notification with the
+ * full quoted conversation; this keeps the bubble focused on the new
+ * content while preserving the history one click away. */
+.helpdesk-html-body details.helpdesk-quoted-history {
+  margin-top: 0.75rem;
+  border-top: 1px dashed var(--hairline);
+  padding-top: 0.5rem;
+}
+.helpdesk-html-body details.helpdesk-quoted-history > summary {
+  cursor: pointer;
+  font-size: 0.75rem;
+  color: var(--muted-foreground);
+  padding: 0.25rem 0;
+  list-style: none;
+  user-select: none;
+}
+.helpdesk-html-body details.helpdesk-quoted-history > summary::-webkit-details-marker {
+  display: none;
+}
+.helpdesk-html-body details.helpdesk-quoted-history > summary::before {
+  content: "▸";
+  display: inline-block;
+  margin-right: 0.4rem;
+  transition: transform 120ms ease-out;
+}
+.helpdesk-html-body details.helpdesk-quoted-history[open] > summary::before {
+  transform: rotate(90deg);
+}
+.helpdesk-html-body details.helpdesk-quoted-history > div {
+  margin-top: 0.5rem;
+  padding-left: 0.75rem;
+  border-left: 2px solid var(--hairline);
+  opacity: 0.85;
+}
+
+/* Dark mode: neutralise eBay's white inline backgrounds so the message
+ * blends with our dark surface. In light mode the email's own white
+ * backgrounds look fine, so we leave them alone. */
+.dark .helpdesk-html-body [bgcolor="#ffffff"],
+.dark .helpdesk-html-body [bgcolor="#FFFFFF"],
+.dark .helpdesk-html-body [style*="background-color: #ffffff"],
+.dark .helpdesk-html-body [style*="background-color: #FFFFFF"],
+.dark .helpdesk-html-body [style*="background:#ffffff"],
+.dark .helpdesk-html-body [style*="background:#FFFFFF"] {
+  background-color: transparent !important;
+}
+.dark .helpdesk-html-body [style*="color: #000"],
+.dark .helpdesk-html-body [style*="color:#000"] {
+  color: inherit !important;
 }

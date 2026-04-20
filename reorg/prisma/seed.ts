@@ -7,57 +7,112 @@ const prisma = new PrismaClient();
 async function main() {
   console.log("Seeding database...");
 
-  // ─── Admin Users ─────────────────────────────────────────────────────────
-  const passwordHash = await bcrypt.hash("changeme-on-first-login", 12);
-  const adminUsers = [
+  // ─── Admin & Operator Users ─────────────────────────────────────────────
+  // Adam & Cory keep their previous shared placeholder password unless one is
+  // already set — we never overwrite an existing passwordHash. Mike is new and
+  // gets his own initial password as requested by the project owner.
+  const placeholderHash = await bcrypt.hash("changeme-on-first-login", 12);
+  const mikeInitialHash = await bcrypt.hash("theperfectpart2026", 12);
+
+  const seededUsers = [
     {
       email: "adam@theperfectpart.net",
       name: "Adam Zinker",
+      handle: "adam",
+      role: Role.ADMIN,
+      title: "Admin",
+      passwordHash: placeholderHash,
       lookupEmails: ["adam@theperfectpart.net"],
+      overwritePassword: false,
     },
     {
       email: "coryzz@live.com",
       name: "Cory Zinker",
+      handle: "cory",
+      role: Role.ADMIN,
+      title: "Admin",
+      passwordHash: placeholderHash,
       lookupEmails: ["coryzz@live.com", "cory@theperfectpart.net"],
+      overwritePassword: false,
+    },
+    {
+      email: "mlmaschi@icloud.com",
+      name: "Mike Maschi",
+      handle: "mike",
+      role: Role.OPERATOR,
+      title: "Agent",
+      passwordHash: mikeInitialHash,
+      lookupEmails: ["mlmaschi@icloud.com"],
+      overwritePassword: false,
     },
   ];
 
-  for (const adminUser of adminUsers) {
+  for (const seedUser of seededUsers) {
     const existingUser = await prisma.user.findFirst({
       where: {
-        OR: adminUser.lookupEmails.map((email) => ({
+        OR: seedUser.lookupEmails.map((email) => ({
           email: { equals: email, mode: "insensitive" },
         })),
       },
-      select: { id: true },
+      select: { id: true, passwordHash: true, handle: true, title: true },
     });
+
+    const data = {
+      email: seedUser.email,
+      name: seedUser.name,
+      role: seedUser.role,
+      handle: existingUser?.handle ?? seedUser.handle,
+      title: existingUser?.title ?? seedUser.title,
+      emailVerified: new Date(),
+      // Only set passwordHash if user has none yet OR overwrite explicitly opted-in.
+      ...(existingUser?.passwordHash && !seedUser.overwritePassword
+        ? {}
+        : { passwordHash: seedUser.passwordHash }),
+    };
 
     if (existingUser) {
-      await prisma.user.update({
-        where: { id: existingUser.id },
-        data: {
-          email: adminUser.email,
-          name: adminUser.name,
-          role: Role.ADMIN,
-          passwordHash,
-          emailVerified: new Date(),
-        },
-      });
-      continue;
+      await prisma.user.update({ where: { id: existingUser.id }, data });
+    } else {
+      await prisma.user.create({ data });
     }
-
-    await prisma.user.create({
-      data: {
-        email: adminUser.email,
-        name: adminUser.name,
-        role: Role.ADMIN,
-        passwordHash,
-        emailVerified: new Date(),
-      },
-    });
   }
 
-  console.log("  Created admin users");
+  console.log("  Seeded users (Adam, Cory, Mike)");
+
+  // ─── Help Desk system filters ───────────────────────────────────────────
+  await prisma.helpdeskFilter.upsert({
+    where: { id: "filter_sys_shipped_archive" },
+    update: {},
+    create: {
+      id: "filter_sys_shipped_archive",
+      name: "Shipped notifications → Archive",
+      description:
+        "Auto-archive eBay shipping confirmation messages so they don't clutter the inbox.",
+      enabled: true,
+      isSystem: true,
+      sortOrder: 0,
+      conditions: {
+        match: "ANY",
+        rules: [
+          {
+            field: "subject",
+            op: "equals",
+            value: "Thank You! Your item has been Shipped to your address!",
+            caseSensitive: false,
+          },
+          {
+            field: "subject",
+            op: "contains",
+            value: "Your item has been Shipped",
+            caseSensitive: false,
+          },
+        ],
+      },
+      action: { type: "MOVE_TO_FOLDER", folder: "archived" },
+    },
+  });
+
+  console.log("  Seeded Help Desk system filters");
 
   // ─── Integrations ───────────────────────────────────────────────────────
   const integrations = [

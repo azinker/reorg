@@ -7,6 +7,24 @@ import {
   NETWORK_TRANSFER_REQUEST_PATH_HEADER,
   NETWORK_TRANSFER_REQUEST_START_HEADER,
 } from "@/lib/network-transfer-request";
+import {
+  NAV_PAGES,
+  resolveAllowedPageKeys,
+  type PageKey,
+} from "@/lib/nav-pages";
+
+const PAGE_PREFIXES: Array<{ prefix: string; key: PageKey }> = NAV_PAGES.map(
+  (p) => ({ prefix: p.href, key: p.key }),
+).sort((a, b) => b.prefix.length - a.prefix.length);
+
+function resolvePageKeyForPath(pathname: string): PageKey | null {
+  for (const { prefix, key } of PAGE_PREFIXES) {
+    if (pathname === prefix || pathname.startsWith(`${prefix}/`)) {
+      return key;
+    }
+  }
+  return null;
+}
 
 function isPublicPath(pathname: string) {
   return (
@@ -26,11 +44,16 @@ function isPublicPath(pathname: string) {
   );
 }
 
-function buildNextResponse(req: NextRequest) {
+function buildNextResponse(req: NextRequest, extraHeaders?: Record<string, string>) {
   const requestHeaders = new Headers(req.headers);
   requestHeaders.set(NETWORK_TRANSFER_REQUEST_METHOD_HEADER, req.method.toUpperCase());
   requestHeaders.set(NETWORK_TRANSFER_REQUEST_PATH_HEADER, req.nextUrl.pathname);
   requestHeaders.set(NETWORK_TRANSFER_REQUEST_START_HEADER, String(Date.now()));
+  if (extraHeaders) {
+    for (const [k, v] of Object.entries(extraHeaders)) {
+      requestHeaders.set(k, v);
+    }
+  }
 
   return NextResponse.next({
     request: {
@@ -60,6 +83,36 @@ export default auth(function proxy(req: NextRequest & { auth?: unknown }) {
     }
 
     return NextResponse.redirect(new URL("/login", req.url));
+  }
+
+  // Page-access gating for non-API routes. We never gate API routes here —
+  // those have their own admin/role checks at the route handler level.
+  // When an admin is impersonating, we skip middleware-level gating and let
+  // (app)/layout.tsx perform it using the impersonated user's permissions.
+  if (!pathname.startsWith("/api/")) {
+    const pageKey = resolvePageKeyForPath(pathname);
+    if (pageKey) {
+      const impersonating = req.cookies.get("reorg_impersonate");
+      if (!impersonating) {
+        const sessionUser = (req.auth as {
+          user?: { role?: string; pagePermissions?: string[] | null };
+        } | null)?.user;
+        const allowed = resolveAllowedPageKeys({
+          role: sessionUser?.role ?? "OPERATOR",
+          pagePermissions: sessionUser?.pagePermissions ?? null,
+        });
+        if (!allowed.has(pageKey)) {
+          const url = req.nextUrl.clone();
+          url.pathname = "/dashboard";
+          url.search = `?denied=${encodeURIComponent(pageKey)}`;
+          return NextResponse.redirect(url);
+        }
+      }
+      return buildNextResponse(req, {
+        "x-reorg-page-key": pageKey,
+        "x-reorg-pathname": pathname,
+      });
+    }
   }
 
   return buildNextResponse(req);

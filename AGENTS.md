@@ -24,6 +24,10 @@ These rules are non-negotiable. No agent, refactor, or feature request may viola
 6. **NEVER** expose secrets in client-side code, logs, API responses, or git history.
 7. **NEVER** allow writes in the staging environment unless the staging write lock is explicitly disabled by an admin.
 8. If there is any ambiguity about whether an operation is read-only or write-capable, treat it as **read-only** until the spec explicitly says otherwise.
+9. **NEVER** delete a Help Desk message, ticket, note, or audit log row. Hide via `isArchived` / `isSpam` / `isDeleted` only — all reversible.
+10. **NEVER** dispatch a Help Desk outbound message (eBay or Resend) outside the `HelpdeskOutboundJob` worker, and never bypass `HELPDESK_SAFE_MODE` or the per-transport feature flag.
+11. **NEVER** initiate an unsolicited eBay buyer message in v1. Only RTQ replies inside an existing buyer thread are allowed; `AddMemberMessageAAQToPartner` is reserved for explicit future approval.
+12. **NEVER** let the Help Desk eBay sync worker call any write/send eBay method. Sync is `GetMyMessages`-only.
 
 ---
 
@@ -209,7 +213,73 @@ Architecture supports an Operator role later (can use table, edit, stage, push i
 /shipping-rates     Shipping rate table editor
 /backups            Backup management + download
 /settings           User/app preferences, density, timezone, theme, write safety
+/help-desk          eBay buyer-message inbox (3-pane: folders / thread list / context)
+/help-desk/dashboard Help Desk operational metrics (Admin / Team Lead)
 ```
+
+---
+
+## Help Desk
+
+The Help Desk is an in-app inbox for eBay buyer messages. v1 scope is
+**eBay only** (TPP + TT, with TT read-only) plus an "External" composer
+mode that sends email via Resend. Anything not covered here is out of v1.
+
+### Architecture
+
+- **Sync (read-only)**: `lib/services/helpdesk-ebay.ts` (Trading API client)
+  + `lib/services/helpdesk-ebay-sync.ts` (2-stage poll: fast tick for
+  active threads, slow tick for backfill). Cron entry at
+  `/api/cron/helpdesk-poll`.
+- **Outbound (write)**: `lib/services/helpdesk-outbound.ts` worker
+  drains `HelpdeskOutboundJob` rows. Two transports:
+    1. `sendHelpdeskReply()` → eBay `AddMemberMessageRTQ` (reply only —
+       no unsolicited AAQToPartner in v1).
+    2. `sendExternalEmail()` → Resend (uses `HELPDESK_RESEND_FROM` →
+       falls back to `RESEND_FROM`).
+- **API**: under `/api/helpdesk/**` (tickets, messages, notes, tags,
+  templates, dashboard, sync status). All routes auth-gated via Auth.js.
+- **UI**: `/help-desk` is a 3-pane shell — folder sidebar + ticket list +
+  thread/context. State managed in `hooks/use-helpdesk.ts`.
+- **Settings**: per-user prefs (send delay, auto-advance, density) live
+  client-side in `localStorage` in v1, surfaced via
+  `components/helpdesk/HelpdeskSettingsDialog.tsx`.
+
+### Feature Flags (all default safe)
+
+| Flag                           | Default | Effect                                                      |
+|--------------------------------|---------|-------------------------------------------------------------|
+| `HELPDESK_SAFE_MODE`           | `true`  | Blocks every outbound transport (eBay + Resend).            |
+| `HELPDESK_ENABLE_EBAY_SEND`    | `false` | Allows RTQ replies (only when safe mode is also off).       |
+| `HELPDESK_ENABLE_RESEND_EXTERNAL` | `false` | Allows External composer mode.                            |
+| `HELPDESK_ENABLE_ATTACHMENTS`  | `false` | Allows outbound attachments (External mode only).           |
+
+Production go-live order: keep `SAFE_MODE=true` while sync & UI bake,
+then flip safe mode off and enable transports one at a time.
+
+### Non-Negotiables
+
+See `.cursor/rules/helpdesk-safety.mdc` for the full list. Highlights:
+
+- No deletion. Hide via `isArchived` / `isSpam` / soft-delete on notes.
+- All sends go through the `HelpdeskOutboundJob` worker. No direct
+  `sendHelpdeskReply()` from a route handler.
+- `safeMode` is checked inside the worker, and a blocked send writes a
+  `HelpdeskAuditLog` row of action `OUTBOUND_BLOCKED`.
+- Sync is pull-only. The sync worker may not call any eBay write method.
+- Sync never overwrites agent-authored fields (notes, tags, assignments,
+  status set by an agent, `snoozedUntil`, manual `kind`).
+- 180-day backfill cap; idempotent on `(ebayMessageId)`.
+- Templates: shared vs personal; agents can only edit their own.
+- SLA buckets are computed against business-hours
+  (Mon–Fri 09:00–17:00, default America/New_York). See
+  `lib/helpdesk/sla.ts`.
+
+### Tests
+
+Pure helpers in `reorg/src/lib/helpdesk/*.ts` have unit tests under the
+same folder. Run with `npm test` (Node's built-in test runner via `tsx
+--test`). New helpers must ship with tests in the same folder.
 
 ---
 

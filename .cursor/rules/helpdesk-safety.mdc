@@ -1,0 +1,118 @@
+---
+description: Help Desk non-negotiables — eBay-only scope, safe-mode default, audit logging, sync-only writes, no message deletion
+alwaysApply: true
+---
+
+# Help Desk Safety Rules
+
+These rules are non-negotiable for any code under `reorg/src/app/(app)/help-desk/**`,
+`reorg/src/app/api/helpdesk/**`, `reorg/src/components/helpdesk/**`,
+`reorg/src/lib/helpdesk/**`, `reorg/src/lib/services/helpdesk-*`, or any new file
+that touches `HelpdeskTicket`, `HelpdeskMessage`, `HelpdeskNote`,
+`HelpdeskOutboundJob`, `HelpdeskTemplate`, `HelpdeskTag`, `HelpdeskNotification`,
+`HelpdeskCheckpoint`, or `HelpdeskAuditLog`.
+
+## Scope
+
+- v1 Help Desk is **eBay only**. Do not add Shopify, BigCommerce, Telitetech, or
+  any other marketplace as a message source or destination in this feature.
+  Resend (External email) is the only non-eBay outbound transport allowed.
+- Telitetech eBay (TT) is read-only for Help Desk in v1 — sync TT messages but
+  never send replies through TT until explicitly approved.
+- Pre-sales messages are explicitly in scope. Post-purchase messages are also
+  in scope. Anything not derived from `GetMyMessages` is out of scope.
+
+## No Deletion
+
+- NEVER expose, implement, or call any "delete message" or "delete ticket"
+  endpoint or service function. eBay has no message-delete API; we do not
+  fabricate one client-side or in the database.
+- `HelpdeskTicket.isArchived` and `HelpdeskTicket.isSpam` are the only
+  hide-from-inbox mechanisms. Both must be reversible (reopen / unspam).
+- `HelpdeskMessage` rows are append-only. Do not add UPDATE or DELETE paths
+  to message bodies once written.
+- Internal notes use soft-delete (`isDeleted`); never hard-delete a note row.
+
+## Safe Mode is the Default
+
+- `HELPDESK_SAFE_MODE=true` is the production default. In safe mode every
+  outbound transport is blocked — eBay (AAQToPartner / RTQ) AND Resend.
+- Outbound code must call `helpdeskFlags.safeMode` (or
+  `helpdeskFlagsSnapshot().effectiveCanSendEbay` /
+  `effectiveCanSendEmail`) before dispatching. Bypassing this is forbidden.
+- A blocked send must log a `HelpdeskAuditLog` entry of action
+  `OUTBOUND_BLOCKED` with the full block reason and the offending payload
+  redacted of secrets.
+- Safe mode banner must remain visible in the Help Desk header whenever the
+  flag is on. Do not gate the banner behind any other condition.
+
+## Outbound Sends
+
+- All outbound flows go through the `HelpdeskOutboundJob` worker. Never call
+  `sendHelpdeskReply()` or `sendExternalEmail()` directly from a route handler.
+- Every send respects the per-message send delay; the user must be able to
+  cancel the job before it dispatches. Status transitions
+  (`PENDING → SENDING → SENT/FAILED/CANCELLED`) must be audit-logged.
+- Outbound to eBay is always a reply. NEVER initiate an unsolicited
+  `AddMemberMessageAAQToPartner` from this app — only RTQ replies in the
+  context of an existing buyer thread are allowed in v1.
+- Outbound attachments require `HELPDESK_ENABLE_ATTACHMENTS=true` AND
+  composer mode `EXTERNAL`. eBay's RTQ has no file-attachment support;
+  inline image URLs in the body are fine, but file uploads are not.
+
+## Sync is Pull-Only
+
+- The eBay sync worker (`helpdesk-ebay-sync.ts`) and its cron entry
+  (`/api/cron/helpdesk-poll`) MUST be read-only with respect to eBay. Do
+  not dispatch any send (`*RTQ`, `*AAQ*`, `MarkAsRead`, etc.) from a sync
+  job. Read methods only.
+- Sync writes only to `HelpdeskTicket`, `HelpdeskMessage`,
+  `HelpdeskCheckpoint`, and `HelpdeskAuditLog` (where appropriate).
+  It must never overwrite agent-authored fields (notes, tags, assignments,
+  status set by an agent, snoozedUntil set by an agent, manual `kind`).
+- Sync is idempotent on `(ebayMessageId)`. Re-running a poll must never
+  create duplicate `HelpdeskMessage` rows.
+- 2-stage polling is mandatory: a fast cron tick for active tickets and a
+  slower tick for backfill / cold tickets. Never collapse them into one
+  unbounded scan.
+
+## Audit Logging
+
+- Any state transition on a ticket (status, assignment, tag add/remove,
+  archive, spam, snooze, reopen) MUST write a `HelpdeskAuditLog` row with
+  `actorUserId`, `before`, `after`, and `action`.
+- Any outbound attempt — successful, failed, blocked, or cancelled — MUST
+  write a `HelpdeskAuditLog` row.
+- Audit logs are append-only. Do not implement an update or delete path.
+- Retain logs for at least 10 days (matches global app retention).
+
+## Permissions
+
+- Admin and Team Lead see every ticket and every action. Agent role sees
+  every ticket but cannot modify integration credentials, write locks,
+  feature flags, or templates owned by other users.
+- Templates have a `scope` of `SHARED` (everyone) or `PERSONAL` (owner only).
+  Do not let an agent edit or delete a template they don't own.
+
+## Secrets
+
+- Never log or return: eBay auth token, Resend API key, internal session
+  cookie, raw `HelpdeskOutboundJob.payload` if it contains tokens.
+- `helpdeskFlagsSnapshot()` is the only sanctioned way to surface flag
+  state to the client. It must never include the underlying env strings.
+
+## Backfill
+
+- Initial backfill is capped at 180 days of eBay history. Do not raise
+  this without an admin migration plan; eBay's `GetMyMessages` quota is
+  not generous.
+- Backfill runs incrementally via `HelpdeskCheckpoint.backfillDone`. Do
+  not re-run a completed backfill on every cron tick.
+
+## Testing
+
+- Pure helpers in `reorg/src/lib/helpdesk/*.ts` must have unit tests in
+  the same folder (`*.test.ts`, run with `npm test`).
+- Outbound paths must have at least one test that asserts safe-mode blocks
+  the send and produces an `OUTBOUND_BLOCKED` audit row.
+- Tests must not hit the live eBay or Resend APIs. Use injected fakes.

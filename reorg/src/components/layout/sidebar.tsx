@@ -28,42 +28,66 @@ import {
   PackageCheck,
   Wallet,
   MessageSquareText,
+  LifeBuoy,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { usePageVisibility } from "@/lib/use-page-visibility";
+import {
+  NAV_PAGES,
+  resolveAllowedPageKeys,
+  type NavPage,
+  type PageKey,
+} from "@/lib/nav-pages";
 
-const navItems = [
-  { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { href: "/catalog-health", label: "Catalog Health", icon: Shield },
-  { href: "/inventory-forecaster", label: "Inventory Forecaster", icon: Boxes },
-  { href: "/tasks", label: "Tasks", icon: ClipboardList },
-  { href: "/revenue", label: "Revenue", icon: ChartNoAxesCombined },
-  { href: "/profit-center", label: "Profit Center", icon: DollarSign },
-  { href: "/payouts", label: "Payouts", icon: Wallet },
-  { href: "/sync", label: "Sync", icon: RefreshCw },
-  { href: "/ship-orders", label: "Ship Orders", icon: PackageCheck },
-  { href: "/auto-responder", label: "Auto Responder", icon: MessageSquareText },
-  { href: "/integrations", label: "Integrations", icon: Plug },
-  { href: "/engine-room", label: "Engine Room", icon: Gauge },
-  { href: "/public-network-transfer", label: "Public Network Transfer", icon: Globe },
-  { href: "/errors", label: "Errors", icon: AlertTriangle },
-  { href: "/unmatched", label: "Unmatched Listings", icon: Unlink },
-  { href: "/import", label: "Import", icon: Upload },
-  { href: "/shipping-rates", label: "Shipping Rates", icon: Weight },
-  { href: "/backups", label: "Backups", icon: Database },
-  { href: "/chrome-extension", label: "Chrome Extension", icon: Puzzle },
-  { href: "/users", label: "Users", icon: Users },
-  { href: "/settings", label: "Settings", icon: Settings },
-];
+/**
+ * Sidebar icons live here (client-side) — the nav-pages registry stays
+ * server-safe by only exporting icon names. Every key in NavPage["icon"]
+ * MUST appear here or TypeScript will complain.
+ */
+const ICON_COMPONENTS: Record<NavPage["icon"], React.ComponentType<{ className?: string }>> = {
+  LayoutDashboard,
+  Shield,
+  Boxes,
+  ClipboardList,
+  ChartNoAxesCombined,
+  DollarSign,
+  Wallet,
+  RefreshCw,
+  PackageCheck,
+  MessageSquareText,
+  LifeBuoy,
+  Plug,
+  Gauge,
+  Globe,
+  AlertTriangle,
+  Unlink,
+  Upload,
+  Weight,
+  Database,
+  Puzzle,
+  Users,
+  Settings,
+};
 
 interface SidebarProps {
   mobile?: boolean;
   onNavigate?: () => void;
-  /** When set, admin-only nav items are hidden for non-admins. */
+  /** Used for admin-only fallback when allowedPageKeys isn't provided. */
   userRole?: string | null;
+  /**
+   * Page keys this user can see, computed server-side using
+   * `resolveAllowedPageKeys`. NULL means "use the legacy default" (operator
+   * sees everything except admin-only pages).
+   */
+  allowedPageKeys?: string[] | null;
 }
 
-export function Sidebar({ mobile = false, onNavigate, userRole }: SidebarProps) {
+export function Sidebar({
+  mobile = false,
+  onNavigate,
+  userRole,
+  allowedPageKeys,
+}: SidebarProps) {
   const pathname = usePathname();
   const isPageVisible = usePageVisibility();
   const [collapsed, setCollapsed] = useState(false);
@@ -79,6 +103,34 @@ export function Sidebar({ mobile = false, onNavigate, userRole }: SidebarProps) 
     affectedLabels: string[];
   } | null>(null);
   const actuallyCollapsed = mobile ? false : collapsed;
+
+  /**
+   * Resolve which nav items to show. We trust `allowedPageKeys` from the
+   * server when provided; otherwise we fall back to the same legacy filter
+   * used before the per-user permissions feature shipped.
+   */
+  const visibleItems = useMemo(() => {
+    if (allowedPageKeys === undefined) {
+      // Legacy fallback (no allowlist available) — preserves prior behavior.
+      return NAV_PAGES.filter(
+        (item) =>
+          (item.key !== "public-network-transfer" && item.key !== "payouts") ||
+          userRole !== "OPERATOR",
+      );
+    }
+
+    const allowed = new Set(
+      allowedPageKeys === null
+        ? Array.from(
+            resolveAllowedPageKeys({
+              role: userRole ?? "OPERATOR",
+              pagePermissions: null,
+            }),
+          )
+        : (allowedPageKeys as PageKey[]),
+    );
+    return NAV_PAGES.filter((item) => allowed.has(item.key));
+  }, [allowedPageKeys, userRole]);
 
   useEffect(() => {
     let active = true;
@@ -129,7 +181,7 @@ export function Sidebar({ mobile = false, onNavigate, userRole }: SidebarProps) 
   return (
     <aside
       className={cn(
-        "flex h-screen flex-col border-r border-sidebar-border bg-sidebar transition-all duration-200",
+        "flex h-full flex-col border-r border-sidebar-border bg-sidebar transition-all duration-200",
         actuallyCollapsed ? "w-16" : "w-60"
       )}
     >
@@ -167,17 +219,11 @@ export function Sidebar({ mobile = false, onNavigate, userRole }: SidebarProps) 
       {/* Nav Items */}
       <nav className="flex-1 overflow-y-auto p-2">
         <ul className="space-y-1">
-          {navItems
-            .filter(
-              (item) =>
-                (item.href !== "/public-network-transfer" && item.href !== "/payouts") ||
-                userRole !== "OPERATOR",
-            )
-            .map((item) => {
+          {visibleItems.map((item) => {
             const isActive =
               pathname === item.href ||
               (item.href !== "/dashboard" && pathname.startsWith(item.href));
-            const Icon = item.icon;
+            const Icon = ICON_COMPONENTS[item.icon];
 
             return (
               <li key={item.href}>

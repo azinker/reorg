@@ -3,6 +3,8 @@ import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { createManagedUser } from "@/lib/services/user-admin";
+import { getActor } from "@/lib/impersonation";
+import { NAV_PAGES } from "@/lib/nav-pages";
 
 const createUserSchema = z.object({
   name: z.string().trim().min(1).max(120),
@@ -12,22 +14,25 @@ const createUserSchema = z.object({
 });
 
 export async function GET() {
-  const session = await auth();
-  if (!session?.user?.id) {
+  const actor = await getActor();
+  if (!actor) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const isAdmin = session.user.role === "ADMIN";
-  const userFilter = isAdmin ? {} : { userId: session.user.id };
+  // Admin = effective role of the actor. While impersonating an operator,
+  // an admin sees the operator's view of /users (just their own row).
+  const isAdmin = actor.role === "ADMIN";
+  const userFilter = isAdmin ? {} : { userId: actor.userId };
 
   const [users, auditLogs] = await Promise.all([
     db.user.findMany({
-      where: isAdmin ? {} : { id: session.user.id },
+      where: isAdmin ? {} : { id: actor.userId },
       select: {
         id: true,
         name: true,
         email: true,
         role: true,
+        pagePermissions: true,
         createdAt: true,
         updatedAt: true,
       },
@@ -53,13 +58,36 @@ export async function GET() {
   return NextResponse.json({
     data: {
       currentUser: {
-        id: session.user.id,
-        name: session.user.name ?? session.user.email ?? "User",
-        email: session.user.email ?? "",
-        role: session.user.role,
+        id: actor.userId,
+        name: actor.name,
+        email: actor.email,
+        role: actor.role,
       },
+      impersonation: actor.isImpersonating
+        ? {
+            realUserId: actor.realUserId,
+            realName: actor.realName,
+            realEmail: actor.realEmail,
+          }
+        : null,
       canManageUsers: isAdmin,
-      users,
+      pageRegistry: NAV_PAGES.map((p) => ({
+        key: p.key,
+        href: p.href,
+        label: p.label,
+        adminOnly: p.adminOnly ?? false,
+        alwaysAllow: p.alwaysAllow ?? false,
+        description: p.description,
+      })),
+      users: users.map((u) => ({
+        id: u.id,
+        name: u.name,
+        email: u.email,
+        role: u.role,
+        pagePermissions: (u.pagePermissions as string[] | null) ?? null,
+        createdAt: u.createdAt.toISOString(),
+        updatedAt: u.updatedAt.toISOString(),
+      })),
       auditLogs: auditLogs.map((log) => ({
         id: log.id,
         action: log.action,

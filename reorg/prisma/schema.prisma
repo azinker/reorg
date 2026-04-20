@@ -183,6 +183,48 @@ enum RevenueFinancialEventClassification {
   OTHER
 }
 
+// ─── Help Desk enums ─────────────────────────────────────────────────────────
+
+enum HelpdeskTicketStatus {
+  NEW
+  TO_DO
+  WAITING
+  RESOLVED
+  SPAM
+  ARCHIVED
+}
+
+enum HelpdeskTicketKind {
+  PRE_SALES
+  POST_SALES
+}
+
+enum HelpdeskMessageDirection {
+  INBOUND
+  OUTBOUND
+}
+
+enum HelpdeskMessageSource {
+  EBAY
+  EBAY_UI
+  EXTERNAL_EMAIL
+  SYSTEM
+}
+
+enum HelpdeskComposerMode {
+  REPLY
+  NOTE
+  EXTERNAL
+}
+
+enum HelpdeskOutboundStatus {
+  PENDING
+  SENDING
+  SENT
+  FAILED
+  CANCELED
+}
+
 // ─── Auth & Users ────────────────────────────────────────────────────────────
 
 model User {
@@ -196,21 +238,49 @@ model User {
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 
-  accounts       Account[]
-  sessions       Session[]
-  stagedChanges  StagedChange[]
-  pushJobs       PushJob[]
-  auditLogs      AuditLog[]
-  createdTasks    Task[]         @relation("TaskCreator")
-  assignedTasks   Task[]         @relation("TaskAssignee")
-  deletedTasks    Task[]         @relation("TaskDeleter")
-  taskActivities  TaskActivity[] @relation("TaskActivityActor")
-  revenueSyncJobs RevenueSyncJob[] @relation("RevenueSyncJobTrigger")
-  forecastRuns   ForecastRun[]
-  supplierOrders SupplierOrder[]
-  createdAutoResponders  AutoResponder[] @relation("AutoResponderCreator")
-  updatedAutoResponders  AutoResponder[] @relation("AutoResponderUpdater")
-  autoResponderVersions  AutoResponderVersion[] @relation("AutoResponderVersionCreator")
+  handle    String? @unique
+  avatarUrl String?
+  title     String?
+  bio       String? @db.Text
+
+  /// Per-user page allowlist. NULL = legacy default (operators see everything
+  /// except admin-only pages). Empty array = only "always-allowed" pages
+  /// (Dashboard, Users-as-self, Settings). Otherwise the listed page keys are
+  /// granted in addition to the always-allowed set. Admin role overrides this.
+  /// Page keys are defined in src/lib/nav-pages.ts.
+  pagePermissions Json?
+
+  accounts              Account[]
+  sessions              Session[]
+  stagedChanges         StagedChange[]
+  pushJobs              PushJob[]
+  auditLogs             AuditLog[]
+  createdTasks          Task[]                 @relation("TaskCreator")
+  assignedTasks         Task[]                 @relation("TaskAssignee")
+  deletedTasks          Task[]                 @relation("TaskDeleter")
+  taskActivities        TaskActivity[]         @relation("TaskActivityActor")
+  revenueSyncJobs       RevenueSyncJob[]       @relation("RevenueSyncJobTrigger")
+  forecastRuns          ForecastRun[]
+  supplierOrders        SupplierOrder[]
+  createdAutoResponders AutoResponder[]        @relation("AutoResponderCreator")
+  updatedAutoResponders AutoResponder[]        @relation("AutoResponderUpdater")
+  autoResponderVersions AutoResponderVersion[] @relation("AutoResponderVersionCreator")
+
+  helpdeskPrimaryAssignments HelpdeskTicket[]       @relation("HelpdeskPrimaryAssignee")
+  helpdeskResolvedTickets    HelpdeskTicket[]       @relation("HelpdeskResolvedBy")
+  helpdeskSnoozedTickets     HelpdeskTicket[]       @relation("HelpdeskSnoozedBy")
+  helpdeskMessages           HelpdeskMessage[]      @relation("HelpdeskMessageAuthor")
+  helpdeskNotes              HelpdeskNote[]         @relation("HelpdeskNoteAuthor")
+  helpdeskCreatedTags        HelpdeskTag[]          @relation("HelpdeskTagCreator")
+  helpdeskAddedTags          HelpdeskTicketTag[]    @relation("HelpdeskTagAdder")
+  helpdeskAssignments        HelpdeskAssignment[]   @relation("HelpdeskAssignmentUser")
+  helpdeskOwnedTemplates     HelpdeskTemplate[]     @relation("HelpdeskTemplateOwner")
+  helpdeskCreatedTemplates   HelpdeskTemplate[]     @relation("HelpdeskTemplateCreator")
+  helpdeskUpdatedTemplates   HelpdeskTemplate[]     @relation("HelpdeskTemplateUpdater")
+  helpdeskDrafts             HelpdeskDraft[]        @relation("HelpdeskDraftAuthor")
+  helpdeskOutboundJobs       HelpdeskOutboundJob[]  @relation("HelpdeskOutboundAuthor")
+  helpdeskNotifications      HelpdeskNotification[] @relation("HelpdeskNotificationRecipient")
+  helpdeskCreatedFilters     HelpdeskFilter[]       @relation("HelpdeskFilterCreator")
 
   @@map("users")
 }
@@ -269,15 +339,16 @@ model Integration {
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
-  listings                 MarketplaceListing[]
-  unmatchedListings        UnmatchedListing[]
-  syncJobs                 SyncJob[]
-  revenueSyncJobs          RevenueSyncJob[]
-  revenueFinancialEvents   RevenueFinancialEvent[]
-  networkTransferSamples   NetworkTransferSample[]
-  autoResponders           AutoResponder[]
-  autoResponderSendLogs    AutoResponderSendLog[]     @relation("SendLogIntegration")
-  autoResponderJobs        AutoResponderJob[]         @relation("JobIntegration")
+  listings               MarketplaceListing[]
+  unmatchedListings      UnmatchedListing[]
+  syncJobs               SyncJob[]
+  revenueSyncJobs        RevenueSyncJob[]
+  revenueFinancialEvents RevenueFinancialEvent[]
+  networkTransferSamples NetworkTransferSample[]
+  autoResponders         AutoResponder[]
+  autoResponderSendLogs  AutoResponderSendLog[]  @relation("SendLogIntegration")
+  autoResponderJobs      AutoResponderJob[]      @relation("JobIntegration")
+  helpdeskTickets        HelpdeskTicket[]        @relation("HelpdeskIntegration")
 
   @@map("integrations")
 }
@@ -466,14 +537,14 @@ model AuditLog {
 }
 
 model NetworkTransferSample {
-  id              String                  @id @default(cuid())
-  createdAt       DateTime                @default(now())
-  channel         NetworkTransferChannel
-  label           String
-  bytesEstimate   Int?
-  durationMs      Int?
-  metadata        Json                    @default("{}")
-  integrationId   String?
+  id            String                 @id @default(cuid())
+  createdAt     DateTime               @default(now())
+  channel       NetworkTransferChannel
+  label         String
+  bytesEstimate Int?
+  durationMs    Int?
+  metadata      Json                   @default("{}")
+  integrationId String?
 
   integration Integration? @relation(fields: [integrationId], references: [id], onDelete: SetNull)
 
@@ -564,10 +635,10 @@ model Task {
   deletedByUserId  String?
   restoredAt       DateTime?
 
-  category   TaskCategory @relation(fields: [categoryId], references: [id])
-  createdBy  User         @relation("TaskCreator", fields: [createdByUserId], references: [id])
-  assignedTo User?        @relation("TaskAssignee", fields: [assignedToUserId], references: [id], onDelete: SetNull)
-  deletedBy  User?        @relation("TaskDeleter", fields: [deletedByUserId], references: [id], onDelete: SetNull)
+  category   TaskCategory   @relation(fields: [categoryId], references: [id])
+  createdBy  User           @relation("TaskCreator", fields: [createdByUserId], references: [id])
+  assignedTo User?          @relation("TaskAssignee", fields: [assignedToUserId], references: [id], onDelete: SetNull)
+  deletedBy  User?          @relation("TaskDeleter", fields: [deletedByUserId], references: [id], onDelete: SetNull)
   activities TaskActivity[]
 
   @@index([status, deletedAt, dueAt])
@@ -580,11 +651,11 @@ model Task {
 
 model TaskActivity {
   id          String           @id @default(cuid())
-  taskId       String
-  actorUserId  String?
-  type         TaskActivityType
-  details      Json             @default("{}")
-  createdAt    DateTime         @default(now())
+  taskId      String
+  actorUserId String?
+  type        TaskActivityType
+  details     Json             @default("{}")
+  createdAt   DateTime         @default(now())
 
   task  Task  @relation(fields: [taskId], references: [id], onDelete: Cascade)
   actor User? @relation("TaskActivityActor", fields: [actorUserId], references: [id], onDelete: SetNull)
@@ -595,25 +666,25 @@ model TaskActivity {
 }
 
 model MarketplaceSaleOrder {
-  id                       String    @id @default(cuid())
-  platform                 Platform
-  externalOrderId          String
-  orderDate                DateTime
-  orderStatus              String?
-  cancelledAt              DateTime?
-  currencyCode             String?
-  grossRevenueAmount       Float?
-  shippingCollectedAmount  Float?
-  taxCollectedAmount       Float?
-  discountAmount           Float?
-  netRevenueAmount         Float?
-  buyerIdentifier          String?
-  buyerDisplayLabel        String?
-  buyerEmail               String?
-  rawData                  Json      @default("{}")
-  financialRawData         Json      @default("{}")
-  createdAt                DateTime  @default(now())
-  updatedAt                DateTime  @updatedAt
+  id                      String    @id @default(cuid())
+  platform                Platform
+  externalOrderId         String
+  orderDate               DateTime
+  orderStatus             String?
+  cancelledAt             DateTime?
+  currencyCode            String?
+  grossRevenueAmount      Float?
+  shippingCollectedAmount Float?
+  taxCollectedAmount      Float?
+  discountAmount          Float?
+  netRevenueAmount        Float?
+  buyerIdentifier         String?
+  buyerDisplayLabel       String?
+  buyerEmail              String?
+  rawData                 Json      @default("{}")
+  financialRawData        Json      @default("{}")
+  createdAt               DateTime  @default(now())
+  updatedAt               DateTime  @updatedAt
 
   lines MarketplaceSaleLine[]
 
@@ -689,7 +760,7 @@ model RevenueSyncJob {
 }
 
 model RevenueFinancialEvent {
-  id                 String                             @id @default(cuid())
+  id                 String                              @id @default(cuid())
   integrationId      String
   platform           Platform
   eventType          RevenueFinancialEventType
@@ -705,10 +776,10 @@ model RevenueFinancialEvent {
   feeType            String?
   feeTypeDescription String?
   bookingEntry       String?
-  isExact            Boolean                            @default(true)
-  rawData            Json                               @default("{}")
-  createdAt          DateTime                           @default(now())
-  updatedAt          DateTime                           @updatedAt
+  isExact            Boolean                             @default(true)
+  rawData            Json                                @default("{}")
+  createdAt          DateTime                            @default(now())
+  updatedAt          DateTime                            @updatedAt
 
   integration Integration @relation(fields: [integrationId], references: [id], onDelete: Cascade)
 
@@ -885,17 +956,17 @@ model AutoResponder {
 }
 
 model AutoResponderVersion {
-  id               String @id @default(cuid())
+  id               String   @id @default(cuid())
   responderId      String
   versionNumber    Int
   subjectTemplate  String
-  bodyTemplate     String @db.Text
-  validationStatus String @default("valid")
+  bodyTemplate     String   @db.Text
+  validationStatus String   @default("valid")
   createdById      String
   createdAt        DateTime @default(now())
 
-  responder AutoResponder        @relation(fields: [responderId], references: [id], onDelete: Cascade)
-  createdBy User                 @relation("AutoResponderVersionCreator", fields: [createdById], references: [id])
+  responder AutoResponder          @relation(fields: [responderId], references: [id], onDelete: Cascade)
+  createdBy User                   @relation("AutoResponderVersionCreator", fields: [createdById], references: [id])
   sendLogs  AutoResponderSendLog[] @relation("SendLogVersion")
   jobs      AutoResponderJob[]     @relation("JobVersion")
 
@@ -905,28 +976,28 @@ model AutoResponderVersion {
 }
 
 model AutoResponderSendLog {
-  id                  String                  @id @default(cuid())
-  responderId         String?
-  responderVersionId  String?
-  integrationId       String
-  channel             Platform
-  orderNumber         String
-  eventType           AutoResponderEventType
-  source              AutoResponderSource
-  renderedSubject     String?
-  renderedBody        String?                 @db.Text
-  status              String?
-  reason              String?
-  externalMessageId   String?
-  ebayItemId          String?
-  ebayBuyerUserId     String?
-  queuedAt            DateTime?
-  attemptedAt         DateTime?
-  sentAt              DateTime?
-  failedAt            DateTime?
-  retryCount          Int                     @default(0)
-  bytesEstimate       Int?
-  createdAt           DateTime                @default(now())
+  id                 String                 @id @default(cuid())
+  responderId        String?
+  responderVersionId String?
+  integrationId      String
+  channel            Platform
+  orderNumber        String
+  eventType          AutoResponderEventType
+  source             AutoResponderSource
+  renderedSubject    String?
+  renderedBody       String?                @db.Text
+  status             String?
+  reason             String?
+  externalMessageId  String?
+  ebayItemId         String?
+  ebayBuyerUserId    String?
+  queuedAt           DateTime?
+  attemptedAt        DateTime?
+  sentAt             DateTime?
+  failedAt           DateTime?
+  retryCount         Int                    @default(0)
+  bytesEstimate      Int?
+  createdAt          DateTime               @default(now())
 
   responder        AutoResponder?        @relation("SendLogResponder", fields: [responderId], references: [id], onDelete: SetNull)
   responderVersion AutoResponderVersion? @relation("SendLogVersion", fields: [responderVersionId], references: [id], onDelete: SetNull)
@@ -972,4 +1043,309 @@ model AutoResponderJob {
   @@index([orderNumber])
   @@index([batchId])
   @@map("auto_responder_jobs")
+}
+
+// ─── Help Desk ───────────────────────────────────────────────────────────────
+
+model HelpdeskTicket {
+  id                 String               @id @default(cuid())
+  integrationId      String
+  channel            Platform
+  threadKey          String
+  buyerUserId        String?
+  buyerName          String?
+  buyerEmail         String?
+  ebayItemId         String?
+  ebayItemTitle      String?
+  ebayOrderNumber    String?
+  subject            String?
+  kind               HelpdeskTicketKind   @default(POST_SALES)
+  status             HelpdeskTicketStatus @default(NEW)
+  isSpam             Boolean              @default(false)
+  isArchived         Boolean              @default(false)
+  archivedAt         DateTime?
+  snoozedUntil       DateTime?
+  snoozedById        String?
+  primaryAssigneeId  String?
+  unreadCount        Int                  @default(0)
+  lastBuyerMessageAt DateTime?
+  lastAgentMessageAt DateTime?
+  firstResponseAt    DateTime?
+  reopenCount        Int                  @default(0)
+  lastReopenedAt     DateTime?
+  resolvedAt         DateTime?
+  resolvedById       String?
+  metadata           Json                 @default("{}")
+  createdAt          DateTime             @default(now())
+  updatedAt          DateTime             @updatedAt
+
+  integration         Integration            @relation("HelpdeskIntegration", fields: [integrationId], references: [id])
+  primaryAssignee     User?                  @relation("HelpdeskPrimaryAssignee", fields: [primaryAssigneeId], references: [id], onDelete: SetNull)
+  resolvedBy          User?                  @relation("HelpdeskResolvedBy", fields: [resolvedById], references: [id], onDelete: SetNull)
+  snoozedBy           User?                  @relation("HelpdeskSnoozedBy", fields: [snoozedById], references: [id], onDelete: SetNull)
+  messages            HelpdeskMessage[]
+  notes               HelpdeskNote[]
+  tags                HelpdeskTicketTag[]
+  drafts              HelpdeskDraft[]
+  outboundJobs        HelpdeskOutboundJob[]
+  notifications       HelpdeskNotification[]
+  additionalAssignees HelpdeskAssignment[]
+
+  @@unique([integrationId, threadKey])
+  @@index([status, lastBuyerMessageAt])
+  @@index([primaryAssigneeId, status])
+  @@index([integrationId, status])
+  @@index([buyerUserId])
+  @@index([ebayOrderNumber])
+  @@index([snoozedUntil])
+  @@index([kind, status])
+  @@index([isArchived, status])
+  @@map("helpdesk_tickets")
+}
+
+model HelpdeskMessage {
+  id             String                   @id @default(cuid())
+  ticketId       String
+  direction      HelpdeskMessageDirection
+  source         HelpdeskMessageSource
+  externalId     String?
+  ebayMessageId  String?
+  authorUserId   String?
+  fromName       String?
+  fromIdentifier String?
+  subject        String?
+  bodyText       String                   @db.Text
+  isHtml         Boolean                  @default(false)
+  rawMedia       Json                     @default("[]")
+  rawData        Json                     @default("{}")
+  sentAt         DateTime
+  receivedAt     DateTime                 @default(now())
+  deletedAt      DateTime?
+  createdAt      DateTime                 @default(now())
+
+  ticket HelpdeskTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  author User?          @relation("HelpdeskMessageAuthor", fields: [authorUserId], references: [id], onDelete: SetNull)
+
+  @@unique([ticketId, externalId])
+  @@index([ticketId, sentAt])
+  @@index([ebayMessageId])
+  @@index([direction, sentAt])
+  @@map("helpdesk_messages")
+}
+
+model HelpdeskNote {
+  id           String    @id @default(cuid())
+  ticketId     String
+  authorUserId String
+  bodyText     String    @db.Text
+  mentions     Json      @default("[]")
+  isDeleted    Boolean   @default(false)
+  deletedAt    DateTime?
+  editedAt     DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  ticket HelpdeskTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  author User           @relation("HelpdeskNoteAuthor", fields: [authorUserId], references: [id])
+
+  @@index([ticketId, createdAt])
+  @@index([authorUserId])
+  @@map("helpdesk_notes")
+}
+
+model HelpdeskTag {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  color       String?
+  description String?
+  createdById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  createdBy User?               @relation("HelpdeskTagCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  tickets   HelpdeskTicketTag[]
+
+  @@index([name])
+  @@map("helpdesk_tags")
+}
+
+model HelpdeskTicketTag {
+  ticketId  String
+  tagId     String
+  addedById String?
+  addedAt   DateTime @default(now())
+
+  ticket  HelpdeskTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  tag     HelpdeskTag    @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  addedBy User?          @relation("HelpdeskTagAdder", fields: [addedById], references: [id], onDelete: SetNull)
+
+  @@id([ticketId, tagId])
+  @@index([tagId])
+  @@map("helpdesk_ticket_tags")
+}
+
+model HelpdeskAssignment {
+  ticketId   String
+  userId     String
+  role       String   @default("ADDITIONAL")
+  assignedAt DateTime @default(now())
+
+  ticket HelpdeskTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  user   User           @relation("HelpdeskAssignmentUser", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([ticketId, userId])
+  @@index([userId])
+  @@map("helpdesk_assignments")
+}
+
+model HelpdeskTemplate {
+  id          String   @id @default(cuid())
+  name        String
+  bodyText    String   @db.Text
+  isShared    Boolean  @default(true)
+  ownerUserId String?
+  shortcut    String?
+  language    String?
+  description String?
+  sortOrder   Int      @default(0)
+  isActive    Boolean  @default(true)
+  createdById String
+  updatedById String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  owner     User? @relation("HelpdeskTemplateOwner", fields: [ownerUserId], references: [id], onDelete: SetNull)
+  createdBy User  @relation("HelpdeskTemplateCreator", fields: [createdById], references: [id])
+  updatedBy User  @relation("HelpdeskTemplateUpdater", fields: [updatedById], references: [id])
+
+  @@index([isShared, isActive])
+  @@index([ownerUserId])
+  @@index([shortcut])
+  @@map("helpdesk_templates")
+}
+
+model HelpdeskDraft {
+  id           String               @id @default(cuid())
+  ticketId     String
+  authorUserId String
+  composerMode HelpdeskComposerMode @default(REPLY)
+  bodyText     String               @db.Text
+  metadata     Json                 @default("{}")
+  updatedAt    DateTime             @updatedAt
+  createdAt    DateTime             @default(now())
+
+  ticket HelpdeskTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  author User           @relation("HelpdeskDraftAuthor", fields: [authorUserId], references: [id], onDelete: Cascade)
+
+  @@unique([ticketId, authorUserId, composerMode])
+  @@index([authorUserId])
+  @@map("helpdesk_drafts")
+}
+
+model HelpdeskOutboundJob {
+  id              String                 @id @default(cuid())
+  ticketId        String
+  authorUserId    String
+  composerMode    HelpdeskComposerMode
+  bodyText        String                 @db.Text
+  parentMessageId String?
+  setStatus       HelpdeskTicketStatus?
+  scheduledAt     DateTime
+  status          HelpdeskOutboundStatus @default(PENDING)
+  attemptCount    Int                    @default(0)
+  lastError       String?
+  externalId      String?
+  sentAt          DateTime?
+  metadata        Json                   @default("{}")
+  createdAt       DateTime               @default(now())
+  updatedAt       DateTime               @updatedAt
+
+  ticket HelpdeskTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  author User           @relation("HelpdeskOutboundAuthor", fields: [authorUserId], references: [id])
+
+  @@index([status, scheduledAt])
+  @@index([ticketId, status])
+  @@index([authorUserId])
+  @@map("helpdesk_outbound_jobs")
+}
+
+model HelpdeskNotification {
+  id          String    @id @default(cuid())
+  recipientId String
+  ticketId    String?
+  kind        String
+  bodyText    String
+  url         String?
+  readAt      DateTime?
+  createdAt   DateTime  @default(now())
+
+  recipient User            @relation("HelpdeskNotificationRecipient", fields: [recipientId], references: [id], onDelete: Cascade)
+  ticket    HelpdeskTicket? @relation(fields: [ticketId], references: [id], onDelete: SetNull)
+
+  @@index([recipientId, readAt])
+  @@index([ticketId])
+  @@index([createdAt])
+  @@map("helpdesk_notifications")
+}
+
+model HelpdeskSyncCheckpoint {
+  id             String    @id @default(cuid())
+  integrationId  String
+  folder         String
+  lastWatermark  DateTime?
+  lastFullSyncAt DateTime?
+  backfillCursor DateTime?
+  backfillDone   Boolean   @default(false)
+  metadata       Json      @default("{}")
+  updatedAt      DateTime  @updatedAt
+  createdAt      DateTime  @default(now())
+
+  @@unique([integrationId, folder])
+  @@index([integrationId])
+  @@map("helpdesk_sync_checkpoints")
+}
+
+/// User-defined inbox rules (e.g. "Subject contains 'Shipped' → Archive").
+/// Rules are evaluated against incoming messages on every sync tick AND can be
+/// run on-demand against the existing inbox via `Run filter`.
+///
+/// `conditions` shape (JSON):
+///   {
+///     "match": "ALL" | "ANY",            // boolean combinator
+///     "rules": [
+///       { "field": "subject" | "body" | "buyer_username" | "from_name",
+///         "op":    "contains" | "equals" | "starts_with" | "ends_with" | "regex",
+///         "value": "...",
+///         "caseSensitive": false }
+///     ]
+///   }
+///
+/// `action` shape (JSON):
+///   {
+///     "type": "MOVE_TO_FOLDER",
+///     "folder": "archived" | "spam" | "resolved",
+///     "addTagIds": ["..."],              // optional
+///     "removeTagIds": ["..."],           // optional
+///     "assignToUserId": "..."            // optional
+///   }
+model HelpdeskFilter {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  enabled     Boolean  @default(true)
+  isSystem    Boolean  @default(false)
+  sortOrder   Int      @default(0)
+  conditions  Json
+  action      Json
+  lastRunAt   DateTime?
+  lastRunHits Int       @default(0)
+  totalHits   Int       @default(0)
+  createdById String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  createdBy User? @relation("HelpdeskFilterCreator", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([enabled, sortOrder])
+  @@map("helpdesk_filters")
 }
