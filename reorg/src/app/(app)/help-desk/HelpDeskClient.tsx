@@ -89,10 +89,13 @@ export default function HelpDeskClient() {
   // Debounce search before it hits the network. The header field still
   // reflects every keystroke instantly (controlled local state in
   // HelpdeskHeader), but the API request — which can be slow on a large
-  // mailbox — only fires after the user pauses typing for 350ms. Without
-  // this the previous behaviour was to fire one fetch per keystroke and
-  // freeze the UI under a queue of overlapping requests.
-  const debouncedSearch = useDebouncedValue(search, 350);
+  // mailbox (sequential scan over `messages.bodyText`) — only fires after
+  // the user pauses typing for 500 ms. eDesk uses ~500 ms too; at 350 ms a
+  // fast typist would still trigger one fetch mid-word. Crucially, common
+  // "type-then-delete" gestures (e.g. typing "Apple" then immediately
+  // backspacing it out) now stay entirely under the debounce window and
+  // fire ZERO fetches, eliminating the freeze the user experienced.
+  const debouncedSearch = useDebouncedValue(search, 500);
   const searchArg =
     debouncedSearch.trim().length > 0 ? debouncedSearch.trim() : undefined;
 

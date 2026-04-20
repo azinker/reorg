@@ -56,9 +56,19 @@ interface SchedulerHealthPayload {
   };
 }
 
-async function fetchGridData(): Promise<GridPayload> {
+/**
+ * All three of these fetchers accept an optional AbortSignal. The dashboard
+ * grid endpoint can return tens of thousands of rows and historically took
+ * 10-30 s on cold Vercel instances; without a signal the request kept running
+ * after the user navigated away (e.g. to /help-desk), continued to log a
+ * misleading "Failed to load grid data" error to the console of the new
+ * page, and held a network slot that competed with the help-desk's own
+ * fetches. Passing a signal lets the dashboard's cleanup effect cancel
+ * the request the instant the user leaves the page.
+ */
+async function fetchGridData(signal?: AbortSignal): Promise<GridPayload> {
   try {
-    const res = await fetch("/api/grid", { cache: "no-store" });
+    const res = await fetch("/api/grid", { cache: "no-store", signal });
     if (!res.ok) throw new Error(`API returned ${res.status}`);
     const json = await res.json();
     const dbRows: GridRow[] = json.data?.rows ?? [];
@@ -72,13 +82,19 @@ async function fetchGridData(): Promise<GridPayload> {
       error: "Live grid returned zero rows.",
     };
   } catch (err) {
+    if (signal?.aborted || (err instanceof DOMException && err.name === "AbortError")) {
+      // Expected — user navigated away mid-flight.
+      return { rows: [], source: "error", error: "aborted" };
+    }
     console.error("Failed to load grid data from API:", err);
     return { rows: [], source: "error", error: String(err) };
   }
 }
 
-async function fetchGridVersion(): Promise<string | null> {
-  const res = await fetch("/api/grid/version", { cache: "no-store" }).catch(() => null);
+async function fetchGridVersion(signal?: AbortSignal): Promise<string | null> {
+  const res = await fetch("/api/grid/version", { cache: "no-store", signal }).catch(
+    () => null,
+  );
   if (!res) {
     return null;
   }
@@ -89,8 +105,10 @@ async function fetchGridVersion(): Promise<string | null> {
   return typeof json.data?.version === "string" ? json.data.version : null;
 }
 
-async function fetchSchedulerHealth(): Promise<SchedulerHealthPayload["healthSummary"] | null> {
-  const res = await fetch("/api/scheduler/status", { cache: "no-store" });
+async function fetchSchedulerHealth(
+  signal?: AbortSignal,
+): Promise<SchedulerHealthPayload["healthSummary"] | null> {
+  const res = await fetch("/api/scheduler/status", { cache: "no-store", signal });
   if (!res.ok) {
     throw new Error(`Scheduler status API returned ${res.status}`);
   }
@@ -148,14 +166,20 @@ export default function DashboardPage() {
 
   useEffect(() => {
     let cancelled = false;
+    // Single AbortController for ALL in-flight fetches owned by the
+    // dashboard mount. When the user navigates away (e.g. to /help-desk),
+    // cleanup aborts the controller and any pending /api/grid request
+    // unwinds immediately instead of continuing to consume a network slot
+    // and the main thread on the next page.
+    const ac = new AbortController();
 
     async function loadInitial() {
       setLoadingProgress(14);
       const [gridData, version] = await Promise.all([
-        fetchGridData(),
-        fetchGridVersion().catch(() => null),
+        fetchGridData(ac.signal),
+        fetchGridVersion(ac.signal).catch(() => null),
       ]);
-      void fetchSchedulerHealth()
+      void fetchSchedulerHealth(ac.signal)
         .then((health) => {
           if (!cancelled) setSchedulerHealth(health);
         })
@@ -176,7 +200,7 @@ export default function DashboardPage() {
       if (refreshInFlightRef.current) return;
 
       try {
-        const nextVersion = await fetchGridVersion();
+        const nextVersion = await fetchGridVersion(ac.signal);
         const shouldRefresh =
           force ||
           sourceRef.current !== "db" ||
@@ -193,7 +217,7 @@ export default function DashboardPage() {
 
         refreshInFlightRef.current = true;
         setIsRefreshing(true);
-        const gridData = await fetchGridData();
+        const gridData = await fetchGridData(ac.signal);
         if (cancelled) return;
 
         if (gridData.source === "error" && sourceRef.current === "db") {
@@ -219,7 +243,7 @@ export default function DashboardPage() {
     function handleVisibilityOrFocus() {
       if (document.visibilityState === "visible") {
         void refreshGridIfChanged();
-        void fetchSchedulerHealth()
+        void fetchSchedulerHealth(ac.signal)
           .then((health) => {
             if (!cancelled) setSchedulerHealth(health);
           })
@@ -245,7 +269,7 @@ export default function DashboardPage() {
     }, GRID_VERSION_POLL_MS);
     const schedulerHealthTimer = window.setInterval(() => {
       if (document.visibilityState !== "visible") return;
-      void fetchSchedulerHealth()
+      void fetchSchedulerHealth(ac.signal)
         .then((health) => {
           if (!cancelled) setSchedulerHealth(health);
         })
@@ -259,6 +283,7 @@ export default function DashboardPage() {
 
     return () => {
       cancelled = true;
+      ac.abort();
       window.clearInterval(progressTimer);
       window.clearInterval(intervalId);
       window.clearInterval(schedulerHealthTimer);
@@ -269,13 +294,15 @@ export default function DashboardPage() {
 
   useEffect(() => {
     if (!isPageVisible) return;
-    void fetchSchedulerHealth()
+    const ac = new AbortController();
+    void fetchSchedulerHealth(ac.signal)
       .then((health) => {
-        setSchedulerHealth(health);
+        if (!ac.signal.aborted) setSchedulerHealth(health);
       })
       .catch(() => {
-        setSchedulerHealth(null);
+        if (!ac.signal.aborted) setSchedulerHealth(null);
       });
+    return () => ac.abort();
   }, [isPageVisible]);
 
   const summary = useMemo(() => (rows ? summarizeGrid(rows) : null), [rows]);

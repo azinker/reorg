@@ -289,22 +289,21 @@ export function useHelpdesk(args: UseHelpdeskArgs): UseHelpdeskReturn {
         if (channel) params.set("channel", channel);
         if (search) params.set("search", search);
 
-        const [ticketsRes, countsRes] = await Promise.all([
-          fetch(`/api/helpdesk/tickets?${params.toString()}`, { cache: "no-store" }),
-          // Counts only need to be re-fetched when we're refreshing the list,
-          // not on every page step — but the cost is small (13 COUNT queries
-          // in parallel) and keeping the badges live is worth it.
-          fetch("/api/helpdesk/counts", { cache: "no-store" }),
-        ]);
+        // Tickets is the only thing that depends on the current filter
+        // (folder/channel/search/cursor). Counts and sync-status are global
+        // and are refreshed on a slower cadence by separate effects, so we
+        // do NOT fetch them here. Previously this `Promise.all` fanned out
+        // to 3 endpoints on every keystroke change, which was the main
+        // source of the inbox feeling unresponsive while typing.
+        const ticketsRes = await fetch(
+          `/api/helpdesk/tickets?${params.toString()}`,
+          { cache: "no-store" },
+        );
         if (requestId !== inflightRequestIdRef.current) return;
         if (!ticketsRes.ok) throw new Error(`Tickets ${ticketsRes.status}`);
-        if (!countsRes.ok) throw new Error(`Counts ${countsRes.status}`);
         const ticketsJson = (await ticketsRes.json()) as {
           data: HelpdeskTicketSummary[];
           nextCursor: string | null;
-        };
-        const countsJson = (await countsRes.json()) as {
-          data: Partial<Record<HelpdeskFolderKey, number>>;
         };
         if (requestId !== inflightRequestIdRef.current) return;
 
@@ -323,8 +322,6 @@ export function useHelpdesk(args: UseHelpdeskArgs): UseHelpdeskReturn {
           setInbox(filterKey, next);
           return next;
         });
-        setCountsState(countsJson.data ?? {});
-        setCounts(countsJson.data ?? {});
         setError(null);
         lastListRefreshAtRef.current = Date.now();
       } catch (err) {
@@ -400,6 +397,26 @@ export function useHelpdesk(args: UseHelpdeskArgs): UseHelpdeskReturn {
   }, []);
 
   /**
+   * Folder badge counts. Independent of search/folder/channel — they're a
+   * global view of the mailbox. Refreshed on mount + on every polling tick,
+   * NOT on every keystroke change. (Search keystrokes used to refire this
+   * with every other filter change, which made typing feel laggy.)
+   */
+  const loadCounts = useCallback(async () => {
+    try {
+      const res = await fetch("/api/helpdesk/counts", { cache: "no-store" });
+      if (!res.ok) return;
+      const json = (await res.json()) as {
+        data: Partial<Record<HelpdeskFolderKey, number>>;
+      };
+      setCountsState(json.data ?? {});
+      setCounts(json.data ?? {});
+    } catch {
+      // best-effort; ignore
+    }
+  }, []);
+
+  /**
    * Silent background refresh of the *current* page (no spinner). Used by
    * the polling interval, "Sync now", visibility-resumed, etc.
    */
@@ -407,9 +424,17 @@ export function useHelpdesk(args: UseHelpdeskArgs): UseHelpdeskReturn {
     const cursor = snapshot.startCursors[snapshot.pageIndex] ?? null;
     void fetchPage(snapshot.pageIndex, cursor, { silent: true });
     void loadSyncStatus();
+    void loadCounts();
     const id = selectedTicketIdRef.current;
     if (id) void loadSelected(id, { silent: true });
-  }, [snapshot.pageIndex, snapshot.startCursors, fetchPage, loadSyncStatus, loadSelected]);
+  }, [
+    snapshot.pageIndex,
+    snapshot.startCursors,
+    fetchPage,
+    loadSyncStatus,
+    loadCounts,
+    loadSelected,
+  ]);
 
   refreshRef.current = refresh;
 
@@ -430,6 +455,15 @@ export function useHelpdesk(args: UseHelpdeskArgs): UseHelpdeskReturn {
     }
     void loadSyncStatus();
   }, [filterKey, fetchPage, loadSyncStatus]);
+
+  // ── Independent global fetches (counts) ────────────────────────────────────
+  // Counts are intentionally NOT in the [filterKey] effect above — they
+  // describe the whole mailbox, so re-fetching them on every keystroke change
+  // is wasted work that competes with the tickets fetch for connections.
+  // Run once on mount; the polling effect below keeps them fresh thereafter.
+  useEffect(() => {
+    void loadCounts();
+  }, [loadCounts]);
 
   // Selected ticket fetch
   useEffect(() => {
