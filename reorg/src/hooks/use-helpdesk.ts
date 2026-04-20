@@ -86,8 +86,10 @@ export interface HelpdeskTicketSummary {
   lastAgentMessageAt: string | null;
   firstResponseAt: string | null;
   reopenCount: number;
-  messageCount: number;
-  noteCount: number;
+  /** @deprecated server no longer ships these on the inbox list (perf). */
+  messageCount?: number;
+  /** @deprecated server no longer ships these on the inbox list (perf). */
+  noteCount?: number;
   tags: { id: string; name: string; color: string | null }[];
   createdAt: string;
   updatedAt: string;

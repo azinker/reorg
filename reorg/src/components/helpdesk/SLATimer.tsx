@@ -19,6 +19,30 @@ interface SLATimerProps {
   variant?: "compact" | "full";
 }
 
+// ─── Shared tick clock ────────────────────────────────────────────────────────
+// Previously each <SLATimer/> spun up its own setInterval. With 50 inbox rows
+// that meant 50 timers all firing at slightly different moments, each
+// recomputing SLA + triggering a React re-render. Sharing one clock lets
+// React batch the 50 setStates into a single commit and trims long-task
+// pressure on the main thread.
+const _subscribers = new Set<() => void>();
+let _intervalId: ReturnType<typeof setInterval> | null = null;
+function subscribe(fn: () => void): () => void {
+  _subscribers.add(fn);
+  if (_intervalId === null && typeof window !== "undefined") {
+    _intervalId = setInterval(() => {
+      for (const cb of _subscribers) cb();
+    }, 60_000);
+  }
+  return () => {
+    _subscribers.delete(fn);
+    if (_subscribers.size === 0 && _intervalId !== null) {
+      clearInterval(_intervalId);
+      _intervalId = null;
+    }
+  };
+}
+
 export function SLATimer({
   lastBuyerMessageAt,
   firstResponseAt,
@@ -45,8 +69,7 @@ export function SLATimer({
       );
     }
     tick();
-    const id = window.setInterval(tick, 30_000);
-    return () => window.clearInterval(id);
+    return subscribe(tick);
   }, [lastBuyerMessageAt, firstResponseAt, timezone]);
 
   if (result.bucket === "NA") return null;

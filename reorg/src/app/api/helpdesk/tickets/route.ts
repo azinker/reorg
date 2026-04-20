@@ -93,6 +93,12 @@ export async function GET(request: NextRequest) {
     ];
   }
 
+  // Inbox list: keep the included relations minimal. We previously also
+  // selected `_count: { messages, notes }`, but neither field is consumed by
+  // the client (verified — `messageCount`/`noteCount` only appear in the
+  // type, never in JSX) and they each issue an extra correlated subquery per
+  // row. With `limit=50` that meant 100 extra subqueries per inbox load,
+  // contributing materially to the 10s+ TTFB on this endpoint.
   const tickets = await db.helpdeskTicket.findMany({
     where,
     orderBy: [{ lastBuyerMessageAt: "desc" }, { updatedAt: "desc" }],
@@ -104,7 +110,6 @@ export async function GET(request: NextRequest) {
         select: { id: true, name: true, email: true, avatarUrl: true, handle: true },
       },
       tags: { include: { tag: true } },
-      _count: { select: { messages: true, notes: true } },
     },
   });
 
@@ -135,8 +140,7 @@ export async function GET(request: NextRequest) {
       lastAgentMessageAt: t.lastAgentMessageAt,
       firstResponseAt: t.firstResponseAt,
       reopenCount: t.reopenCount,
-      messageCount: t._count.messages,
-      noteCount: t._count.notes,
+      // messageCount / noteCount intentionally omitted; not rendered.
       tags: t.tags.map((tt) => ({
         id: tt.tag.id,
         name: tt.tag.name,
