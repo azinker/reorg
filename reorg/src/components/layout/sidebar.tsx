@@ -31,7 +31,6 @@ import {
   LifeBuoy,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { usePageVisibility } from "@/lib/use-page-visibility";
 import {
   NAV_PAGES,
   resolveAllowedPageKeys,
@@ -89,7 +88,6 @@ export function Sidebar({
   allowedPageKeys,
 }: SidebarProps) {
   const pathname = usePathname();
-  const isPageVisible = usePageVisibility();
   const [collapsed, setCollapsed] = useState(false);
   const [healthSummary, setHealthSummary] = useState<{
     status: "healthy" | "delayed" | "attention";
@@ -132,46 +130,78 @@ export function Sidebar({
     return NAV_PAGES.filter((item) => allowed.has(item.key));
   }, [allowedPageKeys, userRole]);
 
+  /**
+   * Load the sync-issues badge counter from the lightweight
+   * `/api/scheduler/health-summary` endpoint.
+   *
+   * Why not `/api/scheduler/status`?
+   *   That route returns ~50 KB of data (recentJobs, recentWebhooks,
+   *   automationEvents, integrationHealth, the full upcoming plan…) and
+   *   takes 15-25 s on cold Vercel instances because it queries 5 000
+   *   audit-log rows and hits the live eBay Trading API. The sidebar uses
+   *   only `attentionCount`, `delayedCount`, and `cooldownCount`, so we
+   *   pull the tiny summary instead — the response is a few hundred bytes
+   *   and parses in a single millisecond.
+   *
+   * The two effects that used to live here (one on mount, one on every
+   * `isPageVisible` flip) are coalesced into one. The previous setup
+   * fired three simultaneous slow requests on every page mount AND
+   * re-fired whenever the user tabbed back to the browser, which was a
+   * major source of the help-desk page lag.
+   */
   useEffect(() => {
     let active = true;
+    const ac = new AbortController();
+    let lastLoadedAt = 0;
 
     async function loadHealth() {
       try {
-        const response = await fetch("/api/scheduler/status", { cache: "no-store" });
+        const response = await fetch("/api/scheduler/health-summary", {
+          cache: "no-store",
+          signal: ac.signal,
+        });
         if (!response.ok) return;
         const json = await response.json();
         if (!active) return;
-        setHealthSummary(json.data?.healthSummary ?? null);
+        // The new endpoint returns the summary directly under `data`.
+        // Tolerate the legacy shape (`data.healthSummary`) too in case an
+        // old service worker / CDN cache serves a stale response.
+        setHealthSummary(json.data?.healthSummary ?? json.data ?? null);
+        lastLoadedAt = Date.now();
       } catch {
-        if (active) setHealthSummary(null);
+        if (active && !ac.signal.aborted) setHealthSummary(null);
       }
     }
 
     void loadHealth();
+
+    // Light polling — 5 min. We only refetch on visibility change if the
+    // cached value is older than 5 min, so tabbing back to the app no
+    // longer triggers an immediate refetch storm.
+    const FIVE_MIN = 300_000;
     const timer = window.setInterval(() => {
       if (document.visibilityState !== "visible") return;
       void loadHealth();
-    }, 300_000);
+    }, FIVE_MIN);
+
+    function onVisibility() {
+      if (
+        document.visibilityState === "visible" &&
+        Date.now() - lastLoadedAt > FIVE_MIN
+      ) {
+        void loadHealth();
+      }
+    }
+    document.addEventListener("visibilitychange", onVisibility);
 
     return () => {
       active = false;
+      ac.abort();
       window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisibility);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  useEffect(() => {
-    if (!isPageVisible) return;
-    void (async () => {
-      try {
-        const response = await fetch("/api/scheduler/status", { cache: "no-store" });
-        if (!response.ok) return;
-        const json = await response.json();
-        setHealthSummary(json.data?.healthSummary ?? null);
-      } catch {
-        setHealthSummary(null);
-      }
-    })();
-  }, [isPageVisible]);
 
   const attentionCount =
     (healthSummary?.attentionCount ?? 0) + (healthSummary?.delayedCount ?? 0);
