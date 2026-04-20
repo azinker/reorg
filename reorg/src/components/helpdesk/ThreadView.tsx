@@ -246,7 +246,13 @@ export function ThreadView({
   // (messages, notes, system events alike) get hidden behind the toggle to
   // preserve chronological grouping — clicking expand reveals everything.
   // ─────────────────────────────────────────────────────────────────────────
-  const INITIAL_MESSAGE_LIMIT = 5;
+  // Initial-render budget. The latest N messages render immediately; older
+  // ones hide behind a single "Show N earlier items" toggle. Each eBay HTML
+  // body costs 50–500ms to sanitise + paint, so this directly controls the
+  // initial blocking budget when the thread opens. 3 keeps the heaviest
+  // threads (10+ giant eBay notifications) under ~1.5s of long tasks while
+  // still showing enough context for a fresh agent to act on the ticket.
+  const INITIAL_MESSAGE_LIMIT = 3;
   const messageCount = items.reduce(
     (n, it) => n + (it.type === "message" ? 1 : 0),
     0,
