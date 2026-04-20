@@ -482,6 +482,19 @@ export function useHelpdesk(args: UseHelpdeskArgs): UseHelpdeskReturn {
   // If we hydrated something fresh-ish from the cache (< 30 s old), skip the
   // immediate visible load and let the polling interval bring it up to date.
   // Otherwise fire a real fetch right away.
+  //
+  // CRITICAL: this effect must ONLY fetch tickets. Counts and sync-status
+  // are mailbox-global and live in their own mount-only effects below.
+  // Putting them here was firing them on every keystroke change, which:
+  //   - took up Chrome's per-origin connection slots (max 6 over HTTP/1.1
+  //     and even on HTTP/2 it competes with bundled-fetch concurrency
+  //     limits), starving the *actual* tickets request the user is waiting
+  //     for, and
+  //   - on a cold Vercel function the slow sync-status response (7+ s in
+  //     the field) would shift the header layout when it returned (the
+  //     "Synced X ago" label changes width), making the search input fail
+  //     Playwright's actionability check and feel non-responsive to a
+  //     real user trying to click it.
   useEffect(() => {
     const cached = getInbox(filterKey);
     const isFresh = cached && Date.now() - cached.fetchedAt < 30_000;
@@ -493,17 +506,15 @@ export function useHelpdesk(args: UseHelpdeskArgs): UseHelpdeskReturn {
     } else {
       void fetchPage(0, null);
     }
-    void loadSyncStatus();
-  }, [filterKey, fetchPage, loadSyncStatus]);
+  }, [filterKey, fetchPage]);
 
-  // ── Independent global fetches (counts) ────────────────────────────────────
-  // Counts are intentionally NOT in the [filterKey] effect above — they
-  // describe the whole mailbox, so re-fetching them on every keystroke change
-  // is wasted work that competes with the tickets fetch for connections.
-  // Run once on mount; the polling effect below keeps them fresh thereafter.
+  // ── Independent global fetches (counts + sync-status) ──────────────────────
+  // These describe the WHOLE mailbox, not the current filter, so they only
+  // run once on mount. The 60 s polling effect below keeps them fresh.
   useEffect(() => {
     void loadCounts();
-  }, [loadCounts]);
+    void loadSyncStatus();
+  }, [loadCounts, loadSyncStatus]);
 
   // Selected ticket fetch
   useEffect(() => {
