@@ -246,7 +246,7 @@ export function ThreadView({
   // (messages, notes, system events alike) get hidden behind the toggle to
   // preserve chronological grouping — clicking expand reveals everything.
   // ─────────────────────────────────────────────────────────────────────────
-  const INITIAL_MESSAGE_LIMIT = 8;
+  const INITIAL_MESSAGE_LIMIT = 5;
   const messageCount = items.reduce(
     (n, it) => n + (it.type === "message" ? 1 : 0),
     0,
