@@ -242,6 +242,21 @@ export function useHelpdesk(args: UseHelpdeskArgs): UseHelpdeskReturn {
   const refreshRef = useRef<() => void>(() => {});
   const lastListRefreshAtRef = useRef(snapshot.fetchedAt);
   const inflightRequestIdRef = useRef(0);
+  /**
+   * AbortController for the *currently in-flight* tickets fetch. Every time
+   * we start a new fetch we cancel the previous one — without this, typing
+   * "Apple" then immediately backspacing it out fires the search="Apple"
+   * request, then the search="" request, and Chrome runs both in parallel.
+   * On a cold Vercel function the slower one can take 8+ seconds, holds a
+   * network slot the whole time, AND triggers a React re-render with stale
+   * data when it eventually returns. Aborting closes the socket immediately,
+   * frees the slot, and prevents the stale re-render storm. This is the
+   * actual fix for the "page goes unresponsive when I delete the search"
+   * complaint that the request-ID guard alone could not solve.
+   */
+  const ticketsFetchAbortRef = useRef<AbortController | null>(null);
+  /** Same idea for the lighter counts/sync-status fetches. */
+  const auxFetchAbortRef = useRef<AbortController | null>(null);
   const selectedTicketIdRef = useRef<string | null>(null);
   selectedTicketIdRef.current = selectedTicketId;
 
@@ -277,6 +292,14 @@ export function useHelpdesk(args: UseHelpdeskArgs): UseHelpdeskReturn {
     ) => {
       const { silent = false, mode = "initial" } = opts;
       const requestId = ++inflightRequestIdRef.current;
+
+      // Abort whatever tickets fetch is currently in flight. This is what
+      // actually frees the underlying TCP slot and stops the stale React
+      // re-render when the prior response would otherwise arrive late.
+      ticketsFetchAbortRef.current?.abort();
+      const ac = new AbortController();
+      ticketsFetchAbortRef.current = ac;
+
       if (!silent) {
         if (mode === "page") setPaging(true);
         else setLoading(true);
@@ -297,7 +320,7 @@ export function useHelpdesk(args: UseHelpdeskArgs): UseHelpdeskReturn {
         // source of the inbox feeling unresponsive while typing.
         const ticketsRes = await fetch(
           `/api/helpdesk/tickets?${params.toString()}`,
-          { cache: "no-store" },
+          { cache: "no-store", signal: ac.signal },
         );
         if (requestId !== inflightRequestIdRef.current) return;
         if (!ticketsRes.ok) throw new Error(`Tickets ${ticketsRes.status}`);
@@ -326,6 +349,15 @@ export function useHelpdesk(args: UseHelpdeskArgs): UseHelpdeskReturn {
         lastListRefreshAtRef.current = Date.now();
       } catch (err) {
         if (requestId !== inflightRequestIdRef.current) return;
+        // Aborts are expected (filter changed mid-flight). Don't surface
+        // them as user-facing errors.
+        if (
+          ac.signal.aborted ||
+          (err instanceof DOMException && err.name === "AbortError") ||
+          (err instanceof Error && /aborted/i.test(err.message))
+        ) {
+          return;
+        }
         setError(err instanceof Error ? err.message : String(err));
       } finally {
         if (!silent) {
@@ -385,14 +417,22 @@ export function useHelpdesk(args: UseHelpdeskArgs): UseHelpdeskReturn {
   );
 
   const loadSyncStatus = useCallback(async () => {
+    // Reuse the aux abort controller so a fresh page load cancels any prior
+    // background poll's still-pending sync-status fetch.
+    auxFetchAbortRef.current?.abort();
+    const ac = new AbortController();
+    auxFetchAbortRef.current = ac;
     try {
-      const res = await fetch("/api/helpdesk/sync-status", { cache: "no-store" });
+      const res = await fetch("/api/helpdesk/sync-status", {
+        cache: "no-store",
+        signal: ac.signal,
+      });
       if (!res.ok) return;
       const json = (await res.json()) as { data: HelpdeskSyncStatus };
       setSyncStatusState(json.data);
       setSyncStatus(json.data);
     } catch {
-      // best-effort; ignore
+      // best-effort; ignore (incl. AbortError)
     }
   }, []);
 
@@ -488,6 +528,18 @@ export function useHelpdesk(args: UseHelpdeskArgs): UseHelpdeskReturn {
     }, POLL_INTERVAL_MS);
     return () => window.clearInterval(handle);
   }, [isPageVisible]);
+
+  // ── Cleanup on unmount ─────────────────────────────────────────────────────
+  // Cancel any pending fetches if the user navigates away from /help-desk
+  // mid-request (e.g. into Settings). Prevents lingering "ghost" requests
+  // from logging errors and from triggering React state updates on an
+  // unmounted tree.
+  useEffect(() => {
+    return () => {
+      ticketsFetchAbortRef.current?.abort();
+      auxFetchAbortRef.current?.abort();
+    };
+  }, []);
 
   const triggerManualSync = useCallback(async () => {
     setManualSyncing(true);
