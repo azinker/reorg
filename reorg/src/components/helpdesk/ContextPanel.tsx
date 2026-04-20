@@ -204,9 +204,13 @@ function ContextPanelInner({ ticket, containerWidth, dividerCls }: InnerProps) {
     setTab("details");
   }, [ticket.id]);
 
-  // Order context lives at the panel level so the customer card can also
-  // surface the buyer phone (which is in the order's shipping address payload).
+  // Order context + related tickets both live at the panel level so that:
+  //   • CustomerCard can read buyer phone off the order shipping address.
+  //   • CustomerCard and RelatedSection share the SAME related-tickets response
+  //     instead of firing two requests against the same endpoint with
+  //     different `limit` values (the previous code did exactly that).
   const order = useOrderContext(ticket);
+  const related = useRelatedTickets(ticket);
 
   return (
     <div className={cn("flex flex-col bg-card", containerWidth, dividerCls)}>
@@ -229,11 +233,11 @@ function ContextPanelInner({ ticket, containerWidth, dividerCls }: InnerProps) {
       <div className="flex-1 overflow-y-auto">
         {tab === "details" && (
           <>
-            <CustomerCard ticket={ticket} order={order.data} />
+            <CustomerCard ticket={ticket} order={order.data} related={related.summary} />
             {ticket.kind === "POST_SALES" || !!ticket.ebayOrderNumber ? (
               <OrderInfoSection ticket={ticket} order={order} />
             ) : null}
-            <RelatedSection ticket={ticket} />
+            <RelatedSection ticket={ticket} related={related} />
           </>
         )}
         {tab === "notes" && <NotesTab ticket={ticket} />}
@@ -316,12 +320,25 @@ interface UseOrderContextResult {
 }
 
 /**
+ * Module-level cache for the auxiliary context-panel fetches. Keyed by ticket
+ * id so re-opening a ticket renders the panel instantly with whatever we last
+ * saw — the useEffect still fires a silent refresh in the background. This
+ * matches the "render cached, refresh after" pattern used by `inbox-cache`
+ * for tickets/counts/sync-status.
+ */
+const orderContextCache = new Map<string, OrderContext | null>();
+const relatedCache = new Map<string, RelatedResponse>();
+
+/**
  * Fetches the live eBay order context once per ticket and exposes it to
  * children of ContextPanel. Lives at the panel level so the CustomerCard and
  * OrderInfoSection share the same network request — we used to fire two.
  */
 function useOrderContext(ticket: HelpdeskTicketDetail): UseOrderContextResult {
-  const [data, setData] = useState<OrderContext | null>(null);
+  // Hydrate synchronously from cache so re-opens paint with the previous
+  // order context instantly.
+  const initial = orderContextCache.has(ticket.id) ? orderContextCache.get(ticket.id) ?? null : null;
+  const [data, setData] = useState<OrderContext | null>(initial);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -332,32 +349,108 @@ function useOrderContext(ticket: HelpdeskTicketDetail): UseOrderContextResult {
       setLoading(false);
       return;
     }
-    let cancelled = false;
-    setLoading(true);
+    const cached = orderContextCache.has(ticket.id)
+      ? orderContextCache.get(ticket.id) ?? null
+      : null;
+    if (cached) setData(cached);
+    // Always refresh, but don't show the spinner if we already have something
+    // on screen — feels "snappy" rather than "loading".
+    if (!cached) setLoading(true);
     setError(null);
+    const ac = new AbortController();
     void (async () => {
       try {
         const res = await fetch(
           `/api/helpdesk/tickets/${ticket.id}/order-context`,
-          { cache: "no-store" },
+          { cache: "no-store", signal: ac.signal },
         );
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const j = (await res.json()) as OrderContextResponse;
-        if (cancelled) return;
+        if (ac.signal.aborted) return;
         setData(j.data);
+        orderContextCache.set(ticket.id, j.data);
         if (!j.data && j.reason) setError(j.reason);
       } catch (err) {
-        if (!cancelled) setError(err instanceof Error ? err.message : String(err));
+        if (ac.signal.aborted) return;
+        // Fetch was aborted by navigation — treat as benign.
+        if (err instanceof DOMException && err.name === "AbortError") return;
+        setError(err instanceof Error ? err.message : String(err));
       } finally {
-        if (!cancelled) setLoading(false);
+        if (!ac.signal.aborted) setLoading(false);
       }
     })();
     return () => {
-      cancelled = true;
+      ac.abort();
     };
   }, [ticket.id, ticket.ebayOrderNumber]);
 
   return { data, loading, error };
+}
+
+// ── Related-tickets hook (shared between CustomerCard + RelatedSection) ────
+
+interface UseRelatedResult {
+  /** Compact summary for the customer card (orderCount + earliestTicketAt). */
+  summary: RelatedResponse | null;
+  /** Full list (up to 10) for the RelatedSection table. */
+  list: RelatedTicket[];
+  loading: boolean;
+}
+
+/**
+ * Single source of truth for the buyer's other tickets. Replaces the two
+ * prior `/api/helpdesk/tickets/related` calls (one with `limit=1`, one with
+ * `limit=10`) with a single `limit=10` request whose payload powers both
+ * the customer-card summary and the RelatedSection list.
+ */
+function useRelatedTickets(ticket: HelpdeskTicketDetail): UseRelatedResult {
+  const cacheKey = `${ticket.id}|${ticket.buyerUserId ?? ""}`;
+  const cached = relatedCache.get(cacheKey) ?? null;
+  const [summary, setSummary] = useState<RelatedResponse | null>(cached);
+  const [list, setList] = useState<RelatedTicket[]>(cached?.data ?? []);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!ticket.buyerUserId) {
+      setSummary(null);
+      setList([]);
+      setLoading(false);
+      return;
+    }
+    const buyer = ticket.buyerUserId;
+    const exclude = ticket.id;
+    const cached = relatedCache.get(cacheKey);
+    if (cached) {
+      setSummary(cached);
+      setList(cached.data);
+    } else {
+      setLoading(true);
+    }
+    const ac = new AbortController();
+    void (async () => {
+      try {
+        const res = await fetch(
+          `/api/helpdesk/tickets/related?buyer=${encodeURIComponent(buyer)}&exclude=${encodeURIComponent(exclude)}&limit=10`,
+          { cache: "no-store", signal: ac.signal },
+        );
+        if (!res.ok) return;
+        const j = (await res.json()) as RelatedResponse;
+        if (ac.signal.aborted) return;
+        setSummary(j);
+        setList(j.data ?? []);
+        relatedCache.set(cacheKey, j);
+      } catch {
+        // best-effort
+      } finally {
+        if (!ac.signal.aborted) setLoading(false);
+      }
+    })();
+    return () => {
+      ac.abort();
+    };
+  }, [ticket.id, ticket.buyerUserId, cacheKey]);
+
+  return { summary, list, loading };
 }
 
 // ── Customer card ──────────────────────────────────────────────────────────
@@ -365,42 +458,18 @@ function useOrderContext(ticket: HelpdeskTicketDetail): UseOrderContextResult {
 function CustomerCard({
   ticket,
   order,
+  related,
 }: {
   ticket: HelpdeskTicketDetail;
   order: OrderContext | null;
+  /**
+   * Summary of the buyer's other tickets, computed once at the panel level
+   * and shared with `RelatedSection`. Powers two derived UI bits here:
+   *   1. orderCount → "Total Order: $X (N orders)" hint
+   *   2. earliestTicketAt → "Customer Since: <date>" date.
+   */
+  related: RelatedResponse | null;
 }) {
-  // Related-tickets summary powers two things:
-  //   1. orderCount → "Total Order: $X (N orders)" hint
-  //   2. earliestTicketAt → "Customer Since: <date>" date.
-  // We leave related rendering to the dedicated RelatedSection below so the
-  // card stays compact.
-  const [related, setRelated] = useState<RelatedResponse | null>(null);
-
-  useEffect(() => {
-    if (!ticket.buyerUserId) {
-      setRelated(null);
-      return;
-    }
-    const buyer = ticket.buyerUserId;
-    const exclude = ticket.id;
-    let cancelled = false;
-    void (async () => {
-      try {
-        const res = await fetch(
-          `/api/helpdesk/tickets/related?buyer=${encodeURIComponent(buyer)}&exclude=${encodeURIComponent(exclude)}&limit=1`,
-          { cache: "no-store" },
-        );
-        if (!res.ok) return;
-        const j = (await res.json()) as RelatedResponse;
-        if (!cancelled) setRelated(j);
-      } catch {
-        // best-effort; missing related count just hides the hint
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [ticket.id, ticket.buyerUserId]);
 
   // Customer-since: prefer the earliest ticket we have on file (true first
   // contact). Fall back to this ticket's createdAt when the related summary
@@ -894,38 +963,15 @@ function OrderInfoSection({
 
 // ── Related tickets ────────────────────────────────────────────────────────
 
-function RelatedSection({ ticket }: { ticket: HelpdeskTicketDetail }) {
-  const [related, setRelated] = useState<RelatedTicket[]>([]);
-  const [loading, setLoading] = useState(false);
-
-  useEffect(() => {
-    if (!ticket.buyerUserId) {
-      setRelated([]);
-      return;
-    }
-    const buyer = ticket.buyerUserId;
-    const exclude = ticket.id;
-    let cancelled = false;
-    setLoading(true);
-    void (async () => {
-      try {
-        const res = await fetch(
-          `/api/helpdesk/tickets/related?buyer=${encodeURIComponent(buyer)}&exclude=${encodeURIComponent(exclude)}&limit=10`,
-          { cache: "no-store" },
-        );
-        if (!res.ok) return;
-        const j = (await res.json()) as RelatedResponse;
-        if (!cancelled) setRelated(j.data ?? []);
-      } catch {
-        // best-effort
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [ticket.id, ticket.buyerUserId]);
+function RelatedSection({
+  ticket,
+  related: relatedHook,
+}: {
+  ticket: HelpdeskTicketDetail;
+  related: UseRelatedResult;
+}) {
+  const related = relatedHook.list;
+  const loading = relatedHook.loading;
 
   if (!ticket.buyerUserId) return null;
 

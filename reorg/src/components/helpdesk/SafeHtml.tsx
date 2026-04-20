@@ -28,7 +28,7 @@
  */
 
 import DOMPurify from "isomorphic-dompurify";
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 interface SafeHtmlProps {
   html: string;
@@ -414,27 +414,142 @@ function stripEbayChrome(html: string): string {
   return body.innerHTML;
 }
 
+/* ────────────────────────────────────────────────────────────────────────── *
+ * Module-level cache + processing pipeline.
+ *
+ * WHY THIS MATTERS FOR PERF:
+ * ──────────────────────────
+ * Each eBay message body can be 50–500 KB of HTML. Sanitising one body costs
+ * one DOMPurify pass (~10–50ms) plus a `stripEbayChrome` pass that creates a
+ * new DOMParser document and runs a half-dozen full `querySelectorAll` walks
+ * over hundreds of elements (~50–200ms). When a thread has 8–15 messages,
+ * mounting `TicketReader` synchronously processes the entire stack in one tick
+ * — easily a 1–3 second long task that blocks the click from feeling snappy.
+ *
+ * Two changes here remove that cost:
+ *
+ *   1. Cache the sanitised output in a module-level Map keyed by the raw input
+ *      string. Re-opening the same ticket (or any ticket sharing the same
+ *      eBay template body) returns instantly with no DOMPurify / DOMParser
+ *      work at all.
+ *
+ *   2. On the FIRST view of a body, render a tiny shimmer placeholder
+ *      synchronously and run the heavy processing inside `requestIdleCallback`
+ *      (with a `setTimeout` fallback for browsers that don't support it).
+ *      This breaks the work into small chunks that interleave with paint, so
+ *      the click resolves immediately and the bubbles fill in over the next
+ *      few frames — exactly the pattern eDesk uses.
+ *
+ * The cache is bounded with a simple LRU (delete-and-reinsert) policy so
+ * memory can't grow without bound across long sessions.
+ */
+
+const SANITISED_CACHE_MAX = 300;
+const sanitisedCache = new Map<string, string>();
+
+function lruGet(key: string): string | undefined {
+  const value = sanitisedCache.get(key);
+  if (value === undefined) return undefined;
+  // Re-insert to mark as most-recently-used.
+  sanitisedCache.delete(key);
+  sanitisedCache.set(key, value);
+  return value;
+}
+
+function lruSet(key: string, value: string): void {
+  if (sanitisedCache.size >= SANITISED_CACHE_MAX) {
+    const oldest = sanitisedCache.keys().next().value;
+    if (oldest !== undefined) sanitisedCache.delete(oldest);
+  }
+  sanitisedCache.set(key, value);
+}
+
+/**
+ * DOMPurify hooks are global state. The previous version of this file
+ * `addHook`'d/`removeAllHooks`'d on every render, which races when several
+ * `SafeHtml` instances render in the same React commit (the first one's
+ * `removeAllHooks` wipes the hook the others just added). Install once at
+ * module load instead.
+ */
+let __dompurifyHookInstalled = false;
+function ensureDompurifyHook() {
+  if (__dompurifyHookInstalled) return;
+  DOMPurify.addHook("afterSanitizeAttributes", (node) => {
+    if (node.tagName === "A") {
+      node.setAttribute("target", "_blank");
+      node.setAttribute("rel", "noopener noreferrer nofollow");
+    }
+    if (node.tagName === "IMG") {
+      node.setAttribute("loading", "lazy");
+      node.setAttribute("referrerpolicy", "no-referrer");
+    }
+  });
+  __dompurifyHookInstalled = true;
+}
+
+function computeSanitised(decoded: string): string {
+  ensureDompurifyHook();
+  const clean = DOMPurify.sanitize(decoded, PURIFY_CONFIG);
+  return stripEbayChrome(clean);
+}
+
+type IdleCb = (cb: () => void, opts?: { timeout?: number }) => number;
+type CancelIdleCb = (id: number) => void;
+function scheduleIdle(cb: () => void, timeoutMs = 250): () => void {
+  if (typeof window === "undefined") {
+    cb();
+    return () => {};
+  }
+  const ric = (window as unknown as { requestIdleCallback?: IdleCb }).requestIdleCallback;
+  const cic = (window as unknown as { cancelIdleCallback?: CancelIdleCb }).cancelIdleCallback;
+  if (ric) {
+    const id = ric(cb, { timeout: timeoutMs });
+    return () => cic?.(id);
+  }
+  const id = window.setTimeout(cb, 0);
+  return () => window.clearTimeout(id);
+}
+
 export function SafeHtml({ html, forceHtml, className }: SafeHtmlProps) {
   const { isHtml, decoded } = useMemo(
     () => detectHtml(html ?? "", forceHtml),
     [html, forceHtml],
   );
 
-  const sanitised = useMemo(() => {
-    if (!isHtml) return null;
-    DOMPurify.addHook("afterSanitizeAttributes", (node) => {
-      if (node.tagName === "A") {
-        node.setAttribute("target", "_blank");
-        node.setAttribute("rel", "noopener noreferrer nofollow");
-      }
-      if (node.tagName === "IMG") {
-        node.setAttribute("loading", "lazy");
-        node.setAttribute("referrerpolicy", "no-referrer");
-      }
+  // Synchronous cache check on first render. If we've already processed this
+  // exact body in this session (different ticket sharing the same eBay
+  // template, or re-opening this ticket) the bubble paints with the final
+  // sanitised HTML on the very first frame — zero extra work, zero flicker.
+  const initialCached = isHtml ? lruGet(decoded) ?? null : null;
+  const [sanitised, setSanitised] = useState<string | null>(initialCached);
+
+  useEffect(() => {
+    if (!isHtml) {
+      if (sanitised !== null) setSanitised(null);
+      return;
+    }
+    const cached = lruGet(decoded);
+    if (cached !== undefined) {
+      if (cached !== sanitised) setSanitised(cached);
+      return;
+    }
+    // Uncached → process during the next idle slice. The bubble shows a
+    // shimmer placeholder until the result is ready, but the click that
+    // opened this ticket has long since resolved.
+    let cancelled = false;
+    const cancel = scheduleIdle(() => {
+      if (cancelled) return;
+      const result = computeSanitised(decoded);
+      lruSet(decoded, result);
+      if (!cancelled) setSanitised(result);
     });
-    const clean = DOMPurify.sanitize(decoded, PURIFY_CONFIG);
-    DOMPurify.removeAllHooks();
-    return stripEbayChrome(clean);
+    return () => {
+      cancelled = true;
+      cancel();
+    };
+    // We deliberately do not include `sanitised` in deps — it's an output
+    // of this effect, including it would loop.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [decoded, isHtml]);
 
   if (!isHtml) {
@@ -451,10 +566,24 @@ export function SafeHtml({ html, forceHtml, className }: SafeHtmlProps) {
     );
   }
 
+  // First view of this body — show a shimmer skeleton synchronously. The
+  // useEffect above will swap this out once idle processing finishes,
+  // typically within a frame or two. This is the single biggest perceived
+  // perf win: clicks register instantly even on huge eBay payloads.
+  if (sanitised === null) {
+    return (
+      <div className={`space-y-2 ${className ?? ""}`}>
+        <div className="h-3 w-3/4 animate-pulse rounded bg-foreground/10" />
+        <div className="h-3 w-2/3 animate-pulse rounded bg-foreground/10" />
+        <div className="h-3 w-1/2 animate-pulse rounded bg-foreground/10" />
+      </div>
+    );
+  }
+
   // After DOMPurify + stripEbayChrome we may end up with literally nothing
   // (e.g. a quoted-only "Re:" mail where the buyer added no new text). Show
   // a friendly placeholder so the bubble isn't visually empty.
-  const trimmed = (sanitised ?? "").trim();
+  const trimmed = sanitised.trim();
   if (trimmed.length === 0) {
     return (
       <p className={`text-xs italic text-muted-foreground ${className ?? ""}`}>
@@ -467,7 +596,7 @@ export function SafeHtml({ html, forceHtml, className }: SafeHtmlProps) {
     <div
       className={`helpdesk-html-body max-w-full overflow-x-auto text-sm leading-relaxed text-foreground/90 ${className ?? ""}`}
       // eslint-disable-next-line react/no-danger -- sanitised by DOMPurify above
-      dangerouslySetInnerHTML={{ __html: sanitised ?? "" }}
+      dangerouslySetInnerHTML={{ __html: sanitised }}
     />
   );
 }
