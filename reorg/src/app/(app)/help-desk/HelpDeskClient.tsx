@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, useMemo } from "react";
+import { startTransition, useCallback, useEffect, useRef, useState, useMemo } from "react";
 import { useSearchParams } from "next/navigation";
 import { useHelpdesk, type HelpdeskFolderKey } from "@/hooks/use-helpdesk";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
@@ -13,6 +13,7 @@ import {
   updateHelpdeskPrefs,
 } from "@/components/helpdesk/HelpdeskSettingsDialog";
 import { HelpdeskSplit } from "@/components/helpdesk/HelpdeskSplit";
+import { cn } from "@/lib/utils";
 
 export default function HelpDeskClient() {
   const [folder, setFolder] = useState<HelpdeskFolderKey>("all_tickets");
@@ -137,6 +138,26 @@ export default function HelpDeskClient() {
     manualSyncing,
   } = useHelpdesk({ folder, channel: channelArg, search: searchArg });
 
+  /**
+   * All selection changes (open ticket, back-to-inbox, prev/next, folder
+   * change clearing the selection) go through this helper. We wrap the
+   * `setSelectedTicketId` call in React 18's `startTransition` so the click
+   * event itself resolves immediately — React then renders the resulting
+   * mount/unmount of TicketReader as a *low-priority* update that is allowed
+   * to be interrupted by subsequent user input. Without this, the click
+   * handler returns only after React has finished mounting/unmounting the
+   * (very heavy) reader subtree, which on production can take 30+ seconds
+   * for long eBay HTML threads and makes the UI feel completely frozen.
+   */
+  const selectTicket = useCallback(
+    (id: string | null) => {
+      startTransition(() => {
+        setSelectedTicketId(id);
+      });
+    },
+    [setSelectedTicketId],
+  );
+
   const safeMode = useMemo(
     () => syncStatus?.flags.safeMode ?? true,
     [syncStatus?.flags.safeMode],
@@ -170,8 +191,8 @@ export default function HelpDeskClient() {
     const next = tickets.find(
       (t, i) => i !== idx && t.status !== "RESOLVED" && !t.isArchived,
     );
-    setSelectedTicketId(next ? next.id : null);
-  }, [selectedTicket, tickets, prefs.autoAdvance, setSelectedTicketId]);
+    selectTicket(next ? next.id : null);
+  }, [selectedTicket, tickets, prefs.autoAdvance, selectTicket]);
 
   // ─── Prev/Next ticket navigation (eDesk-style global header arrows) ─────────
   // Derived from the *currently rendered* ticket list (after server-side
@@ -190,10 +211,10 @@ export default function HelpDeskClient() {
       ? tickets[selectedIndex + 1]?.id ?? null
       : null;
   const goPrev = prevTicketId
-    ? () => setSelectedTicketId(prevTicketId)
+    ? () => selectTicket(prevTicketId)
     : undefined;
   const goNext = nextTicketId
-    ? () => setSelectedTicketId(nextTicketId)
+    ? () => selectTicket(nextTicketId)
     : undefined;
 
   // Up/Down arrow keys when no input is focused → walk the inbox.
@@ -212,12 +233,12 @@ export default function HelpDeskClient() {
       }
       if (!selectedTicketId) return;
       e.preventDefault();
-      if (e.key === "ArrowUp" && prevTicketId) setSelectedTicketId(prevTicketId);
-      if (e.key === "ArrowDown" && nextTicketId) setSelectedTicketId(nextTicketId);
+      if (e.key === "ArrowUp" && prevTicketId) selectTicket(prevTicketId);
+      if (e.key === "ArrowDown" && nextTicketId) selectTicket(nextTicketId);
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [selectedTicketId, prevTicketId, nextTicketId, setSelectedTicketId]);
+  }, [selectedTicketId, prevTicketId, nextTicketId, selectTicket]);
 
   // ─── Batch action handler shared between layouts ─────────────────────────────
   async function onBatchAction(
@@ -282,7 +303,7 @@ export default function HelpDeskClient() {
           counts={counts}
           onChange={(f) => {
             setFolder(f);
-            setSelectedTicketId(null);
+            selectTicket(null);
           }}
           channelFilter={channelFilter}
           onChannelChange={setChannelFilter}
@@ -292,48 +313,68 @@ export default function HelpDeskClient() {
         {prefs.layout === "list" ? (
           // ── LIST LAYOUT ─────────────────────────────────────────────────────────
           // Inbox is full-width when no ticket is selected. Selecting a ticket
-          // swaps the inbox for the in-place reader (eDesk-style). The inbox
+          // overlays the in-place reader on top (eDesk-style). The inbox
           // returns when the user clicks "← Back".
-          selectedTicketId !== null ? (
-            <TicketReader
-              ticket={selectedTicket}
-              loading={selectedLoading}
-              safeMode={safeMode}
-              syncStatus={syncStatus}
-              showBack
-              onBack={() => setSelectedTicketId(null)}
-              onPrev={goPrev}
-              onNext={goNext}
-              hasPrev={!!prevTicketId}
-              hasNext={!!nextTicketId}
-              onSent={refresh}
-            />
-          ) : (
-            <TicketList
-              tickets={tickets}
-              loading={loading}
-              selectedId={selectedTicketId}
-              onSelect={setSelectedTicketId}
-              search={search}
-              onSearchChange={setSearch}
-              onRefresh={refresh}
-              onBatchAction={onBatchAction}
-              flush
-              widthClassName="flex-1 min-w-0"
-              tableMode
-              channelFilter={channelFilter}
-              onChannelFilterChange={setChannelFilter}
-              statusFilter={statusFilter}
-              onStatusFilterChange={setStatusFilter}
-              pageIndex={pageIndex}
-              pageSize={pageSize}
-              hasNextPage={hasNextPage}
-              hasPrevPage={hasPrevPage}
-              paging={paging}
-              onPrevPage={goPrevPage}
-              onNextPage={goNextPage}
-            />
-          )
+          //
+          // PERFORMANCE: TicketList stays MOUNTED at all times. We toggle its
+          // visibility via the `hidden` class instead of conditionally rendering
+          // it. This eliminates the unmount→remount cost on every Back click,
+          // which on production was a 30+ second main-thread block (long task)
+          // because remounting 50 ticket rows + restarting their effects /
+          // SLA timers is genuinely expensive. The reader itself still mounts
+          // on open and unmounts on Back, but that work is now wrapped in
+          // `startTransition` so the click event resolves instantly and React
+          // is allowed to interleave the heavy unmount with subsequent input.
+          <div className="relative flex flex-1 min-w-0 overflow-hidden">
+            <div
+              className={cn(
+                "flex flex-1 min-w-0",
+                selectedTicketId !== null && "hidden",
+              )}
+            >
+              <TicketList
+                tickets={tickets}
+                loading={loading}
+                selectedId={selectedTicketId}
+                onSelect={selectTicket}
+                search={search}
+                onSearchChange={setSearch}
+                onRefresh={refresh}
+                onBatchAction={onBatchAction}
+                flush
+                widthClassName="flex-1 min-w-0"
+                tableMode
+                channelFilter={channelFilter}
+                onChannelFilterChange={setChannelFilter}
+                statusFilter={statusFilter}
+                onStatusFilterChange={setStatusFilter}
+                pageIndex={pageIndex}
+                pageSize={pageSize}
+                hasNextPage={hasNextPage}
+                hasPrevPage={hasPrevPage}
+                paging={paging}
+                onPrevPage={goPrevPage}
+                onNextPage={goNextPage}
+              />
+            </div>
+            {selectedTicketId !== null && (
+              <div className="flex flex-1 min-w-0">
+                <TicketReader
+                  ticket={selectedTicket}
+                  loading={selectedLoading}
+                  safeMode={safeMode}
+                  syncStatus={syncStatus}
+                  showBack
+                  onBack={() => selectTicket(null)}
+                  onPrev={goPrev}
+                  onNext={goNext}
+                  hasPrev={!!prevTicketId}
+                  hasNext={!!nextTicketId}
+                  onSent={refresh}
+                />
+              </div>
+            )}
+          </div>
         ) : (
           // ── SPLIT LAYOUT (default) ──────────────────────────────────────────────
           // Two resizable columns: ticket list ↔ reader (thread + context).
@@ -350,7 +391,7 @@ export default function HelpDeskClient() {
                 tickets={tickets}
                 loading={loading}
                 selectedId={selectedTicketId}
-                onSelect={setSelectedTicketId}
+                onSelect={selectTicket}
                 search={search}
                 onSearchChange={setSearch}
                 onRefresh={refresh}

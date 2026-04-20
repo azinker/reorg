@@ -19,7 +19,7 @@
  *                                              reader (thread + context). User-resizable.
  */
 
-import { useEffect, useState } from "react";
+import { startTransition, useEffect, useState } from "react";
 import { Settings, X } from "lucide-react";
 
 const STORAGE_KEY = "helpdesk:prefs:v1";
@@ -111,10 +111,34 @@ export function useHelpdeskPrefs(): HelpdeskPrefs {
     setPrefs(readPrefs());
     const onChange = (e: Event) => {
       const detail = (e as CustomEvent).detail as HelpdeskPrefs | undefined;
-      if (detail) setPrefs(detail);
+      if (!detail) return;
+      // The most expensive prefs change by far is `layout` — flipping
+      // between split and list re-shapes the entire help-desk tree
+      // (TicketList moves in/out of the resizable split, TicketReader
+      // gets a new parent). React treats that as a full unmount→remount
+      // of both subtrees, which on a production thread with long eBay
+      // HTML messages can take tens of seconds of synchronous work.
+      //
+      // Marking the layout change as a React 18 transition lets the
+      // click handler that triggered it resolve immediately and allows
+      // the heavy re-render to be interrupted by subsequent user input,
+      // so the page never feels frozen while the work is in flight.
+      // Density / drag-handle / autoAdvance changes are cheap and stay
+      // synchronous so they apply visually on the next frame.
+      const layoutChanged = detail.layout !== prefs.layout;
+      if (layoutChanged) {
+        startTransition(() => setPrefs(detail));
+      } else {
+        setPrefs(detail);
+      }
     };
     window.addEventListener("helpdesk:prefs-changed", onChange);
     return () => window.removeEventListener("helpdesk:prefs-changed", onChange);
+    // We intentionally only subscribe once on mount; the closure reads
+    // `prefs` for the layout-change comparison via React's stale-closure
+    // capture. That's fine because `setPrefs` itself is the trigger and
+    // any miss just falls back to a synchronous update.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   return prefs;
 }
