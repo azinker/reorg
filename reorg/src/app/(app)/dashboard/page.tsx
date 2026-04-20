@@ -82,8 +82,20 @@ async function fetchGridData(signal?: AbortSignal): Promise<GridPayload> {
       error: "Live grid returned zero rows.",
     };
   } catch (err) {
-    if (signal?.aborted || (err instanceof DOMException && err.name === "AbortError")) {
-      // Expected — user navigated away mid-flight.
+    // Treat anything that looks like an abort/navigation as expected and
+    // don't spam the console. Chrome reports an aborted fetch as either:
+    //   - DOMException name=AbortError (when AbortController.abort() ran
+    //     BEFORE the request started)
+    //   - TypeError "Failed to fetch" (when the page is mid-navigation
+    //     while the request is in flight — happens when user logs in to
+    //     /dashboard then immediately clicks the sidebar to /help-desk;
+    //     /api/grid is a 10-30 s call and almost always still pending
+    //     when navigation happens)
+    const aborted =
+      signal?.aborted ||
+      (err instanceof DOMException && err.name === "AbortError") ||
+      (err instanceof TypeError && /failed to fetch/i.test(err.message));
+    if (aborted) {
       return { rows: [], source: "error", error: "aborted" };
     }
     console.error("Failed to load grid data from API:", err);

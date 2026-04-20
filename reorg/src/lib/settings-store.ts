@@ -142,6 +142,16 @@ export async function hydrateSettings(): Promise<void> {
     }
     listeners.forEach((fn) => fn());
   } catch (err) {
-    console.error("[settings] hydrate failed", err);
+    // "Failed to fetch" / AbortError surface in the console as scary red
+    // text but they're benign — they happen when the page navigates while
+    // these three /api/settings calls are still in flight (e.g. user logs
+    // in and clicks the sidebar before settings have finished hydrating).
+    // Settings will hydrate again on the next page load, so silence them.
+    const benign =
+      (err instanceof DOMException && err.name === "AbortError") ||
+      (err instanceof TypeError && /failed to fetch/i.test(err.message));
+    if (!benign) {
+      console.error("[settings] hydrate failed", err);
+    }
   }
 }
