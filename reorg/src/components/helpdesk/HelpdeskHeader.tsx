@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import {
   LifeBuoy,
@@ -76,13 +76,67 @@ export function HelpdeskHeader({
   const prefs = useHelpdeskPrefs();
   const safeMode = syncStatus?.flags.safeMode ?? true;
 
-  // Local mirror so typing stays snappy even though the parent re-renders the
-  // ticket list on every keystroke. We still notify the parent immediately —
-  // it debounces server fetches itself in `use-helpdesk`.
+  /**
+   * Local mirror of the search input. Two reasons it lives here:
+   *
+   *  1. Snappy typing — the controlled `<input>` value comes from local
+   *     state, so each keystroke is a single small re-render of just the
+   *     header instead of the whole help-desk tree.
+   *  2. **Debounced parent commit** — we deliberately do NOT call
+   *     `onSearchChange` on every keystroke. The parent's `search` state
+   *     drives the prop tree of FolderSidebar / TicketList (all 50 ticket
+   *     rows!) / TicketReader / ContextPanel. Notifying the parent on every
+   *     keystroke caused a re-render storm that locked up the UI when
+   *     typing or deleting (e.g. typing "Apple" then backspacing it
+   *     out → 10 full help-desk re-renders).
+   *
+   * The parent now only hears about the search query 250 ms after the user
+   * stops typing. The page-level useHelpdesk hook still adds its own 500 ms
+   * debounce on top of that before hitting the network — together they
+   * mean common type-then-delete gestures fire ZERO re-renders below the
+   * header AND ZERO API calls.
+   */
   const [searchLocal, setSearchLocal] = useState(search);
+  // Sync external `search` changes (e.g. parent clearing it programmatically
+  // after a "go to ticket" deep-link) into the local mirror without firing
+  // a debounced notification back up.
+  const lastCommittedRef = useRef(search);
   useEffect(() => {
-    setSearchLocal(search);
+    if (search !== lastCommittedRef.current) {
+      lastCommittedRef.current = search;
+      setSearchLocal(search);
+    }
   }, [search]);
+
+  // Debounced commit — the parent only hears about a search change 250 ms
+  // after the user stops typing. We use a ref to track the pending timer
+  // so the cleanup function can cancel it on unmount or new keystrokes.
+  const commitTimerRef = useRef<number | null>(null);
+  useEffect(() => {
+    return () => {
+      if (commitTimerRef.current != null) {
+        window.clearTimeout(commitTimerRef.current);
+      }
+    };
+  }, []);
+  function scheduleCommit(value: string) {
+    if (commitTimerRef.current != null) {
+      window.clearTimeout(commitTimerRef.current);
+    }
+    commitTimerRef.current = window.setTimeout(() => {
+      commitTimerRef.current = null;
+      lastCommittedRef.current = value;
+      onSearchChange(value);
+    }, 250);
+  }
+  function commitNow(value: string) {
+    if (commitTimerRef.current != null) {
+      window.clearTimeout(commitTimerRef.current);
+      commitTimerRef.current = null;
+    }
+    lastCommittedRef.current = value;
+    onSearchChange(value);
+  }
 
   function setLayout(layout: HelpdeskLayout) {
     updateHelpdeskPrefs({ layout });
@@ -131,9 +185,19 @@ export function HelpdeskHeader({
             type="search"
             value={searchLocal}
             onChange={(e) => {
-              setSearchLocal(e.target.value);
-              onSearchChange(e.target.value);
+              const next = e.target.value;
+              setSearchLocal(next);
+              scheduleCommit(next);
             }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                commitNow(searchLocal);
+              } else if (e.key === "Escape" && searchLocal.length > 0) {
+                setSearchLocal("");
+                commitNow("");
+              }
+            }}
+            onBlur={() => commitNow(searchLocal)}
             placeholder="Search buyer, order #, or message…"
             className="h-8 w-full rounded-md border border-hairline bg-surface pl-8 pr-7 text-xs text-foreground placeholder:text-muted-foreground focus:border-brand/40 focus:outline-none focus:ring-2 focus:ring-brand/20"
             aria-label="Search inbox"
@@ -143,7 +207,7 @@ export function HelpdeskHeader({
               type="button"
               onClick={() => {
                 setSearchLocal("");
-                onSearchChange("");
+                commitNow("");
               }}
               className="absolute right-1 top-1/2 inline-flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-surface-2 hover:text-foreground cursor-pointer"
               title="Clear search"

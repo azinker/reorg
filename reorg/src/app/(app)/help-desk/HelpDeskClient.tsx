@@ -86,16 +86,22 @@ export default function HelpDeskClient() {
   }, []);
 
   const channelArg = channelFilter === "ALL" ? undefined : channelFilter;
-  // Debounce search before it hits the network. The header field still
-  // reflects every keystroke instantly (controlled local state in
-  // HelpdeskHeader), but the API request — which can be slow on a large
-  // mailbox (sequential scan over `messages.bodyText`) — only fires after
-  // the user pauses typing for 500 ms. eDesk uses ~500 ms too; at 350 ms a
-  // fast typist would still trigger one fetch mid-word. Crucially, common
-  // "type-then-delete" gestures (e.g. typing "Apple" then immediately
-  // backspacing it out) now stay entirely under the debounce window and
-  // fire ZERO fetches, eliminating the freeze the user experienced.
-  const debouncedSearch = useDebouncedValue(search, 500);
+  // Network-side debounce on top of the header's input-side debounce.
+  //
+  //   - HelpdeskHeader debounces 250 ms before notifying us of a search
+  //     change (so per-keystroke re-renders of FolderSidebar / TicketList /
+  //     TicketReader never happen).
+  //   - We add another 200 ms before firing the network request, which
+  //     means the API is hit ~450 ms after the user stops typing — close
+  //     to eDesk's ~500 ms. Common type-then-delete gestures (e.g.
+  //     "Apple" followed by 5 backspaces in <750 ms total) still fire
+  //     zero re-renders below the header AND zero API calls.
+  //
+  // We deliberately keep this short because the heavy lifting (avoiding
+  // the re-render storm) already happens in HelpdeskHeader; this debounce
+  // is only here to coalesce two-stage typing patterns into a single
+  // fetch.
+  const debouncedSearch = useDebouncedValue(search, 200);
   const searchArg =
     debouncedSearch.trim().length > 0 ? debouncedSearch.trim() : undefined;
 
