@@ -180,6 +180,14 @@ interface UseHelpdeskReturn {
   syncStatus: HelpdeskSyncStatus | null;
   triggerManualSync: () => Promise<void>;
   manualSyncing: boolean;
+  /**
+   * Hint to begin loading a ticket's full detail before the user clicks it
+   * (typically wired up to `onMouseEnter` on a ticket row). Reads cache first,
+   * fires a fetch in the background otherwise, and stores the result so the
+   * subsequent click resolves instantly. Safe to call repeatedly — duplicate
+   * in-flight prefetches are deduped.
+   */
+  prefetchTicket: (id: string) => void;
 }
 
 const POLL_INTERVAL_MS = 60_000;
@@ -593,5 +601,40 @@ export function useHelpdesk(args: UseHelpdeskArgs): UseHelpdeskReturn {
     syncStatus,
     triggerManualSync,
     manualSyncing,
+    prefetchTicket,
   };
+}
+
+/**
+ * In-flight prefetch dedupe set. Module-level so it survives across the
+ * (rare) `useHelpdesk` remount and so multiple TicketList instances coexist
+ * without firing duplicate prefetches.
+ */
+const inflightPrefetches = new Set<string>();
+
+/**
+ * Pure prefetch function exported on the hook return. Lives at module scope
+ * (not inside the hook) so the identity is stable and callers can use it in
+ * `onMouseEnter` handlers without retriggering effects.
+ */
+function prefetchTicket(id: string): void {
+  if (!id) return;
+  if (getDetail(id)) return; // already cached, nothing to do
+  if (inflightPrefetches.has(id)) return; // dedupe
+  inflightPrefetches.add(id);
+  // Fire and forget — we deliberately do not await. Errors are swallowed
+  // because this is a hint, not a contract; if the user clicks anyway the
+  // regular `loadSelected` path will surface any failure.
+  void fetch(`/api/helpdesk/tickets/${id}`, { cache: "no-store" })
+    .then(async (res) => {
+      if (!res.ok) return;
+      const json = (await res.json()) as { data: HelpdeskTicketDetail };
+      setDetail(id, json.data);
+    })
+    .catch(() => {
+      // benign — selection-time fetch will retry
+    })
+    .finally(() => {
+      inflightPrefetches.delete(id);
+    });
 }

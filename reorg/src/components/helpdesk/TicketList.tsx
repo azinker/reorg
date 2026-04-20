@@ -89,6 +89,15 @@ interface TicketListProps {
   paging?: boolean;
   onPrevPage?: () => void;
   onNextPage?: () => void;
+  /**
+   * Optional prefetch hook called on row hover/focus. Wired up to
+   * `useHelpdesk().prefetchTicket` so the ticket detail starts loading the
+   * moment the cursor lands on a row — by the time the user clicks, the
+   * payload is already in the inbox cache and the click resolves instantly.
+   * eDesk uses the same pattern (and it's the single biggest reason their
+   * inbox feels snappier than ours).
+   */
+  onPrefetch?: (id: string) => void;
 }
 
 const STATUS_COLOR: Record<string, string> = {
@@ -146,6 +155,7 @@ export function TicketList({
   paging = false,
   onPrevPage,
   onNextPage,
+  onPrefetch,
 }: TicketListProps) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
@@ -487,6 +497,8 @@ export function TicketList({
                     key={t.id}
                     onContextMenu={(e) => openContextMenu(e, t.id)}
                     onClick={() => onSelect(t.id)}
+                    onMouseEnter={() => onPrefetch?.(t.id)}
+                    onFocus={() => onPrefetch?.(t.id)}
                     className={cn(
                       "group cursor-pointer border-b border-hairline align-middle transition-colors",
                       isUnread
@@ -679,6 +691,8 @@ export function TicketList({
                   <button
                     type="button"
                     onClick={() => onSelect(t.id)}
+                    onMouseEnter={() => onPrefetch?.(t.id)}
+                    onFocus={() => onPrefetch?.(t.id)}
                     className={cn(
                       "flex w-full flex-col gap-1 pr-3 text-left transition-colors cursor-pointer",
                       rowPad,

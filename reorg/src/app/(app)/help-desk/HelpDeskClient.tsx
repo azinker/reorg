@@ -136,6 +136,7 @@ export default function HelpDeskClient() {
     syncStatus,
     triggerManualSync,
     manualSyncing,
+    prefetchTicket,
   } = useHelpdesk({ folder, channel: channelArg, search: searchArg });
 
   /**
@@ -337,6 +338,7 @@ export default function HelpDeskClient() {
                 loading={loading}
                 selectedId={selectedTicketId}
                 onSelect={selectTicket}
+                onPrefetch={prefetchTicket}
                 search={search}
                 onSearchChange={setSearch}
                 onRefresh={refresh}
@@ -392,6 +394,7 @@ export default function HelpDeskClient() {
                 loading={loading}
                 selectedId={selectedTicketId}
                 onSelect={selectTicket}
+                onPrefetch={prefetchTicket}
                 search={search}
                 onSearchChange={setSearch}
                 onRefresh={refresh}
