@@ -229,6 +229,52 @@ export function ThreadView({
     );
   }, [ticket, events]);
 
+  // ─────────────────────────────────────────────────────────────────────────
+  // Lazy thread expansion (eDesk parity).
+  //
+  // Long threads with 10+ eBay HTML messages spend 4–7 seconds running
+  // DOMPurify + DOM walks on the body of every single message during the
+  // initial mount. That work is unavoidable for messages the agent actually
+  // sees, but it's wasteful for older messages they almost never scroll back
+  // to. eDesk shows the latest few messages and offers a "show earlier
+  // messages" affordance — replicating that here cuts the open click latency
+  // dramatically on heavy threads while keeping the most recent context
+  // visible immediately.
+  //
+  // Notes / system events are tiny to render and don't trigger SafeHtml at
+  // all, so we count only `message` items toward the threshold. Older items
+  // (messages, notes, system events alike) get hidden behind the toggle to
+  // preserve chronological grouping — clicking expand reveals everything.
+  // ─────────────────────────────────────────────────────────────────────────
+  const INITIAL_MESSAGE_LIMIT = 8;
+  const messageCount = items.reduce(
+    (n, it) => n + (it.type === "message" ? 1 : 0),
+    0,
+  );
+  const [expanded, setExpanded] = useState(false);
+  // Reset to collapsed whenever we open a different ticket.
+  useEffect(() => {
+    setExpanded(false);
+  }, [ticketId]);
+  // Find the index of the (messageCount - INITIAL_MESSAGE_LIMIT)-th message
+  // counting from the start. Everything before that index gets hidden.
+  let firstShownIndex = 0;
+  if (!expanded && messageCount > INITIAL_MESSAGE_LIMIT) {
+    let messagesSeen = 0;
+    const messagesToHide = messageCount - INITIAL_MESSAGE_LIMIT;
+    for (let i = 0; i < items.length; i += 1) {
+      if (items[i]!.type === "message") {
+        messagesSeen += 1;
+        if (messagesSeen > messagesToHide) {
+          firstShownIndex = i;
+          break;
+        }
+      }
+    }
+  }
+  const visibleItems = items.slice(firstShownIndex);
+  const hiddenCount = items.length - visibleItems.length;
+
   if (loading && !ticket) {
     return (
       <div className="flex flex-1 items-center justify-center">
@@ -285,13 +331,25 @@ export function ThreadView({
           </p>
         ) : (
           <ol className="mx-auto flex max-w-3xl flex-col gap-3">
+            {hiddenCount > 0 && (
+              <li className="flex justify-center">
+                <button
+                  type="button"
+                  onClick={() => setExpanded(true)}
+                  className="cursor-pointer rounded-full border border-hairline bg-surface px-3 py-1 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-card hover:text-foreground"
+                  title="Render the rest of this thread"
+                >
+                  Show {hiddenCount} earlier {hiddenCount === 1 ? "item" : "items"}
+                </button>
+              </li>
+            )}
             {(() => {
               // Inject a centered "date" pill whenever the calendar day
               // changes between consecutive items. eDesk does this and it
               // makes a long thread far easier to scan.
               const rendered: React.ReactNode[] = [];
               let lastDayKey: string | null = null;
-              for (const item of items) {
+              for (const item of visibleItems) {
                 const dayKey = new Date(item.at).toDateString();
                 if (dayKey !== lastDayKey) {
                   lastDayKey = dayKey;
