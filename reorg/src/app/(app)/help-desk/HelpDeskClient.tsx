@@ -159,6 +159,23 @@ export default function HelpDeskClient() {
     [setSelectedTicketId],
   );
 
+  /**
+   * Last non-null ticket detail we showed in the reader. We pass this to
+   * `TicketReader` even after the user clicks "Back" so the reader's DOM
+   * (including all sanitised SafeHtml bubbles) stays mounted while we
+   * visually cross-fade back to the inbox. Hiding the reader via CSS
+   * instead of unmounting avoids a 1–2 second long task on heavy threads
+   * where React would otherwise tear down hundreds of sanitised HTML
+   * nodes and trigger GC. The retained content gets replaced atomically
+   * the next time the user actually opens a *different* ticket.
+   */
+  const [retainedTicket, setRetainedTicket] = useState<typeof selectedTicket>(
+    null,
+  );
+  useEffect(() => {
+    if (selectedTicket) setRetainedTicket(selectedTicket);
+  }, [selectedTicket]);
+
   const safeMode = useMemo(
     () => syncStatus?.flags.safeMode ?? true,
     [syncStatus?.flags.safeMode],
@@ -359,10 +376,30 @@ export default function HelpDeskClient() {
                 onNextPage={goNextPage}
               />
             </div>
-            {selectedTicketId !== null && (
-              <div className="flex flex-1 min-w-0">
+            {/*
+              PERFORMANCE: TicketReader stays mounted as soon as any ticket
+              has been opened. On "Back" we just hide it with CSS — the
+              entire SafeHtml/ContextPanel/Composer subtree (often hundreds
+              of sanitised DOM nodes) is preserved instead of being torn
+              down, which eliminates the 1–2 s long task that the unmount
+              cascade used to produce on heavy eBay HTML threads. The
+              retained ticket is swapped only when the user opens a
+              *different* ticket, so the cost is paid at most once per
+              switch instead of once per Back.
+            */}
+            {retainedTicket && (
+              <div
+                className={cn(
+                  "flex flex-1 min-w-0",
+                  selectedTicketId === null && "hidden",
+                )}
+              >
                 <TicketReader
-                  ticket={selectedTicket}
+                  ticket={
+                    selectedTicket && selectedTicket.id === selectedTicketId
+                      ? selectedTicket
+                      : retainedTicket
+                  }
                   loading={selectedLoading}
                   safeMode={safeMode}
                   syncStatus={syncStatus}
