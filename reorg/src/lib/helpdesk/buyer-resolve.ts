@@ -130,6 +130,56 @@ export function extractBuyerFromBody(text: string | null | undefined): string | 
   return null;
 }
 
+/**
+ * Extract the buyer's real first/last name from the rendered body of one of
+ * our outbound Auto Responder messages.
+ *
+ * The AR template always opens with "{buyer_name},<br /><br />" where
+ * `{buyer_name}` is the eBay-supplied "First Last" pulled from the
+ * `Buyer.UserFirstName` + `Buyer.UserLastName` fields in `GetOrders`.
+ * That's the *only* place in the system where we currently surface a real
+ * human name, because `MarketplaceSaleOrder.buyerDisplayLabel` is just the
+ * eBay username and the GetMyMessages payload never includes a name at all.
+ *
+ * This helper inverts that template: it looks at the first line of the body
+ * and pulls back out whatever string preceded the opening "<br". We do
+ * conservative validation:
+ *
+ *   - Must be 2+ characters.
+ *   - Must contain at least one letter.
+ *   - Must NOT be the eBay username (caller usually filters this anyway).
+ *   - Must NOT be obvious noise ("Hi", "Hello", "Dear", "Buyer").
+ *
+ * Returns null when there's no confident match. Keep this synchronous —
+ * it's called inside the digest-parsing inner loop on every sub-message
+ * we attribute to AR, and we want it to be cheap.
+ */
+export function extractBuyerNameFromAutoResponderBody(
+  body: string | null | undefined,
+): string | null {
+  if (!body) return null;
+  const trimmed = body.trimStart();
+  // The AR body is HTML — the greeting is "<First Last>,<br />…".
+  const match = /^([A-Za-z][A-Za-z\s\-'\.]{1,80}?)\s*,\s*<br/i.exec(trimmed);
+  const candidate = match?.[1]?.trim();
+  if (!candidate) return null;
+  if (candidate.length < 2) return null;
+  if (!/[A-Za-z]/.test(candidate)) return null;
+  const lower = candidate.toLowerCase();
+  if (
+    lower === "hi" ||
+    lower === "hello" ||
+    lower === "dear" ||
+    lower === "buyer" ||
+    lower === "customer" ||
+    lower === "valued customer" ||
+    lower === "valued"
+  ) {
+    return null;
+  }
+  return candidate;
+}
+
 // ─── Sale-order fallback ──────────────────────────────────────────────────
 
 /**

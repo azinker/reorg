@@ -44,6 +44,7 @@ import { deriveStatusOnInbound } from "@/lib/helpdesk/status-routing";
 import { classifyMessageSource } from "@/lib/helpdesk/message-source";
 import { detectTicketType } from "@/lib/helpdesk/type-detect";
 import {
+  extractBuyerNameFromAutoResponderBody,
   resolveBuyerForDigest,
   type ResolvedBuyer,
 } from "@/lib/helpdesk/buyer-resolve";
@@ -806,6 +807,13 @@ async function reconcileMessages(args: ReconcileArgs): Promise<ReconcileResult> 
             }
           }
 
+          // Track the best buyer real-name we discover during this digest
+          // expansion. We only learn first/last names from AR bodies (the
+          // rest of the system stores eBay usernames). If we find one,
+          // we'll patch the ticket once after the loop instead of inside
+          // each iteration.
+          let realBuyerNameFromAr: string | null = null;
+
           for (const sub of parsed.subMessages) {
             // Skip sub-messages with unknown direction — they're almost
             // always the eBay header/footer template fragments and not
@@ -827,13 +835,30 @@ async function reconcileMessages(args: ReconcileArgs): Promise<ReconcileResult> 
             // other outbound subs get the generic EBAY source (we don't
             // know whether a human agent wrote them or eBay generated
             // them — but they're definitely "from us").
-            const subSource =
+            const isArSub =
               subDirection === HelpdeskMessageDirection.OUTBOUND &&
-              arHashes.has(sub.bodyHash)
-                ? HelpdeskMessageSource.AUTO_RESPONDER
-                : subDirection === HelpdeskMessageDirection.INBOUND
-                  ? HelpdeskMessageSource.EBAY
-                  : HelpdeskMessageSource.EBAY;
+              arHashes.has(sub.bodyHash);
+            const subSource = isArSub
+              ? HelpdeskMessageSource.AUTO_RESPONDER
+              : subDirection === HelpdeskMessageDirection.INBOUND
+                ? HelpdeskMessageSource.EBAY
+                : HelpdeskMessageSource.EBAY;
+
+            // AR bodies open with "{First Last},<br />…" — pull the real
+            // human name back out so the inbox Customer column can show
+            // it instead of the eBay username. Cheap regex; no DB hit.
+            if (isArSub && !realBuyerNameFromAr) {
+              const extracted = extractBuyerNameFromAutoResponderBody(
+                sub.bodyHtml,
+              );
+              if (
+                extracted &&
+                extracted.toLowerCase() !==
+                  (buyerUserId ?? "").toLowerCase()
+              ) {
+                realBuyerNameFromAr = extracted;
+              }
+            }
 
             try {
               await db.helpdeskMessage.create({
@@ -883,6 +908,30 @@ async function reconcileMessages(args: ReconcileArgs): Promise<ReconcileResult> 
               ) {
                 console.error(
                   "[helpdesk-sync] sub-message insert failed",
+                  err,
+                );
+              }
+            }
+          }
+
+          // Patch ticket.buyerName with the real "First Last" we pulled
+          // out of any AR sub-message in this digest. Only overwrite when
+          // the existing value is missing OR is just the eBay username
+          // (we never want to clobber a real name with a different one).
+          if (realBuyerNameFromAr) {
+            const currentLower = (ticket.buyerName ?? "").toLowerCase();
+            const usernameLower = (ticket.buyerUserId ?? "").toLowerCase();
+            const looksLikeUsername =
+              !currentLower || currentLower === usernameLower;
+            if (looksLikeUsername) {
+              try {
+                await db.helpdeskTicket.update({
+                  where: { id: ticket.id },
+                  data: { buyerName: realBuyerNameFromAr },
+                });
+              } catch (err) {
+                console.error(
+                  "[helpdesk-sync] AR-derived buyerName update failed",
                   err,
                 );
               }

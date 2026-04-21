@@ -627,7 +627,25 @@ function Cell({ column, ticket: t, isUnread, timeLeft, otherViewers }: CellProps
         </div>
       );
 
-    case "customer":
+    case "customer": {
+      // Customer column = real first/last name. We deliberately do NOT
+      // fall back to the eBay username here — that column already shows
+      // the username and duplicating it adds zero information. When we
+      // don't yet have a derived name (no AR message, no order match),
+      // render an em-dash so the agent immediately sees "we don't have
+      // a name for this buyer yet" instead of two identical columns.
+      const username = t.buyerUserId ?? null;
+      const name = t.buyerName ?? null;
+      const isJustUsername =
+        !!name &&
+        !!username &&
+        name.toLowerCase() === username.toLowerCase();
+      const display = name && !isJustUsername ? name : "—";
+      const tooltip = name && !isJustUsername
+        ? name
+        : username
+          ? `No first/last name on file for ${username}`
+          : "Unknown buyer";
       return (
         <div className="flex min-w-0 items-center gap-2 px-2">
           {isUnread && (
@@ -640,13 +658,15 @@ function Cell({ column, ticket: t, isUnread, timeLeft, otherViewers }: CellProps
             className={cn(
               "min-w-0 truncate",
               isUnread ? "font-semibold text-foreground" : "font-normal",
+              display === "—" && "text-muted-foreground",
             )}
-            title={t.buyerName ?? t.buyerUserId ?? "Unknown buyer"}
+            title={tooltip}
           >
-            {t.buyerName ?? t.buyerUserId ?? "Unknown buyer"}
+            {display}
           </span>
         </div>
       );
+    }
 
     case "type": {
       const cls = TYPE_BADGE_COLOR[t.type] ?? TYPE_BADGE_COLOR.OTHER;

@@ -17,9 +17,19 @@ export const dynamic = "force-dynamic";
  * and entities decoded; whitespace is collapsed; the result is truncated to
  * 240 chars to keep the inbox payload small while leaving the table room to
  * truncate further with CSS for visual polish.
+ *
+ * `stripGreetingFor` (optional): when supplied, we look at the very first
+ * tokens of the cleaned text and, if they spell out the buyer's name
+ * followed by a comma, drop them. The Customer column already shows the
+ * buyer's name — repeating "Jonathan Towers," at the start of the preview
+ * just steals horizontal space from the actual message content.
  */
 const PREVIEW_MAX = 240;
-function summarizeBody(body: string | null | undefined, isHtml: boolean): string {
+function summarizeBody(
+  body: string | null | undefined,
+  isHtml: boolean,
+  stripGreetingFor?: string | null,
+): string {
   if (!body) return "";
   let text = body;
   if (isHtml) {
@@ -39,6 +49,24 @@ function summarizeBody(body: string | null | undefined, isHtml: boolean): string
     .replace(/&#39;|&apos;/gi, "'")
     .replace(/\s+/g, " ")
     .trim();
+
+  // If the message opens with a greeting matching the known buyer name
+  // (eg. AR "Jonathan Towers, 🚨🚨 Great News!" or buyer "Hi/Hello/Dear"
+  // forms), peel it off so the Customer column and the preview don't show
+  // the same string back-to-back.
+  if (stripGreetingFor) {
+    const nameEsc = stripGreetingFor.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    // 1) "<First Last>,\s+rest"  (AR shape)
+    const direct = new RegExp(`^${nameEsc}\\s*,\\s*`, "i");
+    if (direct.test(text)) text = text.replace(direct, "");
+    // 2) "Hi <First Last>," / "Hello …" / "Dear …"
+    const salutation = new RegExp(
+      `^(?:Hi|Hello|Dear)\\s+${nameEsc}\\s*,\\s*`,
+      "i",
+    );
+    if (salutation.test(text)) text = text.replace(salutation, "");
+  }
+
   if (text.length > PREVIEW_MAX) {
     text = text.slice(0, PREVIEW_MAX - 1).trimEnd() + "…";
   }
@@ -153,9 +181,23 @@ export async function GET(request: NextRequest) {
       orderBy: { sentAt: "desc" },
       select: { ticketId: true, bodyText: true, isHtml: true },
     });
+    // Build a fast ticketId -> buyerName map so we can pass the right
+    // greeting-strip target to summarizeBody for each row without an
+    // extra lookup.
+    const buyerNameByTicket = new Map<string, string | null>();
+    for (const t of page) {
+      buyerNameByTicket.set(t.id, t.buyerName);
+    }
     for (const m of recent) {
       if (previewByTicket.has(m.ticketId)) continue;
-      previewByTicket.set(m.ticketId, summarizeBody(m.bodyText, m.isHtml));
+      previewByTicket.set(
+        m.ticketId,
+        summarizeBody(
+          m.bodyText,
+          m.isHtml,
+          buyerNameByTicket.get(m.ticketId) ?? null,
+        ),
+      );
     }
   }
 
