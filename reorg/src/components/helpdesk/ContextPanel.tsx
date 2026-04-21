@@ -133,6 +133,7 @@ interface OrderContext {
   shippedTime: string | null;
   estimatedDeliveryMin: string | null;
   estimatedDeliveryMax: string | null;
+  actualDeliveryTime: string | null;
   shippingService: string | null;
   trackingNumber: string | null;
   trackingCarrier: string | null;
@@ -834,7 +835,7 @@ function OrderInfoSection({
             <div className="px-3 py-2 text-xs">
               <div className="mb-0.5 flex items-center justify-between gap-2">
                 <p className="text-[10px] uppercase tracking-wider text-muted-foreground">
-                  Estimated Delivery
+                  {ctx?.actualDeliveryTime ? "Delivered" : "Estimated Delivery"}
                 </p>
                 {ctx?.shippingService ? (
                   <span className="rounded bg-surface-2 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-foreground">
@@ -842,12 +843,27 @@ function OrderInfoSection({
                   </span>
                 ) : null}
               </div>
-              <p className="text-foreground">
-                {formatEstimatedDelivery(
-                  ctx?.estimatedDeliveryMin,
-                  ctx?.estimatedDeliveryMax,
-                )}
-              </p>
+              {ctx?.actualDeliveryTime ? (
+                // eBay confirmed delivery — show that prominently with a green
+                // dot and the actual delivery date. The estimated window
+                // becomes irrelevant once the carrier has scanned "delivered".
+                <p className="flex items-center gap-1.5 text-foreground">
+                  <span
+                    className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-500"
+                    aria-hidden
+                  />
+                  <span className="font-medium text-emerald-700 dark:text-emerald-300">
+                    {formatLongDate(ctx.actualDeliveryTime)}
+                  </span>
+                </p>
+              ) : (
+                <p className="text-foreground">
+                  {formatEstimatedDelivery(
+                    ctx?.estimatedDeliveryMin,
+                    ctx?.estimatedDeliveryMax,
+                  )}
+                </p>
+              )}
             </div>
 
             <div className="px-3 py-2 text-xs">
@@ -1065,6 +1081,24 @@ function formatShortDate(value: string | null | undefined): string {
   if (!value) return "—";
   try {
     return new Date(value).toLocaleDateString(undefined, {
+      month: "short",
+      day: "numeric",
+    });
+  } catch {
+    return "—";
+  }
+}
+
+/**
+ * "Mon, Mar 2" used by the Delivered confirmation row. Slightly longer than
+ * `formatShortDate` because it includes the weekday — buyers and agents both
+ * think about "did it land before Monday" so the weekday earns its width.
+ */
+function formatLongDate(value: string | null | undefined): string {
+  if (!value) return "—";
+  try {
+    return new Date(value).toLocaleDateString(undefined, {
+      weekday: "short",
       month: "short",
       day: "numeric",
     });

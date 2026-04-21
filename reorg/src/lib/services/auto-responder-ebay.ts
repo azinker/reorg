@@ -216,7 +216,7 @@ export function buildEbayConfig(integration: { config: unknown }): EbayConfig {
 
 // ΓöÇΓöÇΓöÇ XML parser (lightweight, same as ship-orders) ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 
-function parseXmlSimple(xml: string): Record<string, unknown> {
+export function parseXmlSimple(xml: string): Record<string, unknown> {
   // Reuse fast-xml-parser if available, else simple regex extraction.
   // `isArray` forces the listed tags to always parse as arrays so single-
   // element collections (e.g. one ShipmentTrackingDetails) still walk the
@@ -225,9 +225,16 @@ function parseXmlSimple(xml: string): Record<string, unknown> {
   try {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { XMLParser } = require("fast-xml-parser");
+    // CRITICAL: `parseTagValue: false` keeps every text node as a string.
+    // eBay tracking numbers are 22 digits (USPS) and the parser would
+    // otherwise coerce them into JS numbers, losing precision
+    // (9401903308746074110125 -> 9.401903308746074e+21). Same risk for
+    // OrderID, ItemID, SKU, postal codes, and any other "looks numeric but
+    // isn't a number" field.
     const parser = new XMLParser({
       ignoreAttributes: true,
       trimValues: true,
+      parseTagValue: false,
       isArray: (tagName: string) =>
         [
           "Order",
@@ -257,7 +264,7 @@ function parseXmlSimple(xml: string): Record<string, unknown> {
  * shipped via CompleteSale (which is most of TPP's volume ΓÇö eDesk picks it
  * up via the same broader walk).
  */
-function extractTrackingFromOrder(
+export function extractTrackingFromOrder(
   order: Record<string, unknown>,
 ): { number: string | null; carrier: string | null } {
   const pickFromDetails = (
@@ -319,6 +326,71 @@ function extractTrackingFromOrder(
   }
 
   return { number: null, carrier: null };
+}
+
+/**
+ * Pull estimated delivery + actual delivery from the GetOrders response.
+ *
+ * eBay exposes delivery info in three different shapes depending on the order
+ * vintage and shipping path:
+ *   a) Order.EstimatedDeliveryDateMin / Max                            (rare)
+ *   b) Order.ShippingServiceSelected.EstimatedDeliveryDateMin / Max    (legacy)
+ *   c) Transaction.ShippingServiceSelected.ShippingPackageInfo
+ *        .EstimatedDeliveryTimeMin / Max                               (current)
+ *
+ * Most TPP volume lands in (c) because eBay returns the package-level
+ * estimate once handling time is configured. Without that fallback the
+ * right-rail showed "TBD" even when eBay had a window the buyer was seeing.
+ *
+ * `ActualDeliveryTime` lives on the same package-info nodes once the carrier
+ * confirms delivery; we surface it so the panel can swap "Estimated" for
+ * "Delivered <date>".
+ */
+export function extractDeliveryDates(
+  order: Record<string, unknown>,
+  firstTx: Record<string, unknown> | undefined,
+): {
+  estimatedMin: string | null;
+  estimatedMax: string | null;
+  actualDeliveryTime: string | null;
+} {
+  const pickFirstString = (...candidates: unknown[]): string | null => {
+    for (const c of candidates) {
+      if (c == null) continue;
+      const s = String(c).trim();
+      if (s) return s;
+    }
+    return null;
+  };
+  const orderSss = order.ShippingServiceSelected as
+    | Record<string, unknown>
+    | undefined;
+  const orderPkg = orderSss?.ShippingPackageInfo as
+    | Record<string, unknown>
+    | undefined;
+  const txSss = firstTx?.ShippingServiceSelected as
+    | Record<string, unknown>
+    | undefined;
+  const txPkg = txSss?.ShippingPackageInfo as
+    | Record<string, unknown>
+    | undefined;
+
+  return {
+    estimatedMin: pickFirstString(
+      order.EstimatedDeliveryDateMin,
+      orderSss?.EstimatedDeliveryDateMin,
+      txPkg?.EstimatedDeliveryTimeMin,
+    ),
+    estimatedMax: pickFirstString(
+      order.EstimatedDeliveryDateMax,
+      orderSss?.EstimatedDeliveryDateMax,
+      txPkg?.EstimatedDeliveryTimeMax,
+    ),
+    actualDeliveryTime: pickFirstString(
+      orderPkg?.ActualDeliveryTime,
+      txPkg?.ActualDeliveryTime,
+    ),
+  };
 }
 
 // ΓöÇΓöÇΓöÇ GetOrders enrichment (buyer + item data) ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
@@ -475,6 +547,13 @@ export interface EbayOrderContext {
   shippedTime: string | null;
   estimatedDeliveryMin: string | null;
   estimatedDeliveryMax: string | null;
+  /**
+   * Confirmed delivery timestamp (eBay's `ActualDeliveryTime`). Populated
+   * once the carrier reports the package as delivered. We surface this so
+   * the agent immediately sees "Delivered Mar 2" instead of a stale
+   * "estimated by Mar 2" window.
+   */
+  actualDeliveryTime: string | null;
   /** Shipping service summary, e.g. "USPS Ground Advantage". */
   shippingService: string | null;
   /** First tracking number found, plus carrier when eBay sent one. */
@@ -634,19 +713,10 @@ export async function fetchEbayOrderContext(
     })
     .filter((li) => li.itemId);
 
-  // Estimated delivery ΓÇö multiple eBay shapes; capture both ends if present.
-  const ed = order.ShippingServiceSelected as Record<string, unknown> | undefined;
-  // eBay also exposes EstimatedDeliveryDateMin/Max on the order itself.
-  const estimatedDeliveryMin = order.EstimatedDeliveryDateMin
-    ? String(order.EstimatedDeliveryDateMin)
-    : ed?.EstimatedDeliveryDateMin
-      ? String(ed.EstimatedDeliveryDateMin)
-      : null;
-  const estimatedDeliveryMax = order.EstimatedDeliveryDateMax
-    ? String(order.EstimatedDeliveryDateMax)
-    : ed?.EstimatedDeliveryDateMax
-      ? String(ed.EstimatedDeliveryDateMax)
-      : null;
+  const delivery = extractDeliveryDates(order, firstTx);
+  const estimatedDeliveryMin = delivery.estimatedMin;
+  const estimatedDeliveryMax = delivery.estimatedMax;
+  const actualDeliveryTime = delivery.actualDeliveryTime;
 
   const totalCents = parseDollarsToCents(order.Total ?? order.AmountPaid);
   const currency = pickCurrency(order.Total) ?? pickCurrency(order.AmountPaid);
@@ -670,6 +740,7 @@ export async function fetchEbayOrderContext(
     shippedTime: order.ShippedTime ? String(order.ShippedTime) : null,
     estimatedDeliveryMin,
     estimatedDeliveryMax,
+    actualDeliveryTime,
     shippingService,
     trackingNumber,
     trackingCarrier,

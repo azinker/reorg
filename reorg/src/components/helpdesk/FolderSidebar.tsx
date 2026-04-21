@@ -131,7 +131,7 @@ const PINNED_TAGS: FolderRow[] = [
     label: "Cancel Requests",
     icon: Ban,
     tooltip:
-      "Tickets where the buyer asked to cancel an order. Auto-routed by the 'Buyer Request Cancellation' filter — handle these fast to avoid forced cancellations.",
+      "Tickets routed here by any filter whose action is 'Move to Cancel Requests'. These are hidden from All Tickets / New / To Do / Waiting so they don't dilute the main inbox — handle them fast to avoid forced cancellations.",
   },
 ];
 

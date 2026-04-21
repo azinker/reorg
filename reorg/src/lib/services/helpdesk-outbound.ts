@@ -32,7 +32,7 @@ import {
   type HelpdeskTicket,
   type Integration,
 } from "@prisma/client";
-import { helpdeskFlags } from "@/lib/helpdesk/flags";
+import { helpdeskFlags, helpdeskFlagsSnapshotAsync } from "@/lib/helpdesk/flags";
 import {
   buildEbayConfig,
   sendHelpdeskReply,
@@ -122,16 +122,21 @@ async function sendOne(
     ticket: HelpdeskTicket & { integration: Integration };
   },
 ): Promise<"sent" | "blocked" | "failed"> {
-  // Safe Mode is the killswitch.
-  if (helpdeskFlags.safeMode) {
+  // Safe Mode is the killswitch. We use the ASYNC snapshot here so the
+  // global write lock (Settings → Write Safety) is honored — flipping the
+  // lock in the UI must immediately stop outbound traffic without anyone
+  // having to redeploy or change an env var.
+  const flags = await helpdeskFlagsSnapshotAsync();
+  if (flags.safeMode) {
+    const reason = flags.globalWriteLock ? "global_write_lock" : "safe_mode";
     await db.helpdeskOutboundJob.update({
       where: { id: job.id },
       data: {
         status: HelpdeskOutboundStatus.CANCELED,
-        lastError: "blocked_by_safe_mode",
+        lastError: `blocked_by_${reason}`,
       },
     });
-    await audit(job, "HELPDESK_OUTBOUND_BLOCKED", { reason: "safe_mode" });
+    await audit(job, "HELPDESK_OUTBOUND_BLOCKED", { reason });
     return "blocked";
   }
 

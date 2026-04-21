@@ -177,10 +177,17 @@ export function HelpdeskHeader({
         so it's always reachable regardless of which layout (split / list)
         or which ticket is open. Submits as you type via `onSearchChange`,
         which the page-level `useHelpdesk` hook debounces.
+
+        SCOPE: searches buyer USERNAME or eBay ORDER NUMBER only. We
+        deliberately removed body / subject / item-id matching — agents
+        kept stumbling on irrelevant matches (e.g. typing "Apple" surfaced
+        every message containing the word "apple" from any thread). The
+        server-side route enforces the same restriction; this placeholder
+        is just the user-facing contract.
       */}
-      <div className="mx-6 hidden max-w-md flex-1 md:block">
+      <div className="mx-6 hidden max-w-2xl flex-1 md:block">
         <div className="relative mx-auto">
-          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <input
             type="search"
             value={searchLocal}
@@ -198,9 +205,9 @@ export function HelpdeskHeader({
               }
             }}
             onBlur={() => commitNow(searchLocal)}
-            placeholder="Search buyer, order #, or message…"
-            className="h-8 w-full rounded-md border border-hairline bg-surface pl-8 pr-7 text-xs text-foreground placeholder:text-muted-foreground focus:border-brand/40 focus:outline-none focus:ring-2 focus:ring-brand/20"
-            aria-label="Search inbox"
+            placeholder="Search by buyer username or eBay Order ID (NN-NNNNN-NNNNN)…"
+            className="h-10 w-full rounded-md border border-hairline bg-surface pl-9 pr-9 text-sm text-foreground placeholder:text-muted-foreground focus:border-brand/40 focus:outline-none focus:ring-2 focus:ring-brand/20"
+            aria-label="Search inbox by buyer username or eBay Order ID"
           />
           {searchLocal.length > 0 && (
             <button
@@ -209,11 +216,11 @@ export function HelpdeskHeader({
                 setSearchLocal("");
                 commitNow("");
               }}
-              className="absolute right-1 top-1/2 inline-flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-surface-2 hover:text-foreground cursor-pointer"
+              className="absolute right-1.5 top-1/2 inline-flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-surface-2 hover:text-foreground cursor-pointer"
               title="Clear search"
               aria-label="Clear search"
             >
-              <X className="h-3 w-3" />
+              <X className="h-3.5 w-3.5" />
             </button>
           )}
         </div>

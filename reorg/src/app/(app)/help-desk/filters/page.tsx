@@ -74,6 +74,7 @@ const FOLDER_LABEL: Record<FilterActionFolder, string> = {
   spam: "Mark as spam",
   resolved: "Mark resolved",
   inbox: "Move to inbox",
+  cancel_requests: "Move to Cancel Requests",
 };
 
 /**
@@ -91,6 +92,8 @@ const ACTION_HELP: Record<FilterActionFolder, string> = {
     "Marks matching tickets as Resolved. They move to the Resolved folder. Use this for confirmation messages that need no agent reply.",
   inbox:
     "Brings matching tickets back into the inbox (status NEW). Useful when another filter has hidden them and you want to undo it for a subset.",
+  cancel_requests:
+    "Routes matching tickets to the Cancel Requests folder. They are HIDDEN from All Tickets, New, To Do, Waiting, Pre-sales, My Tickets, Unassigned, and Mentioned — but their status (NEW/TO_DO/WAITING) is preserved so they're still actionable.",
 };
 
 function emptyDraft(): FilterRow {

@@ -26,7 +26,7 @@ import {
 } from "@prisma/client";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { helpdeskFlagsSnapshot } from "@/lib/helpdesk/flags";
+import { helpdeskFlagsSnapshotAsync } from "@/lib/helpdesk/flags";
 import {
   buildEbayConfig,
   reviseMyMessages,
@@ -169,14 +169,18 @@ export async function POST(request: NextRequest) {
       // Mirror to eBay when the read-sync flag is on AND safe-mode is off.
       // Best-effort: eBay rejection must never block the local update — the
       // user already sees the row as read. Surfaced through the audit log.
-      const flags = helpdeskFlagsSnapshot();
+      // The async snapshot makes sure the global write lock can shut this
+      // down without anyone touching env vars.
+      const flags = await helpdeskFlagsSnapshotAsync();
       if (flags.effectiveCanSyncReadState) {
         const ebaySummary = await mirrorReadStateToEbay(ids, action.isRead);
         summary = { ...summary, ebay: ebaySummary };
       } else if (flags.enableEbayReadSync && flags.safeMode) {
         summary = {
           ...summary,
-          ebay: { skipped: "safeMode" } as Record<string, unknown>,
+          ebay: {
+            skipped: flags.globalWriteLock ? "globalWriteLock" : "safeMode",
+          } as Record<string, unknown>,
         };
       }
       break;

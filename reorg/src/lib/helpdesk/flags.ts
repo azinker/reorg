@@ -9,7 +9,18 @@
  *   2. HELPDESK_SAFE_MODE=false + HELPDESK_ENABLE_EBAY_SEND=true   (eBay replies live)
  *   3. HELPDESK_ENABLE_RESEND_EXTERNAL=true                         (External email composer live)
  *   4. HELPDESK_ENABLE_ATTACHMENTS=true                              (outbound attachments)
+ *
+ * SAFE MODE COUPLING:
+ *   The Global Write Lock (Settings → Write Safety) is the master killswitch
+ *   for ALL outbound marketplace traffic. When the lock is ON, Help Desk
+ *   safe mode is ALSO on — no eBay sends, no ReviseMyMessages, no Resend
+ *   email, no read-state mirroring. Sync (pulling messages, hydrating
+ *   bodies, fetching order context) still works because pulls never mutate
+ *   eBay state. Use `helpdeskFlagsSnapshotAsync()` for any code path that
+ *   actually decides whether to call eBay; the synchronous snapshot is
+ *   env-only and is only safe for displaying defaults.
  */
+import { db } from "@/lib/db";
 
 function readBool(name: string, fallback: boolean): boolean {
   const raw = process.env[name];
@@ -55,12 +66,12 @@ export const helpdeskFlags = {
   },
 };
 
-/**
- * Returns the public-safe snapshot of helpdesk flags. Safe to send to the
- * client (used by Settings page to display current mode).
- */
-export function helpdeskFlagsSnapshot(): {
+export interface HelpdeskFlagsSnapshot {
   safeMode: boolean;
+  /** True iff the env-level HELPDESK_SAFE_MODE is on. */
+  envSafeMode: boolean;
+  /** True iff the global write lock (DB AppSetting) is on. Always false in the sync snapshot. */
+  globalWriteLock: boolean;
   enableEbaySend: boolean;
   enableResendExternal: boolean;
   enableAttachments: boolean;
@@ -68,19 +79,88 @@ export function helpdeskFlagsSnapshot(): {
   effectiveCanSendEbay: boolean;
   effectiveCanSendEmail: boolean;
   effectiveCanSyncReadState: boolean;
-} {
-  const safeMode = helpdeskFlags.safeMode;
+}
+
+/**
+ * Synchronous snapshot — env-only. Does NOT consult the DB write lock.
+ *
+ * Use this when you only need to display the env-level defaults (tests,
+ * a stale UI fallback). For ANY decision about whether to call eBay you
+ * must use {@link helpdeskFlagsSnapshotAsync} so the global write lock
+ * (Settings → Write Safety) is honored.
+ */
+export function helpdeskFlagsSnapshot(): HelpdeskFlagsSnapshot {
+  const envSafeMode = helpdeskFlags.safeMode;
   const enableEbaySend = helpdeskFlags.enableEbaySend;
   const enableResendExternal = helpdeskFlags.enableResendExternal;
   const enableEbayReadSync = helpdeskFlags.enableEbayReadSync;
   return {
-    safeMode,
+    safeMode: envSafeMode,
+    envSafeMode,
+    globalWriteLock: false,
     enableEbaySend,
     enableResendExternal,
     enableAttachments: helpdeskFlags.enableAttachments,
     enableEbayReadSync,
-    effectiveCanSendEbay: !safeMode && enableEbaySend,
-    effectiveCanSendEmail: !safeMode && enableResendExternal,
-    effectiveCanSyncReadState: !safeMode && enableEbayReadSync,
+    effectiveCanSendEbay: !envSafeMode && enableEbaySend,
+    effectiveCanSendEmail: !envSafeMode && enableResendExternal,
+    effectiveCanSyncReadState: !envSafeMode && enableEbayReadSync,
   };
+}
+
+/**
+ * Pure composition: given the env-only snapshot AND the current global
+ * write lock value, return the effective snapshot. Exported separately so
+ * tests can pin the boolean math without touching the DB.
+ *
+ * Truth table for `safeMode` and the `effectiveCan*` outputs:
+ *
+ *   envSafeMode | globalWriteLock | safeMode | can send eBay / email / sync read
+ *   ------------+-----------------+----------+----------------------------------
+ *   false       | false           | false    | follows individual enable flags
+ *   true        | false           | true     | all FALSE
+ *   false       | true            | true     | all FALSE   ← the new coupling
+ *   true        | true            | true     | all FALSE
+ *
+ * The lock can ONLY tighten safety; it can never enable a send.
+ */
+export function applyGlobalWriteLock(
+  base: HelpdeskFlagsSnapshot,
+  globalWriteLock: boolean,
+): HelpdeskFlagsSnapshot {
+  const safeMode = base.envSafeMode || globalWriteLock;
+  return {
+    ...base,
+    safeMode,
+    globalWriteLock,
+    effectiveCanSendEbay: !safeMode && base.enableEbaySend,
+    effectiveCanSendEmail: !safeMode && base.enableResendExternal,
+    effectiveCanSyncReadState: !safeMode && base.enableEbayReadSync,
+  };
+}
+
+/**
+ * Async snapshot that ALSO consults the global write lock from the DB
+ * (`AppSetting.global_write_lock`). When the lock is ON, `safeMode` is
+ * forced TRUE and every outbound capability is forced FALSE — regardless
+ * of env flags.
+ *
+ * This is the snapshot every server route / cron worker / outbound worker
+ * MUST call before talking to eBay. It guarantees the user-visible Write
+ * Safety toggle in Settings actually shuts off Help Desk outbound traffic.
+ */
+export async function helpdeskFlagsSnapshotAsync(): Promise<HelpdeskFlagsSnapshot> {
+  const base = helpdeskFlagsSnapshot();
+  let globalWriteLock = false;
+  try {
+    const row = await db.appSetting.findUnique({
+      where: { key: "global_write_lock" },
+    });
+    globalWriteLock = row?.value === true;
+  } catch {
+    // If the DB lookup fails we FAIL CLOSED — assume the lock is on so we
+    // never accidentally send to eBay during a partial outage.
+    globalWriteLock = true;
+  }
+  return applyGlobalWriteLock(base, globalWriteLock);
 }

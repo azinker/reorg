@@ -9,6 +9,11 @@ const ENV_KEYS = [
   "HELPDESK_ENABLE_ATTACHMENTS",
 ];
 
+// NOTE: The async snapshot (`helpdeskFlagsSnapshotAsync`) consults the DB
+// for the global write lock. We don't touch the DB in this test file; those
+// integration semantics are covered separately. The unit tests below pin
+// the env-only behavior of the synchronous snapshot.
+
 function withEnv(
   patch: Record<string, string | undefined>,
   fn: () => void,

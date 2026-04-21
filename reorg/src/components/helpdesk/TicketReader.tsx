@@ -104,39 +104,45 @@ export function TicketReader({
        * we're at an edge so the agent can see the list boundary without
        * losing their selection.
        */}
-      <div className="flex h-10 shrink-0 items-center gap-2 border-b border-hairline bg-card px-3 sm:px-4">
+      {/*
+       * Back / prev / next sized for fast targeting in LIST layout. The agent
+       * spends most of their time on this row (one click per ticket triaged)
+       * so the controls were bumped from h-7 / 11px / 3.5w icons up to
+       * h-9 / 13px / 4w icons. Header bar height grows to h-12 to match.
+       */}
+      <div className="flex h-12 shrink-0 items-center gap-2 border-b border-hairline bg-card px-3 sm:px-4">
         {showBack && onBack && (
           <button
             type="button"
             onClick={onBack}
-            className="inline-flex h-7 items-center gap-1 rounded-md border border-hairline bg-surface px-2 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-surface-2 hover:text-foreground cursor-pointer"
+            className="inline-flex h-9 items-center gap-1.5 rounded-md border border-hairline bg-surface px-3 text-[13px] font-medium text-muted-foreground transition-colors hover:bg-surface-2 hover:text-foreground cursor-pointer"
             title="Back to inbox (Esc)"
           >
-            <ArrowLeft className="h-3.5 w-3.5" />
+            <ArrowLeft className="h-4 w-4" />
             Back
           </button>
         )}
-        <div className="inline-flex h-7 items-center rounded-md border border-hairline bg-surface">
+        <div className="inline-flex h-9 items-center rounded-md border border-hairline bg-surface">
           <button
             type="button"
             onClick={onPrev}
             disabled={!onPrev || !hasPrev}
-            className="inline-flex h-full w-7 items-center justify-center rounded-l-md text-muted-foreground transition-colors hover:bg-surface-2 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40 cursor-pointer"
+            className="inline-flex h-full w-9 items-center justify-center rounded-l-md text-muted-foreground transition-colors hover:bg-surface-2 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40 cursor-pointer"
             title="Previous ticket (↑)"
             aria-label="Previous ticket"
           >
-            <ChevronLeft className="h-3.5 w-3.5" />
+            <ChevronLeft className="h-4 w-4" />
           </button>
-          <div className="h-4 w-px bg-hairline" aria-hidden />
+          <div className="h-5 w-px bg-hairline" aria-hidden />
           <button
             type="button"
             onClick={onNext}
             disabled={!onNext || !hasNext}
-            className="inline-flex h-full w-7 items-center justify-center rounded-r-md text-muted-foreground transition-colors hover:bg-surface-2 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40 cursor-pointer"
+            className="inline-flex h-full w-9 items-center justify-center rounded-r-md text-muted-foreground transition-colors hover:bg-surface-2 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40 cursor-pointer"
             title="Next ticket (↓)"
             aria-label="Next ticket"
           >
-            <ChevronRight className="h-3.5 w-3.5" />
+            <ChevronRight className="h-4 w-4" />
           </button>
         </div>
       </div>

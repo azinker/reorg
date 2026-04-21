@@ -18,7 +18,7 @@ import {
   HelpdeskOutboundStatus,
   HelpdeskTicketStatus,
 } from "@prisma/client";
-import { helpdeskFlags } from "@/lib/helpdesk/flags";
+import { helpdeskFlagsSnapshotAsync } from "@/lib/helpdesk/flags";
 import {
   extractMentionHandles,
   resolveMentions,
@@ -123,13 +123,19 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         : null;
 
   // Pre-flight visibility for the agent: if a feature flag is off we still
-  // accept the job (the worker will mark it CANCELED) — the response includes a
-  // `willBlock` warning so the UI can show a banner.
-  const willBlockReason: string | null = helpdeskFlags.safeMode
-    ? "safe_mode"
-    : parsed.data.composerMode === "REPLY" && !helpdeskFlags.enableEbaySend
+  // accept the job (the worker will mark it CANCELED) — the response includes
+  // a `willBlock` warning so the UI can show a banner. We use the ASYNC
+  // snapshot so the global write lock (Settings → Write Safety) participates
+  // in the safe-mode signal — agents see the banner the moment Cory or
+  // Adam flips the lock.
+  const flags = await helpdeskFlagsSnapshotAsync();
+  const willBlockReason: string | null = flags.safeMode
+    ? flags.globalWriteLock
+      ? "global_write_lock"
+      : "safe_mode"
+    : parsed.data.composerMode === "REPLY" && !flags.enableEbaySend
       ? "ebay_send_disabled"
-      : parsed.data.composerMode === "EXTERNAL" && !helpdeskFlags.enableResendExternal
+      : parsed.data.composerMode === "EXTERNAL" && !flags.enableResendExternal
         ? "external_email_disabled"
         : null;
 

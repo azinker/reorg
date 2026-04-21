@@ -20,6 +20,7 @@
  */
 
 import { db } from "@/lib/db";
+import { BUYER_CANCELLATION_TAG_NAME } from "@/lib/helpdesk/folders";
 import {
   HelpdeskTicketStatus,
   type HelpdeskFilter,
@@ -55,7 +56,28 @@ export interface FilterConditions {
   rules: FilterRule[];
 }
 
-export type FilterActionFolder = "archived" | "spam" | "resolved" | "inbox";
+/**
+ * Folder targets a `MOVE_TO_FOLDER` action can route a matching ticket to.
+ *
+ *   archived         → sets isArchived=true; ticket disappears from every open folder
+ *   spam             → sets isSpam=true and status=SPAM
+ *   resolved         → sets status=RESOLVED with resolvedAt=now
+ *   inbox            → resets isArchived/isSpam (used to undo an earlier filter)
+ *   cancel_requests  → routes to the "Cancel Requests" sidebar folder by tagging
+ *                      the ticket with `BUYER_CANCELLATION_TAG_NAME`. The
+ *                      ticket keeps its current open status (NEW/TO_DO/WAITING)
+ *                      so it stays "live", but `buildFolderWhere()` excludes
+ *                      it from All Tickets / New / To Do / Waiting / Pre-sales /
+ *                      My Tickets / Unassigned / Mentioned. This is the
+ *                      user-facing "move to Cancel Requests" choice in the
+ *                      THEN dropdown on /help-desk/filters.
+ */
+export type FilterActionFolder =
+  | "archived"
+  | "spam"
+  | "resolved"
+  | "inbox"
+  | "cancel_requests";
 
 export interface FilterAction {
   type: "MOVE_TO_FOLDER";
@@ -85,6 +107,7 @@ const VALID_FOLDERS: ReadonlySet<FilterActionFolder> = new Set([
   "spam",
   "resolved",
   "inbox",
+  "cancel_requests",
 ]);
 
 /**
@@ -281,6 +304,16 @@ export async function applyFilterAction(
       data.archivedAt = null;
       data.isSpam = false;
       break;
+    case "cancel_requests":
+      // Status-neutral: we want the ticket to stay NEW/TO_DO/WAITING so the
+      // agent still sees it as "live work" — but `buildFolderWhere()` skips
+      // any open ticket carrying the cancellation tag (applied below) so it
+      // only appears in the Cancel Requests sidebar folder. We also clear
+      // archived/spam in case a previous filter hid the row.
+      data.isArchived = false;
+      data.archivedAt = null;
+      data.isSpam = false;
+      break;
   }
 
   if (action.assignToUserId !== undefined) {
@@ -296,10 +329,31 @@ export async function applyFilterAction(
     select: { id: true },
   });
 
+  // Build the final list of tag ids to apply. For `cancel_requests` we
+  // append the reserved cancellation tag id (lazily upserted on first use so
+  // operators don't have to run a seed script). This piggybacks on the
+  // existing `addTagIds` machinery so the sync's per-message hot loop only
+  // ever touches one createMany call.
+  const tagIdsToAdd: string[] = [...(action.addTagIds ?? [])];
+  if (action.folder === "cancel_requests") {
+    const tag = await db.helpdeskTag.upsert({
+      where: { name: BUYER_CANCELLATION_TAG_NAME },
+      update: {},
+      create: {
+        name: BUYER_CANCELLATION_TAG_NAME,
+        description:
+          "Buyer asked to cancel the order. Routed by a 'Move to Cancel Requests' filter.",
+        color: "#ef4444",
+      },
+      select: { id: true },
+    });
+    if (!tagIdsToAdd.includes(tag.id)) tagIdsToAdd.push(tag.id);
+  }
+
   // Tag mutations are separate junction-table writes.
-  if (action.addTagIds && action.addTagIds.length > 0) {
+  if (tagIdsToAdd.length > 0) {
     await db.helpdeskTicketTag.createMany({
-      data: action.addTagIds.map((tagId) => ({
+      data: tagIdsToAdd.map((tagId) => ({
         ticketId: updated.id,
         tagId,
         addedById: triggeredByUserId,

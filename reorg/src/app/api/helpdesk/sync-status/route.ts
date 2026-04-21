@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { helpdeskFlagsSnapshot } from "@/lib/helpdesk/flags";
+import { helpdeskFlagsSnapshotAsync } from "@/lib/helpdesk/flags";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -12,13 +12,14 @@ export async function GET(_request: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const [checkpoints, lastTickAt, lastOutcome, lastSummary] = await Promise.all([
+  const [checkpoints, lastTickAt, lastOutcome, lastSummary, flags] = await Promise.all([
     db.helpdeskSyncCheckpoint.findMany({
       orderBy: { updatedAt: "desc" },
     }),
     db.appSetting.findUnique({ where: { key: "helpdesk_poll_last_tick_at" } }),
     db.appSetting.findUnique({ where: { key: "helpdesk_poll_last_outcome" } }),
     db.appSetting.findUnique({ where: { key: "helpdesk_poll_last_summary" } }),
+    helpdeskFlagsSnapshotAsync(),
   ]);
 
   const integrationIds = Array.from(new Set(checkpoints.map((c) => c.integrationId)));
@@ -32,7 +33,7 @@ export async function GET(_request: NextRequest) {
 
   return NextResponse.json({
     data: {
-      flags: helpdeskFlagsSnapshot(),
+      flags,
       lastTickAt: (lastTickAt?.value as string | undefined) ?? null,
       lastOutcome: (lastOutcome?.value as string | undefined) ?? null,
       lastSummary: lastSummary?.value ?? null,

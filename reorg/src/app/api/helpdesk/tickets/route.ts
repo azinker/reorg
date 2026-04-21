@@ -6,6 +6,7 @@ import {
   buildFolderWhere,
   type HelpdeskFolderKey,
 } from "@/lib/helpdesk/folders";
+import { resolveHelpdeskSearch } from "@/lib/helpdesk/search";
 import { Platform, type Prisma } from "@prisma/client";
 
 export const runtime = "nodejs";
@@ -63,33 +64,14 @@ export async function GET(request: NextRequest) {
       };
   if (channel) where.channel = channel as Platform;
 
-  // Global search: partial, case-insensitive match across buyer identity
-  // fields, eBay order number, ticket subject, and message body. We use
-  // `contains` everywhere so partial entries like "dshman" match
-  // "dshman_buyer" and "19-14450" matches "19-14450-09100".
-  //
-  // Order # is normalized: strip dashes/spaces from both the query and the
-  // stored value so "1914450" matches "19-14450-09100".
-  if (search) {
-    const normalizedOrder = search.replace(/[\s-]/g, "");
-    const orFilters: Prisma.HelpdeskTicketWhereInput[] = [
-      { buyerUserId: { contains: search, mode: "insensitive" } },
-      { buyerName: { contains: search, mode: "insensitive" } },
-      { buyerEmail: { contains: search, mode: "insensitive" } },
-      { ebayOrderNumber: { contains: search, mode: "insensitive" } },
-      { subject: { contains: search, mode: "insensitive" } },
-      { ebayItemTitle: { contains: search, mode: "insensitive" } },
-      { ebayItemId: { contains: search } },
-      { messages: { some: { bodyText: { contains: search, mode: "insensitive" } } } },
-    ];
-    if (normalizedOrder !== search && normalizedOrder.length > 0) {
-      orFilters.push({
-        ebayOrderNumber: { contains: normalizedOrder, mode: "insensitive" },
-      });
-    }
+  // Global search: STRICT mode — eBay Order ID OR buyer username, never both.
+  // The shape resolution lives in `lib/helpdesk/search.ts` so it's unit-
+  // testable and the route stays a thin Prisma wrapper.
+  const resolved = resolveHelpdeskSearch(search);
+  if (resolved) {
     where.AND = [
       ...(Array.isArray(where.AND) ? where.AND : where.AND ? [where.AND] : []),
-      { OR: orFilters },
+      resolved.where,
     ];
   }
 
