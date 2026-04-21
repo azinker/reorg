@@ -28,7 +28,35 @@ export async function GET(request: NextRequest) {
   const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 50) : 10;
 
   if (!buyer) {
-    return NextResponse.json({ data: [], total: 0 });
+    return NextResponse.json({ data: [], total: 0, orderCount: 0, earliestTicketAt: null });
+  }
+
+  // Defensive guard: never group "tickets from this buyer" by a value that
+  // we know is not a real buyer. If old sync rows still carry buyerUserId
+  // = "eBay" (the literal system sender) or one of our seller user ids,
+  // the panel must NOT pull every system-noise ticket into the list.
+  // The repair script clears these, but we belt-and-suspenders here so a
+  // stale row can't poison the panel between sync runs.
+  const lowered = buyer.toLowerCase();
+  if (lowered === "ebay") {
+    return NextResponse.json({ data: [], total: 0, orderCount: 0, earliestTicketAt: null });
+  }
+  // Pull seller user ids from active eBay integrations (cheap — tiny table).
+  const sellerIds = await db.integration.findMany({
+    where: { platform: { in: ["TPP_EBAY", "TT_EBAY"] } },
+    select: { config: true },
+  });
+  const sellerSet = new Set(
+    sellerIds
+      .map((i) => {
+        const cfg = (i.config ?? {}) as Record<string, unknown>;
+        const v = cfg.accountUserId;
+        return typeof v === "string" ? v.trim().toLowerCase() : null;
+      })
+      .filter((s): s is string => !!s),
+  );
+  if (sellerSet.has(lowered)) {
+    return NextResponse.json({ data: [], total: 0, orderCount: 0, earliestTicketAt: null });
   }
 
   const where = {

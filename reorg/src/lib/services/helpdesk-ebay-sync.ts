@@ -43,6 +43,7 @@ import { helpdeskFlags } from "@/lib/helpdesk/flags";
 import { deriveStatusOnInbound } from "@/lib/helpdesk/status-routing";
 import { classifyMessageSource } from "@/lib/helpdesk/message-source";
 import { detectTicketType } from "@/lib/helpdesk/type-detect";
+import { resolveBuyer, type ResolvedBuyer } from "@/lib/helpdesk/buyer-resolve";
 
 // ΓöÇΓöÇΓöÇ Constants ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 
@@ -390,7 +391,6 @@ async function reconcileMessages(args: ReconcileArgs): Promise<ReconcileResult> 
     if (!body.messageID) continue;
     const direction = inferDirection(body, args.folderKey);
 
-    const buyerUserId = inferBuyerUserId(body, direction);
     const sentAt = body.receiveDate ? new Date(body.receiveDate) : new Date();
     const subject = body.subject?.trim() || null;
     const itemId = body.itemID?.trim() || null;
@@ -399,11 +399,27 @@ async function reconcileMessages(args: ReconcileArgs): Promise<ReconcileResult> 
     // Auto-responder messages always include "Your order (#NN-NNNNN-NNNNN)";
     // many buyer replies also quote the order number. We capture it here so
     // the ticket can show it without an extra API round-trip. This has to
-    // happen BEFORE computeThreadKey because the thread key now prefers
-    // order-scoped grouping.
+    // happen BEFORE the buyer resolver and computeThreadKey because both
+    // use it (resolver as the saleOrder fallback, threadKey as the primary
+    // grouping key).
     const extractedOrderNumber = extractEbayOrderNumber(body);
 
-    const threadKey = computeThreadKey(body, direction, extractedOrderNumber);
+    // Resolve the *real* buyer for this message. The resolver knows to
+    // ignore "eBay" / the seller's own user id and falls back to the
+    // body text or MarketplaceSaleOrder when the headers don't carry a
+    // real buyer. This is the single source of truth for buyer identity
+    // throughout sync — keep all downstream `buyerUserId` writes in sync
+    // with the value here so we never store "eBay" or our seller name.
+    const resolved: ResolvedBuyer = await resolveBuyer({
+      body,
+      integration: args.integration,
+      orderNumber: extractedOrderNumber,
+    });
+    const buyerUserId = resolved.buyerUserId;
+    const buyerName = resolved.buyerName;
+    const buyerEmail = resolved.buyerEmail;
+
+    const threadKey = computeThreadKey(body, buyerUserId, extractedOrderNumber);
     if (!threadKey) continue;
 
     const isPreSales =
@@ -432,13 +448,9 @@ async function reconcileMessages(args: ReconcileArgs): Promise<ReconcileResult> 
     // ticket. If the existing itm:-keyed ticket already has an order
     // stamped, it belongs to a *different* earlier order and we must leave
     // it alone.
-    if (!ticket && extractedOrderNumber && itemId) {
-      const buyer =
-        direction === HelpdeskMessageDirection.INBOUND
-          ? body.sender
-          : body.recipientUserID;
-      if (buyer) {
-        const preSalesKey = `itm:${itemId}|buyer:${buyer.toLowerCase()}`;
+    if (!ticket && extractedOrderNumber && itemId && buyerUserId) {
+      const preSalesKey = `itm:${itemId}|buyer:${buyerUserId.toLowerCase()}`;
+      {
         const preSalesTicket = await db.helpdeskTicket.findUnique({
           where: {
             integrationId_threadKey: {
@@ -522,6 +534,8 @@ async function reconcileMessages(args: ReconcileArgs): Promise<ReconcileResult> 
           channel: args.integration.platform,
           threadKey,
           buyerUserId,
+          buyerName,
+          buyerEmail,
           ebayItemId: itemId,
           ebayOrderNumber: extractedOrderNumber,
           subject,
@@ -549,6 +563,27 @@ async function reconcileMessages(args: ReconcileArgs): Promise<ReconcileResult> 
       // see one on a later message in the thread.
       if (extractedOrderNumber && !ticket.ebayOrderNumber) {
         ticketUpdate.ebayOrderNumber = extractedOrderNumber;
+      }
+      // Backfill buyer fields if they're missing or were previously stored
+      // as a system value ("eBay") or our seller name. We only overwrite
+      // when the resolver gave us a confident answer this round; leaving
+      // the bad value in place is a no-op the repair script can fix later.
+      const sellerLower = (
+        (args.integration.config as Record<string, unknown>)?.accountUserId as string | undefined
+      )?.toLowerCase() ?? null;
+      const existingLower = ticket.buyerUserId?.toLowerCase() ?? null;
+      const existingIsBad =
+        !existingLower ||
+        existingLower === "ebay" ||
+        (sellerLower !== null && existingLower === sellerLower);
+      if (buyerUserId && existingIsBad) {
+        ticketUpdate.buyerUserId = buyerUserId;
+      }
+      if (buyerName && (!ticket.buyerName || existingIsBad)) {
+        ticketUpdate.buyerName = buyerName;
+      }
+      if (buyerEmail && !ticket.buyerEmail) {
+        ticketUpdate.buyerEmail = buyerEmail;
       }
       // If a ticket was originally classified as pre-sales but a later
       // message reveals an order number, re-classify it as post-sales so it
@@ -745,16 +780,6 @@ function inferDirection(
   return HelpdeskMessageDirection.INBOUND;
 }
 
-function inferBuyerUserId(
-  body: EbayMessageBody,
-  direction: HelpdeskMessageDirection,
-): string | null {
-  if (direction === HelpdeskMessageDirection.INBOUND) {
-    return body.sender?.trim() || null;
-  }
-  return body.recipientUserID?.trim() || null;
-}
-
 function buyerOrderHint(body: EbayMessageBody): boolean {
   // Best-effort signal that the message references a real order (post-sale).
   // eBay GetMyMessages does not always return order details; the subject
@@ -784,18 +809,23 @@ function buyerOrderHint(body: EbayMessageBody): boolean {
  */
 function computeThreadKey(
   body: EbayMessageBody,
-  direction: HelpdeskMessageDirection,
+  buyerUserId: string | null,
   orderNumber: string | null,
 ): string | null {
-  const buyer =
-    direction === HelpdeskMessageDirection.INBOUND
-      ? body.sender
-      : body.recipientUserID;
+  const buyer = buyerUserId?.trim() || null;
   const itemId = body.itemID?.trim();
   const subject = body.subject?.trim();
 
   if (orderNumber && buyer) {
     return `ord:${orderNumber}|buyer:${buyer.toLowerCase()}`;
+  }
+  if (orderNumber) {
+    // No buyer resolved yet but we still have a real order number — keep
+    // the message attached to the order so a later, well-identified
+    // message can adopt this row. Without this branch system messages
+    // (refund/shipping notifications) would either fan out to a per-
+    // message ticket or pile into the wrong (item, seller) bucket.
+    return `ord:${orderNumber}`;
   }
   if (itemId && buyer) {
     return `itm:${itemId}|buyer:${buyer.toLowerCase()}`;

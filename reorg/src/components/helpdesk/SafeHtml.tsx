@@ -128,7 +128,24 @@ const EBAY_FOOTER_PHRASES = [
   /^view the conversation on ebay/i,
   /^do not reply to this email/i,
   /\b2145 hamilton avenue\b/i,
+  // Adam-flagged boilerplate: eBay's "we scan messages…" disclaimer that
+  // appears at the bottom of every member-to-member message. It adds no
+  // signal and steals visual real estate in every bubble.
+  /^we scan messages to enforce policies/i,
+  /only purchases on ebay are covered by the ebay purchase protection/i,
+  /asking your trading partner to complete a transaction outside of ebay/i,
 ];
+
+/**
+ * eBay appends a structured metadata block at the bottom of every
+ * notification body: item title, "Order status: Paid", "Item ID: …",
+ * "Transaction ID: …", "Order number: …". The agent already sees the
+ * order number in the ticket header / Customer card, so duplicating it
+ * inside the message bubble is pure noise. We strip the entire trailing
+ * block once we see ANY of these label-style lines.
+ */
+const EBAY_METADATA_LABEL_RE =
+  /^(?:order\s+status|item\s+id|transaction\s+id|order\s+number)\s*[:\-]/i;
 
 /**
  * Decode the most common HTML entities found in eBay payloads. We use a
@@ -156,6 +173,71 @@ function decodeHtmlEntities(input: string): string {
       }
     },
   );
+}
+
+/**
+ * Strip the same eBay boilerplate from a *plain-text* body that
+ * `stripEbayChrome` strips from HTML. Many shipping/refund/cancel/feedback
+ * notifications arrive without any HTML markup at all, but they still come
+ * loaded with the eBay disclaimer footer, the "Dear <buyer>," salutation,
+ * the duplicated body, and the order-metadata block. This function gives
+ * plain-text bodies the same hygiene HTML bodies get.
+ */
+function stripEbayPlainText(input: string): string {
+  if (!input) return input;
+
+  let text = input.replace(/\r\n/g, "\n");
+
+  // Drop "Dear <buyer>," salutation and "New message:" / "New message to:"
+  // preview lines if they appear at the very top.
+  text = text.replace(
+    /^\s*(?:new message[^\n]*\n+)?(?:dear\s+\S+,?\s*\n+)?/i,
+    "",
+  );
+
+  // Drop the order-metadata stripe at the bottom. Once we hit a line that
+  // starts with one of the metadata labels, drop it and everything after.
+  const metadataRe =
+    /\n\s*(?:order\s+status|item\s+id|transaction\s+id|order\s+number)\s*[:\-][^\n]*/i;
+  const idx = text.search(metadataRe);
+  if (idx >= 0) {
+    text = text.slice(0, idx);
+  }
+
+  // Drop the eBay scan-message disclaimer wherever it appears.
+  text = text.replace(
+    /(?:^|\n)\s*we scan messages to enforce policies[^\n]*(?:\n[^\n]*)*?(?=\n\s*\n|\n[A-Z]|$)/i,
+    "",
+  );
+  text = text.replace(
+    /(?:^|\n)\s*only purchases on ebay are covered by the ebay purchase protection[^\n]*/gi,
+    "",
+  );
+  text = text.replace(
+    /(?:^|\n)\s*asking your trading partner to complete a transaction outside of ebay[^\n]*/gi,
+    "",
+  );
+
+  // Collapse the duplicated body that eBay's notification templates emit.
+  // We split on blank lines and drop later paragraphs whose first 80
+  // characters duplicate an earlier paragraph (case- and whitespace-
+  // insensitive).
+  const paragraphs = text.split(/\n{2,}/);
+  const seen = new Set<string>();
+  const kept: string[] = [];
+  for (const para of paragraphs) {
+    const trimmed = para.trim();
+    if (trimmed.length === 0) {
+      kept.push(para);
+      continue;
+    }
+    const key = trimmed.replace(/\s+/g, " ").slice(0, 80).toLowerCase();
+    if (trimmed.length > 120 && seen.has(key)) continue;
+    seen.add(key);
+    kept.push(para);
+  }
+
+  return kept.join("\n\n").replace(/\n{3,}/g, "\n\n").trim();
 }
 
 /** Decide whether a body should be treated as HTML, after entity-decoding. */
@@ -393,6 +475,86 @@ function stripEbayChrome(html: string): string {
     }
   }
 
+  // 2i. Drop the eBay-appended order-metadata block. Once we see ANY of
+  //     {Order status|Item ID|Transaction ID|Order number} as a leading
+  //     label in a small block element, we rip out that block AND every
+  //     following sibling whose text is either another label or short
+  //     enough to be the item title that eBay sticks at the very top of
+  //     the metadata block. This collapses the entire footer cleanly
+  //     without losing the buyer's text above it.
+  {
+    const candidates = Array.from(body.querySelectorAll("p, div, td, span"));
+    let anchor: Element | null = null;
+    for (const el of candidates) {
+      const text = (el.textContent ?? "").trim();
+      if (!text || text.length > 200) continue;
+      if (EBAY_METADATA_LABEL_RE.test(text)) {
+        anchor = el;
+        break;
+      }
+    }
+    if (anchor) {
+      // Walk up to the smallest "block" container that holds the anchor
+      // (preferring <tr> when we're inside a layout table) so we drop the
+      // entire metadata stripe in one go.
+      const block = anchor.closest("tr, table") ?? anchor.parentElement ?? anchor;
+      // If the block is the <body> itself, fall back to removing just the
+      // anchor and its short following siblings. Otherwise nuke the whole
+      // block and its siblings forward.
+      if (block === body) {
+        let cursor: Element | null = anchor;
+        const toRemove: Element[] = [];
+        while (cursor) {
+          const t = (cursor.textContent ?? "").trim();
+          // Stop if we hit a long paragraph — that's likely the buyer's
+          // actual reply, not part of the metadata block.
+          if (t.length > 600) break;
+          toRemove.push(cursor);
+          cursor = cursor.nextElementSibling;
+        }
+        for (const el of toRemove) el.remove();
+      } else if (body.contains(block)) {
+        let cursor: Element | null = block as Element;
+        const toRemove: Element[] = [];
+        while (cursor) {
+          toRemove.push(cursor);
+          cursor = cursor.nextElementSibling;
+        }
+        for (const el of toRemove) el.remove();
+      }
+    }
+  }
+
+  // 2j. Drop the duplicated message body that eBay's notification
+  //     templates emit. The pattern is: an opening "New message: <preview>",
+  //     a "Dear <handle>," salutation, a "<buyer-name>," opener, then the
+  //     ENTIRE body again. We already handle the New-message + Dear lines
+  //     above; here we look for two long, near-identical text blocks and
+  //     drop the second one. We compare on the first 80 chars normalised
+  //     so minor whitespace differences don't fool us.
+  {
+    const blocks = Array.from(
+      body.querySelectorAll("p, div, td, blockquote"),
+    ).filter((el) => {
+      const t = (el.textContent ?? "").trim();
+      return t.length > 120;
+    });
+    const seen = new Set<string>();
+    for (const el of blocks) {
+      const key = (el.textContent ?? "")
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, 80)
+        .toLowerCase();
+      if (!key) continue;
+      if (seen.has(key)) {
+        el.remove();
+      } else {
+        seen.add(key);
+      }
+    }
+  }
+
   // 3. Collapse empty wrappers left behind by the strips above. Repeat a few
   //    passes since removing one row can leave its parent empty.
   for (let pass = 0; pass < 3; pass += 1) {
@@ -624,10 +786,11 @@ export function SafeHtml({ html, forceHtml, className }: SafeHtmlProps) {
   }, [decoded, isHtml]);
 
   if (!isHtml) {
+    const cleaned = stripEbayPlainText(decoded);
     return (
       <div className={className}>
         <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground/90">
-          {decoded || (
+          {cleaned || (
             <span className="italic text-muted-foreground">
               (empty message body)
             </span>
