@@ -105,17 +105,17 @@ const ALL_PARENT: FolderRow = {
 // are intentionally dropped because the visual hierarchy (indent + parent's
 // icon above) already conveys the grouping; adding icons here just adds
 // noise and makes the column look "busy".
+// v2 sidebar: NEW is folded into TO_DO, so the inbox surfaces a single
+// "needs response" bucket. The legacy `all_new` folder key still resolves
+// to the same query (kept in folders.ts for back-compat with any saved
+// links), but we no longer render it as its own row — duplicate counts
+// would just confuse the agent.
 const ALL_CHILDREN: FolderRow[] = [
-  {
-    key: "all_new",
-    label: "New",
-    tooltip: "Newly arrived buyer messages that nobody has triaged yet.",
-    child: true,
-  },
   {
     key: "all_to_do",
     label: "To Do",
-    tooltip: "Triaged tickets waiting on an agent reply.",
+    tooltip:
+      "Tickets needing an agent reply — every unanswered buyer message lives here, brand-new or follow-up.",
     child: true,
   },
   {

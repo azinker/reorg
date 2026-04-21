@@ -230,6 +230,12 @@ enum HelpdeskMessageSource {
   EBAY_UI
   EXTERNAL_EMAIL
   SYSTEM
+  /// Originated from the reorG Auto Responder. Detected during inbound sync by
+  /// matching the OUTBOUND message back to an AutoResponderSendLog row for the
+  /// same order. Lets the ThreadView render the message with a robot avatar
+  /// instead of an agent identity, and lets timeline / reporting separate
+  /// human agent traffic from automated traffic.
+  AUTO_RESPONDER
 }
 
 enum HelpdeskComposerMode {
@@ -270,6 +276,15 @@ model User {
   /// granted in addition to the always-allowed set. Admin role overrides this.
   /// Page keys are defined in src/lib/nav-pages.ts.
   pagePermissions Json?
+
+  /// Per-agent Help Desk default for the Composer's primary "Send" button:
+  /// what status should the ticket land in after the message goes out?
+  /// "RESOLVED" = mark resolved (default — most agent replies are
+  /// closing replies and shouldn't sit in the queue), "WAITING" = ball is
+  /// in the buyer's court but ticket stays open for follow-up. The
+  /// dropdown still lets the agent override per-message; this is just the
+  /// default the dropdown is initialised to. NULL = use the global default.
+  helpdeskDefaultSendStatus String? @db.VarChar(16)
 
   accounts              Account[]
   sessions              Session[]
@@ -1389,6 +1404,157 @@ model HelpdeskSyncCheckpoint {
   @@unique([integrationId, folder])
   @@index([integrationId])
   @@map("helpdesk_sync_checkpoints")
+}
+
+// ─── Help Desk eBay action mirrors ───────────────────────────────────────────
+//
+// These three tables mirror buyer-initiated actions on eBay (return cases,
+// cancellation requests, feedback) so we can fold them into the ticket
+// timeline without re-querying eBay every time a thread is opened. Each row
+// is keyed by `externalId` from the eBay REST API and is upserted by a
+// dedicated sync worker that runs alongside the message sync.
+//
+// READ-ONLY in v1: we never push to eBay from these tables. The user-facing
+// surface is the timeline pill in ThreadView and the type-classification
+// nudge on HelpdeskTicket.type.
+
+enum HelpdeskCaseStatus {
+  OPEN
+  CLOSED
+  AWAITING_SELLER
+  AWAITING_BUYER
+  ESCALATED
+  CANCELLED
+  REFUNDED
+  UNKNOWN
+}
+
+enum HelpdeskCaseKind {
+  RETURN
+  ITEM_NOT_RECEIVED
+  NOT_AS_DESCRIBED
+  CHARGEBACK
+  OTHER
+}
+
+/// eBay return / dispute case opened by the buyer. Sourced from eBay's REST
+/// post-order Returns API. One row per eBay case; the `externalId` is the
+/// eBay-issued case identifier (e.g. "5234567" for returns) which we expose
+/// in the timeline pill so the agent can click through to manage the case
+/// directly on eBay.
+model HelpdeskCase {
+  id              String              @id @default(cuid())
+  integrationId   String
+  /// Foreign-key to the matching HelpdeskTicket when we can resolve one by
+  /// order number + buyer. Nullable so cases without a known ticket still
+  /// get tracked (we'll attach later if a ticket appears).
+  ticketId        String?
+  /// eBay's case identifier — guaranteed unique within the integration.
+  externalId      String
+  kind            HelpdeskCaseKind
+  status          HelpdeskCaseStatus  @default(OPEN)
+  ebayOrderNumber String?
+  buyerUserId     String?
+  /// Buyer-facing reason text shown on eBay (e.g. "Item not as described").
+  reason          String?             @db.Text
+  /// URL the agent can click to open the case directly on eBay.
+  manageUrl       String?
+  openedAt        DateTime
+  closedAt        DateTime?
+  rawData         Json                @default("{}")
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+
+  @@unique([integrationId, externalId])
+  @@index([ticketId, openedAt])
+  @@index([ebayOrderNumber])
+  @@index([buyerUserId])
+  @@index([status, openedAt])
+  @@map("helpdesk_cases")
+}
+
+enum HelpdeskFeedbackKind {
+  POSITIVE
+  NEUTRAL
+  NEGATIVE
+}
+
+/// Buyer feedback on an order. Sourced from eBay Trading API GetFeedback.
+/// Negative feedback drives a centered, red-tinted timeline pill and (when
+/// the ticket type is still QUERY) flips ticket type to NEGATIVE_FEEDBACK so
+/// the inbox column makes the situation obvious.
+model HelpdeskFeedback {
+  id              String                @id @default(cuid())
+  integrationId   String
+  ticketId        String?
+  /// eBay's FeedbackID — unique within the integration. We dedupe on this.
+  externalId      String
+  kind            HelpdeskFeedbackKind
+  /// 1..5 star rating when eBay supplies one; null otherwise.
+  starRating      Int?
+  /// Public comment the buyer left.
+  comment         String?               @db.Text
+  /// When provided, the agent's public reply to the feedback.
+  sellerResponse  String?               @db.Text
+  ebayOrderNumber String?
+  ebayItemId      String?
+  buyerUserId     String?
+  /// URL of the feedback page on eBay (deep-link).
+  manageUrl       String?
+  leftAt          DateTime
+  rawData         Json                  @default("{}")
+  createdAt       DateTime              @default(now())
+  updatedAt       DateTime              @updatedAt
+
+  @@unique([integrationId, externalId])
+  @@index([ticketId, leftAt])
+  @@index([ebayOrderNumber])
+  @@index([buyerUserId])
+  @@index([kind, leftAt])
+  @@map("helpdesk_feedback")
+}
+
+enum HelpdeskCancellationStatus {
+  REQUESTED
+  APPROVED
+  REJECTED
+  COMPLETED
+  CANCELLED_BY_BUYER
+  UNKNOWN
+}
+
+/// Buyer-initiated cancellation request. Sourced from eBay's REST post-order
+/// Cancellation API. Drives the "Buyer requested cancellation" timeline pill
+/// and the auto-applied "Buyer Request Cancellation" tag (handled by
+/// existing filter machinery against the resulting ticket).
+model HelpdeskCancellation {
+  id              String                     @id @default(cuid())
+  integrationId   String
+  ticketId        String?
+  /// eBay cancellation request identifier — unique within the integration.
+  externalId      String
+  status          HelpdeskCancellationStatus @default(REQUESTED)
+  /// Buyer-supplied reason (e.g. "buyerChangedMind", "orderMistake").
+  reason          String?
+  /// Refund amount when cancellation completed with a refund attached.
+  refundAmount    Float?
+  refundCurrency  String?                    @db.VarChar(8)
+  ebayOrderNumber String?
+  buyerUserId     String?
+  /// URL the agent can click to open the cancellation on eBay.
+  manageUrl       String?
+  requestedAt     DateTime
+  resolvedAt      DateTime?
+  rawData         Json                       @default("{}")
+  createdAt       DateTime                   @default(now())
+  updatedAt       DateTime                   @updatedAt
+
+  @@unique([integrationId, externalId])
+  @@index([ticketId, requestedAt])
+  @@index([ebayOrderNumber])
+  @@index([buyerUserId])
+  @@index([status, requestedAt])
+  @@map("helpdesk_cancellations")
 }
 
 /// User-defined inbox rules (e.g. "Subject contains 'Shipped' → Archive").

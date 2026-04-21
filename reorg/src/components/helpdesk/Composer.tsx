@@ -35,6 +35,7 @@ import {
   AlertTriangle,
   Paperclip,
   Zap,
+  ChevronDown,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { HelpdeskTicketDetail, HelpdeskSyncStatus } from "@/hooks/use-helpdesk";
@@ -45,6 +46,18 @@ import { useHelpdeskPrefs } from "@/components/helpdesk/HelpdeskSettingsDialog";
 
 type ComposerMode = "REPLY" | "NOTE" | "EXTERNAL";
 type StatusChoice = "WAITING" | "RESOLVED" | "NONE";
+
+const STATUS_LABEL: Record<StatusChoice, string> = {
+  RESOLVED: "Send + Resolve",
+  WAITING: "Send + Mark Waiting",
+  NONE: "Send (keep status)",
+};
+
+const STATUS_SHORT: Record<StatusChoice, string> = {
+  RESOLVED: "Resolve",
+  WAITING: "Waiting",
+  NONE: "Send",
+};
 
 interface ComposerProps {
   ticket: HelpdeskTicketDetail;
@@ -74,7 +87,15 @@ export function Composer({
   const sendDelaySeconds = sendDelayOverride ?? prefs.sendDelaySeconds;
   const [mode, setMode] = useState<ComposerMode>("REPLY");
   const [body, setBody] = useState("");
-  const [statusChoice, setStatusChoice] = useState<StatusChoice>("WAITING");
+  // Per-agent default lives in prefs (server-synced via /api/helpdesk/me/prefs).
+  // Local state lets the agent pick a non-default action for THIS one send
+  // without the menu pick getting nuked by the prefs hook ticking.
+  const [statusChoice, setStatusChoice] = useState<StatusChoice>(
+    prefs.defaultSendStatus,
+  );
+  const [statusOverridden, setStatusOverridden] = useState(false);
+  const [statusMenuOpen, setStatusMenuOpen] = useState(false);
+  const statusMenuRef = useRef<HTMLDivElement | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [pending, setPending] = useState<PendingJob | null>(null);
   const [secondsLeft, setSecondsLeft] = useState(0);
@@ -97,9 +118,35 @@ export function Composer({
     setBody("");
     setError(null);
     setPending(null);
-    setStatusChoice("WAITING");
+    setStatusChoice(prefs.defaultSendStatus);
+    setStatusOverridden(false);
     setExpanded(false);
-  }, [ticket.id]);
+    setStatusMenuOpen(false);
+  }, [ticket.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Track preference changes from Settings dialog while the composer is
+  // open. We deliberately skip this when the agent has explicitly picked
+  // a different action for the current draft — they obviously want THAT
+  // action, not whatever the new default is.
+  useEffect(() => {
+    if (statusOverridden) return;
+    setStatusChoice(prefs.defaultSendStatus);
+  }, [prefs.defaultSendStatus, statusOverridden]);
+
+  // Close the status split-button dropdown when clicking outside it.
+  useEffect(() => {
+    if (!statusMenuOpen) return;
+    const onClick = (e: MouseEvent) => {
+      if (
+        statusMenuRef.current &&
+        !statusMenuRef.current.contains(e.target as Node)
+      ) {
+        setStatusMenuOpen(false);
+      }
+    };
+    window.addEventListener("mousedown", onClick);
+    return () => window.removeEventListener("mousedown", onClick);
+  }, [statusMenuOpen]);
 
   // Choose default mode the first time we see this ticket
   useEffect(() => {
@@ -479,18 +526,6 @@ export function Composer({
             )}
           </>
         )}
-        {mode !== "NOTE" && (
-          <select
-            value={statusChoice}
-            onChange={(e) => setStatusChoice(e.target.value as StatusChoice)}
-            disabled={modeMeta.disabled || !!pending}
-            className="h-7 rounded-md border border-hairline bg-surface px-2 text-foreground disabled:opacity-50"
-          >
-            <option value="WAITING">Send + mark Waiting</option>
-            <option value="RESOLVED">Send + mark Resolved</option>
-            <option value="NONE">Send only (keep status)</option>
-          </select>
-        )}
         <span className="ml-auto text-[10px] text-muted-foreground">
           {modeMeta.icon} {modeMeta.label}
           {mode !== "NOTE" && (
@@ -501,26 +536,102 @@ export function Composer({
           )}
           {" · ⌘/Ctrl+Enter to send"}
         </span>
-        <button
-          type="button"
-          onClick={handleSubmit}
-          disabled={!canSubmit || modeMeta.disabled}
-          className={cn(
-            "inline-flex h-7 items-center gap-1 rounded-md px-3 text-xs font-semibold transition-colors cursor-pointer",
-            canSubmit && !modeMeta.disabled
-              ? mode === "NOTE"
+        {mode === "NOTE" ? (
+          <button
+            type="button"
+            onClick={handleSubmit}
+            disabled={!canSubmit || modeMeta.disabled}
+            className={cn(
+              "inline-flex h-7 items-center gap-1 rounded-md px-3 text-xs font-semibold transition-colors cursor-pointer",
+              canSubmit && !modeMeta.disabled
                 ? "bg-amber-600 text-white hover:bg-amber-500"
-                : "bg-brand text-brand-foreground hover:opacity-90"
-              : "bg-surface-2 text-muted-foreground",
-          )}
-        >
-          {submitting ? (
-            <Loader2 className="h-3 w-3 animate-spin" />
-          ) : (
-            <Send className="h-3 w-3" />
-          )}
-          {mode === "NOTE" ? "Add note" : "Send"}
-        </button>
+                : "bg-surface-2 text-muted-foreground",
+            )}
+          >
+            {submitting ? (
+              <Loader2 className="h-3 w-3 animate-spin" />
+            ) : (
+              <Send className="h-3 w-3" />
+            )}
+            Add note
+          </button>
+        ) : (
+          /*
+            Split-button send.
+              - Primary face does the agent's preferred action (defaultSendStatus
+                from prefs, or whatever they picked from the dropdown for THIS
+                send). Default for new accounts is RESOLVED.
+              - Chevron opens a small menu with the other two actions, so
+                "Send + Mark Waiting" is one click away when an agent expects
+                the buyer to reply but doesn't want to flip their global pref.
+          */
+          <div ref={statusMenuRef} className="relative inline-flex">
+            <button
+              type="button"
+              onClick={handleSubmit}
+              disabled={!canSubmit || modeMeta.disabled}
+              className={cn(
+                "inline-flex h-7 items-center gap-1 rounded-l-md border border-r-0 border-brand px-3 text-xs font-semibold transition-colors cursor-pointer",
+                canSubmit && !modeMeta.disabled
+                  ? "bg-brand text-brand-foreground hover:opacity-90"
+                  : "border-hairline bg-surface-2 text-muted-foreground",
+              )}
+              title={STATUS_LABEL[statusChoice]}
+            >
+              {submitting ? (
+                <Loader2 className="h-3 w-3 animate-spin" />
+              ) : (
+                <Send className="h-3 w-3" />
+              )}
+              {STATUS_SHORT[statusChoice]}
+            </button>
+            <button
+              type="button"
+              onClick={() => setStatusMenuOpen((v) => !v)}
+              disabled={!!pending || modeMeta.disabled}
+              aria-label="Choose send action"
+              className={cn(
+                "inline-flex h-7 w-6 items-center justify-center rounded-r-md border text-xs cursor-pointer",
+                canSubmit && !modeMeta.disabled
+                  ? "border-brand bg-brand text-brand-foreground hover:opacity-90"
+                  : "border-hairline bg-surface-2 text-muted-foreground",
+              )}
+            >
+              <ChevronDown className="h-3 w-3" />
+            </button>
+            {statusMenuOpen && (
+              <div className="absolute bottom-full right-0 z-20 mb-1 min-w-[10rem] rounded-md border border-hairline bg-card p-1 text-xs shadow-md">
+                {(["RESOLVED", "WAITING", "NONE"] as StatusChoice[]).map((s) => (
+                  <button
+                    key={s}
+                    type="button"
+                    onClick={() => {
+                      setStatusChoice(s);
+                      setStatusOverridden(true);
+                      setStatusMenuOpen(false);
+                    }}
+                    className={cn(
+                      "block w-full rounded px-2 py-1 text-left transition-colors cursor-pointer",
+                      s === statusChoice
+                        ? "bg-brand-muted text-brand"
+                        : "text-foreground hover:bg-surface-2",
+                    )}
+                  >
+                    {STATUS_LABEL[s]}
+                    {s === prefs.defaultSendStatus && (
+                      <span className="ml-2 text-[9px] uppercase tracking-wider text-muted-foreground">
+                        default
+                      </span>
+                    )}
+                  </button>
+                ))}
+                <div className="mt-1 border-t border-hairline px-2 py-1 text-[10px] text-muted-foreground">
+                  Change the default in Help Desk settings.
+                </div>
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

@@ -41,12 +41,23 @@ export interface HelpdeskFolderContext {
 }
 
 /**
- * Build a Prisma where clause for the given folder. Folder semantics:
+ * Build a Prisma where clause for the given folder. Folder semantics
+ * (v2 — NEW is folded into TO_DO so the agent has a single
+ * "needs response" bucket):
+ *
  *   - pre_sales:    open + kind=PRE_SALES (not snoozed, not archived, not spam, not cancellation)
  *   - my_tickets:   open + primary or additional assignee = me (not cancellation)
- *   - all_tickets:  open (every active status, includes snoozed-now-due, not cancellation)
- *   - all_new:      status=NEW (not cancellation)
- *   - all_to_do:    status=TO_DO (not cancellation)
+ *   - all_tickets:  open (every active status incl. snoozed-now-due, not cancellation).
+ *                   This is the "All Messages" sidebar entry — shows NEW + TO_DO + WAITING.
+ *   - all_new:      LEGACY ALIAS — now matches the same set as all_to_do.
+ *                   Kept so any saved view / link / count cache that still
+ *                   asks for "all_new" gets a reasonable answer instead of
+ *                   silently dropping to 0. The sidebar no longer surfaces it.
+ *   - all_to_do:    status ∈ {NEW, TO_DO} (not cancellation). NEW exists only
+ *                   for historical rows from before the v2 routing change;
+ *                   live mail now lands directly in TO_DO via
+ *                   deriveStatusOnInbound, but legacy rows must still appear
+ *                   here so the agent doesn't lose their existing queue.
  *   - all_waiting:  status=WAITING (not cancellation)
  *   - buyer_cancellation: open + carries the "Buyer Request Cancellation" tag
  *                         (auto-applied by the system filter on every sync)
@@ -116,17 +127,19 @@ export function buildFolderWhere(
     case "all_tickets":
       return { AND: [open, notSnoozed, notCancellation] };
     case "all_new":
-      return {
-        AND: [
-          { status: HelpdeskTicketStatus.NEW, isArchived: false, isSpam: false },
-          notSnoozed,
-          notCancellation,
-        ],
-      };
     case "all_to_do":
+      // v2: TO_DO is the single "needs response" bucket. We accept legacy
+      // NEW rows in the same query so historical tickets created before the
+      // routing rewrite remain visible without a one-off backfill.
       return {
         AND: [
-          { status: HelpdeskTicketStatus.TO_DO, isArchived: false, isSpam: false },
+          {
+            status: {
+              in: [HelpdeskTicketStatus.NEW, HelpdeskTicketStatus.TO_DO],
+            },
+            isArchived: false,
+            isSpam: false,
+          },
           notSnoozed,
           notCancellation,
         ],

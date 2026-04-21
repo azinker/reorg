@@ -6,9 +6,15 @@
  * The state machine matches the eDesk model the user asked for in the
  * triage overhaul:
  *
- *   NEW       — first buyer message on a brand-new thread, never replied to
- *   TO_DO     — ball in OUR court: buyer message arrived AND we have replied
- *               at least once before, OR a snoozed ticket woke back up
+ *   NEW       — legacy / sync-only. Live buyer mail no longer lands here;
+ *               all unanswered buyer messages route straight to TO_DO so
+ *               the inbox surfaces a single "needs response" bucket. We
+ *               keep the value in the schema so historical rows remain
+ *               legible, but `deriveStatusOnInbound` will never *return*
+ *               NEW. Folder routing treats NEW as a TO_DO alias.
+ *   TO_DO     — ball in OUR court: any buyer message that hasn't been
+ *               replied to. Includes brand-new tickets AND replies to
+ *               threads we'd previously responded on.
  *   WAITING   — ball in BUYER's court: we sent the last reply
  *   RESOLVED  — explicit close (agent clicked "Send + mark Resolved" or
  *               batch action). Auto-resolve on long inactivity is handled
@@ -46,16 +52,20 @@ export interface RoutingTicketSnapshot {
 /**
  * Decide the new ticket status when a buyer message arrives.
  *
- *   - On a brand-new ticket (no agent reply yet): stay NEW.
- *   - On a ticket we've replied to before: bump to TO_DO. This is the
- *     critical "ball back in our court" transition — without it, a buyer
- *     reply after a WAITING outbound would silently linger in WAITING and
- *     the inbox count badges would lie to the agent.
- *   - On a RESOLVED ticket: reopen as TO_DO. (Caller is also responsible
- *     for bumping `reopenCount` and stamping `lastReopenedAt`.)
- *   - On SPAM / ARCHIVED: leave the status alone. Spam is explicit and
- *     buyer follow-ups on archived threads shouldn't auto-undo the
- *     agent's archive decision.
+ * Per the v2 folder semantics ("To Do = anything from a buyer that needs a
+ * response"), every buyer message that isn't spam or archived routes to
+ * TO_DO — including brand-new tickets that previously would have started
+ * in NEW. The merging eliminates the awkward "New vs To Do" distinction
+ * the user kept tripping on in the inbox.
+ *
+ *   - SPAM: stays SPAM (explicit agent decision).
+ *   - ARCHIVED: leave the status alone — buyer follow-ups on archived
+ *     threads shouldn't auto-undo the agent's archive decision.
+ *   - RESOLVED: reopen as TO_DO. Caller is responsible for bumping
+ *     `reopenCount` and stamping `lastReopenedAt`.
+ *   - Anything else (NEW, TO_DO, WAITING): land in TO_DO. The
+ *     `hasAgentReplied` flag on the snapshot is no longer consulted —
+ *     it's preserved on the type only because callers may still pass it.
  */
 export function deriveStatusOnInbound(
   ticket: RoutingTicketSnapshot,
@@ -65,14 +75,6 @@ export function deriveStatusOnInbound(
   }
   if (ticket.isArchived || ticket.status === HelpdeskTicketStatus.ARCHIVED) {
     return ticket.status; // leave alone; archive trumps
-  }
-  if (ticket.status === HelpdeskTicketStatus.RESOLVED) {
-    return HelpdeskTicketStatus.TO_DO;
-  }
-  if (!ticket.hasAgentReplied) {
-    // Still untouched — let the row stay NEW (or whatever non-replied
-    // status it already had).
-    return HelpdeskTicketStatus.NEW;
   }
   return HelpdeskTicketStatus.TO_DO;
 }

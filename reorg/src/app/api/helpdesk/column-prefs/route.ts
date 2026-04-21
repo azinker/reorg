@@ -34,31 +34,19 @@ import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
+import {
+  DEFAULT_COLUMNS,
+  KNOWN_COLUMN_KEYS,
+  type HelpdeskColumnKey,
+} from "@/lib/helpdesk/column-keys";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-/**
- * Canonical inbox columns, in their default left-to-right order. The
- * inbox UI uses the same identifiers, so adding a column = adding a key
- * here AND wiring a renderer in the table component.
- */
-export const KNOWN_COLUMN_KEYS = [
-  "channel",
-  "customer",
-  "type",
-  "latestUpdate",
-  "owner",
-  "timeLeft",
-  "created",
-  "status",
-  "orderId",
-  "ebayUsername",
-] as const;
-
-export type HelpdeskColumnKey = (typeof KNOWN_COLUMN_KEYS)[number];
-
-export const DEFAULT_COLUMNS: HelpdeskColumnKey[] = [...KNOWN_COLUMN_KEYS];
+// NOTE: Next 15's route-module type checker forbids exporting anything
+// from a route.ts beyond the recognised handler names + `runtime` /
+// `dynamic`. The column-key constants live in @/lib/helpdesk/column-keys
+// so both this route and any client component can import them safely.
 
 const knownKeySchema = z.enum(KNOWN_COLUMN_KEYS);
 

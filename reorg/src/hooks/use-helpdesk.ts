@@ -120,7 +120,7 @@ export interface HelpdeskTicketSummary {
 export interface HelpdeskMessageDetail {
   id: string;
   direction: "INBOUND" | "OUTBOUND";
-  source: "EBAY" | "EBAY_UI" | "EXTERNAL_EMAIL" | "SYSTEM";
+  source: "EBAY" | "EBAY_UI" | "EXTERNAL_EMAIL" | "SYSTEM" | "AUTO_RESPONDER";
   fromName: string | null;
   fromIdentifier: string | null;
   subject: string | null;

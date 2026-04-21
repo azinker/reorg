@@ -14,12 +14,12 @@ const baseTicket = {
 };
 
 describe("deriveStatusOnInbound", () => {
-  it("keeps NEW when buyer's first message arrives and we have not replied", () => {
+  it("routes a brand-new buyer message to TO_DO (NEW is no longer used)", () => {
     const out = deriveStatusOnInbound({
       ...baseTicket,
       status: HelpdeskTicketStatus.NEW,
     });
-    assert.equal(out, HelpdeskTicketStatus.NEW);
+    assert.equal(out, HelpdeskTicketStatus.TO_DO);
   });
 
   it("promotes WAITING → TO_DO when buyer replies after our outbound", () => {
@@ -63,6 +63,15 @@ describe("deriveStatusOnInbound", () => {
       ...baseTicket,
       hasAgentReplied: true,
       status: HelpdeskTicketStatus.TO_DO,
+    });
+    assert.equal(out, HelpdeskTicketStatus.TO_DO);
+  });
+
+  it("ignores hasAgentReplied — even untouched threads land in TO_DO now", () => {
+    const out = deriveStatusOnInbound({
+      ...baseTicket,
+      hasAgentReplied: false,
+      status: HelpdeskTicketStatus.NEW,
     });
     assert.equal(out, HelpdeskTicketStatus.TO_DO);
   });

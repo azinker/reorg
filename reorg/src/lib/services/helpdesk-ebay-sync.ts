@@ -40,6 +40,7 @@ import {
 import { applyFilterAction, pickMatchingFilters } from "@/lib/helpdesk/filters";
 import { helpdeskFlags } from "@/lib/helpdesk/flags";
 import { deriveStatusOnInbound } from "@/lib/helpdesk/status-routing";
+import { classifyMessageSource } from "@/lib/helpdesk/message-source";
 import { detectTicketType } from "@/lib/helpdesk/type-detect";
 
 // ΓöÇΓöÇΓöÇ Constants ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
@@ -344,6 +345,32 @@ async function reconcileMessages(args: ReconcileArgs): Promise<ReconcileResult> 
     messagesInserted: 0,
   };
 
+  // Build a Set of eBay message IDs that originated from our Auto Responder
+  // for this batch, so we can tag the resulting HelpdeskMessage rows with
+  // source=AUTO_RESPONDER instead of the catch-all EBAY/EBAY_UI. We match by
+  // the externalMessageId that AR persisted on the SendLog row when the
+  // send succeeded — that's exactly the same id eBay will hand us back on
+  // the next inbox/sent sync. One query per batch (vs. per message) keeps
+  // the worker O(N) instead of O(N²).
+  const outboundMessageIds = args.bodies
+    .filter((b) => inferDirection(b, args.folderKey) === HelpdeskMessageDirection.OUTBOUND)
+    .map((b) => b.messageID)
+    .filter((id): id is string => Boolean(id));
+  const arMessageIds = new Set<string>();
+  if (outboundMessageIds.length > 0) {
+    const arRows = await db.autoResponderSendLog.findMany({
+      where: {
+        integrationId: args.integration.id,
+        externalMessageId: { in: outboundMessageIds },
+        eventType: "SENT",
+      },
+      select: { externalMessageId: true },
+    });
+    for (const r of arRows) {
+      if (r.externalMessageId) arMessageIds.add(r.externalMessageId);
+    }
+  }
+
   for (const body of args.bodies) {
     if (!body.messageID) continue;
     const direction = inferDirection(body, args.folderKey);
@@ -441,9 +468,14 @@ async function reconcileMessages(args: ReconcileArgs): Promise<ReconcileResult> 
           subject,
           kind: isPreSales ? HelpdeskTicketKind.PRE_SALES : HelpdeskTicketKind.POST_SALES,
           ...(detectedType ? { type: detectedType } : {}),
+          // v2 folder semantics: every unanswered buyer message lives in
+          // TO_DO. The legacy NEW value is preserved in the enum for
+          // historical rows but new tickets never start there. Outbound-only
+          // creates (rare — usually we see the buyer message first) still
+          // start in WAITING because we just spoke last.
           status:
             direction === HelpdeskMessageDirection.INBOUND
-              ? HelpdeskTicketStatus.NEW
+              ? HelpdeskTicketStatus.TO_DO
               : HelpdeskTicketStatus.WAITING,
           lastBuyerMessageAt:
             direction === HelpdeskMessageDirection.INBOUND ? sentAt : null,
@@ -495,16 +527,23 @@ async function reconcileMessages(args: ReconcileArgs): Promise<ReconcileResult> 
     let inserted = false;
     const messageBodyText = body.text ?? "";
     const messageFromName = body.sender ?? null;
+
+    // Source determination is delegated to a pure classifier so the
+    // priority ordering (reorG envelope > AR log > catch-all EBAY_UI) is
+    // unit-tested independently of the sync's prisma plumbing.
+    const messageSource = classifyMessageSource({
+      direction,
+      ebayMessageId: body.messageID,
+      externalMessageId: body.externalMessageID,
+      autoResponderMessageIds: arMessageIds,
+    });
+
     try {
       await db.helpdeskMessage.create({
         data: {
           ticketId: ticket.id,
           direction,
-          source:
-            direction === HelpdeskMessageDirection.OUTBOUND &&
-            !body.externalMessageID?.startsWith("reorg:")
-              ? HelpdeskMessageSource.EBAY_UI
-              : HelpdeskMessageSource.EBAY,
+          source: messageSource,
           externalId: body.messageID,
           ebayMessageId: body.messageID,
           fromName: messageFromName,
@@ -555,8 +594,16 @@ async function reconcileMessages(args: ReconcileArgs): Promise<ReconcileResult> 
     // outbound messages route already passes the agent's chosen
     // `setStatus` (WAITING or RESOLVED) through `deriveStatusOnOutbound`,
     // so this block only nudges WAITING for unsolicited eBay-side replies.
+    //
+    // Auto Responder messages are explicitly EXCLUDED from this transition.
+    // An AR send is a one-way courtesy notification, not a substantive
+    // reply — the buyer hasn't actually been engaged with yet, so flipping
+    // a brand-new ticket from TO_DO to WAITING just because the AR fired
+    // would hide the ticket from the agent's "needs response" queue. The
+    // agent still owes the buyer a real reply.
     if (
       direction === HelpdeskMessageDirection.OUTBOUND &&
+      messageSource !== HelpdeskMessageSource.AUTO_RESPONDER &&
       ticket.status !== HelpdeskTicketStatus.RESOLVED &&
       ticket.status !== HelpdeskTicketStatus.SPAM &&
       !ticket.isArchived

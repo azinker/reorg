@@ -84,11 +84,20 @@ test("buildFolderWhere(mentioned) filters notes by ctx user", () => {
   assert.match(json, /"isDeleted":false/);
 });
 
-test("buildFolderWhere(all_new) constrains status=NEW and not snoozed", () => {
-  const where = buildFolderWhere("all_new", ctx);
+test("buildFolderWhere(all_to_do) accepts both NEW and TO_DO so legacy rows still surface", () => {
+  const where = buildFolderWhere("all_to_do", ctx);
   const json = JSON.stringify(where);
-  assert.match(json, /"status":"NEW"/);
+  // v2 semantics: NEW is folded into TO_DO. The Prisma `in` clause must
+  // include both so historical rows from before the routing rewrite remain
+  // visible without a one-off backfill.
+  assert.match(json, /"status":\{"in":\["NEW","TO_DO"\]\}/);
   assert.match(json, /"snoozedUntil"/);
+});
+
+test("buildFolderWhere(all_new) is a back-compat alias for all_to_do (v2)", () => {
+  const a = JSON.stringify(buildFolderWhere("all_new", ctx));
+  const b = JSON.stringify(buildFolderWhere("all_to_do", ctx));
+  assert.equal(a, b);
 });
 
 test("buildFolderWhere(favorites) matches starred non-archived tickets across statuses", () => {

@@ -26,6 +26,20 @@ const STORAGE_KEY = "helpdesk:prefs:v1";
 
 export type HelpdeskLayout = "split" | "list";
 
+/**
+ * Action the composer's primary "Send" button performs after a successful
+ * outbound message:
+ *   - "RESOLVED" — close the ticket and (with autoAdvance) move on
+ *   - "WAITING"  — keep the ticket open in WAITING (await buyer reply)
+ *   - "NONE"     — leave the status untouched
+ *
+ * Mirrors the eDesk-style "send and mark as…" preference. Persisted on
+ * the User row server-side via /api/helpdesk/me/prefs so it follows the
+ * agent across browsers; localStorage acts as a synchronous cache so the
+ * composer doesn't flash the wrong default during initial hydration.
+ */
+export type HelpdeskDefaultSendStatus = "RESOLVED" | "WAITING" | "NONE";
+
 export interface HelpdeskPrefs {
   sendDelaySeconds: number;
   autoAdvance: boolean;
@@ -34,6 +48,7 @@ export interface HelpdeskPrefs {
   layout: HelpdeskLayout;
   threadWidthPct: number;
   inboxWidthPct: number;
+  defaultSendStatus: HelpdeskDefaultSendStatus;
 }
 
 const DEFAULTS: HelpdeskPrefs = {
@@ -44,6 +59,10 @@ const DEFAULTS: HelpdeskPrefs = {
   layout: "split",
   threadWidthPct: 55,
   inboxWidthPct: 26,
+  // v2 spec: replying to a buyer typically means "this is handled" —
+  // close the ticket. Agents who want the old WAITING behaviour change
+  // this once in Settings and it sticks (server-side persisted).
+  defaultSendStatus: "RESOLVED",
 };
 
 function readPrefs(): HelpdeskPrefs {
@@ -60,6 +79,12 @@ function readPrefs(): HelpdeskPrefs {
       layout: parsed.layout === "list" ? "list" : "split",
       threadWidthPct: clampInt(parsed.threadWidthPct, 35, 75, DEFAULTS.threadWidthPct),
       inboxWidthPct: clampInt(parsed.inboxWidthPct, 15, 45, DEFAULTS.inboxWidthPct),
+      defaultSendStatus:
+        parsed.defaultSendStatus === "WAITING" ||
+        parsed.defaultSendStatus === "NONE" ||
+        parsed.defaultSendStatus === "RESOLVED"
+          ? parsed.defaultSendStatus
+          : DEFAULTS.defaultSendStatus,
     };
   } catch {
     return DEFAULTS;
@@ -92,7 +117,8 @@ function writePrefs(p: HelpdeskPrefs, previous?: HelpdeskPrefs) {
     prev.density !== p.density ||
     prev.layout !== p.layout ||
     prev.threadWidthPct !== p.threadWidthPct ||
-    prev.inboxWidthPct !== p.inboxWidthPct;
+    prev.inboxWidthPct !== p.inboxWidthPct ||
+    prev.defaultSendStatus !== p.defaultSendStatus;
   if (!changed) return;
   window.localStorage.setItem(STORAGE_KEY, JSON.stringify(p));
   window.dispatchEvent(new CustomEvent("helpdesk:prefs-changed", { detail: p }));
@@ -104,11 +130,60 @@ function clampInt(n: unknown, min: number, max: number, fallback: number): numbe
   return Math.max(min, Math.min(max, Math.round(v)));
 }
 
+/**
+ * One-shot server hydration: pulls `defaultSendStatus` from
+ * /api/helpdesk/me/prefs and merges it into localStorage so future reads
+ * are synchronous. Failures are non-fatal — we just stay on whatever
+ * value localStorage had (or the DEFAULTS fallback).
+ */
+let serverHydrationPromise: Promise<void> | null = null;
+function hydrateFromServerOnce(): Promise<void> {
+  if (typeof window === "undefined") return Promise.resolve();
+  if (serverHydrationPromise) return serverHydrationPromise;
+  serverHydrationPromise = (async () => {
+    try {
+      const res = await fetch("/api/helpdesk/me/prefs", {
+        credentials: "same-origin",
+      });
+      if (!res.ok) return;
+      const json = (await res.json()) as {
+        data?: { defaultSendStatus?: HelpdeskDefaultSendStatus };
+      };
+      const next = json?.data?.defaultSendStatus;
+      if (next !== "RESOLVED" && next !== "WAITING" && next !== "NONE") return;
+      const prev = readPrefs();
+      if (prev.defaultSendStatus === next) return;
+      writePrefs({ ...prev, defaultSendStatus: next }, prev);
+    } catch {
+      // Network failure / unauthenticated. The composer already has a
+      // sensible default; nothing to do.
+    }
+  })();
+  return serverHydrationPromise;
+}
+
+/** Imperative server-side persist for the defaultSendStatus pref. */
+export function persistDefaultSendStatusToServer(
+  value: HelpdeskDefaultSendStatus,
+): void {
+  if (typeof window === "undefined") return;
+  void fetch("/api/helpdesk/me/prefs", {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    credentials: "same-origin",
+    body: JSON.stringify({ defaultSendStatus: value }),
+  }).catch(() => {
+    // Server-side write failed; the local pref still applies for this
+    // session and will be retried next time the agent edits it.
+  });
+}
+
 /** Hook for components that want to read live prefs and react to changes. */
 export function useHelpdeskPrefs(): HelpdeskPrefs {
   const [prefs, setPrefs] = useState<HelpdeskPrefs>(DEFAULTS);
   useEffect(() => {
     setPrefs(readPrefs());
+    void hydrateFromServerOnce();
     const onChange = (e: Event) => {
       const detail = (e as CustomEvent).detail as HelpdeskPrefs | undefined;
       if (!detail) return;
@@ -170,6 +245,11 @@ export function HelpdeskSettingsDialog({ open, onClose }: HelpdeskSettingsDialog
     const next = { ...prefs, [key]: value };
     setPrefs(next);
     writePrefs(next, prefs);
+    // Server-side prefs need an explicit network write — localStorage
+    // alone wouldn't survive a browser change.
+    if (key === "defaultSendStatus") {
+      persistDefaultSendStatusToServer(value as HelpdeskDefaultSendStatus);
+    }
   }
 
   return (
@@ -255,6 +335,26 @@ export function HelpdeskSettingsDialog({ open, onClose }: HelpdeskSettingsDialog
             >
               <option value="comfortable">Comfortable</option>
               <option value="compact">Compact</option>
+            </select>
+          </Field>
+
+          <Field
+            label="Default Send action"
+            description="What happens to the ticket when you press the composer's primary Send button."
+          >
+            <select
+              value={prefs.defaultSendStatus}
+              onChange={(e) =>
+                update(
+                  "defaultSendStatus",
+                  e.target.value as HelpdeskDefaultSendStatus,
+                )
+              }
+              className="h-8 rounded-md border border-hairline bg-surface px-2 text-foreground"
+            >
+              <option value="RESOLVED">Send + Resolve</option>
+              <option value="WAITING">Send + Mark Waiting</option>
+              <option value="NONE">Send only (keep status)</option>
             </select>
           </Field>
         </div>
