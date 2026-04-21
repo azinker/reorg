@@ -389,8 +389,6 @@ async function reconcileMessages(args: ReconcileArgs): Promise<ReconcileResult> 
   for (const body of args.bodies) {
     if (!body.messageID) continue;
     const direction = inferDirection(body, args.folderKey);
-    const threadKey = computeThreadKey(body, direction);
-    if (!threadKey) continue;
 
     const buyerUserId = inferBuyerUserId(body, direction);
     const sentAt = body.receiveDate ? new Date(body.receiveDate) : new Date();
@@ -400,8 +398,13 @@ async function reconcileMessages(args: ReconcileArgs): Promise<ReconcileResult> 
     // Extract an eBay order number from the message itself (subject or body).
     // Auto-responder messages always include "Your order (#NN-NNNNN-NNNNN)";
     // many buyer replies also quote the order number. We capture it here so
-    // the ticket can show it without an extra API round-trip.
+    // the ticket can show it without an extra API round-trip. This has to
+    // happen BEFORE computeThreadKey because the thread key now prefers
+    // order-scoped grouping.
     const extractedOrderNumber = extractEbayOrderNumber(body);
+
+    const threadKey = computeThreadKey(body, direction, extractedOrderNumber);
+    if (!threadKey) continue;
 
     const isPreSales =
       !!itemId &&
@@ -417,6 +420,47 @@ async function reconcileMessages(args: ReconcileArgs): Promise<ReconcileResult> 
         },
       },
     });
+
+    // Pre-sales → post-sales adoption. If this message has an order number
+    // (threadKey=ord:...) and we don't have a ticket at that key yet, look
+    // for an existing *pre-sales* ticket on the same {itemId, buyer} pair
+    // that hasn't been stamped with an order yet. If one exists, we adopt
+    // it: rewrite its threadKey from `itm:...` to `ord:...` so the
+    // pre-sales message history follows the buyer into the order.
+    //
+    // Safety: we only adopt when `ebayOrderNumber` is NULL on the existing
+    // ticket. If the existing itm:-keyed ticket already has an order
+    // stamped, it belongs to a *different* earlier order and we must leave
+    // it alone.
+    if (!ticket && extractedOrderNumber && itemId) {
+      const buyer =
+        direction === HelpdeskMessageDirection.INBOUND
+          ? body.sender
+          : body.recipientUserID;
+      if (buyer) {
+        const preSalesKey = `itm:${itemId}|buyer:${buyer.toLowerCase()}`;
+        const preSalesTicket = await db.helpdeskTicket.findUnique({
+          where: {
+            integrationId_threadKey: {
+              integrationId: args.integration.id,
+              threadKey: preSalesKey,
+            },
+          },
+        });
+        if (preSalesTicket && preSalesTicket.ebayOrderNumber === null) {
+          // Adopt it: re-key and stamp the order number. We don't change
+          // kind here — the branch below handles pre-sales → post-sales
+          // reclassification via ticketUpdate.kind.
+          ticket = await db.helpdeskTicket.update({
+            where: { id: preSalesTicket.id },
+            data: {
+              threadKey,
+              ebayOrderNumber: extractedOrderNumber,
+            },
+          });
+        }
+      }
+    }
 
     const ticketUpdate: Prisma.HelpdeskTicketUpdateInput = {};
     if (direction === HelpdeskMessageDirection.INBOUND) {
@@ -720,18 +764,28 @@ function buyerOrderHint(body: EbayMessageBody): boolean {
 }
 
 /**
- * Stable thread key. Buyer + Item is the strongest signal for a single
- * conversation; multiple independent threads on the same item from the same
- * buyer are rare and acceptable to merge for v1.
+ * Stable thread key. We prefer `orderNumber + buyer` because that is the
+ * strongest signal that two messages belong to the same logical ticket: each
+ * eBay order is its own transaction, and the operator wants each order's
+ * messages in its own ticket even when the same buyer places multiple
+ * orders on the same listing.
+ *
+ * When no order number is known yet (pure pre-sales inquiry), we fall back
+ * to `itemId + buyer`. As soon as that conversation converts into a real
+ * order, the sync will "adopt" the pre-sales ticket by rewriting its
+ * threadKey from `itm:...` to `ord:...` so the pre-sales message history is
+ * preserved on the post-sales ticket.
  *
  * Format examples:
- *   - itm:123456789|buyer:johndoe
- *   - sub:question-about-shipping|buyer:johndoe
- *   - msg:abcdef (last-resort fallback when neither exists)
+ *   - ord:08-14471-32723|buyer:johndoe          (post-sales, preferred)
+ *   - itm:123456789|buyer:johndoe                (pre-sales, no order yet)
+ *   - sub:question-about-shipping|buyer:johndoe  (no itemID available)
+ *   - msg:abcdef                                 (last-resort fallback)
  */
 function computeThreadKey(
   body: EbayMessageBody,
   direction: HelpdeskMessageDirection,
+  orderNumber: string | null,
 ): string | null {
   const buyer =
     direction === HelpdeskMessageDirection.INBOUND
@@ -740,6 +794,9 @@ function computeThreadKey(
   const itemId = body.itemID?.trim();
   const subject = body.subject?.trim();
 
+  if (orderNumber && buyer) {
+    return `ord:${orderNumber}|buyer:${buyer.toLowerCase()}`;
+  }
   if (itemId && buyer) {
     return `itm:${itemId}|buyer:${buyer.toLowerCase()}`;
   }
