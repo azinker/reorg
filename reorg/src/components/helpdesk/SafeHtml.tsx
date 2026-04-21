@@ -649,9 +649,47 @@ function ensureDompurifyHook() {
   __dompurifyHookInstalled = true;
 }
 
+/**
+ * eBay's GetMyMessages returns a *digest* of the entire conversation in
+ * one HTML body. Every individual buyer/agent message is wrapped in a
+ *
+ *     <div id="UserInputtedText" ...>...message HTML...</div>
+ *     <div id="UserInputtedText2" ...>...older message HTML...</div>
+ *
+ * pair (one per turn). The `ebay-digest-parser` server-side already
+ * explodes new digests into discrete `HelpdeskMessage` rows whose
+ * `bodyText`/`bodyHtml` is *just* the inner contents of one of these
+ * divs.
+ *
+ * For legacy rows the back-end hasn't re-exploded yet, the body still
+ * contains the entire envelope (logo banner, "New message from", giant
+ * footer, ALL turns inlined). When that happens we want to render
+ * **only** the inner content of the FIRST `#UserInputtedText` div, not
+ * the whole envelope. This regex pulls that content out so the existing
+ * sanitiser/chrome-stripper sees a clean, single message instead of a
+ * 50KB envelope.
+ *
+ * Returns the original string when no `#UserInputtedText` anchor is
+ * found — every other code path (auto-responder, plain-text bodies,
+ * already-exploded sub-messages) is unaffected.
+ */
+const USER_INPUTTED_RE =
+  /<div\s+[^>]*id\s*=\s*"UserInputtedText[^"]*"[^>]*>([\s\S]*?)<\/div>/i;
+
+function preferUserInputtedAnchor(body: string): string {
+  const m = USER_INPUTTED_RE.exec(body);
+  if (!m) return body;
+  const inner = m[1]?.trim() ?? "";
+  // If the captured content is empty or nothing but whitespace, keep the
+  // original so we don't accidentally render a blank bubble.
+  if (inner.length === 0) return body;
+  return inner;
+}
+
 function computeSanitised(decoded: string): string {
   ensureDompurifyHook();
-  const clean = DOMPurify.sanitize(decoded, PURIFY_CONFIG);
+  const anchored = preferUserInputtedAnchor(decoded);
+  const clean = DOMPurify.sanitize(anchored, PURIFY_CONFIG);
   return stripEbayChrome(clean);
 }
 

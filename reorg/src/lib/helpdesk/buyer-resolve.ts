@@ -158,6 +158,46 @@ export async function resolveBuyerFromSaleOrder(
   };
 }
 
+/**
+ * Pull the buyer's eBay handle out of an eBay HTML digest body.
+ *
+ * eBay's `MessageHistory[N]` blocks (and the live `PrimaryMessage`
+ * block) embed the buyer username inside an anchor of the form:
+ *
+ *     <a href="https://www.ebay.com/.../usr/<buyer>?...">buyer</a>
+ *
+ * The same handle can appear many times in one body (one per history
+ * heading + the live envelope). We just need ONE non-system match. We
+ * scan every `/usr/<x>` link and return the first one that isn't the
+ * literal "eBay" or the seller's own user id.
+ *
+ * Returns `null` when the body is plain text (no HTML link), when no
+ * `/usr/...` anchors exist, or when every candidate is filtered out as
+ * a system/seller handle.
+ */
+export function extractBuyerFromDigestHtml(
+  html: string | null | undefined,
+  sellerUserId: string | null,
+): string | null {
+  if (!html) return null;
+  // Cheap pre-check: skip the regex pass entirely when the body has no
+  // /usr/ link at all.
+  if (!/\/usr\//i.test(html)) return null;
+  const re = /https?:\/\/[^"'\s]*\/usr\/([A-Za-z0-9._-]+)/gi;
+  const seen = new Set<string>();
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(html)) !== null) {
+    const cand = m[1]?.trim();
+    if (!cand) continue;
+    const lower = cand.toLowerCase();
+    if (seen.has(lower)) continue;
+    seen.add(lower);
+    if (isSystemOrSellerSender(cand, sellerUserId)) continue;
+    return cand;
+  }
+  return null;
+}
+
 // ─── Top-level resolver ───────────────────────────────────────────────────
 
 export interface ResolvedBuyer {
@@ -257,4 +297,44 @@ export async function resolveBuyer(args: {
     buyerEmail: null,
     source: "none",
   };
+}
+
+/**
+ * Resolve a buyer for a single sub-message extracted from an eBay digest
+ * (see `ebay-digest-parser.ts`). The parser gives us per-message direction
+ * but the underlying `EbayMessageBody` headers describe only the *envelope*
+ * (the email itself), not the individual history entries inside it.
+ *
+ * Resolution order:
+ *
+ *   1. If the digest HTML contains a `/usr/<x>` link that isn't the seller
+ *      or "eBay", trust it — that's the buyer's handle.
+ *   2. Otherwise, fall back to the standard envelope-level `resolveBuyer`
+ *      (which also tries body-text salutations and MarketplaceSaleOrder).
+ *
+ * The whole point is that the same buyer should be attributed to *every*
+ * historical sub-message in the digest, regardless of which side sent
+ * which row. We just need one good attribution and we use it for the lot.
+ */
+export async function resolveBuyerForDigest(args: {
+  body: EbayMessageBody;
+  integration: Integration;
+  orderNumber: string | null;
+  digestHtml: string | null | undefined;
+}): Promise<ResolvedBuyer> {
+  const sellerUserId = getSellerUserId(args.integration);
+  const fromDigest = extractBuyerFromDigestHtml(args.digestHtml, sellerUserId);
+  if (fromDigest) {
+    return {
+      buyerUserId: fromDigest,
+      buyerName: fromDigest,
+      buyerEmail: null,
+      source: "header",
+    };
+  }
+  return resolveBuyer({
+    body: args.body,
+    integration: args.integration,
+    orderNumber: args.orderNumber,
+  });
 }

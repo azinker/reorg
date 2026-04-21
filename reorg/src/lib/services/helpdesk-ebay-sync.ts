@@ -43,7 +43,14 @@ import { helpdeskFlags } from "@/lib/helpdesk/flags";
 import { deriveStatusOnInbound } from "@/lib/helpdesk/status-routing";
 import { classifyMessageSource } from "@/lib/helpdesk/message-source";
 import { detectTicketType } from "@/lib/helpdesk/type-detect";
-import { resolveBuyer, type ResolvedBuyer } from "@/lib/helpdesk/buyer-resolve";
+import {
+  resolveBuyerForDigest,
+  type ResolvedBuyer,
+} from "@/lib/helpdesk/buyer-resolve";
+import {
+  parseEbayDigest,
+  hashBodyForMatch,
+} from "@/lib/helpdesk/ebay-digest-parser";
 
 // ΓöÇΓöÇΓöÇ Constants ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 
@@ -389,7 +396,13 @@ async function reconcileMessages(args: ReconcileArgs): Promise<ReconcileResult> 
 
   for (const body of args.bodies) {
     if (!body.messageID) continue;
-    const direction = inferDirection(body, args.folderKey);
+    // Envelope-level direction governs the *primary* HelpdeskMessage row
+    // we insert (the digest envelope itself, used for filters/threading).
+    // Per-sub-message directions for digest-exploded historical rows are
+    // resolved later from the parser's structured output. We alias to
+    // `direction` to keep the rest of this loop's existing logic intact.
+    const envelopeDirection = inferDirection(body, args.folderKey);
+    const direction = envelopeDirection;
 
     const sentAt = body.receiveDate ? new Date(body.receiveDate) : new Date();
     const subject = body.subject?.trim() || null;
@@ -404,16 +417,19 @@ async function reconcileMessages(args: ReconcileArgs): Promise<ReconcileResult> 
     // grouping key).
     const extractedOrderNumber = extractEbayOrderNumber(body);
 
-    // Resolve the *real* buyer for this message. The resolver knows to
-    // ignore "eBay" / the seller's own user id and falls back to the
-    // body text or MarketplaceSaleOrder when the headers don't carry a
-    // real buyer. This is the single source of truth for buyer identity
-    // throughout sync — keep all downstream `buyerUserId` writes in sync
-    // with the value here so we never store "eBay" or our seller name.
-    const resolved: ResolvedBuyer = await resolveBuyer({
+    // Resolve the *real* buyer for this message. The digest-aware resolver
+    // first scans the HTML body for a `/usr/<buyer>` link (which the eBay
+    // template embeds in every history-block heading), then falls back to
+    // the standard envelope-level resolver (sender / recipient / body
+    // salutation / MarketplaceSaleOrder). This is the single source of
+    // truth for buyer identity throughout sync — keep all downstream
+    // `buyerUserId` writes in sync with the value here so we never store
+    // "eBay" or our seller name.
+    const resolved: ResolvedBuyer = await resolveBuyerForDigest({
       body,
       integration: args.integration,
       orderNumber: extractedOrderNumber,
+      digestHtml: body.text,
     });
     const buyerUserId = resolved.buyerUserId;
     const buyerName = resolved.buyerName;
@@ -718,6 +734,166 @@ async function reconcileMessages(args: ReconcileArgs): Promise<ReconcileResult> 
             unreadCount: 0,
           },
         });
+      }
+    }
+
+    // ── Digest expansion: eBay's GetMyMessages returns each notification
+    // as a single HTML "digest" body that contains the *entire* recent
+    // conversation history embedded in `<div id="UserInputtedText[N]">`
+    // blocks (one per historical message). The envelope row we inserted
+    // above represents the digest itself; here we explode the historical
+    // sub-messages into their own HelpdeskMessage rows so the agent sees
+    // every individual buyer/agent/AR turn instead of one giant blob.
+    //
+    // Idempotency strategy:
+    //   - The parser produces a stable `externalId` per sub-message of
+    //     form `<digestExternalId>:<n>`, so re-running the same digest is
+    //     a no-op via the (ticketId, externalId) unique constraint.
+    //   - Across DIFFERENT digests covering the same conversation we
+    //     dedupe by `bodyHash` (computed in-process from existing rows).
+    //
+    // Direction handling:
+    //   - The parser returns "inbound" / "outbound" / "unknown" per sub
+    //     based on the surrounding `MessageHistory[N]` heading.
+    //   - "unknown" sub-messages are skipped — they're usually the eBay
+    //     boilerplate header/footer and we don't want to mis-attribute
+    //     them.
+    //
+    // AR attribution: outbound sub-messages whose normalized bodyHash
+    // matches an `AutoResponderSendLog.renderedBody` for the same
+    // (integration, orderNumber) get tagged source=AUTO_RESPONDER so the
+    // ThreadView renders them with the AR avatar/label instead of as a
+    // generic agent message.
+    if (body.text && /<div\s+id="UserInputtedText\d*"/i.test(body.text)) {
+      try {
+        const parsed = parseEbayDigest({
+          bodyHtml: body.text,
+          digestExternalId: body.messageID,
+        });
+        if (parsed.isDigest && parsed.subMessages.length > 0) {
+          // Build hash set of existing messages on this ticket so we can
+          // dedupe newly parsed sub-messages against earlier digests.
+          const existing = await db.helpdeskMessage.findMany({
+            where: { ticketId: ticket.id },
+            select: { bodyText: true, externalId: true },
+          });
+          const existingHashes = new Set<string>();
+          const existingExternalIds = new Set<string>();
+          for (const m of existing) {
+            existingHashes.add(hashBodyForMatch(m.bodyText));
+            if (m.externalId) existingExternalIds.add(m.externalId);
+          }
+
+          // Pull AR send logs for this order so we can attribute outbound
+          // sub-messages whose body matches an AR send. We key by hash so
+          // a single equality check covers any whitespace/casing drift
+          // between what we sent and what eBay echoed back.
+          const arHashes = new Set<string>();
+          if (extractedOrderNumber) {
+            const arLogs = await db.autoResponderSendLog.findMany({
+              where: {
+                integrationId: args.integration.id,
+                orderNumber: extractedOrderNumber,
+                eventType: "SENT",
+                renderedBody: { not: null },
+              },
+              select: { renderedBody: true },
+            });
+            for (const log of arLogs) {
+              if (log.renderedBody) {
+                arHashes.add(hashBodyForMatch(log.renderedBody));
+              }
+            }
+          }
+
+          for (const sub of parsed.subMessages) {
+            // Skip sub-messages with unknown direction — they're almost
+            // always the eBay header/footer template fragments and not
+            // real conversational turns.
+            if (sub.direction === "unknown") continue;
+            // Idempotency: skip if we've already inserted this exact sub
+            // (same digest, same position) or any other row with the
+            // same body hash on this ticket (covers cross-digest dupes).
+            if (existingExternalIds.has(sub.externalId)) continue;
+            if (existingHashes.has(sub.bodyHash)) continue;
+
+            const subDirection =
+              sub.direction === "inbound"
+                ? HelpdeskMessageDirection.INBOUND
+                : HelpdeskMessageDirection.OUTBOUND;
+
+            // AR attribution: only outbound sub-messages whose hash
+            // matches an AR send log for this order are tagged AR. All
+            // other outbound subs get the generic EBAY source (we don't
+            // know whether a human agent wrote them or eBay generated
+            // them — but they're definitely "from us").
+            const subSource =
+              subDirection === HelpdeskMessageDirection.OUTBOUND &&
+              arHashes.has(sub.bodyHash)
+                ? HelpdeskMessageSource.AUTO_RESPONDER
+                : subDirection === HelpdeskMessageDirection.INBOUND
+                  ? HelpdeskMessageSource.EBAY
+                  : HelpdeskMessageSource.EBAY;
+
+            try {
+              await db.helpdeskMessage.create({
+                data: {
+                  ticketId: ticket.id,
+                  direction: subDirection,
+                  source: subSource,
+                  externalId: sub.externalId,
+                  ebayMessageId: body.messageID,
+                  fromName:
+                    subDirection === HelpdeskMessageDirection.INBOUND
+                      ? buyerName ?? buyerUserId ?? "Buyer"
+                      : null,
+                  fromIdentifier:
+                    subDirection === HelpdeskMessageDirection.INBOUND
+                      ? buyerUserId
+                      : null,
+                  subject: null,
+                  bodyText: sub.bodyHtml,
+                  isHtml: true,
+                  rawMedia: [] as Prisma.InputJsonValue,
+                  rawData: {
+                    digestSource: body.messageID,
+                    subIndex: sub.index,
+                    isLive: sub.isLive,
+                    folder: args.folderKey,
+                  } as Prisma.InputJsonValue,
+                  // Historical sub-messages don't carry their own
+                  // timestamp in the digest, so we approximate using the
+                  // envelope's receiveDate offset by sub-index seconds.
+                  // Older subs get earlier timestamps so chronological
+                  // sort order is preserved within the ticket.
+                  sentAt: new Date(
+                    sentAt.getTime() -
+                      (parsed.subMessages.length - 1 - sub.index) * 1000,
+                  ),
+                },
+              });
+              // Track the new hash so subsequent subs in the same digest
+              // dedupe against it too.
+              existingHashes.add(sub.bodyHash);
+              result.messagesInserted++;
+            } catch (err) {
+              if (
+                !(err instanceof Error) ||
+                !err.message.includes("Unique constraint failed")
+              ) {
+                console.error(
+                  "[helpdesk-sync] sub-message insert failed",
+                  err,
+                );
+              }
+            }
+          }
+        }
+      } catch (err) {
+        // Parser failures must never block envelope-level sync. Log and
+        // move on — the digest envelope row is already in the DB so the
+        // agent will at minimum see the latest message.
+        console.error("[helpdesk-sync] digest parse failed", err);
       }
     }
 
