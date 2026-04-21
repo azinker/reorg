@@ -391,6 +391,101 @@ export interface RunFilterResult {
 }
 
 /**
+ * Translate a single rule into a Prisma `where` predicate so the DB can do
+ * the heavy lifting. Returns `null` when the rule can't be expressed in SQL
+ * (currently only `regex` — Postgres can do regex via `~` but Prisma's QM
+ * doesn't expose case-insensitive regex portably across providers, so we
+ * fall back to in-memory evaluation for those).
+ *
+ * Field mapping:
+ *   - subject / body / from_name → message-level columns
+ *   - buyer_username             → ticket relation
+ */
+function ruleToPrismaWhere(rule: FilterRule): Prisma.HelpdeskMessageWhereInput | null {
+  if (rule.op === "regex") return null;
+  const mode: "default" | "insensitive" = rule.caseSensitive ? "default" : "insensitive";
+
+  // Build the string predicate based on the operator. Prisma accepts the
+  // same shape (`{ contains, mode }` etc) on every string column.
+  const stringFilter: Prisma.StringFilter | Prisma.StringNullableFilter = (() => {
+    switch (rule.op) {
+      case "contains":
+        return { contains: rule.value, mode };
+      case "equals":
+        return { equals: rule.value, mode };
+      case "starts_with":
+        return { startsWith: rule.value, mode };
+      case "ends_with":
+        return { endsWith: rule.value, mode };
+    }
+  })();
+
+  switch (rule.field) {
+    case "subject":
+      return { subject: stringFilter as Prisma.StringNullableFilter };
+    case "body":
+      return { bodyText: stringFilter as Prisma.StringFilter };
+    case "buyer_username":
+      return {
+        ticket: {
+          is: { buyerUserId: stringFilter as Prisma.StringNullableFilter },
+        },
+      };
+    case "from_name":
+      // from_name resolution is `msg.fromName ?? ticket.buyerName ?? msg.fromIdentifier`,
+      // so the SQL prefilter has to OR all three. The in-memory pass below
+      // still re-validates with the canonical extractor so this can over-match
+      // safely without producing false positives.
+      return {
+        OR: [
+          { fromName: stringFilter as Prisma.StringNullableFilter },
+          { fromIdentifier: stringFilter as Prisma.StringNullableFilter },
+          { ticket: { is: { buyerName: stringFilter as Prisma.StringNullableFilter } } },
+        ],
+      };
+  }
+}
+
+/**
+ * Compose a `where` clause that prefilters down to messages the rule set
+ * could possibly match. We always require the message to be INBOUND or an
+ * OUTBOUND eBay-system notification (`authorUserId IS NULL`) because agent
+ * replies must never be archived by a filter.
+ *
+ * Returns `null` when no rule can be expressed in SQL — the caller then has
+ * to scan the full eligible message pool. In practice only `regex` triggers
+ * the fallback.
+ */
+function conditionsToPrismaWhere(
+  conditions: FilterConditions,
+): Prisma.HelpdeskMessageWhereInput | null {
+  const parts: Prisma.HelpdeskMessageWhereInput[] = [];
+  for (const r of conditions.rules) {
+    const w = ruleToPrismaWhere(r);
+    if (w) parts.push(w);
+  }
+  if (parts.length === 0) return null;
+
+  // ALL → AND, ANY → OR. When `match=ALL` and SOME rules are regex (and so
+  // dropped here), the SQL prefilter is over-permissive but the in-memory
+  // pass still re-validates the full rule set, so accuracy is preserved.
+  const ruleClause: Prisma.HelpdeskMessageWhereInput =
+    conditions.match === "ALL" ? { AND: parts } : { OR: parts };
+
+  return {
+    AND: [
+      {
+        OR: [
+          { direction: "INBOUND" },
+          { direction: "OUTBOUND", authorUserId: null },
+        ],
+      },
+      ruleClause,
+    ],
+  };
+}
+
+/**
  * Execute a filter against every ticket's most recent matchable message. We
  * scan two populations:
  *
@@ -405,8 +500,14 @@ export interface RunFilterResult {
  * agent replies typed in our composer, and archiving an agent's own reply is
  * rarely what the user wants.
  *
- * Bounded to the most recent 5000 messages per run to keep the request snappy
- * even on very large inboxes.
+ * Strategy: push the rule set down to Postgres via a Prisma `where`. The
+ * earlier implementation pulled the most recent 5000 messages and evaluated
+ * in JS, which caused a real production bug — once the user had >5000 recent
+ * INBOUND/system messages, AR-trigger sub-messages older than ~3 weeks were
+ * invisible to "Run filter", leaving ~1200 matching tickets stuck in the
+ * open inbox. Now we paginate over EVERY matching message via cursor so the
+ * filter can converge no matter how big the inbox is. Regex rules fall back
+ * to a bounded scan because Prisma can't push them down portably.
  */
 export async function runFilterOverInbox(
   filterId: string,
@@ -418,60 +519,97 @@ export async function runFilterOverInbox(
   if (!filter) throw new Error(`Filter not found: ${filterId}`);
 
   const conditions = parseConditions(filter.conditions);
+  const sqlWhere = conditionsToPrismaWhere(conditions);
 
-  // Pull recent matchable messages with their parent tickets in one shot. We
-  // dedupe by ticketId so each ticket is only acted on once even if multiple
-  // messages match. See doc comment above for the direction/authorUserId
-  // contract.
-  const messages = await db.helpdeskMessage.findMany({
-    where: {
-      OR: [
-        { direction: "INBOUND" },
-        { direction: "OUTBOUND", authorUserId: null },
-      ],
-    },
-    orderBy: { sentAt: "desc" },
-    take: 5000,
-    select: {
-      id: true,
-      subject: true,
-      bodyText: true,
-      fromName: true,
-      fromIdentifier: true,
-      ticket: {
-        select: {
-          id: true,
-          buyerUserId: true,
-          buyerName: true,
-          isArchived: true,
-          isSpam: true,
-          status: true,
-        },
-      },
-    },
-  });
+  type Page = Array<{
+    id: string;
+    subject: string | null;
+    bodyText: string;
+    fromName: string | null;
+    fromIdentifier: string | null;
+    ticket: {
+      id: string;
+      buyerUserId: string | null;
+      buyerName: string | null;
+      isArchived: boolean;
+      isSpam: boolean;
+      status: HelpdeskTicketStatus;
+    };
+  }>;
 
+  // Cursor-paginate over the candidate pool so we cover the entire inbox.
+  // Each page is bounded to PAGE_SIZE for memory safety, and the OUTER cap
+  // (HARD_CAP) is high enough to clear any realistic backlog while still
+  // protecting against runaway loops.
+  const PAGE_SIZE = 1000;
+  const HARD_CAP = 200_000;
+
+  const baseWhere: Prisma.HelpdeskMessageWhereInput = sqlWhere ?? {
+    OR: [
+      { direction: "INBOUND" },
+      { direction: "OUTBOUND", authorUserId: null },
+    ],
+  };
+
+  let scanned = 0;
+  let cursor: string | undefined;
   const seen = new Set<string>();
   const matchedTickets: { ticketId: string; subject: string | null }[] = [];
-  for (const m of messages) {
-    if (seen.has(m.ticket.id)) continue;
-    const isMatch = evaluateConditions(
-      conditions,
-      {
-        subject: m.subject,
-        bodyText: m.bodyText,
-        fromName: m.fromName,
-        fromIdentifier: m.fromIdentifier,
+
+  while (scanned < HARD_CAP) {
+    const page: Page = await db.helpdeskMessage.findMany({
+      where: baseWhere,
+      orderBy: { sentAt: "desc" },
+      take: PAGE_SIZE,
+      ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+      select: {
+        id: true,
+        subject: true,
+        bodyText: true,
+        fromName: true,
+        fromIdentifier: true,
+        ticket: {
+          select: {
+            id: true,
+            buyerUserId: true,
+            buyerName: true,
+            isArchived: true,
+            isSpam: true,
+            status: true,
+          },
+        },
       },
-      {
-        buyerUserId: m.ticket.buyerUserId,
-        buyerName: m.ticket.buyerName,
-      },
-    );
-    if (isMatch) {
-      seen.add(m.ticket.id);
-      matchedTickets.push({ ticketId: m.ticket.id, subject: m.subject });
+    });
+    if (page.length === 0) break;
+    scanned += page.length;
+    cursor = page[page.length - 1]?.id;
+
+    for (const m of page) {
+      if (seen.has(m.ticket.id)) continue;
+      // Always re-validate in JS against the FULL rule set. The SQL prefilter
+      // is permissive (regex rules dropped, from_name OR'd) so this guards
+      // against false positives without paying the cost on already-rejected
+      // rows.
+      const isMatch = evaluateConditions(
+        conditions,
+        {
+          subject: m.subject,
+          bodyText: m.bodyText,
+          fromName: m.fromName,
+          fromIdentifier: m.fromIdentifier,
+        },
+        {
+          buyerUserId: m.ticket.buyerUserId,
+          buyerName: m.ticket.buyerName,
+        },
+      );
+      if (isMatch) {
+        seen.add(m.ticket.id);
+        matchedTickets.push({ ticketId: m.ticket.id, subject: m.subject });
+      }
     }
+
+    if (page.length < PAGE_SIZE) break;
   }
 
   let applied = 0;
@@ -500,7 +638,7 @@ export async function runFilterOverInbox(
   return {
     filterId: filter.id,
     filterName: filter.name,
-    scanned: messages.length,
+    scanned,
     matched: matchedTickets.length,
     applied,
     examples: matchedTickets.slice(0, 5),
