@@ -497,8 +497,8 @@ async function reconcileMessages(args: ReconcileArgs): Promise<ReconcileResult> 
       ticketUpdate.unreadCount = { increment: 1 };
       if (ticket) {
         // Route the ticket through the pure status helper. The helper knows
-        // the eDesk semantics (NEW vs TO_DO depending on whether we've ever
-        // replied, RESOLVED reopens to TO_DO, SPAM/ARCHIVED stay put).
+        // the eDesk semantics (every non-spam buyer message → TO_DO; that
+        // includes RESOLVED reopens AND archived bounces).
         const next = deriveStatusOnInbound({
           status: ticket.status,
           hasAgentReplied: ticket.lastAgentMessageAt !== null,
@@ -514,6 +514,16 @@ async function reconcileMessages(args: ReconcileArgs): Promise<ReconcileResult> 
         if (ticket.status === HelpdeskTicketStatus.RESOLVED) {
           ticketUpdate.reopenCount = { increment: 1 };
           ticketUpdate.lastReopenedAt = new Date();
+        }
+        // Bounce-out-of-archive: the user's explicit spec is that a buyer
+        // reply on an archived ticket re-opens it to To Do. We clear the
+        // archive flag here (the status helper itself can't touch it
+        // because it's pure). Spam tickets are deliberately NOT bounced —
+        // SPAM is an explicit agent decision and the spammer messaging
+        // again shouldn't resurrect the thread.
+        if (ticket.isArchived && !ticket.isSpam) {
+          ticketUpdate.isArchived = false;
+          ticketUpdate.archivedAt = null;
         }
         // Wake any active snooze: a new buyer message means the agent's
         // "remind me later" is now moot.
@@ -596,7 +606,25 @@ async function reconcileMessages(args: ReconcileArgs): Promise<ReconcileResult> 
       if (buyerUserId && existingIsBad) {
         ticketUpdate.buyerUserId = buyerUserId;
       }
-      if (buyerName && (!ticket.buyerName || existingIsBad)) {
+      // Update buyerName when:
+      //   - it's missing OR the userId was previously bad (legacy fix), OR
+      //   - we just discovered a real "First Last" that's distinct from the
+      //     stored username. We never replace a real human name with a
+      //     username — only the other way around.
+      const newNameIsRealHuman =
+        !!buyerName &&
+        buyerName.toLowerCase() !==
+          (buyerUserId ?? ticket.buyerUserId ?? "").toLowerCase();
+      const storedNameIsJustUsername =
+        !!ticket.buyerName &&
+        ticket.buyerName.toLowerCase() ===
+          (ticket.buyerUserId ?? "").toLowerCase();
+      if (
+        buyerName &&
+        (!ticket.buyerName ||
+          existingIsBad ||
+          (newNameIsRealHuman && storedNameIsJustUsername))
+      ) {
         ticketUpdate.buyerName = buyerName;
       }
       if (buyerEmail && !ticket.buyerEmail) {
@@ -860,6 +888,13 @@ async function reconcileMessages(args: ReconcileArgs): Promise<ReconcileResult> 
               }
             }
 
+            const subFromName =
+              subDirection === HelpdeskMessageDirection.INBOUND
+                ? buyerName ?? buyerUserId ?? "Buyer"
+                : isArSub
+                  ? "Auto Responder"
+                  : null;
+
             try {
               await db.helpdeskMessage.create({
                 data: {
@@ -868,10 +903,7 @@ async function reconcileMessages(args: ReconcileArgs): Promise<ReconcileResult> 
                   source: subSource,
                   externalId: sub.externalId,
                   ebayMessageId: body.messageID,
-                  fromName:
-                    subDirection === HelpdeskMessageDirection.INBOUND
-                      ? buyerName ?? buyerUserId ?? "Buyer"
-                      : null,
+                  fromName: subFromName,
                   fromIdentifier:
                     subDirection === HelpdeskMessageDirection.INBOUND
                       ? buyerUserId
@@ -901,6 +933,46 @@ async function reconcileMessages(args: ReconcileArgs): Promise<ReconcileResult> 
               // dedupe against it too.
               existingHashes.add(sub.bodyHash);
               result.messagesInserted++;
+
+              // ── Filter evaluation per sub-message. The envelope-level
+              // filter check below sees only the eBay notification chrome
+              // ("X has sent a question…"), never the AR / agent / buyer
+              // body that actually carries the trigger text. Without this
+              // pass, filters like "body contains 🚨🚨 Great News!" would
+              // never fire on live ingest — they'd only catch up when an
+              // admin clicks "Run filter". Apply matches once per sub
+              // (idempotent on already-archived tickets).
+              if (args.filters.length > 0) {
+                const subMatching = pickMatchingFilters(
+                  args.filters,
+                  {
+                    subject: null,
+                    bodyText: sub.bodyHtml,
+                    fromName: subFromName,
+                    fromIdentifier: subFromName,
+                  },
+                  {
+                    buyerUserId: ticket.buyerUserId,
+                    buyerName: ticket.buyerName,
+                  },
+                );
+                for (const f of subMatching) {
+                  try {
+                    await applyFilterAction(f, ticket.id, null);
+                  } catch (err) {
+                    console.error(
+                      `[helpdesk-sync] sub-filter "${f.name}" apply failed for ticket ${ticket.id}`,
+                      err,
+                    );
+                  }
+                }
+                if (subMatching.length > 0) {
+                  await db.helpdeskFilter.updateMany({
+                    where: { id: { in: subMatching.map((f) => f.id) } },
+                    data: { totalHits: { increment: 1 } },
+                  });
+                }
+              }
             } catch (err) {
               if (
                 !(err instanceof Error) ||

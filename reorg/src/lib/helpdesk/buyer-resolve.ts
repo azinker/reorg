@@ -297,28 +297,62 @@ export async function resolveBuyer(args: {
   const { body, integration, orderNumber } = args;
   const sellerUserId = getSellerUserId(integration);
 
-  // 1) Header lookup.
+  // The user's spec is explicit: when a message has an order number, the
+  // Customer column should show the real first/last name from the order
+  // (eBay's GetOrders returns Buyer.UserFirstName / UserLastName, which we
+  // now persist into MarketplaceSaleOrder.buyerDisplayLabel). We therefore
+  // ALWAYS look up the sale order first when an order number is present,
+  // and only fall back to header/body extraction for pre-sales inquiries
+  // (no order number) or orders we haven't synced yet.
+  //
+  //   resolveBuyer order of preference:
+  //     1. MarketplaceSaleOrder lookup   ← real human name when post-sales
+  //     2. Header (sender / recipient)   ← eBay username
+  //     3. Body extraction               ← scraped from "Hi <name>,"
+  //     4. None                          ← nothing reliable
+  const fromOrder = await resolveBuyerFromSaleOrder(
+    integration.platform,
+    orderNumber,
+  );
+
+  // Header lookup — gives us the username (eBay uses it as both id and
+  // sender field), and is used both as the primary fallback when the
+  // order isn't in our DB and as the canonical buyerUserId when the
+  // order DOES match (so the eBay Username column always shows the
+  // real handle even when buyerName carries a "First Last").
   const senderClean = body.sender?.trim() || null;
   const recipientClean = body.recipientUserID?.trim() || null;
+  const headerHandle =
+    senderClean && !isSystemOrSellerSender(senderClean, sellerUserId)
+      ? senderClean
+      : recipientClean && !isSystemOrSellerSender(recipientClean, sellerUserId)
+        ? recipientClean
+        : null;
 
-  if (senderClean && !isSystemOrSellerSender(senderClean, sellerUserId)) {
+  if (fromOrder?.userId) {
+    // Prefer the real "First Last" from the order, but keep the username
+    // from the header when one is available (the order's buyerIdentifier
+    // IS the username, but envelope-level header is the more authoritative
+    // source for which side of the conversation actually sent this msg).
     return {
-      buyerUserId: senderClean,
-      buyerName: senderClean,
+      buyerUserId: headerHandle ?? fromOrder.userId,
+      buyerName: fromOrder.label ?? headerHandle ?? fromOrder.userId,
+      buyerEmail: fromOrder.email,
+      source: "saleOrder",
+    };
+  }
+
+  if (headerHandle) {
+    return {
+      buyerUserId: headerHandle,
+      buyerName: headerHandle,
       buyerEmail: null,
       source: "header",
     };
   }
-  if (recipientClean && !isSystemOrSellerSender(recipientClean, sellerUserId)) {
-    return {
-      buyerUserId: recipientClean,
-      buyerName: recipientClean,
-      buyerEmail: null,
-      source: "header",
-    };
-  }
 
-  // 2) Body-text extraction.
+  // Body-text extraction (last resort for system-only messages that have
+  // no order number and no real header sender).
   const fromBody = extractBuyerFromBody(body.text);
   if (fromBody && !isSystemOrSellerSender(fromBody, sellerUserId)) {
     return {
@@ -329,18 +363,6 @@ export async function resolveBuyer(args: {
     };
   }
 
-  // 3) Sale-order fallback.
-  const fromOrder = await resolveBuyerFromSaleOrder(integration.platform, orderNumber);
-  if (fromOrder?.userId) {
-    return {
-      buyerUserId: fromOrder.userId,
-      buyerName: fromOrder.label,
-      buyerEmail: fromOrder.email,
-      source: "saleOrder",
-    };
-  }
-
-  // 4) No confident match.
   return {
     buyerUserId: null,
     buyerName: null,

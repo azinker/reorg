@@ -49,13 +49,28 @@ describe("deriveStatusOnInbound", () => {
     assert.equal(out, HelpdeskTicketStatus.SPAM);
   });
 
-  it("does not auto-undo ARCHIVED when buyer follows up", () => {
+  it("bounces ARCHIVED tickets back to TO_DO when buyer follows up", () => {
+    // Per the spec: any archive is "we filed this away because the buyer
+    // wasn't expecting a reply" — the moment the buyer messages again we
+    // owe them an answer, so it has to land in the active queue. The
+    // sync caller is responsible for clearing isArchived/archivedAt; this
+    // helper just reports the new status.
     const out = deriveStatusOnInbound({
       ...baseTicket,
       isArchived: true,
       status: HelpdeskTicketStatus.WAITING,
     });
-    assert.equal(out, HelpdeskTicketStatus.WAITING);
+    assert.equal(out, HelpdeskTicketStatus.TO_DO);
+  });
+
+  it("still suppresses bounce for SPAM regardless of archive state", () => {
+    const out = deriveStatusOnInbound({
+      ...baseTicket,
+      isArchived: true,
+      isSpam: true,
+      status: HelpdeskTicketStatus.SPAM,
+    });
+    assert.equal(out, HelpdeskTicketStatus.SPAM);
   });
 
   it("rolls TO_DO follow-ups forward to TO_DO (idempotent)", () => {

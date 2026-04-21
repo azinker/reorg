@@ -628,21 +628,25 @@ function Cell({ column, ticket: t, isUnread, timeLeft, otherViewers }: CellProps
       );
 
     case "customer": {
-      // Customer column = real first/last name. We deliberately do NOT
-      // fall back to the eBay username here — that column already shows
-      // the username and duplicating it adds zero information. When we
-      // don't yet have a derived name (no AR message, no order match),
-      // render an em-dash so the agent immediately sees "we don't have
-      // a name for this buyer yet" instead of two identical columns.
+      // Customer column prefers the buyer's real first/last name. Pre-sales
+      // inquiries (no order number) often don't carry a name on the eBay
+      // envelope, so we fall back to the eBay username — that's still more
+      // useful than a blank cell, and the eBay Username column will simply
+      // mirror the same string in those cases. When the AR runs on a
+      // post-sales ticket we update buyerName separately so the two
+      // columns diverge naturally.
       const username = t.buyerUserId ?? null;
       const name = t.buyerName ?? null;
       const isJustUsername =
         !!name &&
         !!username &&
         name.toLowerCase() === username.toLowerCase();
-      const display = name && !isJustUsername ? name : "—";
-      const tooltip = name && !isJustUsername
-        ? name
+      const realName = name && !isJustUsername ? name : null;
+      const display = realName ?? username ?? "—";
+      const tooltip = realName
+        ? username
+          ? `${realName} (${username})`
+          : realName
         : username
           ? `No first/last name on file for ${username}`
           : "Unknown buyer";
@@ -658,7 +662,7 @@ function Cell({ column, ticket: t, isUnread, timeLeft, otherViewers }: CellProps
             className={cn(
               "min-w-0 truncate",
               isUnread ? "font-semibold text-foreground" : "font-normal",
-              display === "—" && "text-muted-foreground",
+              !realName && "text-muted-foreground",
             )}
             title={tooltip}
           >

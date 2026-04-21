@@ -993,6 +993,40 @@ async function fetchEbayRevenue(
       financeSummary?.buyerIdentifier,
     );
 
+    // Real human name pulled from Buyer.UserFirstName / UserLastName when
+    // eBay still surfaces it (within ~30 days of order completion, GDPR
+    // strips it after that). When that's blank, ShippingAddress.Name is
+    // the fallback because the carrier label always carries "First Last".
+    // We persist this onto MarketplaceSaleOrder.buyerDisplayLabel so the
+    // Help Desk Customer column can display a real name without scraping
+    // it back out of auto-responder bodies. When neither source is
+    // available the label falls back to the username (the previous
+    // behaviour) so existing pre-sales tickets still render something.
+    const firstTx = transactionsForOrder[0];
+    const buyerNode = firstTx ? asRecord(firstTx.Buyer) : undefined;
+    const buyerFirstFromNode = buyerNode
+      ? nonEmptyString(getString(buyerNode.UserFirstName))
+      : null;
+    const buyerLastFromNode = buyerNode
+      ? nonEmptyString(getString(buyerNode.UserLastName))
+      : null;
+    const buyerNameFromNode =
+      buyerFirstFromNode || buyerLastFromNode
+        ? [buyerFirstFromNode, buyerLastFromNode].filter(Boolean).join(" ")
+        : null;
+    const shippingName = nonEmptyString(
+      readText(order, "ShippingAddress.Name"),
+    );
+    // Only treat shipping name as a real human name when it actually has
+    // both a first AND last token (eBay sometimes stuffs business names
+    // here and we don't want "ABC AUTO PARTS LLC" landing in Customer).
+    const shippingLooksLikeRealName =
+      shippingName != null && /^\S+\s+\S+/.test(shippingName);
+    const buyerDisplayLabel =
+      buyerNameFromNode ??
+      (shippingLooksLikeRealName ? shippingName : null) ??
+      buyerIdentifier;
+
     for (let index = 0; index < transactionsForOrder.length; index += 1) {
       const transaction = transactionsForOrder[index];
       const item = asRecord(transaction.Item);
@@ -1060,7 +1094,7 @@ async function fetchEbayRevenue(
         orderDiscountAmount: readNumber(order, "AmountSaved") ?? null,
         orderNetRevenueAmount: null,
         buyerIdentifier,
-        buyerDisplayLabel: buyerIdentifier,
+        buyerDisplayLabel,
         buyerEmail: null,
         isCancelled,
         isReturn: false,

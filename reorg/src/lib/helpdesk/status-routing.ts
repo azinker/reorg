@@ -53,14 +53,24 @@ export interface RoutingTicketSnapshot {
  * Decide the new ticket status when a buyer message arrives.
  *
  * Per the v2 folder semantics ("To Do = anything from a buyer that needs a
- * response"), every buyer message that isn't spam or archived routes to
- * TO_DO — including brand-new tickets that previously would have started
- * in NEW. The merging eliminates the awkward "New vs To Do" distinction
- * the user kept tripping on in the inbox.
+ * response"), every buyer message that isn't spam routes to TO_DO —
+ * including brand-new tickets that previously would have started in NEW
+ * AND tickets that were previously archived. The user's spec on archived
+ * tickets is explicit:
  *
- *   - SPAM: stays SPAM (explicit agent decision).
- *   - ARCHIVED: leave the status alone — buyer follow-ups on archived
- *     threads shouldn't auto-undo the agent's archive decision.
+ *   "Once those messages go to Archived, and if a buyer responds on that
+ *    ticket, it would bounce it out of archived and it would go to the
+ *    To Do folder, as the buyer messaged us and they are waiting for a
+ *    response. That goes for any message that goes to Archive, it should
+ *    be bounced back out to To Do if a buyer messages us on that ticket."
+ *
+ * So the routing rule is:
+ *   - SPAM: stays SPAM (explicit agent decision; spam buyers shouldn't
+ *     resurrect their own threads).
+ *   - ARCHIVED: bounce back to TO_DO. The CALLER is responsible for
+ *     clearing `isArchived` / `archivedAt` on the row — this helper just
+ *     reports the desired status. We DO NOT touch the `isArchived`
+ *     boolean here because this module is pure / DB-free.
  *   - RESOLVED: reopen as TO_DO. Caller is responsible for bumping
  *     `reopenCount` and stamping `lastReopenedAt`.
  *   - Anything else (NEW, TO_DO, WAITING): land in TO_DO. The
@@ -72,9 +82,6 @@ export function deriveStatusOnInbound(
 ): HelpdeskTicketStatus {
   if (ticket.isSpam || ticket.status === HelpdeskTicketStatus.SPAM) {
     return HelpdeskTicketStatus.SPAM;
-  }
-  if (ticket.isArchived || ticket.status === HelpdeskTicketStatus.ARCHIVED) {
-    return ticket.status; // leave alone; archive trumps
   }
   return HelpdeskTicketStatus.TO_DO;
 }
