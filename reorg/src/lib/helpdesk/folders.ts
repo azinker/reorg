@@ -22,6 +22,7 @@ export type HelpdeskFolderKey =
   | "resolved"
   | "unassigned"
   | "mentioned"
+  | "favorites"
   | "spam"
   | "archived";
 
@@ -53,6 +54,8 @@ export interface HelpdeskFolderContext {
  *   - resolved:     status=RESOLVED, not archived
  *   - unassigned:   open + primaryAssigneeId IS NULL (not cancellation)
  *   - mentioned:    has note where me ∈ mentions, ticket open (not cancellation)
+ *   - favorites:    isFavorite=true, not archived (team-wide; any agent can
+ *                   star or un-star a ticket and it shows up here for everyone)
  *   - spam:         status=SPAM, not archived
  *   - archived:     isArchived=true
  *
@@ -179,6 +182,13 @@ export function buildFolderWhere(
           },
         ],
       };
+    case "favorites":
+      // Team-wide favorites: any active (non-archived) ticket flagged by any
+      // agent. We deliberately do NOT filter by status so an agent can star
+      // a RESOLVED ticket and still find it again. Snoozed favorites are
+      // included — the goal is "things I want to find quickly", not "active
+      // queue". Archived rows are excluded so old cleanup doesn't pollute.
+      return { isFavorite: true, isArchived: false };
     case "spam":
       return { isSpam: true, isArchived: false };
     case "archived":
@@ -198,6 +208,7 @@ export const FOLDER_LABELS: Record<HelpdeskFolderKey, string> = {
   resolved: "Resolved",
   unassigned: "Unassigned",
   mentioned: "Mentioned",
+  favorites: "Favorites",
   spam: "Spam",
   archived: "Archived",
 };

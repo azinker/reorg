@@ -18,6 +18,7 @@ const FOLDERS: HelpdeskFolderKey[] = [
   "resolved",
   "unassigned",
   "mentioned",
+  "favorites",
   "spam",
   "archived",
 ];

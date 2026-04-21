@@ -39,6 +39,8 @@ import {
 } from "@/lib/services/helpdesk-ebay";
 import { applyFilterAction, pickMatchingFilters } from "@/lib/helpdesk/filters";
 import { helpdeskFlags } from "@/lib/helpdesk/flags";
+import { deriveStatusOnInbound } from "@/lib/helpdesk/status-routing";
+import { detectTicketType } from "@/lib/helpdesk/type-detect";
 
 // ΓöÇΓöÇΓöÇ Constants ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 
@@ -378,19 +380,33 @@ async function reconcileMessages(args: ReconcileArgs): Promise<ReconcileResult> 
     if (direction === HelpdeskMessageDirection.INBOUND) {
       ticketUpdate.lastBuyerMessageAt = sentAt;
       ticketUpdate.unreadCount = { increment: 1 };
-      if (ticket?.status === HelpdeskTicketStatus.RESOLVED) {
-        // New buyer message reopens the ticket and resumes timers.
-        ticketUpdate.status = HelpdeskTicketStatus.TO_DO;
-        ticketUpdate.reopenCount = { increment: 1 };
-        ticketUpdate.lastReopenedAt = new Date();
-        ticketUpdate.snoozedUntil = null;
-        if (ticket.snoozedById) {
-          ticketUpdate.snoozedBy = { disconnect: true };
+      if (ticket) {
+        // Route the ticket through the pure status helper. The helper knows
+        // the eDesk semantics (NEW vs TO_DO depending on whether we've ever
+        // replied, RESOLVED reopens to TO_DO, SPAM/ARCHIVED stay put).
+        const next = deriveStatusOnInbound({
+          status: ticket.status,
+          hasAgentReplied: ticket.lastAgentMessageAt !== null,
+          isArchived: ticket.isArchived,
+          isSpam: ticket.isSpam,
+        });
+        if (next !== ticket.status) {
+          ticketUpdate.status = next;
         }
-      } else if (ticket?.snoozedUntil) {
-        ticketUpdate.snoozedUntil = null;
-        if (ticket.snoozedById) {
-          ticketUpdate.snoozedBy = { disconnect: true };
+        // Reopen bookkeeping is only relevant when we resurrect a RESOLVED
+        // ticket — otherwise we'd inflate reopenCount on every buyer message
+        // in a normal back-and-forth.
+        if (ticket.status === HelpdeskTicketStatus.RESOLVED) {
+          ticketUpdate.reopenCount = { increment: 1 };
+          ticketUpdate.lastReopenedAt = new Date();
+        }
+        // Wake any active snooze: a new buyer message means the agent's
+        // "remind me later" is now moot.
+        if (ticket.snoozedUntil) {
+          ticketUpdate.snoozedUntil = null;
+          if (ticket.snoozedById) {
+            ticketUpdate.snoozedBy = { disconnect: true };
+          }
         }
       }
     } else {
@@ -400,6 +416,18 @@ async function reconcileMessages(args: ReconcileArgs): Promise<ReconcileResult> 
         ticketUpdate.firstResponseAt = sentAt;
       }
     }
+
+    // Auto-detect ticket type from this message (subject + body + eBay
+    // questionType). Only used on create OR when the existing row hasn't
+    // been overridden by an agent and is still on the default QUERY value.
+    const detectedType =
+      direction === HelpdeskMessageDirection.INBOUND
+        ? detectTicketType({
+            ebayQuestionType: body.questionType ?? null,
+            subject,
+            bodyText: body.text ?? null,
+          })
+        : null;
 
     if (!ticket) {
       ticket = await db.helpdeskTicket.create({
@@ -412,6 +440,7 @@ async function reconcileMessages(args: ReconcileArgs): Promise<ReconcileResult> 
           ebayOrderNumber: extractedOrderNumber,
           subject,
           kind: isPreSales ? HelpdeskTicketKind.PRE_SALES : HelpdeskTicketKind.POST_SALES,
+          ...(detectedType ? { type: detectedType } : {}),
           status:
             direction === HelpdeskMessageDirection.INBOUND
               ? HelpdeskTicketStatus.NEW
@@ -438,6 +467,19 @@ async function reconcileMessages(args: ReconcileArgs): Promise<ReconcileResult> 
         ticket.kind === HelpdeskTicketKind.PRE_SALES
       ) {
         ticketUpdate.kind = HelpdeskTicketKind.POST_SALES;
+      }
+      // Type upgrade: if an agent hasn't manually picked a type yet AND the
+      // current type is still the default QUERY, let a stronger signal in a
+      // later message reclassify the ticket (e.g. buyer's first message was
+      // generic, second message says "I want to return this"). We never
+      // overwrite a non-default type or an explicit override.
+      if (
+        detectedType &&
+        !ticket.typeOverridden &&
+        ticket.type === "QUERY" &&
+        detectedType !== "QUERY"
+      ) {
+        ticketUpdate.type = detectedType;
       }
     }
 
@@ -503,11 +545,16 @@ async function reconcileMessages(args: ReconcileArgs): Promise<ReconcileResult> 
 
     if (!inserted) continue;
 
-    // ΓöÇΓöÇ Auto-resolve: if this OUTBOUND message is newer than every inbound
-    // message on the ticket and the ticket is currently open, mark it
-    // RESOLVED. This handles the "buyer message that was already responded
-    // to" case during initial backfill ΓÇö the agent already replied on eBay,
-    // so reorG should not flag it as needing attention.
+    // ── eDesk WAITING transition: when an OUTBOUND message lands and is
+    // newer than every inbound on the ticket, the ball is now in the
+    // buyer's court → WAITING. This covers two real flows:
+    //   1. The agent replied on eBay.com directly (we see it via sync).
+    //   2. Our own outbound worker delivered a reply.
+    // We do NOT auto-resolve here — the user's spec is "RESOLVED is
+    // explicit only" (Send + mark Resolved button or batch action). The
+    // outbound messages route already passes the agent's chosen
+    // `setStatus` (WAITING or RESOLVED) through `deriveStatusOnOutbound`,
+    // so this block only nudges WAITING for unsolicited eBay-side replies.
     if (
       direction === HelpdeskMessageDirection.OUTBOUND &&
       ticket.status !== HelpdeskTicketStatus.RESOLVED &&
@@ -522,14 +569,11 @@ async function reconcileMessages(args: ReconcileArgs): Promise<ReconcileResult> 
         },
         select: { id: true },
       });
-      if (!newerInbound) {
+      if (!newerInbound && ticket.status !== HelpdeskTicketStatus.WAITING) {
         await db.helpdeskTicket.update({
           where: { id: ticket.id },
           data: {
-            status: HelpdeskTicketStatus.RESOLVED,
-            resolvedAt: sentAt,
-            // resolvedBy intentionally null ΓÇö this was the eBay reply, not a
-            // reorG action by a real user.
+            status: HelpdeskTicketStatus.WAITING,
             unreadCount: 0,
           },
         });

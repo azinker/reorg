@@ -39,6 +39,23 @@ import {
  *     if the cache is older than VISIBILITY_REFRESH_MIN_MS
  */
 
+/**
+ * Mirror of the Prisma `HelpdeskTicketType` enum. Kept hand-typed (rather
+ * than imported from `@prisma/client`) so this hook stays usable in
+ * client-only bundles without dragging the Prisma generated code into
+ * the client bundle.
+ */
+export type HelpdeskTicketType =
+  | "QUERY"
+  | "PRE_SALES"
+  | "RETURN_REQUEST"
+  | "ITEM_NOT_RECEIVED"
+  | "NEGATIVE_FEEDBACK"
+  | "REFUND"
+  | "SHIPPING_QUERY"
+  | "CANCELLATION"
+  | "OTHER";
+
 export type HelpdeskFolderKey =
   | "pre_sales"
   | "my_tickets"
@@ -51,6 +68,7 @@ export type HelpdeskFolderKey =
   | "resolved"
   | "unassigned"
   | "mentioned"
+  | "favorites"
   | "spam"
   | "archived";
 
@@ -76,9 +94,13 @@ export interface HelpdeskTicketSummary {
   ebayOrderNumber: string | null;
   subject: string | null;
   kind: "PRE_SALES" | "POST_SALES";
+  type: HelpdeskTicketType;
+  typeOverridden: boolean;
   status: "NEW" | "TO_DO" | "WAITING" | "RESOLVED" | "SPAM" | "ARCHIVED";
   isSpam: boolean;
   isArchived: boolean;
+  isFavorite: boolean;
+  isImportant: boolean;
   snoozedUntil: string | null;
   primaryAssignee: HelpdeskUserBadge | null;
   unreadCount: number;

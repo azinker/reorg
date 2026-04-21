@@ -24,6 +24,7 @@
  *      Resolved
  *      Unassigned
  *      @ Mentioned
+ *      Favorites
  *      Spam
  *      Archived
  *   ─────────────────────────
@@ -47,6 +48,7 @@ import {
   CheckCircle2,
   UserX,
   AtSign,
+  Star,
   AlertOctagon,
   Archive,
   Tags,
@@ -167,6 +169,14 @@ const TAGS_GROUP: FolderRow[] = [
     icon: AtSign,
     tooltip:
       "Tickets where another agent typed @your-handle in an internal note. Use this to follow conversations you've been pulled into without being the assignee.",
+    child: true,
+  },
+  {
+    key: "favorites",
+    label: "Favorites",
+    icon: Star,
+    tooltip:
+      "Tickets any agent has starred from the per-ticket header bar. Team-wide — useful for keeping VIP buyers, escalations, or weird edge cases handy without changing their folder.",
     child: true,
   },
   {

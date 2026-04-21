@@ -25,6 +25,7 @@ import type { HelpdeskTicketSummary } from "@/hooks/use-helpdesk";
 import { SLATimer } from "@/components/helpdesk/SLATimer";
 import { useHelpdeskPrefs } from "@/components/helpdesk/HelpdeskSettingsDialog";
 import { Avatar } from "@/components/ui/avatar";
+import { TicketTable } from "@/components/helpdesk/TicketTable";
 
 /** Compact agent shape used by the bulk-assign dropdown. */
 interface AgentBadge {
@@ -443,219 +444,24 @@ export function TicketList({
             </p>
           </div>
         ) : tableMode ? (
-          // ── eDESK-STYLE TABLE ─────────────────────────────────────────────────
-          // Wider columns: select / star / channel / customer / subject /
-          // owner / time / unread badge. Mirrors the eDesk inbox layout but
-          // styled with reorG tokens. Density aware.
-          <table className="w-full table-fixed border-collapse text-xs">
-            <colgroup>
-              {onBatchAction && <col className="w-[36px]" />}
-              <col className="w-[40px]" />
-              <col className="w-[64px]" />
-              <col className="w-[200px]" />
-              <col />
-              <col className="w-[120px]" />
-              <col className="w-[44px]" />
-              <col className="w-[88px]" />
-            </colgroup>
-            <thead className="sticky top-0 z-[1] border-b border-hairline bg-card/95 backdrop-blur">
-              <tr className="text-left text-[10px] uppercase tracking-wider text-muted-foreground">
-                {onBatchAction && (
-                  <th className="px-2 py-2">
-                    <button
-                      type="button"
-                      onClick={toggleAllVisible}
-                      className="flex h-4 w-4 items-center justify-center rounded border border-hairline text-muted-foreground hover:text-foreground cursor-pointer"
-                      title={
-                        allVisibleSelected ? "Clear selection" : "Select all visible"
-                      }
-                    >
-                      {allVisibleSelected ? (
-                        <CheckSquare className="h-3 w-3" />
-                      ) : (
-                        <Square className="h-3 w-3" />
-                      )}
-                    </button>
-                  </th>
-                )}
-                <th className="px-1 py-2"></th>
-                <th className="px-2 py-2">Channel</th>
-                <th className="px-2 py-2">Customer</th>
-                <th className="px-2 py-2">Latest update</th>
-                <th className="px-2 py-2">Owner</th>
-                <th className="px-2 py-2">Time</th>
-                <th className="px-2 py-2 text-right">Tags</th>
-              </tr>
-            </thead>
-            <tbody>
-              {visibleTickets.map((t) => {
-                const isActive = selectedId === t.id;
-                const isUnread = t.unreadCount > 0;
-                const isChecked = selected.has(t.id);
-                return (
-                  <tr
-                    key={t.id}
-                    onContextMenu={(e) => openContextMenu(e, t.id)}
-                    onClick={() => onSelect(t.id)}
-                    onMouseEnter={() => onPrefetch?.(t.id)}
-                    onFocus={() => onPrefetch?.(t.id)}
-                    className={cn(
-                      "group cursor-pointer border-b border-hairline align-middle transition-colors",
-                      isUnread
-                        ? "bg-brand/[0.04]"
-                        : "bg-transparent text-muted-foreground",
-                      isActive && "!bg-brand-muted",
-                      "hover:bg-surface-2",
-                    )}
-                  >
-                    {onBatchAction && (
-                      <td
-                        className="px-2 py-2.5"
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={isChecked}
-                          onChange={() => toggle(t.id)}
-                          className="h-3.5 w-3.5 cursor-pointer accent-brand"
-                          aria-label="Select ticket"
-                        />
-                      </td>
-                    )}
-                    <td className="px-1 py-2.5">
-                      {/* Star/flag is a v2 feature — surface a placeholder slot
-                          today so we can wire it up without a re-layout. */}
-                      <Star
-                        className={cn(
-                          "h-3.5 w-3.5",
-                          "text-muted-foreground/30 group-hover:text-muted-foreground",
-                        )}
-                      />
-                    </td>
-                    <td className="px-2 py-2.5">
-                      <span className="inline-flex items-center gap-1 rounded border border-hairline bg-surface px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-                        {CHANNEL_BADGE[t.channel] ?? t.channel}
-                      </span>
-                    </td>
-                    <td className="px-2 py-2.5">
-                      <div className="flex min-w-0 items-center gap-1.5">
-                        {isUnread && (
-                          <span
-                            aria-hidden
-                            className="inline-block h-2 w-2 shrink-0 rounded-full bg-brand"
-                          />
-                        )}
-                        <span
-                          className={cn(
-                            "truncate",
-                            isUnread
-                              ? "font-bold text-foreground"
-                              : "font-normal",
-                          )}
-                          title={t.buyerName ?? t.buyerUserId ?? "Unknown buyer"}
-                        >
-                          {t.buyerName ?? t.buyerUserId ?? "Unknown buyer"}
-                        </span>
-                        {t.kind === "PRE_SALES" && (
-                          <span className="shrink-0 rounded bg-sky-500/15 px-1 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-sky-700 dark:text-sky-300">
-                            Pre
-                          </span>
-                        )}
-                      </div>
-                      <p
-                        className={cn(
-                          "truncate text-[11px]",
-                          isUnread ? "text-foreground/80" : "text-muted-foreground/80",
-                        )}
-                      >
-                        {t.ebayOrderNumber
-                          ? `Order #${t.ebayOrderNumber}`
-                          : t.buyerEmail ?? "—"}
-                      </p>
-                    </td>
-                    <td className="px-2 py-2.5">
-                      <p
-                        className={cn(
-                          "truncate text-[12px]",
-                          isUnread
-                            ? "font-semibold text-foreground"
-                            : "text-muted-foreground",
-                        )}
-                        title={t.subject ?? t.ebayItemTitle ?? "(no subject)"}
-                      >
-                        {t.subject ?? t.ebayItemTitle ?? "(no subject)"}
-                      </p>
-                      <div className="mt-0.5 flex items-center gap-1.5 text-[10px]">
-                        <span
-                          className={cn(
-                            "rounded border px-1.5 py-0.5 font-semibold uppercase tracking-wider",
-                            STATUS_COLOR[t.status] ??
-                              "border-hairline text-muted-foreground",
-                          )}
-                        >
-                          {t.status.replace("_", " ")}
-                        </span>
-                        <SLATimer
-                          lastBuyerMessageAt={t.lastBuyerMessageAt}
-                          firstResponseAt={t.firstResponseAt ?? null}
-                        />
-                      </div>
-                    </td>
-                    <td className="px-2 py-2.5">
-                      {t.primaryAssignee ? (
-                        <div className="flex items-center gap-1.5">
-                          <Avatar user={t.primaryAssignee} size="xs" />
-                          <span className="truncate text-[11px] text-muted-foreground">
-                            {t.primaryAssignee.name?.split(" ")[0] ??
-                              t.primaryAssignee.handle ??
-                              "—"}
-                          </span>
-                        </div>
-                      ) : (
-                        <span className="text-[10px] text-muted-foreground/60">
-                          Unassigned
-                        </span>
-                      )}
-                    </td>
-                    <td
-                      className={cn(
-                        "px-2 py-2.5 text-right tabular-nums",
-                        isUnread
-                          ? "font-semibold text-foreground"
-                          : "text-muted-foreground",
-                      )}
-                    >
-                      {relTime(t.lastBuyerMessageAt ?? t.lastAgentMessageAt)}
-                    </td>
-                    <td className="px-2 py-2.5">
-                      <div className="flex items-center justify-end gap-1">
-                        {t.tags.slice(0, 2).map((tag) => (
-                          <span
-                            key={tag.id}
-                            className="inline-flex max-w-[64px] items-center gap-0.5 truncate rounded border border-hairline bg-surface px-1 py-0.5 text-[9px] text-muted-foreground"
-                            title={tag.name}
-                          >
-                            <TagIcon className="h-2.5 w-2.5" />
-                            {tag.name}
-                          </span>
-                        ))}
-                        {t.tags.length > 2 && (
-                          <span className="text-[9px] text-muted-foreground">
-                            +{t.tags.length - 2}
-                          </span>
-                        )}
-                        {t.unreadCount > 0 && (
-                          <span className="ml-1 rounded-full bg-brand px-1.5 py-0.5 text-[9px] font-bold text-brand-foreground">
-                            {t.unreadCount}
-                          </span>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+          // ── eDESK-STYLE 10-COLUMN GRID ───────────────────────────────────────
+          // Replaces the old 8-column <table> with a self-contained component
+          // that owns column preferences (per-user, drag-to-reorder), sortable
+          // headers, the time-left countdown bar, and the green-eye presence
+          // poll. Selection / batch actions / context menu still live on this
+          // component because they're shared with the dense Split rows below.
+          <TicketTable
+            tickets={visibleTickets}
+            selectedId={selectedId}
+            onSelect={onSelect}
+            onPrefetch={onPrefetch}
+            onContextMenu={openContextMenu}
+            selected={selected}
+            onToggle={toggle}
+            onToggleAllVisible={toggleAllVisible}
+            allVisibleSelected={allVisibleSelected}
+            showSelection={!!onBatchAction}
+          />
         ) : (
           <ul className="divide-y divide-hairline">
             {visibleTickets.map((t) => {

@@ -561,6 +561,14 @@ export interface EbayOrderContext {
   trackingCarrier: string | null;
   /** Total in cents (subtotal + shipping + tax). */
   totalCents: number | null;
+  /**
+   * Shipping fee charged to the buyer in cents, when eBay surfaces it on
+   * the chosen shipping service. Renders in the ContextPanel right above
+   * the order Total so agents can answer "how much shipping did I pay?"
+   * without opening eBay. Null when the buyer used free shipping or eBay
+   * doesn't expose a per-order shipping line.
+   */
+  shippingCents: number | null;
   currency: string | null;
   shippingAddress: EbayOrderContextAddress | null;
   lineItems: EbayOrderContextLineItem[];
@@ -679,6 +687,17 @@ export async function fetchEbayOrderContext(
   const shippingService = shippingServiceSelected?.ShippingService
     ? String(shippingServiceSelected.ShippingService)
     : null;
+  // Shipping cost — eBay puts this in two places depending on whether the
+  // seller charged for shipping. Try the chosen service first (most
+  // accurate), then fall back to the order-level summary. Free shipping =
+  // null so the UI can hide the row.
+  const orderSss = order.ShippingServiceSelected as
+    | Record<string, unknown>
+    | undefined;
+  const shippingCents =
+    parseDollarsToCents(orderSss?.ShippingServiceCost) ??
+    parseDollarsToCents(shippingServiceSelected?.ShippingServiceCost) ??
+    parseDollarsToCents(shippingDetails?.ShippingServiceCost);
 
   // Line items
   const lineItems: EbayOrderContextLineItem[] = transactions
@@ -745,6 +764,7 @@ export async function fetchEbayOrderContext(
     trackingNumber,
     trackingCarrier,
     totalCents,
+    shippingCents,
     currency,
     shippingAddress,
     lineItems,

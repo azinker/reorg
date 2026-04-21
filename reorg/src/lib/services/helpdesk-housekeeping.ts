@@ -11,6 +11,7 @@
 
 import { db } from "@/lib/db";
 import { HelpdeskTicketStatus } from "@prisma/client";
+import { deriveStatusOnSnoozeWake } from "@/lib/helpdesk/status-routing";
 
 const AUTO_ARCHIVE_DAYS = 30;
 const NOTIFICATION_RETENTION_DAYS = 30;
@@ -47,10 +48,44 @@ export async function runHelpdeskHousekeeping(): Promise<HousekeepingResult> {
     });
   }
 
-  const unsnoozed = await db.helpdeskTicket.updateMany({
+  // Wake snoozed tickets. We have to promote the status (per the eDesk
+  // routing model: snoozed → TO_DO when waking, unless the row is spam or
+  // archived in which case we leave the underlying status alone). updateMany
+  // can't apply per-row logic so we read the rows first, group by target
+  // status, then issue one updateMany per target. Cheap because the count
+  // is bounded by however many tickets the agents snoozed.
+  const waking = await db.helpdeskTicket.findMany({
     where: { snoozedUntil: { not: null, lte: now } },
-    data: { snoozedUntil: null, snoozedById: null },
+    select: { id: true, status: true, isSpam: true, isArchived: true },
   });
+  const buckets = new Map<HelpdeskTicketStatus, string[]>();
+  for (const t of waking) {
+    const next = deriveStatusOnSnoozeWake(t.status, {
+      isSpam: t.isSpam,
+      isArchived: t.isArchived,
+    });
+    const list = buckets.get(next) ?? [];
+    list.push(t.id);
+    buckets.set(next, list);
+  }
+  let unsnoozedCount = 0;
+  for (const [status, ids] of buckets.entries()) {
+    const r = await db.helpdeskTicket.updateMany({
+      where: { id: { in: ids } },
+      data: { snoozedUntil: null, snoozedById: null, status },
+    });
+    unsnoozedCount += r.count;
+  }
+  if (unsnoozedCount > 0) {
+    await db.auditLog.create({
+      data: {
+        action: "HELPDESK_AUTO_UNSNOOZED",
+        entityType: "HelpdeskTicket",
+        details: { count: unsnoozedCount },
+      },
+    });
+  }
+  const unsnoozed = { count: unsnoozedCount };
 
   const notifCutoff = new Date(
     now.getTime() - NOTIFICATION_RETENTION_DAYS * 86_400_000,

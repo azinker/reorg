@@ -138,6 +138,8 @@ interface OrderContext {
   trackingNumber: string | null;
   trackingCarrier: string | null;
   totalCents: number | null;
+  /** Shipping fee in cents; null = free shipping or unavailable. */
+  shippingCents: number | null;
   currency: string | null;
   shippingAddress: OrderContextAddress | null;
   lineItems: OrderContextLineItem[];
@@ -160,7 +162,7 @@ export function ContextPanel({
     return (
       <div
         className={cn(
-          "flex items-center justify-center bg-card px-4 text-center text-xs text-muted-foreground",
+          "flex items-center justify-center bg-card px-4 text-center text-sm text-muted-foreground",
           containerWidth,
           dividerCls,
         )}
@@ -214,11 +216,15 @@ function ContextPanelInner({ ticket, containerWidth, dividerCls }: InnerProps) {
   const related = useRelatedTickets(ticket);
 
   return (
-    <div className={cn("flex flex-col bg-card", containerWidth, dividerCls)}>
+    // h-full + min-h-0 so flex-1 inside us actually scrolls instead of growing
+    // past the parent height. Without min-h-0 a child with overflow-y-auto in
+    // a column flex layout will overflow the panel and the agent can't reach
+    // "Other Tickets from this Buyer" at the bottom (split-mode bug repro).
+    <div className={cn("flex h-full min-h-0 flex-col bg-card", containerWidth, dividerCls)}>
       <div
         role="tablist"
         aria-label="Ticket context tabs"
-        className="flex items-stretch border-b border-hairline bg-card text-[11px]"
+        className="flex shrink-0 items-stretch border-b border-hairline bg-card text-xs"
       >
         <ContextTabButton
           active={tab === "details"}
@@ -231,7 +237,7 @@ function ContextPanelInner({ ticket, containerWidth, dividerCls }: InnerProps) {
           label={`Notes${noteCount > 0 ? ` · ${noteCount}` : ""}`}
         />
       </div>
-      <div className="flex-1 overflow-y-auto">
+      <div className="min-h-0 flex-1 overflow-y-auto">
         {tab === "details" && (
           <>
             <CustomerCard ticket={ticket} order={order.data} related={related.summary} />
@@ -260,7 +266,7 @@ function ContextTabButton({ active, onClick, label }: ContextTabButtonProps) {
       aria-selected={active}
       onClick={onClick}
       className={cn(
-        "flex-1 border-b-2 px-3 py-2 font-medium transition-colors cursor-pointer",
+        "flex-1 border-b-2 px-3 py-2.5 font-medium transition-colors cursor-pointer",
         active
           ? "border-brand text-foreground"
           : "border-transparent text-muted-foreground hover:text-foreground",
@@ -281,10 +287,10 @@ function NotesTab({ ticket }: { ticket: HelpdeskTicketDetail }) {
     return (
       <section className="px-4 py-6 text-center">
         <StickyNote className="mx-auto h-6 w-6 text-muted-foreground/40" />
-        <p className="mt-2 text-xs text-muted-foreground">
+        <p className="mt-2 text-sm text-muted-foreground">
           No internal notes yet.
         </p>
-        <p className="mt-1 text-[11px] text-muted-foreground/70">
+        <p className="mt-1 text-xs text-muted-foreground/70">
           Switch the composer to "Note" to leave a private message visible
           only to your team.
         </p>
@@ -302,7 +308,7 @@ function NotesTab({ ticket }: { ticket: HelpdeskTicketDetail }) {
             <p className="mb-1 text-[10px] uppercase tracking-wider text-amber-700 dark:text-amber-300">
               {n.author.name ?? n.author.email}
             </p>
-            <p className="whitespace-pre-wrap text-xs text-foreground">
+            <p className="whitespace-pre-wrap text-sm text-foreground">
               {n.bodyText}
             </p>
           </div>
@@ -508,7 +514,7 @@ function CustomerCard({
     <section className="border-b border-hairline px-4 py-4">
       <div className="mb-3 flex items-center gap-2">
         <UserIcon className="h-3.5 w-3.5 text-brand" />
-        <h3 className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+        <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
           Customer
         </h3>
       </div>
@@ -525,14 +531,14 @@ function CustomerCard({
         />
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1.5">
-            <p className="truncate text-sm font-semibold text-foreground">
+            <p className="truncate text-base font-semibold text-foreground">
               {fullName}
             </p>
             <CopyButton value={fullName} title="Copy buyer name" />
           </div>
           {ticket.buyerUserId ? (
-            <p className="mt-0.5 flex items-center gap-1 truncate text-xs text-muted-foreground">
-              <span className="inline-flex items-center gap-1 rounded bg-surface-2 px-1 py-px text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">
+            <p className="mt-0.5 flex items-center gap-1 truncate text-sm text-muted-foreground">
+              <span className="inline-flex items-center gap-1 rounded bg-surface-2 px-1 py-px text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                 eb
               </span>
               <a
@@ -546,8 +552,8 @@ function CustomerCard({
             </p>
           ) : null}
           {phone ? (
-            <p className="mt-0.5 flex items-center gap-1 truncate text-xs text-foreground">
-              <Phone className="h-3 w-3 text-muted-foreground" />
+            <p className="mt-0.5 flex items-center gap-1 truncate text-sm text-foreground">
+              <Phone className="h-3.5 w-3.5 text-muted-foreground" />
               <a
                 href={`tel:${phone.replace(/\s+/g, "")}`}
                 className="text-foreground hover:underline"
@@ -564,7 +570,7 @@ function CustomerCard({
        * between the buyer identity block and the channel/total block. */}
       <div className="my-3 border-t border-hairline" />
 
-      <dl className="space-y-2.5 text-xs">
+      <dl className="space-y-3 text-sm">
         <Row label="Channel">
           <div className="flex items-center justify-end gap-1.5">
             <span className="inline-flex items-center gap-1 rounded bg-surface-2 px-1 py-px text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">
@@ -710,7 +716,7 @@ function OrderInfoSection({
       >
         <div className="flex items-center gap-2">
           <ShoppingBag className="h-3.5 w-3.5 text-brand" />
-          <h3 className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+          <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
             Order Info
           </h3>
         </div>
@@ -727,7 +733,7 @@ function OrderInfoSection({
           {/* Order No. row — link, sales-record number, MFN badge, copy button.
            * Replaces the old 3-dot menu (it had no actions wired up). */}
           <div className="mb-3">
-            <p className="mb-1 text-[10px] uppercase tracking-wider text-muted-foreground">
+            <p className="mb-1 text-[11px] uppercase tracking-wider text-muted-foreground">
               Order No.
             </p>
             <div className="flex flex-wrap items-center gap-1.5">
@@ -736,18 +742,18 @@ function OrderInfoSection({
                   href={`https://www.ebay.com/mesh/ord/details?orderid=${encodeURIComponent(ticket.ebayOrderNumber)}`}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 break-all font-mono text-xs text-brand hover:underline"
+                  className="inline-flex items-center gap-1 break-all font-mono text-sm text-brand hover:underline"
                   title="Open this order on eBay (new tab)"
                 >
                   {ticket.ebayOrderNumber}
-                  <ExternalLink className="h-3 w-3 shrink-0 opacity-70" />
+                  <ExternalLink className="h-3.5 w-3.5 shrink-0 opacity-70" />
                 </a>
               ) : (
-                <span className="text-xs text-muted-foreground">—</span>
+                <span className="text-sm text-muted-foreground">—</span>
               )}
               {ctx?.salesRecordNumber ? (
                 <span
-                  className="font-mono text-[11px] text-muted-foreground"
+                  className="font-mono text-xs text-muted-foreground"
                   title="eBay Selling Manager Sales Record Number"
                 >
                   ({ctx.salesRecordNumber})
@@ -767,13 +773,13 @@ function OrderInfoSection({
 
           {/* Status messages while we load */}
           {loading ? (
-            <p className="mb-3 inline-flex items-center gap-1.5 text-[11px] text-muted-foreground">
+            <p className="mb-3 inline-flex items-center gap-1.5 text-xs text-muted-foreground">
               <Loader2 className="h-3 w-3 animate-spin" /> Loading live order
               details from eBay…
             </p>
           ) : null}
           {error && !ctx ? (
-            <p className="mb-3 text-[11px] text-amber-700 dark:text-amber-300">
+            <p className="mb-3 text-xs text-amber-700 dark:text-amber-300">
               {error}
             </p>
           ) : null}
@@ -783,9 +789,9 @@ function OrderInfoSection({
            * next field. This is the layout from the user's screenshot. */}
           <div className="divide-y divide-hairline rounded-md border border-hairline">
             {/* Ordered + Shipped on a single row, side-by-side, mirrors eDesk. */}
-            <div className="grid grid-cols-2 gap-2 px-3 py-2 text-xs">
+            <div className="grid grid-cols-2 gap-2 px-3 py-2.5 text-sm">
               <div>
-                <p className="mb-0.5 text-[10px] uppercase tracking-wider text-muted-foreground">
+                <p className="mb-0.5 text-[11px] uppercase tracking-wider text-muted-foreground">
                   Ordered
                 </p>
                 <p className="text-foreground">
@@ -795,7 +801,7 @@ function OrderInfoSection({
                 </p>
               </div>
               <div>
-                <p className="mb-0.5 text-[10px] uppercase tracking-wider text-muted-foreground">
+                <p className="mb-0.5 text-[11px] uppercase tracking-wider text-muted-foreground">
                   Shipped
                 </p>
                 <p className="text-foreground">
@@ -804,8 +810,8 @@ function OrderInfoSection({
               </div>
             </div>
 
-            <div className="px-3 py-2 text-xs">
-              <p className="mb-0.5 text-[10px] uppercase tracking-wider text-muted-foreground">
+            <div className="px-3 py-2.5 text-sm">
+              <p className="mb-0.5 text-[11px] uppercase tracking-wider text-muted-foreground">
                 Tracking No.
               </p>
               {ctx?.trackingNumber ? (
@@ -832,9 +838,9 @@ function OrderInfoSection({
               )}
             </div>
 
-            <div className="px-3 py-2 text-xs">
+            <div className="px-3 py-2.5 text-sm">
               <div className="mb-0.5 flex items-center justify-between gap-2">
-                <p className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                <p className="text-[11px] uppercase tracking-wider text-muted-foreground">
                   {ctx?.actualDeliveryTime ? "Delivered" : "Estimated Delivery"}
                 </p>
                 {ctx?.shippingService ? (
@@ -866,8 +872,8 @@ function OrderInfoSection({
               )}
             </div>
 
-            <div className="px-3 py-2 text-xs">
-              <p className="mb-0.5 text-[10px] uppercase tracking-wider text-muted-foreground">
+            <div className="px-3 py-2.5 text-sm">
+              <p className="mb-0.5 text-[11px] uppercase tracking-wider text-muted-foreground">
                 Delivery Address
               </p>
               {ctx?.shippingAddress ? (
@@ -879,7 +885,7 @@ function OrderInfoSection({
                   title="Open in Google Maps"
                 >
                   <MapPin className="mt-0.5 h-3 w-3 shrink-0" />
-                  <span className="whitespace-pre-line text-xs leading-snug text-foreground">
+                  <span className="whitespace-pre-line text-sm leading-snug text-foreground">
                     {formatAddressMultiline(ctx.shippingAddress)}
                   </span>
                 </a>
@@ -893,7 +899,7 @@ function OrderInfoSection({
            * distinct section, the way eDesk visually breaks Order Info from
            * the line items. Each row shows thumbnail, title, SKU, qty + price. */}
           <div className="mt-4">
-            <p className="mb-2 text-[10px] uppercase tracking-wider text-muted-foreground">
+            <p className="mb-2 text-[11px] uppercase tracking-wider text-muted-foreground">
               Products
             </p>
             <div className="space-y-2">
@@ -932,16 +938,16 @@ function OrderInfoSection({
                     </div>
                   )}
                   <div className="min-w-0 flex-1">
-                    <p className="line-clamp-2 text-xs text-brand">
+                    <p className="line-clamp-2 text-sm text-brand">
                       {item.title}
                     </p>
                     {item.sku ? (
-                      <p className="mt-0.5 truncate text-[10px] text-muted-foreground">
+                      <p className="mt-0.5 truncate text-xs text-muted-foreground">
                         SKU {item.sku}
                       </p>
                     ) : null}
                   </div>
-                  <div className="shrink-0 text-right text-[11px]">
+                  <div className="shrink-0 text-right text-xs">
                     <p className="font-semibold text-foreground">
                       {item.unitPriceCents != null && item.quantity != null
                         ? formatMoney(
@@ -956,14 +962,32 @@ function OrderInfoSection({
               ))}
               {(!ctx?.lineItems || ctx.lineItems.length === 0) &&
               !ticket.ebayItemId ? (
-                <p className="text-[11px] text-muted-foreground">
+                <p className="text-xs text-muted-foreground">
                   No products on this ticket.
                 </p>
               ) : null}
             </div>
 
+            {ctx?.shippingCents != null ? (
+              // Shipping fee row — sits BETWEEN the products list and the
+              // Total so the agent sees: products → shipping → total. Mirrors
+              // eDesk's right-rail. Hidden on free shipping (null cents).
+              <div className="mt-3 flex items-center justify-between border-t border-hairline pt-2 text-sm">
+                <span className="text-muted-foreground">Shipping</span>
+                <span className="text-foreground">
+                  {ctx.shippingCents === 0
+                    ? "Free"
+                    : formatMoney(ctx.shippingCents, ctx.currency)}
+                </span>
+              </div>
+            ) : null}
             {ctx?.totalCents != null ? (
-              <div className="mt-3 flex items-center justify-between border-t border-hairline pt-2 text-xs">
+              <div
+                className={cn(
+                  "flex items-center justify-between border-t border-hairline pt-2 text-sm",
+                  ctx?.shippingCents != null ? "mt-2" : "mt-3",
+                )}
+              >
                 <span className="font-semibold text-foreground">Total</span>
                 <span className="font-semibold text-foreground">
                   {formatMoney(ctx.totalCents, ctx.currency)}
@@ -993,27 +1017,27 @@ function RelatedSection({
 
   return (
     <section className="px-4 py-4">
-      <h3 className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+      <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
         Other Tickets from this Buyer
       </h3>
       {loading ? (
-        <p className="text-[11px] text-muted-foreground">Loading…</p>
+        <p className="text-xs text-muted-foreground">Loading…</p>
       ) : related.length === 0 ? (
-        <p className="text-[11px] text-muted-foreground">
+        <p className="text-xs text-muted-foreground">
           No other tickets on file.
         </p>
       ) : (
-        <ul className="space-y-1">
+        <ul className="space-y-1.5">
           {related.map((t) => (
             <li key={t.id}>
               <Link
                 href={`/help-desk?ticket=${t.id}`}
-                className="block rounded-md border border-hairline bg-surface px-2 py-1.5 transition-colors hover:bg-surface-2"
+                className="block rounded-md border border-hairline bg-surface px-2.5 py-2 transition-colors hover:bg-surface-2"
               >
-                <p className="line-clamp-1 text-xs text-foreground">
+                <p className="line-clamp-1 text-sm text-foreground">
                   {t.subject ?? t.ebayItemTitle ?? "Untitled"}
                 </p>
-                <div className="mt-0.5 flex items-center gap-2 text-[10px] text-muted-foreground">
+                <div className="mt-0.5 flex items-center gap-2 text-xs text-muted-foreground">
                   <span>{t.status.replace("_", " ").toLowerCase()}</span>
                   {t.ebayOrderNumber ? (
                     <span className="font-mono">{t.ebayOrderNumber}</span>
@@ -1036,10 +1060,10 @@ function RelatedSection({
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="flex items-start justify-between gap-3">
-      <dt className="shrink-0 text-[11px] font-medium text-muted-foreground">
+      <dt className="shrink-0 text-xs font-medium text-muted-foreground">
         {label}
       </dt>
-      <dd className="min-w-0 flex-1 text-right text-xs">{children}</dd>
+      <dd className="min-w-0 flex-1 text-right text-sm">{children}</dd>
     </div>
   );
 }

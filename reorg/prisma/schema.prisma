@@ -199,6 +199,27 @@ enum HelpdeskTicketKind {
   POST_SALES
 }
 
+/// Practical, agent-facing classification of WHAT the ticket is about.
+/// Distinct from `HelpdeskTicketKind` (PRE_SALES/POST_SALES) because that one
+/// answers "is this before or after a purchase?" while this one answers
+/// "what bucket does this belong in for triage / routing / reporting?".
+///
+/// Set automatically by the inbound sync when we can pattern-match the
+/// message (e.g. eBay return events → RETURN_REQUEST). An agent can always
+/// override via the per-ticket header bar; manual overrides win and are not
+/// reverted by subsequent syncs.
+enum HelpdeskTicketType {
+  QUERY                 // generic buyer message — the default
+  PRE_SALES             // pre-purchase question
+  RETURN_REQUEST        // buyer initiated an eBay return
+  ITEM_NOT_RECEIVED     // INR claim
+  NEGATIVE_FEEDBACK     // buyer left negative feedback or threatened to
+  REFUND                // refund request
+  SHIPPING_QUERY        // tracking / delivery / customs questions
+  CANCELLATION          // buyer wants to cancel
+  OTHER
+}
+
 enum HelpdeskMessageDirection {
   INBOUND
   OUTBOUND
@@ -281,6 +302,8 @@ model User {
   helpdeskOutboundJobs       HelpdeskOutboundJob[]  @relation("HelpdeskOutboundAuthor")
   helpdeskNotifications      HelpdeskNotification[] @relation("HelpdeskNotificationRecipient")
   helpdeskCreatedFilters     HelpdeskFilter[]       @relation("HelpdeskFilterCreator")
+  helpdeskColumnPrefs        HelpdeskColumnPref[]   @relation("HelpdeskColumnPrefUser")
+  helpdeskPresence           HelpdeskPresence[]     @relation("HelpdeskPresenceUser")
 
   @@map("users")
 }
@@ -1060,9 +1083,22 @@ model HelpdeskTicket {
   ebayOrderNumber    String?
   subject            String?
   kind               HelpdeskTicketKind   @default(POST_SALES)
+  /// Practical classification — see HelpdeskTicketType. Default QUERY for
+  /// untriaged messages; auto-detected by the inbound sync where possible.
+  type               HelpdeskTicketType   @default(QUERY)
+  /// True once an agent has manually set `type`. Auto-detection skips
+  /// tickets where this is true so we never silently revert an override.
+  typeOverridden     Boolean              @default(false)
   status             HelpdeskTicketStatus @default(NEW)
   isSpam             Boolean              @default(false)
   isArchived         Boolean              @default(false)
+  /// Team-wide favorite (any agent can favorite/unfavorite). Surfaces in the
+  /// Favorites sidebar folder. Distinct from `isImportant` which is just a
+  /// per-row visual badge in the inbox.
+  isFavorite         Boolean              @default(false)
+  /// Marks the row with a flag badge in the inbox. Doesn't change folder
+  /// routing — purely a visual "look at this one" hint.
+  isImportant        Boolean              @default(false)
   archivedAt         DateTime?
   snoozedUntil       DateTime?
   snoozedById        String?
@@ -1090,6 +1126,7 @@ model HelpdeskTicket {
   outboundJobs        HelpdeskOutboundJob[]
   notifications       HelpdeskNotification[]
   additionalAssignees HelpdeskAssignment[]
+  presence            HelpdeskPresence[]     @relation("HelpdeskTicketPresence")
 
   @@unique([integrationId, threadKey])
   @@index([status, lastBuyerMessageAt])
@@ -1100,6 +1137,8 @@ model HelpdeskTicket {
   @@index([snoozedUntil])
   @@index([kind, status])
   @@index([isArchived, status])
+  @@index([isFavorite])
+  @@index([type])
   @@map("helpdesk_tickets")
 }
 
@@ -1196,6 +1235,53 @@ model HelpdeskAssignment {
   @@id([ticketId, userId])
   @@index([userId])
   @@map("helpdesk_assignments")
+}
+
+/// Per-user inbox column preferences. The shape of `columns` is defined by
+/// the client (`InboxColumnKey[]` in TicketList) so we can add/rename
+/// columns without a migration. Each row represents a single user's view of
+/// a single inbox layout (currently always "table" — kept open so we can
+/// fork "list" prefs in future without another model).
+///
+/// Persisted server-side so prefs follow the agent across browsers/devices.
+model HelpdeskColumnPref {
+  userId    String
+  layout    String   @default("table")
+  /// Ordered array of column keys to render, e.g.
+  /// `["channel","customer","type","latestUpdate","owner","timeLeft","created","status","orderId","ebayUsername"]`.
+  /// Columns not present here are hidden.
+  columns   Json     @default("[]")
+  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now())
+
+  user User @relation("HelpdeskColumnPrefUser", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, layout])
+  @@map("helpdesk_column_prefs")
+}
+
+/// Live "agent X is currently viewing ticket Y" state. The client posts a
+/// heartbeat every ~10s while the ticket detail tab is foreground; the row
+/// is considered live for `expiresAt > now()`. Purged lazily by /presence
+/// reads and by a scheduled cleanup. Composite PK so a single agent can only
+/// occupy one slot per ticket — re-heartbeating just bumps `expiresAt`.
+model HelpdeskPresence {
+  ticketId      String
+  userId        String
+  lastSeenAt    DateTime @default(now())
+  expiresAt     DateTime
+  /// Free-form client surface marker (e.g. "viewer" vs "composing") so we
+  /// can later distinguish "reading" vs "typing a reply" without a schema
+  /// change. Default "viewer" today.
+  presenceState String   @default("viewer")
+
+  ticket HelpdeskTicket @relation("HelpdeskTicketPresence", fields: [ticketId], references: [id], onDelete: Cascade)
+  user   User           @relation("HelpdeskPresenceUser", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([ticketId, userId])
+  @@index([ticketId, expiresAt])
+  @@index([expiresAt])
+  @@map("helpdesk_presence")
 }
 
 model HelpdeskTemplate {

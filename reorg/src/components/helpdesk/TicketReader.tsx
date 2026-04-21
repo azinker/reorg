@@ -25,6 +25,7 @@ import { useEffect } from "react";
 import { ThreadView } from "@/components/helpdesk/ThreadView";
 import { ContextPanel } from "@/components/helpdesk/ContextPanel";
 import { HelpdeskSplit } from "@/components/helpdesk/HelpdeskSplit";
+import { TicketTriageBar } from "@/components/helpdesk/TicketTriageBar";
 import {
   useHelpdeskPrefs,
   updateHelpdeskPrefs,
@@ -65,6 +66,78 @@ export function TicketReader({
   onSent,
 }: TicketReaderProps) {
   const prefs = useHelpdeskPrefs();
+
+  // ── Presence heartbeat ────────────────────────────────────────────────────
+  // While this reader is mounted AND the tab is in the foreground, ping the
+  // per-ticket presence endpoint every 10s. The Status column in the inbox
+  // reads from /api/helpdesk/presence with an 8s poll, so other agents see
+  // the green eye within ~10s and lose it ~25s after the tab blurs (TTL).
+  // On unmount or visibility change → away, signal-out via DELETE.
+  useEffect(() => {
+    const id = ticket?.id;
+    if (!id) return;
+    let cancelled = false;
+    let intervalId: ReturnType<typeof setInterval> | null = null;
+
+    function isVisible() {
+      return typeof document !== "undefined" && !document.hidden;
+    }
+
+    async function beat() {
+      if (cancelled || !isVisible()) return;
+      try {
+        await fetch(`/api/helpdesk/tickets/${id}/presence`, {
+          method: "POST",
+          credentials: "same-origin",
+        });
+      } catch {
+        /* network blips are fine — next poll will retry */
+      }
+    }
+
+    async function clear() {
+      try {
+        await fetch(`/api/helpdesk/tickets/${id}/presence`, {
+          method: "DELETE",
+          credentials: "same-origin",
+          keepalive: true,
+        });
+      } catch {
+        /* ignored */
+      }
+    }
+
+    function start() {
+      if (intervalId) return;
+      void beat();
+      intervalId = setInterval(beat, 10_000);
+    }
+
+    function stop() {
+      if (intervalId) {
+        clearInterval(intervalId);
+        intervalId = null;
+      }
+    }
+
+    function onVisibility() {
+      if (isVisible()) start();
+      else {
+        stop();
+        void clear();
+      }
+    }
+
+    if (isVisible()) start();
+    document.addEventListener("visibilitychange", onVisibility);
+
+    return () => {
+      cancelled = true;
+      stop();
+      document.removeEventListener("visibilitychange", onVisibility);
+      void clear();
+    };
+  }, [ticket?.id]);
 
   // Esc → Back. Only fires when no input/textarea is focused so we don't
   // hijack the composer.
@@ -188,6 +261,14 @@ export function TicketReader({
           </a>
         )}
       </div>
+
+      {/*
+       * Per-ticket triage bar (eDesk parity). Lives below the ticket info
+       * row so it always travels with the active ticket. We render it even
+       * when no ticket is selected (controls disable themselves) so the
+       * layout doesn't reflow on selection change.
+       */}
+      <TicketTriageBar ticket={ticket} onMutated={onSent} />
 
       {/* Thread + Context split */}
       <div className="flex flex-1 overflow-hidden">

@@ -17,6 +17,7 @@ test("FOLDER_LABELS covers every folder key", () => {
     "resolved",
     "unassigned",
     "mentioned",
+    "favorites",
     "spam",
     "archived",
   ];
@@ -88,6 +89,16 @@ test("buildFolderWhere(all_new) constrains status=NEW and not snoozed", () => {
   const json = JSON.stringify(where);
   assert.match(json, /"status":"NEW"/);
   assert.match(json, /"snoozedUntil"/);
+});
+
+test("buildFolderWhere(favorites) matches starred non-archived tickets across statuses", () => {
+  const where = buildFolderWhere("favorites", ctx) as {
+    isFavorite: boolean;
+    isArchived: boolean;
+  };
+  // Crucially, no status filter — agents can star RESOLVED tickets too.
+  assert.equal(where.isFavorite, true);
+  assert.equal(where.isArchived, false);
 });
 
 test("buildFolderWhere(buyer_cancellation) requires the cancellation tag and open status", () => {

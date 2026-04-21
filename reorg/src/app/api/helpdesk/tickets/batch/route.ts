@@ -21,6 +21,7 @@ import { z } from "zod";
 import {
   HelpdeskMessageDirection,
   HelpdeskTicketStatus,
+  HelpdeskTicketType,
   Platform,
   Prisma,
 } from "@prisma/client";
@@ -67,6 +68,23 @@ const actionSchema = z.discriminatedUnion("action", [
   baseSchema.extend({
     action: z.literal("markRead"),
     isRead: z.boolean(),
+  }),
+  baseSchema.extend({
+    action: z.literal("setType"),
+    type: z.nativeEnum(HelpdeskTicketType),
+  }),
+  baseSchema.extend({
+    action: z.literal("setFavorite"),
+    isFavorite: z.boolean(),
+  }),
+  baseSchema.extend({
+    action: z.literal("setImportant"),
+    isImportant: z.boolean(),
+  }),
+  baseSchema.extend({
+    // "Snooze a batch" — pass an ISO datetime to set, or null to clear.
+    action: z.literal("snooze"),
+    snoozedUntil: z.string().datetime().nullable(),
   }),
 ]);
 
@@ -154,6 +172,44 @@ export async function POST(request: NextRequest) {
         },
       });
       summary = { count: r.count, isArchived: action.isArchived };
+      break;
+    }
+    case "setType": {
+      // `typeOverridden=true` so the eBay sync auto-detector won't quietly
+      // revert this choice on a later inbound message.
+      const r = await db.helpdeskTicket.updateMany({
+        where: { id: { in: ids } },
+        data: { type: action.type, typeOverridden: true },
+      });
+      summary = { count: r.count, type: action.type };
+      break;
+    }
+    case "setFavorite": {
+      const r = await db.helpdeskTicket.updateMany({
+        where: { id: { in: ids } },
+        data: { isFavorite: action.isFavorite },
+      });
+      summary = { count: r.count, isFavorite: action.isFavorite };
+      break;
+    }
+    case "setImportant": {
+      const r = await db.helpdeskTicket.updateMany({
+        where: { id: { in: ids } },
+        data: { isImportant: action.isImportant },
+      });
+      summary = { count: r.count, isImportant: action.isImportant };
+      break;
+    }
+    case "snooze": {
+      const until = action.snoozedUntil ? new Date(action.snoozedUntil) : null;
+      const r = await db.helpdeskTicket.updateMany({
+        where: { id: { in: ids } },
+        data: {
+          snoozedUntil: until,
+          snoozedById: until ? userId : null,
+        },
+      });
+      summary = { count: r.count, snoozedUntil: action.snoozedUntil };
       break;
     }
     case "markRead": {
@@ -254,6 +310,32 @@ function perTicketActionFor(
       return {
         action: "HELPDESK_BATCH_MARKREAD",
         details: { isRead: action.isRead } satisfies Prisma.InputJsonValue,
+      };
+    case "setType":
+      return {
+        action: "HELPDESK_TICKET_TYPE_CHANGED",
+        details: { type: action.type } satisfies Prisma.InputJsonValue,
+      };
+    case "setFavorite":
+      return {
+        action: "HELPDESK_TICKET_FAVORITE_TOGGLED",
+        details: {
+          isFavorite: action.isFavorite,
+        } satisfies Prisma.InputJsonValue,
+      };
+    case "setImportant":
+      return {
+        action: "HELPDESK_TICKET_IMPORTANT_TOGGLED",
+        details: {
+          isImportant: action.isImportant,
+        } satisfies Prisma.InputJsonValue,
+      };
+    case "snooze":
+      return {
+        action: "HELPDESK_TICKET_SNOOZED",
+        details: {
+          snoozedUntil: action.snoozedUntil,
+        } satisfies Prisma.InputJsonValue,
       };
     default:
       return null;

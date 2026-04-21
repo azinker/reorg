@@ -1,4 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { z } from "zod";
+import { HelpdeskTicketType } from "@prisma/client";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 
@@ -144,9 +146,13 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
       ebayOrderNumber: ticket.ebayOrderNumber,
       subject: ticket.subject,
       kind: ticket.kind,
+      type: ticket.type,
+      typeOverridden: ticket.typeOverridden,
       status: ticket.status,
       isSpam: ticket.isSpam,
       isArchived: ticket.isArchived,
+      isFavorite: ticket.isFavorite,
+      isImportant: ticket.isImportant,
       snoozedUntil: ticket.snoozedUntil,
       primaryAssignee: ticket.primaryAssignee,
       unreadCount: 0,
@@ -168,4 +174,102 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
       additionalAssignees: ticket.additionalAssignees,
     },
   });
+}
+
+/**
+ * Per-ticket partial update for the new triage controls in the ticket
+ * header bar. Each field is optional — agents can call this with just the
+ * one thing they changed (e.g. picking a Type from the dropdown).
+ *
+ *   - `type`        sets the ticket type AND flips `typeOverridden=true` so
+ *                   the inbound auto-detector won't silently undo the choice
+ *                   on a later message.
+ *   - `isFavorite`  shared favorite (any agent can toggle it for the team).
+ *   - `isImportant` row-badge flag in the inbox; pure visual hint.
+ *
+ * Each successful change writes a per-ticket audit row so the reader
+ * timeline shows who flipped what. We deliberately do NOT attempt to write
+ * to eBay for any of these fields — they're internal triage state only.
+ */
+const patchSchema = z
+  .object({
+    type: z.nativeEnum(HelpdeskTicketType).optional(),
+    isFavorite: z.boolean().optional(),
+    isImportant: z.boolean().optional(),
+  })
+  .refine(
+    (v) =>
+      v.type !== undefined ||
+      v.isFavorite !== undefined ||
+      v.isImportant !== undefined,
+    { message: "At least one field is required" },
+  );
+
+export async function PATCH(request: NextRequest, { params }: RouteParams) {
+  const session = await auth();
+  if (!session?.user?.id) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const { id } = await params;
+  const json = await request.json().catch(() => null);
+  const parsed = patchSchema.safeParse(json);
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: parsed.error.flatten() },
+      { status: 400 },
+    );
+  }
+
+  const data: Record<string, unknown> = {};
+  const auditEntries: Array<{ action: string; details: object }> = [];
+
+  if (parsed.data.type !== undefined) {
+    data.type = parsed.data.type;
+    data.typeOverridden = true;
+    auditEntries.push({
+      action: "HELPDESK_TICKET_TYPE_CHANGED",
+      details: { type: parsed.data.type },
+    });
+  }
+  if (parsed.data.isFavorite !== undefined) {
+    data.isFavorite = parsed.data.isFavorite;
+    auditEntries.push({
+      action: "HELPDESK_TICKET_FAVORITE_TOGGLED",
+      details: { isFavorite: parsed.data.isFavorite },
+    });
+  }
+  if (parsed.data.isImportant !== undefined) {
+    data.isImportant = parsed.data.isImportant;
+    auditEntries.push({
+      action: "HELPDESK_TICKET_IMPORTANT_TOGGLED",
+      details: { isImportant: parsed.data.isImportant },
+    });
+  }
+
+  const updated = await db.helpdeskTicket.update({
+    where: { id },
+    data,
+    select: {
+      id: true,
+      type: true,
+      typeOverridden: true,
+      isFavorite: true,
+      isImportant: true,
+    },
+  });
+
+  if (auditEntries.length > 0) {
+    await db.auditLog.createMany({
+      data: auditEntries.map((e) => ({
+        userId: session.user!.id!,
+        action: e.action,
+        entityType: "HelpdeskTicket",
+        entityId: id,
+        details: e.details,
+      })),
+    });
+  }
+
+  return NextResponse.json({ data: updated });
 }
