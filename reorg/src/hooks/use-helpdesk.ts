@@ -93,6 +93,14 @@ export interface HelpdeskTicketSummary {
   ebayItemTitle: string | null;
   ebayOrderNumber: string | null;
   subject: string | null;
+  /**
+   * Server-derived one-line preview of the most recent real message in the
+   * thread (excludes raw eBay digest envelopes). Populated by GET
+   * /api/helpdesk/tickets so the inbox table can show actual message text in
+   * the "Latest Update" column instead of falling back to the eBay
+   * notification subject. Null if no eligible message exists yet.
+   */
+  latestPreview: string | null;
   kind: "PRE_SALES" | "POST_SALES";
   type: HelpdeskTicketType;
   typeOverridden: boolean;

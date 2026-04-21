@@ -177,7 +177,11 @@ function formatTime12h(date: string | null): string {
 }
 
 function previewLatest(t: HelpdeskTicketSummary): string {
-  return t.subject ?? t.ebayItemTitle ?? "(no subject)";
+  // Prefer the server-derived latest message preview (skips raw eBay digest
+  // envelopes), then fall back to the subject / item title for tickets that
+  // don't have an eligible message yet (eg. brand-new sync, or threads where
+  // the only row is still an un-exploded envelope).
+  return t.latestPreview ?? t.subject ?? t.ebayItemTitle ?? "(no subject)";
 }
 
 // ─── Sort logic (client-side stable sort over loaded page) ─────────────────

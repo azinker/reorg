@@ -12,6 +12,39 @@ import { Platform, type Prisma } from "@prisma/client";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+/**
+ * Build a one-line preview from a message body. HTML bodies get tags stripped
+ * and entities decoded; whitespace is collapsed; the result is truncated to
+ * 240 chars to keep the inbox payload small while leaving the table room to
+ * truncate further with CSS for visual polish.
+ */
+const PREVIEW_MAX = 240;
+function summarizeBody(body: string | null | undefined, isHtml: boolean): string {
+  if (!body) return "";
+  let text = body;
+  if (isHtml) {
+    text = text
+      .replace(/<style[\s\S]*?<\/style>/gi, " ")
+      .replace(/<script[\s\S]*?<\/script>/gi, " ")
+      .replace(/<br\s*\/?\s*>/gi, " ")
+      .replace(/<\/(p|div|li|tr|h[1-6])>/gi, " ")
+      .replace(/<[^>]+>/g, " ");
+  }
+  text = text
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;|&apos;/gi, "'")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (text.length > PREVIEW_MAX) {
+    text = text.slice(0, PREVIEW_MAX - 1).trimEnd() + "…";
+  }
+  return text;
+}
+
 const folderEnum = z.enum([
   "pre_sales",
   "my_tickets",
@@ -99,6 +132,33 @@ export async function GET(request: NextRequest) {
   const hasMore = tickets.length > limit;
   const page = hasMore ? tickets.slice(0, limit) : tickets;
 
+  // Compute a one-line `latestPreview` per ticket from the most recent real
+  // message (excluding raw eBay digest envelopes — those still contain a
+  // `<div id="UserInputtedText...">` block; the exploded sub-messages don't).
+  // Done as a single batched query keyed off the page's ticket ids so the
+  // inbox stays one-roundtrip even at limit=50.
+  const previewByTicket = new Map<string, string>();
+  if (page.length > 0) {
+    const ticketIds = page.map((t) => t.id);
+    const recent = await db.helpdeskMessage.findMany({
+      where: {
+        ticketId: { in: ticketIds },
+        deletedAt: null,
+        // Exclude un-exploded digest envelopes — their body is the entire
+        // notification chrome, not a real message. Exploded sub-messages
+        // still have HTML bodies but never contain the marker div, so we
+        // can filter the envelopes out cheaply at the SQL layer.
+        NOT: { bodyText: { contains: "UserInputtedText" } },
+      },
+      orderBy: { sentAt: "desc" },
+      select: { ticketId: true, bodyText: true, isHtml: true },
+    });
+    for (const m of recent) {
+      if (previewByTicket.has(m.ticketId)) continue;
+      previewByTicket.set(m.ticketId, summarizeBody(m.bodyText, m.isHtml));
+    }
+  }
+
   return NextResponse.json({
     data: page.map((t) => ({
       id: t.id,
@@ -112,6 +172,7 @@ export async function GET(request: NextRequest) {
       ebayItemTitle: t.ebayItemTitle,
       ebayOrderNumber: t.ebayOrderNumber,
       subject: t.subject,
+      latestPreview: previewByTicket.get(t.id) ?? null,
       kind: t.kind,
       type: t.type,
       typeOverridden: t.typeOverridden,
