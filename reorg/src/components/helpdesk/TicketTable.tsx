@@ -122,7 +122,10 @@ const CHANNEL_BADGE: Record<string, string> = {
 interface TimeLeftResult {
   /** ms remaining (clamped >= 0). null = no SLA applies (resolved/waiting). */
   remainingMs: number | null;
-  /** 0..1 progress fill, where 1 = clock fully expired (red). */
+  /**
+   * 0..1 *remaining* fill — 1.0 = brand new (full bar), 0 = depleted/overdue
+   * (empty bar). Used directly as the bar width.
+   */
   pct: number;
   /** "23h", "12m", "Overdue 2h", or "—". */
   label: string;
@@ -146,12 +149,13 @@ function computeTimeLeft(t: HelpdeskTicketSummary, now: number): TimeLeftResult 
     : new Date(t.createdAt).getTime();
   const elapsed = now - start;
   const remaining = SLA_MS - elapsed;
-  const pct = Math.max(0, Math.min(1, elapsed / SLA_MS));
+  // pct = fraction REMAINING (1.0 = fresh, 0 = depleted).
+  const pct = Math.max(0, Math.min(1, remaining / SLA_MS));
   if (remaining <= 0) {
     const overdueH = Math.floor(-remaining / 3_600_000);
     return {
       remainingMs: 0,
-      pct: 1,
+      pct: 0,
       label: overdueH > 0 ? `Overdue ${overdueH}h` : "Overdue",
     };
   }
@@ -393,7 +397,7 @@ export function TicketTable({
 
       {/* Grid header */}
       <div
-        className="sticky top-0 z-[2] grid items-center border-b border-hairline bg-card/95 px-2 py-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground backdrop-blur"
+        className="sticky top-0 z-[2] grid items-center border-b border-hairline bg-card/95 px-2 py-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground backdrop-blur"
         style={{ gridTemplateColumns: totalGridTemplate }}
       >
         {showSelection && (
@@ -533,7 +537,7 @@ function TicketRow({
       onContextMenu={(e) => onContextMenu?.(e, t.id)}
       style={{ gridTemplateColumns: gridTemplate }}
       className={cn(
-        "group grid cursor-pointer items-center border-b border-hairline px-2 py-2.5 text-sm transition-colors",
+        "group grid cursor-pointer items-center border-b border-hairline px-2 py-4 text-[15px] transition-colors",
         isUnread
           ? "bg-brand/[0.04] text-foreground"
           : "bg-transparent text-muted-foreground",
@@ -553,7 +557,7 @@ function TicketRow({
             type="checkbox"
             checked={selected}
             onChange={() => undefined}
-            className="h-3.5 w-3.5 cursor-pointer accent-brand"
+            className="h-4 w-4 cursor-pointer accent-brand"
             aria-label="Select ticket"
           />
         </div>
@@ -563,13 +567,13 @@ function TicketRow({
       <div className="flex justify-center">
         {t.isImportant && (
           <Flag
-            className="h-3.5 w-3.5 fill-red-500 text-red-500"
+            className="h-4 w-4 fill-red-500 text-red-500"
             aria-label="Important"
           />
         )}
         {!t.isImportant && t.isFavorite && (
           <Star
-            className="h-3.5 w-3.5 fill-amber-500 text-amber-500"
+            className="h-4 w-4 fill-amber-500 text-amber-500"
             aria-label="Favorite"
           />
         )}
@@ -603,13 +607,13 @@ function Cell({ column, ticket: t, isUnread, timeLeft, otherViewers }: CellProps
   switch (column) {
     case "channel":
       return (
-        <div className="flex items-center gap-1.5 px-2">
-          <span className="inline-flex items-center rounded border border-hairline bg-surface px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+        <div className="flex items-center gap-2 px-2">
+          <span className="inline-flex items-center rounded border border-hairline bg-surface px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
             {CHANNEL_BADGE[t.channel] ?? t.channel}
           </span>
           {/* US flag indicator — eBay orders are 99% US so we always render. */}
           <span
-            className="text-[11px] leading-none"
+            className="text-base leading-none"
             role="img"
             aria-label="United States"
             title="Shipping to US"
@@ -621,11 +625,11 @@ function Cell({ column, ticket: t, isUnread, timeLeft, otherViewers }: CellProps
 
     case "customer":
       return (
-        <div className="flex min-w-0 items-center gap-1.5 px-2">
+        <div className="flex min-w-0 items-center gap-2 px-2">
           {isUnread && (
             <span
               aria-hidden
-              className="inline-block h-2 w-2 shrink-0 rounded-full bg-brand"
+              className="inline-block h-2.5 w-2.5 shrink-0 rounded-full bg-brand"
             />
           )}
           <span
@@ -646,7 +650,7 @@ function Cell({ column, ticket: t, isUnread, timeLeft, otherViewers }: CellProps
         <div className="px-2">
           <span
             className={cn(
-              "inline-flex items-center rounded border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider",
+              "inline-flex items-center rounded border px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider",
               cls,
             )}
           >
@@ -677,16 +681,16 @@ function Cell({ column, ticket: t, isUnread, timeLeft, otherViewers }: CellProps
       return (
         <div className="px-2">
           {t.primaryAssignee ? (
-            <div className="flex min-w-0 items-center gap-1.5">
-              <Avatar user={t.primaryAssignee} size="xs" />
-              <span className="truncate text-xs text-muted-foreground">
+            <div className="flex min-w-0 items-center gap-2">
+              <Avatar user={t.primaryAssignee} size="sm" />
+              <span className="truncate text-sm text-muted-foreground">
                 {t.primaryAssignee.name?.split(" ")[0] ??
                   t.primaryAssignee.handle ??
                   "—"}
               </span>
             </div>
           ) : (
-            <span className="text-xs text-muted-foreground/60">Unassigned</span>
+            <span className="text-sm text-muted-foreground/60">Unassigned</span>
           )}
         </div>
       );
@@ -695,30 +699,42 @@ function Cell({ column, ticket: t, isUnread, timeLeft, otherViewers }: CellProps
       return (
         <div className="px-2">
           {timeLeft.remainingMs === null ? (
-            <span className="text-xs text-muted-foreground/60">{timeLeft.label}</span>
+            <span className="text-sm text-muted-foreground/60">{timeLeft.label}</span>
           ) : (
-            <div className="flex flex-col gap-1">
+            <div className="flex flex-col gap-1.5">
               <span
                 className={cn(
-                  "text-xs tabular-nums",
-                  timeLeft.pct >= 1
+                  "text-sm tabular-nums",
+                  // Color the label by URGENCY of remaining time:
+                  //   pct === 0  → overdue (red, bold)
+                  //   pct ≤ 0.25 → almost depleted (red)
+                  //   pct ≤ 0.5  → halfway (amber)
+                  //   pct  > 0.5 → healthy (green-ish, muted)
+                  timeLeft.pct === 0
                     ? "font-semibold text-red-600 dark:text-red-300"
-                    : timeLeft.pct >= 0.75
-                      ? "font-semibold text-amber-600 dark:text-amber-300"
-                      : "text-muted-foreground",
+                    : timeLeft.pct <= 0.25
+                      ? "font-semibold text-red-600 dark:text-red-300"
+                      : timeLeft.pct <= 0.5
+                        ? "font-semibold text-amber-600 dark:text-amber-300"
+                        : "text-muted-foreground",
                 )}
               >
                 {timeLeft.label}
               </span>
-              <div className="h-1 w-full overflow-hidden rounded-full bg-surface-2">
+              <div className="h-1.5 w-full overflow-hidden rounded-full bg-surface-2">
                 <div
                   className={cn(
                     "h-full rounded-full transition-all",
-                    timeLeft.pct >= 1
-                      ? "bg-red-500"
-                      : timeLeft.pct >= 0.75
+                    // Bar fill represents REMAINING time:
+                    //   > 0.5 → green (lots of time)
+                    //   0.25..0.5 → amber (halfway)
+                    //   ≤ 0.25 → red (almost out)
+                    //   0 → red (overdue, but bar is empty so color barely matters)
+                    timeLeft.pct > 0.5
+                      ? "bg-emerald-500"
+                      : timeLeft.pct > 0.25
                         ? "bg-amber-500"
-                        : "bg-brand",
+                        : "bg-red-500",
                   )}
                   style={{ width: `${Math.round(timeLeft.pct * 100)}%` }}
                 />
@@ -732,7 +748,7 @@ function Cell({ column, ticket: t, isUnread, timeLeft, otherViewers }: CellProps
       return (
         <div
           className={cn(
-            "px-2 text-right tabular-nums text-xs",
+            "px-2 text-right tabular-nums text-sm",
             isUnread ? "text-foreground" : "text-muted-foreground",
           )}
           title={new Date(t.createdAt).toLocaleString()}
@@ -754,10 +770,10 @@ function Cell({ column, ticket: t, isUnread, timeLeft, otherViewers }: CellProps
           title={tooltip}
         >
           {watchedByOthers ? (
-            <Eye className="h-4 w-4 text-emerald-500" aria-label={tooltip} />
+            <Eye className="h-[18px] w-[18px] text-emerald-500" aria-label={tooltip} />
           ) : (
             <Mail
-              className="h-4 w-4 text-muted-foreground/70"
+              className="h-[18px] w-[18px] text-muted-foreground/70"
               aria-label="Inbox"
             />
           )}
@@ -770,13 +786,13 @@ function Cell({ column, ticket: t, isUnread, timeLeft, otherViewers }: CellProps
         <div className="px-2">
           {t.ebayOrderNumber ? (
             <span
-              className="block truncate font-mono text-xs text-foreground"
+              className="block truncate font-mono text-sm text-foreground"
               title={t.ebayOrderNumber}
             >
               {t.ebayOrderNumber}
             </span>
           ) : (
-            <span className="text-xs text-muted-foreground/60">—</span>
+            <span className="text-sm text-muted-foreground/60">—</span>
           )}
         </div>
       );
@@ -786,13 +802,13 @@ function Cell({ column, ticket: t, isUnread, timeLeft, otherViewers }: CellProps
         <div className="px-2">
           {t.buyerUserId ? (
             <span
-              className="block truncate text-xs text-muted-foreground"
+              className="block truncate text-sm text-muted-foreground"
               title={t.buyerUserId}
             >
               {t.buyerUserId}
             </span>
           ) : (
-            <span className="text-xs text-muted-foreground/60">—</span>
+            <span className="text-sm text-muted-foreground/60">—</span>
           )}
         </div>
       );
