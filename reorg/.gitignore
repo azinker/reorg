@@ -51,3 +51,5 @@ prisma/*.db-journal
 
 # test artifacts (playwright screenshots, traces)
 /test-artifacts/
+
+.vercel

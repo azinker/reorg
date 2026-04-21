@@ -391,9 +391,19 @@ export interface RunFilterResult {
 }
 
 /**
- * Execute a filter against every ticket's most recent inbound message. We
- * intentionally only scan inbound (buyer→us) messages — outbound would
- * archive our own replies, which is rarely what the user wants.
+ * Execute a filter against every ticket's most recent matchable message. We
+ * scan two populations:
+ *
+ *   1. INBOUND — buyer → us (the obvious case)
+ *   2. OUTBOUND with `authorUserId IS NULL` — eBay-system notifications that
+ *      eBay sent on our behalf (e.g. "Thank You! Your item has been Shipped",
+ *      "Refund issued", "We sent your payout"). These appear as outbound on
+ *      the seller's side but no human in our app composed them, so it's safe
+ *      for filter rules to match them by subject.
+ *
+ * We intentionally exclude OUTBOUND with `authorUserId` set — those are real
+ * agent replies typed in our composer, and archiving an agent's own reply is
+ * rarely what the user wants.
  *
  * Bounded to the most recent 5000 messages per run to keep the request snappy
  * even on very large inboxes.
@@ -409,11 +419,17 @@ export async function runFilterOverInbox(
 
   const conditions = parseConditions(filter.conditions);
 
-  // Pull recent inbound messages with their parent tickets in one shot. We
+  // Pull recent matchable messages with their parent tickets in one shot. We
   // dedupe by ticketId so each ticket is only acted on once even if multiple
-  // messages match.
+  // messages match. See doc comment above for the direction/authorUserId
+  // contract.
   const messages = await db.helpdeskMessage.findMany({
-    where: { direction: "INBOUND" },
+    where: {
+      OR: [
+        { direction: "INBOUND" },
+        { direction: "OUTBOUND", authorUserId: null },
+      ],
+    },
     orderBy: { sentAt: "desc" },
     take: 5000,
     select: {

@@ -642,12 +642,15 @@ async function reconcileMessages(args: ReconcileArgs): Promise<ReconcileResult> 
       }
     }
 
-    // ΓöÇΓöÇ Filters: only evaluate against fresh INBOUND mail. Outbound replies
-    // shouldn't trigger filters that would archive the agent's own message.
-    if (
-      direction === HelpdeskMessageDirection.INBOUND &&
-      args.filters.length > 0
-    ) {
+    // ── Filters: evaluate against fresh INBOUND mail, plus OUTBOUND
+    // messages that eBay generated on our behalf (shipping notices, refund
+    // notices, payout notices — anything where no agent authored the reply
+    // in our composer). The eBay-sync code path never sets `authorUserId`,
+    // so every OUTBOUND we insert here is by definition "eBay-generated
+    // from the seller's side". Agent-composed replies go through a
+    // different code path (/api/helpdesk/messages) which sets
+    // `authorUserId` and does NOT invoke filters, so they stay safe.
+    if (args.filters.length > 0) {
       const matching = pickMatchingFilters(
         args.filters,
         {
