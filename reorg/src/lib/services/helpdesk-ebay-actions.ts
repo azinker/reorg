@@ -139,7 +139,10 @@ async function listReturns(
   const res = await fetchWithTimeout(url, {
     method: "GET",
     headers: {
-      Authorization: `Bearer ${accessToken}`,
+      // post-order v2 endpoints require the IAF (Identity Auth Framework)
+      // scheme, NOT the Bearer scheme used by the Sell/Buy/Commerce REST APIs.
+      // Sending "Bearer" returns "401 Bad scheme: Bearer".
+      Authorization: `IAF ${accessToken}`,
       "Content-Type": "application/json",
       "Accept-Language": "en-US",
     },
@@ -203,7 +206,8 @@ async function listCancellations(
   const res = await fetchWithTimeout(url, {
     method: "GET",
     headers: {
-      Authorization: `Bearer ${accessToken}`,
+      // post-order v2 requires the IAF scheme; "Bearer" → 401 Bad scheme.
+      Authorization: `IAF ${accessToken}`,
       "Content-Type": "application/json",
       "Accept-Language": "en-US",
     },
