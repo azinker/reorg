@@ -52,7 +52,13 @@ const REQUEST_TIMEOUT_MS = 30_000;
 // How far back to look the *first* time we run each worker against a fresh
 // integration. After that the watermark on HelpdeskSyncCheckpoint moves
 // forward and we only fetch deltas.
-const INITIAL_LOOKBACK_DAYS = 30;
+//
+// Aligned with helpdesk-ebay-sync.BACKFILL_DAYS so the message timeline and
+// the eBay-action timeline cover the same horizon. Tunable via env var.
+const INITIAL_LOOKBACK_DAYS = Number.parseInt(
+  process.env.HELPDESK_BACKFILL_DAYS ?? "60",
+  10,
+);
 
 // Per-tick page caps so a single sync tick can't blow the eBay rate budget.
 const MAX_PAGES_PER_TICK = 4;

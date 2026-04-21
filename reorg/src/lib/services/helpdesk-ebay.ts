@@ -20,6 +20,17 @@ import { db } from "@/lib/db";
 import { recordNetworkTransferSample } from "@/lib/services/network-transfer-samples";
 
 const TRADING_API = "https://api.ebay.com/ws/api.dll";
+// SITE_ID = 0 (eBay US Main).
+//
+// Q: Do we need a separate site=100 (eBay Motors) call to capture buyer
+// messages on Motors-listed items?
+// A: No. My Messages is per-seller-account, NOT per-site. A buyer who
+//    bought a Motors-category listing under TPP/TT lands in the same
+//    inbox as a buyer who bought a Main-site listing. The 3Dsellers and
+//    eDesk "(US) / (MOTORS)" labels are UI groupings on their side, not
+//    separate API connections. Calling with site=100 would actually drop
+//    `MessageType` and `QuestionType` (eBay docs: "available only on the
+//    US site"), so SITE_ID="0" is the correct choice for both stores.
 const SITE_ID = "0";
 const COMPAT_LEVEL = "1199";
 const REQUEST_TIMEOUT_MS = 30_000;

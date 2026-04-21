@@ -9,7 +9,8 @@
  *      hydrate.
  *   3. Body pull: chunked (10 IDs per call) for the IDs we don't already have.
  *
- * Backfill: 180-day initial history. Resumable across cron ticks via
+ * Backfill: 60-day initial history (BACKFILL_DAYS, env-tunable).
+ * Resumable across cron ticks via
  * HelpdeskSyncCheckpoint.backfillCursor ΓÇö each tick advances by ~7 days
  * (eBay's StartTime window cap) until backfillDone=true.
  *
@@ -54,8 +55,22 @@ const FOLDERS = [
 /** Maximum span (days) per GetMyMessages headers call ΓÇö eBay caps at 7. */
 const HEADERS_WINDOW_DAYS = 7;
 
-/** Initial backfill horizon in days. */
-const BACKFILL_DAYS = 3;
+/**
+ * Initial backfill horizon in days.
+ *
+ * Adam wants the inbox to show the full last 60 days of buyer
+ * conversations on first connect (TPP + TT). The cron walks backwards
+ * one HEADERS_WINDOW_DAYS slice at a time, so a 60-day horizon =
+ * ceil(60/7) = 9 cron ticks worst case before backfill flips done.
+ *
+ * Tunable via the HELPDESK_BACKFILL_DAYS env var so we can re-trigger
+ * a deeper pull (e.g. 90/180) without a redeploy by bumping the env
+ * var and resetting checkpoints (scripts/reset-helpdesk-backfill.ts).
+ */
+const BACKFILL_DAYS = Number.parseInt(
+  process.env.HELPDESK_BACKFILL_DAYS ?? "60",
+  10,
+);
 
 /** Max body fetch chunks per tick (each chunk = 10 messages). */
 const MAX_BODY_CHUNKS_PER_TICK = 8;
