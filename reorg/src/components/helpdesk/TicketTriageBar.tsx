@@ -183,8 +183,12 @@ export function TicketTriageBar({
 
   const disabled = !ticket || busy !== null;
 
+  // Toolbar strip — subtle brand-tinted gradient anchors the row so the
+  // agent reads it as a distinct "command bar" rather than a continuation
+  // of the message list. The tint is intentionally faint (≤8% alpha) so
+  // it never competes with the action buttons themselves.
   return (
-    <div className="flex h-11 shrink-0 items-center gap-1.5 border-b border-hairline bg-card px-3 sm:px-4">
+    <div className="flex h-11 shrink-0 items-center gap-1.5 border-b border-hairline bg-gradient-to-r from-brand/[0.06] via-card to-violet-500/[0.05] px-3 sm:px-4">
       <TypeMenu
         value={ticket?.type ?? null}
         disabled={disabled}
@@ -217,6 +221,7 @@ export function TicketTriageBar({
             disabled={disabled}
             active={isResolved}
             success={justResolved}
+            accent="emerald"
             onClick={() =>
               runBatch(
                 {
@@ -228,14 +233,9 @@ export function TicketTriageBar({
             }
           >
             {justResolved ? (
-              <Check className="h-4 w-4 text-emerald-500" />
+              <Check className="h-4 w-4" />
             ) : (
-              <CircleCheck
-                className={cn(
-                  "h-4 w-4",
-                  isResolved && "text-emerald-500",
-                )}
-              />
+              <CircleCheck className="h-4 w-4" />
             )}
           </IconButton>
         );
@@ -258,6 +258,7 @@ export function TicketTriageBar({
             disabled={disabled}
             active={isArchived}
             success={justArchived}
+            accent="violet"
             onClick={() =>
               runBatch(
                 { action: "archive", isArchived: !isArchived },
@@ -266,14 +267,9 @@ export function TicketTriageBar({
             }
           >
             {justArchived ? (
-              <Check className="h-4 w-4 text-emerald-500" />
+              <Check className="h-4 w-4" />
             ) : (
-              <Archive
-                className={cn(
-                  "h-4 w-4",
-                  isArchived && "text-amber-500",
-                )}
-              />
+              <Archive className="h-4 w-4" />
             )}
           </IconButton>
         );
@@ -283,6 +279,7 @@ export function TicketTriageBar({
         title="Mark as spam"
         disabled={disabled}
         active={ticket?.status === "SPAM"}
+        accent="red"
         onClick={() =>
           runBatch(
             { action: "markSpam", isSpam: ticket?.status !== "SPAM" },
@@ -373,8 +370,12 @@ function TypeMenu({
         onClick={() => !disabled && setOpen((v) => !v)}
         disabled={disabled}
         className={cn(
-          "inline-flex h-8 items-center gap-1.5 rounded-md border border-hairline bg-surface px-2.5 text-xs font-medium text-foreground transition-colors hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-40 cursor-pointer",
-          open && "bg-surface-2",
+          // Brand-accented anchor for the toolbar — this is the agent's
+          // primary identity classifier for the ticket so we paint it in
+          // the reorG brand color (coral). Same hover/active rhythm as
+          // the IconButton accent system below for visual consistency.
+          "inline-flex h-8 items-center gap-1.5 rounded-md border border-brand/30 bg-surface px-2.5 text-xs font-medium text-foreground transition-colors hover:border-brand/60 hover:bg-brand/10 hover:text-brand disabled:cursor-not-allowed disabled:opacity-40 cursor-pointer",
+          open && "border-brand/60 bg-brand/15 text-brand",
         )}
         title="Change ticket type"
       >
@@ -439,6 +440,7 @@ function SnoozeMenu({
         title={isSnoozed ? "Snoozed — click to change" : "Snooze ticket"}
         disabled={disabled}
         active={isSnoozed}
+        accent="amber"
         onClick={() => setOpen((v) => !v)}
       >
         <Clock className="h-4 w-4" />
@@ -512,6 +514,7 @@ function MoreMenu({
         title="More actions"
         disabled={disabled}
         active={open}
+        accent="violet"
         onClick={() => setOpen((v) => !v)}
       >
         <MoreHorizontal className="h-4 w-4" />
@@ -599,6 +602,7 @@ function AssignMenu({
         title={assignedId ? "Reassign ticket" : "Assign to user"}
         disabled={disabled}
         active={!!assignedId}
+        accent="brand"
         onClick={() => {
           if (disabled) return;
           onOpen();
@@ -692,11 +696,59 @@ function AgentAvatar({ name, url }: { name: string; url: string | null }) {
 
 // ─── Generic icon button used by snooze/spam/more/assign ────────────────────
 
+/**
+ * Per-action accent palette. We map each toolbar action to a reorG theme
+ * color so the row reads as a chord (warm primary on the left, cool/cancel
+ * on the right) instead of a uniform grey strip:
+ *
+ *   brand   — primary identity (Type pill, Assign menu trigger). Coral.
+ *   amber   — caution / "wait" (Snooze).
+ *   emerald — success / done   (Resolve).
+ *   violet  — organizational   (Archive, More menu).
+ *   red     — danger / refusal (Spam).
+ *
+ * Each accent has THREE state classes:
+ *   • hover   — paints when the button is idle but the cursor is over it.
+ *               Subtle tinted bg + colored icon, no border change.
+ *   • active  — sticky state when the underlying flag is true (ticket is
+ *               currently snoozed/resolved/archived/spam/assigned). Slightly
+ *               heavier bg + colored border so the agent can scan the row
+ *               and see at a glance "this ticket is archived" without
+ *               opening any menus.
+ *   • base    — colored border tint at rest, kept very faint (≤25% alpha)
+ *               so the toolbar still looks calm, not Christmas-tree-y.
+ */
+type IconAccent = "brand" | "amber" | "emerald" | "violet" | "red";
+
+const ACCENT_BASE: Record<IconAccent, string> = {
+  brand:
+    "border-brand/30 hover:border-brand/60 hover:bg-brand/10 hover:text-brand",
+  amber:
+    "border-amber-500/30 hover:border-amber-500/60 hover:bg-amber-500/10 hover:text-amber-500",
+  emerald:
+    "border-emerald-500/30 hover:border-emerald-500/60 hover:bg-emerald-500/10 hover:text-emerald-500",
+  violet:
+    "border-violet-500/30 hover:border-violet-500/60 hover:bg-violet-500/10 hover:text-violet-500",
+  red: "border-red-500/30 hover:border-red-500/60 hover:bg-red-500/10 hover:text-red-500",
+};
+
+const ACCENT_ACTIVE: Record<IconAccent, string> = {
+  brand: "border-brand/60 bg-brand/15 text-brand",
+  amber:
+    "border-amber-500/60 bg-amber-500/15 text-amber-600 dark:text-amber-300",
+  emerald:
+    "border-emerald-500/60 bg-emerald-500/15 text-emerald-600 dark:text-emerald-300",
+  violet:
+    "border-violet-500/60 bg-violet-500/15 text-violet-600 dark:text-violet-300",
+  red: "border-red-500/60 bg-red-500/15 text-red-600 dark:text-red-300",
+};
+
 function IconButton({
   title,
   active,
   success,
   disabled,
+  accent = "brand",
   onClick,
   children,
 }: {
@@ -707,9 +759,17 @@ function IconButton({
    * last action landed. The parent owns the timing (clears after ~1.5s).
    * Independent from `active` so the "success" pulse can fire even on a
    * toggle-off (un-archive, un-resolve) where `active` switches false.
+   * Always renders in emerald regardless of the action's resting accent —
+   * the pulse is a universal "done" signal so the agent learns one shape.
    */
   success?: boolean;
   disabled?: boolean;
+  /**
+   * Theme accent for this action. See ACCENT_BASE/ACCENT_ACTIVE above for
+   * the per-color hover + sticky styling. Defaults to brand for symmetry
+   * with the type pill / assign trigger.
+   */
+  accent?: IconAccent;
   onClick: () => void;
   children: React.ReactNode;
 }) {
@@ -721,8 +781,18 @@ function IconButton({
       title={title}
       aria-label={title}
       className={cn(
-        "inline-flex h-8 w-8 items-center justify-center rounded-md border border-hairline bg-surface text-muted-foreground transition-colors hover:bg-surface-2 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40 cursor-pointer",
-        active && "bg-surface-2 text-foreground",
+        "inline-flex h-8 w-8 items-center justify-center rounded-md border bg-surface text-muted-foreground transition-colors disabled:cursor-not-allowed disabled:opacity-40 cursor-pointer",
+        // Resting accent: faint colored border + tinted hover. Becomes the
+        // dominant style only when the agent hovers, so the toolbar still
+        // looks calm at rest.
+        ACCENT_BASE[accent],
+        // Sticky active state: ticket currently has this flag set
+        // (snoozed/resolved/archived/spam/assigned). Wins over hover so a
+        // resolved ticket stays green even after the cursor leaves.
+        active && ACCENT_ACTIVE[accent],
+        // Universal "just succeeded" pulse — always emerald regardless of
+        // the action's resting accent. Wins over both base and active so
+        // the agent sees a consistent "done" signal across every button.
         success &&
           "border-emerald-500/60 bg-emerald-500/15 text-emerald-600 ring-2 ring-emerald-500/30 dark:text-emerald-300",
       )}
