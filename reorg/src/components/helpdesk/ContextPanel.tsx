@@ -243,6 +243,13 @@ function ContextPanelInner({ ticket, containerWidth, dividerCls }: InnerProps) {
             <CustomerCard ticket={ticket} order={order.data} related={related.summary} />
             {ticket.kind === "POST_SALES" || !!ticket.ebayOrderNumber ? (
               <OrderInfoSection ticket={ticket} order={order} />
+            ) : ticket.listingInfo ? (
+              // Pre-sales (no order yet) but the buyer is messaging from a
+              // specific listing — show a "Product Inquiry" card so the
+              // agent immediately knows WHAT the buyer is asking about.
+              // No qty / price (there's no order); just title + SKU +
+              // thumbnail + a deep link to the eBay listing.
+              <ProductInquirySection listing={ticket.listingInfo} />
             ) : null}
             <RelatedSection ticket={ticket} related={related} />
           </>
@@ -671,6 +678,77 @@ function CustomerCard({
           </Row>
         ) : null}
       </dl>
+    </section>
+  );
+}
+
+// ── Product inquiry (pre-sales) ────────────────────────────────────────────
+
+/**
+ * Pre-sales counterpart to OrderInfoSection. Renders only when the buyer is
+ * asking about a specific eBay listing but no order exists yet (typical
+ * "Ask seller a question" flow). Mirrors the products card visually so the
+ * right rail feels consistent across pre/post-sales — but deliberately omits
+ * fields that don't exist before an order:
+ *
+ *   - No quantity, no price, no shipping, no totals
+ *   - No tracking, no delivery date, no address
+ *   - No "Order No." link
+ *
+ * Includes a short "inquiry into the product" caption so a new agent
+ * scanning the rail understands at a glance: this isn't a hidden order, the
+ * buyer is just asking pre-purchase questions.
+ */
+function ProductInquirySection({
+  listing,
+}: {
+  listing: NonNullable<HelpdeskTicketDetail["listingInfo"]>;
+}) {
+  const ebayUrl = `https://www.ebay.com/itm/${listing.itemId}`;
+  return (
+    <section className="border-b border-hairline px-4 py-4">
+      <div className="mb-2 flex items-center gap-2">
+        <ShoppingBag className="h-3.5 w-3.5 text-brand" />
+        <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+          Product Inquiry
+        </h3>
+      </div>
+      <p className="mb-3 text-xs text-muted-foreground">
+        Buyer is asking a pre-purchase question about this listing.
+      </p>
+      <a
+        href={ebayUrl}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="flex items-start gap-2 rounded-md border border-hairline bg-surface p-2 transition-colors hover:bg-surface-2"
+      >
+        {listing.imageUrl ? (
+          /* eslint-disable-next-line @next/next/no-img-element */
+          <img
+            src={listing.imageUrl}
+            alt=""
+            className="h-12 w-12 shrink-0 rounded border border-hairline object-cover"
+          />
+        ) : (
+          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded border border-hairline bg-surface-2 text-muted-foreground">
+            <Package className="h-4 w-4" />
+          </div>
+        )}
+        <div className="min-w-0 flex-1">
+          <p className="line-clamp-3 text-sm text-brand">
+            {listing.title ?? listing.itemId}
+          </p>
+          {listing.sku ? (
+            <p className="mt-0.5 truncate text-xs text-muted-foreground">
+              SKU {listing.sku}
+            </p>
+          ) : null}
+          <p className="mt-1 inline-flex items-center gap-1 truncate font-mono text-[11px] text-muted-foreground">
+            Item #{listing.itemId}
+            <ExternalLink className="h-3 w-3 shrink-0 opacity-70" />
+          </p>
+        </div>
+      </a>
     </section>
   );
 }

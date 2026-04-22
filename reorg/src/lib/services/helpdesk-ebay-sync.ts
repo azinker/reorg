@@ -40,7 +40,10 @@ import {
 } from "@/lib/services/helpdesk-ebay";
 import { applyFilterAction, pickMatchingFilters } from "@/lib/helpdesk/filters";
 import { helpdeskFlags } from "@/lib/helpdesk/flags";
-import { deriveStatusOnInbound } from "@/lib/helpdesk/status-routing";
+import {
+  deriveStatusOnInbound,
+  deriveStatusOnSyncedOutbound,
+} from "@/lib/helpdesk/status-routing";
 import { classifyMessageSource } from "@/lib/helpdesk/message-source";
 import { detectTicketType } from "@/lib/helpdesk/type-detect";
 import {
@@ -774,23 +777,31 @@ async function reconcileMessages(args: ReconcileArgs): Promise<ReconcileResult> 
 
     if (!inserted) continue;
 
-    // ── eDesk WAITING transition: when an OUTBOUND message lands and is
-    // newer than every inbound on the ticket, the ball is now in the
-    // buyer's court → WAITING. This covers two real flows:
-    //   1. The agent replied on eBay.com directly (we see it via sync).
-    //   2. Our own outbound worker delivered a reply.
-    // We do NOT auto-resolve here — the user's spec is "RESOLVED is
-    // explicit only" (Send + mark Resolved button or batch action). The
-    // outbound messages route already passes the agent's chosen
-    // `setStatus` (WAITING or RESOLVED) through `deriveStatusOnOutbound`,
-    // so this block only nudges WAITING for unsolicited eBay-side replies.
+    // ── Synced-outbound status transition. When an OUTBOUND message
+    // lands and is newer than every inbound on the ticket, the ball is
+    // now in the buyer's court — but the *target* status depends on
+    // *how* the agent replied:
     //
-    // Auto Responder messages are explicitly EXCLUDED from this transition.
-    // An AR send is a one-way courtesy notification, not a substantive
-    // reply — the buyer hasn't actually been engaged with yet, so flipping
-    // a brand-new ticket from TO_DO to WAITING just because the AR fired
-    // would hide the ticket from the agent's "needs response" queue. The
-    // agent still owes the buyer a real reply.
+    //   1. Agent typed the reply directly on eBay.com (source=EBAY_UI):
+    //      we treat this as a deliberate "I'm done" signal and flip the
+    //      ticket straight to RESOLVED. There's no in-app composer
+    //      action here to choose RESOLVED vs WAITING, so without this
+    //      auto-rule eBay-direct replies pile up in WAITING forever.
+    //
+    //   2. reorG outbound worker delivered the reply (source=EBAY,
+    //      reorG: prefix): the composer already applied the agent's
+    //      chosen status (WAITING or RESOLVED) when it queued the job.
+    //      We default to WAITING but *never downgrade* a ticket that's
+    //      already RESOLVED — the helper enforces that.
+    //
+    //   3. Auto Responder send (source=AUTO_RESPONDER): explicitly
+    //      EXCLUDED. An AR is a one-way courtesy notification, not a
+    //      substantive reply. Flipping TO_DO → WAITING here would hide
+    //      the ticket from the agent's "needs response" queue while the
+    //      buyer still hasn't actually been answered.
+    //
+    // Buyer follow-ups still bounce these tickets back to TO_DO via
+    // `deriveStatusOnInbound` above.
     if (
       direction === HelpdeskMessageDirection.OUTBOUND &&
       messageSource !== HelpdeskMessageSource.AUTO_RESPONDER &&
@@ -806,14 +817,20 @@ async function reconcileMessages(args: ReconcileArgs): Promise<ReconcileResult> 
         },
         select: { id: true },
       });
-      if (!newerInbound && ticket.status !== HelpdeskTicketStatus.WAITING) {
-        await db.helpdeskTicket.update({
-          where: { id: ticket.id },
-          data: {
-            status: HelpdeskTicketStatus.WAITING,
-            unreadCount: 0,
-          },
-        });
+      if (!newerInbound) {
+        const nextStatus = deriveStatusOnSyncedOutbound(messageSource);
+        if (nextStatus !== ticket.status) {
+          await db.helpdeskTicket.update({
+            where: { id: ticket.id },
+            data: {
+              status: nextStatus,
+              unreadCount: 0,
+              ...(nextStatus === HelpdeskTicketStatus.RESOLVED
+                ? { resolvedAt: sentAt }
+                : {}),
+            },
+          });
+        }
       }
     }
 

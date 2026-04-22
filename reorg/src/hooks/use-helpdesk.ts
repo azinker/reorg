@@ -169,11 +169,28 @@ export interface HelpdeskPendingOutboundJob {
   author: HelpdeskUserBadge | null;
 }
 
+/**
+ * Optional MarketplaceListing snapshot for the ticket's `ebayItemId`. The
+ * server enriches the detail response with this when the buyer is messaging
+ * about a listing we manage internally — pre-sales tickets show it as a
+ * "Product Inquiry" card in the right rail (no qty / price). For post-sales
+ * tickets the OrderInfoSection already pulls richer line-item data from
+ * eBay; this field is a fallback for when eBay returns nothing or for
+ * pre-sales conversations where no order exists yet.
+ */
+export interface HelpdeskListingInfo {
+  itemId: string;
+  sku: string | null;
+  title: string | null;
+  imageUrl: string | null;
+}
+
 export interface HelpdeskTicketDetail extends HelpdeskTicketSummary {
   messages: HelpdeskMessageDetail[];
   notes: HelpdeskNoteDetail[];
   pendingOutboundJobs: HelpdeskPendingOutboundJob[];
   additionalAssignees: { user: HelpdeskUserBadge }[];
+  listingInfo: HelpdeskListingInfo | null;
 }
 
 export interface HelpdeskSyncStatus {

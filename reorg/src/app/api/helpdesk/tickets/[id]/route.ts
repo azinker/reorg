@@ -25,7 +25,7 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
   const ticket = await db.helpdeskTicket.findUnique({
     where: { id },
     include: {
-      integration: { select: { label: true, platform: true } },
+      integration: { select: { id: true, label: true, platform: true } },
       primaryAssignee: {
         select: { id: true, name: true, email: true, avatarUrl: true, handle: true },
       },
@@ -340,6 +340,66 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
     }
   }
 
+  // ── Listing enrichment.
+  //
+  // When the buyer is messaging from a specific listing (eBay sets
+  // ItemID on every "Ask seller a question" / "Contact buyer" send) we
+  // hydrate the ticket detail with the matching MarketplaceListing so
+  // the right rail can render a "Product Inquiry" card with title +
+  // SKU + thumbnail + a deep link back to the eBay listing.
+  //
+  // Pre-sales tickets need this most — there's no order context to fall
+  // back on, so without this the right rail just shows the buyer card
+  // and nothing about *what* they're asking about. Post-sales tickets
+  // already get richer line-item data from the order-context endpoint;
+  // we still populate this as a fallback for cases where eBay returns
+  // no order detail (rare but happens during sandbox / partial syncs).
+  //
+  // Lookup keys off (integrationId, platformItemId) which has a unique
+  // constraint per variant. We prefer the parent variation row
+  // (platformVariantId=null) so the card shows a representative title
+  // and image rather than a single child variant.
+  let listingInfo: {
+    itemId: string;
+    sku: string | null;
+    title: string | null;
+    imageUrl: string | null;
+  } | null = null;
+  if (ticket.ebayItemId) {
+    const listing = await db.marketplaceListing.findFirst({
+      where: {
+        integrationId: ticket.integration.id,
+        platformItemId: ticket.ebayItemId,
+      },
+      orderBy: [{ platformVariantId: "asc" }],
+      select: {
+        platformItemId: true,
+        sku: true,
+        title: true,
+        imageUrl: true,
+      },
+    });
+    if (listing) {
+      listingInfo = {
+        itemId: listing.platformItemId,
+        sku: listing.sku ?? null,
+        title: listing.title ?? ticket.ebayItemTitle ?? null,
+        imageUrl: listing.imageUrl ?? null,
+      };
+    } else {
+      // No internal MarketplaceListing match (item not in our catalog,
+      // or sync hasn't touched it yet). Fall back to whatever the
+      // ticket itself recorded so the card can still render a title +
+      // eBay link — just without SKU or thumbnail.
+      listingInfo = {
+        itemId: ticket.ebayItemId,
+        sku: null,
+        title: ticket.ebayItemTitle ?? null,
+        imageUrl: null,
+      };
+    }
+  }
+
   // Shape the response so it matches HelpdeskTicketSummary plus messages/notes.
   return NextResponse.json({
     data: {
@@ -395,6 +455,7 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
         author: job.author,
       })),
       additionalAssignees: ticket.additionalAssignees,
+      listingInfo,
     },
   });
 }

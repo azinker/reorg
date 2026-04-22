@@ -31,7 +31,7 @@
  * All functions are pure (input → output) and never touch the DB.
  */
 
-import { HelpdeskTicketStatus } from "@prisma/client";
+import { HelpdeskMessageSource, HelpdeskTicketStatus } from "@prisma/client";
 
 /**
  * Compact view of the ticket sufficient for routing decisions. We accept a
@@ -102,6 +102,47 @@ export function deriveStatusOnOutbound(
   // Don't downgrade from RESOLVED on background sync if we somehow get a
   // double-fire — RESOLVED stays RESOLVED.
   if (current === HelpdeskTicketStatus.RESOLVED) return current;
+  return HelpdeskTicketStatus.WAITING;
+}
+
+/**
+ * Decide the new status when a SYNCED outbound (i.e. a reply we discovered
+ * via the eBay sync, not one our composer queued) lands as the latest
+ * message on the ticket. The source classifier tells us *how* the reply
+ * arrived:
+ *
+ *   - `EBAY` (reorG-stamped): the reorG outbound queue sent it. The
+ *     agent already chose RESOLVED vs WAITING in the composer; that
+ *     choice was applied locally when the job was created. We don't
+ *     second-guess it on the round-trip back from eBay — defaulting to
+ *     WAITING preserves the ticket's previous status if the composer
+ *     already moved it to RESOLVED.
+ *
+ *   - `EBAY_UI`: a human agent typed the reply directly on eBay.com,
+ *     bypassing reorG entirely. There is no in-app "Send + Resolve"
+ *     trigger because the action happened outside reorG, but the act of
+ *     answering on eBay is a strong signal the agent considers the
+ *     ticket handled — they replied and moved on. We flip these straight
+ *     to RESOLVED so they don't sit in WAITING forever and the agent's
+ *     queue stays clean. A buyer follow-up still bounces the ticket back
+ *     to TO_DO via `deriveStatusOnInbound`.
+ *
+ *   - `AUTO_RESPONDER`: the AR fired a courtesy notification — the
+ *     buyer hasn't actually been engaged with yet. Caller is expected to
+ *     skip this transition entirely (sync.ts already does); we still
+ *     handle the case defensively by returning WAITING to mirror the
+ *     legacy behaviour.
+ *
+ *   - Anything else (EXTERNAL_EMAIL, SYSTEM): treat as WAITING.
+ *
+ * Pure / DB-free so it stays unit-testable.
+ */
+export function deriveStatusOnSyncedOutbound(
+  source: HelpdeskMessageSource,
+): HelpdeskTicketStatus {
+  if (source === HelpdeskMessageSource.EBAY_UI) {
+    return HelpdeskTicketStatus.RESOLVED;
+  }
   return HelpdeskTicketStatus.WAITING;
 }
 
