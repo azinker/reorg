@@ -46,20 +46,39 @@ async function main(): Promise<void> {
 
   let flipped = 0;
   for (const t of candidates) {
-    const last = await db.helpdeskMessage.findFirst({
-      where: { ticketId: t.id },
+    // Find the most recent EBAY_UI outbound message on this ticket. We
+    // can't just look at "latest message" because eBay digest envelopes
+    // create two outbound rows at the same sentAt — one envelope tagged
+    // EBAY_UI (the source we care about) and one exploded sub tagged
+    // EBAY. A naive `findFirst` orderBy sentAt is non-deterministic
+    // between them. Instead: anchor on the EBAY_UI row directly, then
+    // confirm no INBOUND message is newer.
+    const ebayUiOut = await db.helpdeskMessage.findFirst({
+      where: {
+        ticketId: t.id,
+        direction: HelpdeskMessageDirection.OUTBOUND,
+        source: HelpdeskMessageSource.EBAY_UI,
+      },
       orderBy: { sentAt: "desc" },
-      select: { id: true, direction: true, source: true, sentAt: true },
+      select: { sentAt: true },
     });
-    if (!last) continue;
-    if (last.direction !== HelpdeskMessageDirection.OUTBOUND) continue;
-    if (last.source !== HelpdeskMessageSource.EBAY_UI) continue;
+    if (!ebayUiOut) continue;
+
+    const newerInbound = await db.helpdeskMessage.findFirst({
+      where: {
+        ticketId: t.id,
+        direction: HelpdeskMessageDirection.INBOUND,
+        sentAt: { gt: ebayUiOut.sentAt },
+      },
+      select: { id: true },
+    });
+    if (newerInbound) continue;
 
     await db.helpdeskTicket.update({
       where: { id: t.id },
       data: {
         status: HelpdeskTicketStatus.RESOLVED,
-        resolvedAt: last.sentAt,
+        resolvedAt: ebayUiOut.sentAt,
         unreadCount: 0,
       },
     });
