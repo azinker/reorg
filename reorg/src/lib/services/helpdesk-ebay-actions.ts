@@ -513,7 +513,14 @@ async function syncReturnsForIntegration(
 
   await db.helpdeskSyncCheckpoint.update({
     where: { id: checkpoint.id },
-    data: { lastWatermark: new Date(), lastFullSyncAt: new Date() },
+    // Action-mirror folders are watermark-sync only; there's no day-by-day
+    // backfill phase, so once we've completed a successful pass the
+    // checkpoint is "done" for the purposes of the UI backfill badge.
+    data: {
+      lastWatermark: new Date(),
+      lastFullSyncAt: new Date(),
+      backfillDone: true,
+    },
   });
   return inserted;
 }
@@ -594,7 +601,11 @@ async function syncCancellationsForIntegration(
 
   await db.helpdeskSyncCheckpoint.update({
     where: { id: checkpoint.id },
-    data: { lastWatermark: new Date(), lastFullSyncAt: new Date() },
+    data: {
+      lastWatermark: new Date(),
+      lastFullSyncAt: new Date(),
+      backfillDone: true,
+    },
   });
   return inserted;
 }
@@ -664,7 +675,11 @@ async function syncFeedbackForIntegration(
 
   await db.helpdeskSyncCheckpoint.update({
     where: { id: checkpoint.id },
-    data: { lastWatermark: new Date(), lastFullSyncAt: new Date() },
+    data: {
+      lastWatermark: new Date(),
+      lastFullSyncAt: new Date(),
+      backfillDone: true,
+    },
   });
   return inserted;
 }

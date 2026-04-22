@@ -186,7 +186,16 @@ export function HelpdeskHeader({
   }
 
   const lastTick = syncStatus?.lastTickAt ?? null;
-  const backfillInProgress = syncStatus?.checkpoints.some((c) => !c.backfillDone) ?? false;
+  // Only the message-folder checkpoints (`inbox`, `sent`) actually have a
+  // backfill state — they walk back day-by-day until they hit the horizon
+  // and then flip `backfillDone=true`. The action-mirror checkpoints
+  // (`returns`, `cancellations`, `feedback`) are watermark-sync only; they
+  // don't need a backfill flag and were always reading as "in progress",
+  // which made this badge stick on forever after the messages were done.
+  const backfillInProgress =
+    syncStatus?.checkpoints.some(
+      (c) => (c.folder === "inbox" || c.folder === "sent") && !c.backfillDone,
+    ) ?? false;
 
   return (
     <div className="flex items-center justify-between border-b border-hairline bg-card px-5 py-3">
@@ -211,7 +220,7 @@ export function HelpdeskHeader({
         {backfillInProgress && (
           <span className="inline-flex items-center gap-1 rounded-md border border-blue-500/30 bg-blue-500/10 px-2 py-0.5 text-[11px] font-medium text-blue-700 dark:text-blue-300">
             <Loader2 className="h-3 w-3 animate-spin" />
-            Backfilling 180 days
+            Backfilling 60 days
           </span>
         )}
       </div>
