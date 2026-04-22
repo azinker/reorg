@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
-import { HelpdeskTicketType } from "@prisma/client";
+import { HelpdeskOutboundStatus, HelpdeskTicketType } from "@prisma/client";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 
@@ -43,6 +43,27 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
       },
       notes: {
         where: { isDeleted: false },
+        orderBy: { createdAt: "asc" },
+        include: {
+          author: {
+            select: { id: true, name: true, email: true, avatarUrl: true, handle: true },
+          },
+        },
+      },
+      // Surface in-flight outbound jobs (the 5s undo window + any rows
+      // currently being SENDING by the cron) so the thread can render an
+      // immediate "Sending…" bubble. We deliberately exclude SENT (those
+      // become real HelpdeskMessage rows on next sync) and CANCELED
+      // (Undo'd by the agent — they don't want to see it).
+      outboundJobs: {
+        where: {
+          status: {
+            in: [
+              HelpdeskOutboundStatus.PENDING,
+              HelpdeskOutboundStatus.SENDING,
+            ],
+          },
+        },
         orderBy: { createdAt: "asc" },
         include: {
           author: {
@@ -171,6 +192,20 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
       updatedAt: ticket.updatedAt,
       messages: ticket.messages,
       notes: ticket.notes,
+      pendingOutboundJobs: ticket.outboundJobs.map((job) => ({
+        id: job.id,
+        composerMode: job.composerMode,
+        bodyText: job.bodyText,
+        status: job.status,
+        scheduledAt: job.scheduledAt,
+        createdAt: job.createdAt,
+        // lastError is set by the cron worker if a send hit a transient
+        // failure or a write lock. Surfacing it here lets the thread
+        // bubble show "Send blocked: <reason>" instead of an indefinite
+        // sending spinner.
+        willBlockReason: job.lastError ?? null,
+        author: job.author,
+      })),
       additionalAssignees: ticket.additionalAssignees,
     },
   });

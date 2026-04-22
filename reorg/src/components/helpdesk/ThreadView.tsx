@@ -331,6 +331,14 @@ export function ThreadView({
         data: NonNullable<HelpdeskTicketDetail["notes"][number]>;
         at: string;
       }
+    | {
+        kind: "pending";
+        key: string;
+        data: NonNullable<
+          HelpdeskTicketDetail["pendingOutboundJobs"]
+        >[number];
+        at: string;
+      }
     | { kind: "system"; key: string; data: SystemEvent; at: string };
 
   const rows = useMemo<TimelineRow[]>(() => {
@@ -346,10 +354,28 @@ export function ThreadView({
           data: NonNullable<HelpdeskTicketDetail["notes"][number]>;
           at: string;
         }
+      | {
+          kind: "pending";
+          data: NonNullable<
+            HelpdeskTicketDetail["pendingOutboundJobs"]
+          >[number];
+          at: string;
+        }
       | { kind: "system"; data: SystemEvent; at: string };
+    // Pending outbound jobs are slotted in as if they had already been
+    // sent (using `scheduledAt` so they sit at the bottom of the thread
+    // even if the agent hit Send a moment after a buyer reply landed).
+    // Once the cron worker actually delivers them, the next sync turns
+    // them into real HelpdeskMessage rows and the API stops returning
+    // them in `pendingOutboundJobs` — at which point this transient
+    // bubble is replaced by the permanent one. NOTE bubbles (composer
+    // mode = NOTE) never go through the outbound queue, so we don't
+    // need to worry about double-rendering them here.
+    const pending = ticket.pendingOutboundJobs ?? [];
     const merged: Item[] = [
       ...ticket.messages.map((m) => ({ kind: "message" as const, data: m, at: m.sentAt })),
       ...ticket.notes.map((n) => ({ kind: "note" as const, data: n, at: n.createdAt })),
+      ...pending.map((p) => ({ kind: "pending" as const, data: p, at: p.scheduledAt })),
       ...events.map((e) => ({ kind: "system" as const, data: e, at: e.at })),
     ].sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime());
 
@@ -371,7 +397,9 @@ export function ThreadView({
           ? `msg-${item.data.id}`
           : item.kind === "note"
             ? `note-${item.data.id}`
-            : `sys-${item.data.id}`;
+            : item.kind === "pending"
+              ? `pending-${item.data.id}`
+              : `sys-${item.data.id}`;
       out.push({ ...item, key: baseKey } as TimelineRow);
     }
     return out;
@@ -513,6 +541,12 @@ interface TimelineItemProps {
         data: NonNullable<HelpdeskTicketDetail["notes"][number]>;
         at: string;
       }
+    | {
+        kind: "pending";
+        key: string;
+        data: NonNullable<HelpdeskTicketDetail["pendingOutboundJobs"]>[number];
+        at: string;
+      }
     | { kind: "system"; key: string; data: SystemEvent; at: string };
   buyerInitial: string;
 }
@@ -551,6 +585,66 @@ function TimelineItem({ row, buyerInitial }: TimelineItemProps) {
           </span>
         </span>
         <span className="h-px flex-1 max-w-[18%] bg-hairline" />
+      </div>
+    );
+  }
+
+  if (row.kind === "pending") {
+    const j = row.data;
+    const scheduled = new Date(j.scheduledAt).getTime();
+    const now = Date.now();
+    const secondsLeft = Math.max(0, Math.round((scheduled - now) / 1000));
+    const blocked = !!j.willBlockReason;
+    // We render a right-aligned bubble that mimics the agent reply look
+    // (purple, dashed border to signal "not yet committed"). When the
+    // cron actually delivers the reply, the API stops returning this job
+    // in `pendingOutboundJobs` and the next ticket-detail refetch
+    // replaces this transient bubble with the permanent HelpdeskMessage.
+    const statusLabel = blocked
+      ? `Send blocked: ${j.willBlockReason}`
+      : j.status === "SENDING"
+        ? "Sending to eBay…"
+        : secondsLeft > 0
+          ? `Sending in ${secondsLeft}s`
+          : "Sending…";
+    return (
+      <div className="group/msg flex flex-row-reverse gap-3">
+        <div className="shrink-0 pt-0.5">
+          {j.author ? (
+            <Avatar user={j.author} size="sm" />
+          ) : (
+            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-brand-muted text-sm font-semibold text-brand">
+              ?
+            </div>
+          )}
+        </div>
+        <div className="min-w-0 max-w-[80%] flex-1">
+          <div className="mb-1 flex flex-wrap items-baseline justify-end gap-x-2 gap-y-0.5">
+            <span
+              className={cn(
+                "shrink-0 rounded border px-1.5 py-0 text-[9px] font-semibold uppercase tracking-wider",
+                blocked
+                  ? "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300"
+                  : "border-brand/40 bg-brand-muted text-brand",
+              )}
+            >
+              {statusLabel}
+            </span>
+            <span className="truncate text-[13px] font-semibold text-brand">
+              {j.author?.name ?? j.author?.email ?? "Agent"}
+            </span>
+          </div>
+          <div
+            className={cn(
+              "rounded-md border border-dashed px-3 py-2 text-[13px] leading-[1.5] opacity-90",
+              blocked
+                ? "border-amber-500/50 bg-amber-50 text-foreground dark:bg-amber-950/20"
+                : "border-brand/50 bg-brand-muted/60 text-foreground",
+            )}
+          >
+            <p className="whitespace-pre-wrap">{j.bodyText}</p>
+          </div>
+        </div>
       </div>
     );
   }

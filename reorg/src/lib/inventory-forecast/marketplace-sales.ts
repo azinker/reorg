@@ -335,6 +335,39 @@ async function fetchEbaySales(
       const transactionArray = asRecord(order.TransactionArray);
       const transactions = asArray<Record<string, unknown>>(transactionArray?.Transaction);
 
+      // Pull buyer identity off the order/transaction so the persisted
+      // MarketplaceSaleOrder row carries a real human name when one is
+      // available. eBay only returns Buyer.UserFirstName/UserLastName for
+      // ~30 days after order completion (GDPR strips it after that), so
+      // ShippingAddress.Name is the GDPR-safe fallback. We only treat the
+      // shipping name as "real" when it has at least two whitespace tokens
+      // so business names don't pollute the Customer column.
+      // NOTE: `readText` here only walks one level so we must fish nested
+      // nodes out by hand.
+      const firstTx = transactions[0];
+      const buyerNode = firstTx ? asRecord(firstTx.Buyer) : undefined;
+      const shippingAddressNode = asRecord(order.ShippingAddress);
+      const buyerIdentifier =
+        readText(order, "BuyerUserID") ??
+        (buyerNode ? readText(buyerNode, "UserID") : undefined) ??
+        null;
+      const buyerFirst = buyerNode ? readText(buyerNode, "UserFirstName") : null;
+      const buyerLast = buyerNode ? readText(buyerNode, "UserLastName") : null;
+      const buyerNameFromNode =
+        buyerFirst || buyerLast
+          ? [buyerFirst, buyerLast].filter(Boolean).join(" ")
+          : null;
+      const shippingName = shippingAddressNode
+        ? readText(shippingAddressNode, "Name") ?? null
+        : null;
+      const shippingLooksReal =
+        !!shippingName && /^\S+\s+\S+/.test(shippingName);
+      const buyerEmail = buyerNode ? readText(buyerNode, "Email") ?? null : null;
+      const buyerDisplayLabel =
+        buyerNameFromNode ??
+        (shippingLooksReal ? shippingName : null) ??
+        buyerIdentifier;
+
       for (let index = 0; index < transactions.length; index += 1) {
         const transaction = transactions[index];
         const item = asRecord(transaction.Item);
@@ -363,6 +396,9 @@ async function fetchEbaySales(
           platformVariantId: readText(variation, "SKU") ?? readText(transaction, "SKU") ?? null,
           isCancelled,
           isReturn: false,
+          buyerIdentifier,
+          buyerDisplayLabel,
+          buyerEmail: buyerEmail && /\S+@\S+/.test(buyerEmail) ? buyerEmail : null,
           rawData: {},
         });
       }

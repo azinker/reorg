@@ -150,9 +150,29 @@ export interface HelpdeskNoteDetail {
   author: HelpdeskUserBadge;
 }
 
+/**
+ * Reply that an agent has hit Send on but which hasn't been pushed to the
+ * marketplace yet. Lives in HelpdeskOutboundJob (separate from
+ * HelpdeskMessage) and only crosses over after the every-1-min outbound
+ * cron actually sends it. We surface PENDING/QUEUED/SENDING jobs in the
+ * thread so the agent doesn't see "did my reply go through?" dead air for
+ * the up-to-15-min round-trip back from eBay.
+ */
+export interface HelpdeskPendingOutboundJob {
+  id: string;
+  composerMode: "REPLY" | "NOTE" | "EXTERNAL";
+  bodyText: string;
+  status: "PENDING" | "SENDING";
+  scheduledAt: string;
+  createdAt: string;
+  willBlockReason: string | null;
+  author: HelpdeskUserBadge | null;
+}
+
 export interface HelpdeskTicketDetail extends HelpdeskTicketSummary {
   messages: HelpdeskMessageDetail[];
   notes: HelpdeskNoteDetail[];
+  pendingOutboundJobs: HelpdeskPendingOutboundJob[];
   additionalAssignees: { user: HelpdeskUserBadge }[];
 }
 
@@ -436,8 +456,13 @@ export function useHelpdesk(args: UseHelpdeskArgs): UseHelpdeskReturn {
       }
       const cached = getDetail(id);
       if (cached) {
+        // Hydrate the UI instantly from cache so opening a previously-viewed
+        // ticket feels instantaneous, but ALWAYS continue on to the network
+        // refetch below. The previous early-return-on-silent meant that
+        // after an agent added a note or queued a reply, the cache (which
+        // doesn't yet contain the new note/job) won out forever and the
+        // thread never updated until the user clicked away and back.
         setSelectedTicket(cached.data);
-        if (silent) return; // background poll already happened recently
       } else if (!silent) {
         setSelectedLoading(true);
       }

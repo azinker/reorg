@@ -40,7 +40,15 @@ function isPublicPath(pathname: string) {
     pathname.startsWith("/api/ebay/callback") ||
     pathname.startsWith("/api/shopify/callback") ||
     pathname === "/api/auto-responder/process" ||
-    pathname === "/api/auto-responder/reconcile"
+    pathname === "/api/auto-responder/reconcile" ||
+    // All Vercel cron endpoints. Vercel hits these without a session
+    // cookie, so the middleware has to let them through; each cron
+    // handler enforces `Authorization: Bearer ${CRON_SECRET}` (or
+    // `x-cron-secret`) on its own. Without this allowlist entry, the
+    // middleware short-circuits with a 401 before the handler ever
+    // runs — that's what silently killed the every-5-minute Help Desk
+    // poll, queued-reply delivery, and daily housekeeping for ~28h.
+    pathname.startsWith("/api/cron/")
   );
 }
 

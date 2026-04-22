@@ -263,6 +263,11 @@ export function Composer({
           scheduledAt: new Date(json.data.scheduledAt).getTime(),
           willBlockReason: json.data.willBlockReason,
         });
+        // Refetch the ticket detail right away so the thread renders a
+        // "Sending in 5s" bubble immediately. Without this, the bubble
+        // wouldn't appear until the 5s undo window expired and the
+        // existing onSent() inside the countdown effect fired.
+        onSent();
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -284,6 +289,9 @@ export function Composer({
       setPending(null);
       // restore body so the user can edit and resend
       // (we cleared it on submit; fetch it back from elsewhere if needed)
+      // Tell the parent to refetch so the pending bubble vanishes from
+      // the thread.
+      onSent();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
