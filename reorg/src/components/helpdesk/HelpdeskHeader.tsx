@@ -52,6 +52,27 @@ interface HelpdeskHeaderProps {
    */
   search: string;
   onSearchChange: (q: string) => void;
+  /**
+   * True when the agent is currently reading a single ticket in the
+   * reader pane. Used to:
+   *   1. Display the search field as blank (the `search` prop is also
+   *      passed in as "" by the parent in this state, but we use this
+   *      flag to drive the Enter-key behavior below).
+   *   2. Treat Enter / Escape inside the search input as a "take me
+   *      back to the search results list" action — i.e. close the
+   *      ticket and apply the new query atomically. Without this,
+   *      submitting a search while reading a ticket would commit
+   *      the query but leave the reader open, hiding the result.
+   *
+   * Optional so existing callers (none) don't break.
+   */
+  ticketOpen?: boolean;
+  /**
+   * Invoked when the agent submits a search via Enter while a ticket
+   * is open. The parent should deselect the open ticket so the inbox
+   * list (with the freshly applied search) becomes visible.
+   */
+  onCloseTicket?: () => void;
 }
 
 function relTime(date: string | null): string {
@@ -72,6 +93,8 @@ export function HelpdeskHeader({
   agent,
   search,
   onSearchChange,
+  ticketOpen = false,
+  onCloseTicket,
 }: HelpdeskHeaderProps) {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const prefs = useHelpdeskPrefs();
@@ -217,7 +240,14 @@ export function HelpdeskHeader({
             onChange={(e) => {
               const next = e.target.value;
               setSearchLocal(next);
-              scheduleCommit(next);
+              // While a ticket is open we MUST NOT debounce-commit
+              // the search up to the parent — that would deselect
+              // the ticket on every keystroke pause (since the parent
+              // wraps onSearchChange with selectTicket(null)). Wait
+              // for an explicit Enter / Escape / Blur instead.
+              if (!ticketOpen) {
+                scheduleCommit(next);
+              }
             }}
             onKeyDown={(e) => {
               if (e.key === "Enter") {
@@ -231,13 +261,21 @@ export function HelpdeskHeader({
                   routeToSearchResults(searchLocal);
                   return;
                 }
+                if (ticketOpen) {
+                  onCloseTicket?.();
+                }
                 commitNow(searchLocal);
               } else if (e.key === "Escape" && searchLocal.length > 0) {
                 setSearchLocal("");
-                commitNow("");
+                if (!ticketOpen) commitNow("");
               }
             }}
-            onBlur={() => commitNow(searchLocal)}
+            onBlur={() => {
+              // Don't commit on blur while reading a ticket — see the
+              // onChange comment above. The user must press Enter to
+              // re-enter search mode.
+              if (!ticketOpen) commitNow(searchLocal);
+            }}
             placeholder="Search by buyer username or eBay Order ID"
             className="h-10 w-full rounded-md border border-hairline bg-surface pl-9 pr-9 text-sm text-foreground placeholder:text-muted-foreground focus:border-brand/40 focus:outline-none focus:ring-2 focus:ring-brand/20"
             aria-label="Search inbox by buyer username or eBay Order ID"

@@ -1,6 +1,10 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
-import { HelpdeskOutboundStatus, HelpdeskTicketType } from "@prisma/client";
+import {
+  HelpdeskOutboundStatus,
+  HelpdeskTicketType,
+  type Prisma,
+} from "@prisma/client";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 
@@ -78,7 +82,7 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  // ── Digest envelope dedupe.
+  // ── Digest envelope dedupe + image lift.
   //
   // eBay's GetMyMessages returns each "message" as a giant HTML *digest*
   // body that contains the entire conversation history embedded in
@@ -97,7 +101,50 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
   // and gets hidden. This runs in pure JS over the already-loaded
   // messages array — no extra DB roundtrip — and handles legacy data
   // without a backfill since the test is data-driven.
+  //
+  // BUT: when a buyer sends an image-only message via eBay's web inbox,
+  // the digest envelope's `<div id="UserInputtedText">` is *empty* and
+  // the actual image attachments live in `<td id="previewImageCont[N]">`
+  // blocks elsewhere in the envelope HTML. Hiding the envelope erases
+  // the images; the corresponding live sub-message has bodyText="" and
+  // rawMedia=[] so it renders as an empty bubble.
+  //
+  // Lift fix: before hiding an envelope, scan its body for previewImage
+  // URLs and stash them on the LIVE sub-message's rawMedia for the
+  // response. The thread's `extractInlineImages` will then render them
+  // in the live sub's bubble exactly where the buyer sent them.
+  function extractPreviewImages(html: string): Array<{
+    url: string;
+    mimeType: string;
+  }> {
+    const out: Array<{ url: string; mimeType: string }> = [];
+    if (!html) return out;
+    // Each attachment renders as
+    //   <td id="previewImageCont0" …><a …><span …><img id="previewimage0"
+    //     src="https://i.ebayimg.com/…/$_0.JPG?…"></span></a></td>
+    // We grab just the src and de-dupe on URL.
+    const re =
+      /<td[^>]*id="previewImageCont\d+"[\s\S]*?<img[^>]*src="(https:\/\/i\.ebayimg\.com\/[^"]+)"/gi;
+    const seen = new Set<string>();
+    let mt: RegExpExecArray | null;
+    while ((mt = re.exec(html)) !== null) {
+      const url = mt[1];
+      if (!seen.has(url)) {
+        seen.add(url);
+        // eBay only attaches JPG/PNG raster previews. Use a generic
+        // image/* mime so extractInlineImages picks them up.
+        out.push({ url, mimeType: "image/jpeg" });
+      }
+    }
+    return out;
+  }
+
   const digestSourceIds = new Set<string>();
+  // envelope.ebayMessageId → array of buyer-uploaded image attachments
+  const envelopeImages = new Map<
+    string,
+    Array<{ url: string; mimeType: string }>
+  >();
   for (const m of ticket.messages) {
     const raw = m.rawData as Record<string, unknown> | null;
     const src =
@@ -106,17 +153,58 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
         : null;
     if (src) digestSourceIds.add(src);
   }
-  const visibleMessages = ticket.messages.filter((m) => {
+  for (const m of ticket.messages) {
     const raw = m.rawData as Record<string, unknown> | null;
     const isExplodedSub =
       raw && typeof raw["digestSource"] === "string";
-    if (isExplodedSub) return true;
-    // Hide envelope rows whose explosions are already in the thread.
+    if (isExplodedSub) continue;
     if (m.ebayMessageId && digestSourceIds.has(m.ebayMessageId)) {
-      return false;
+      const imgs = extractPreviewImages(m.bodyText ?? "");
+      if (imgs.length > 0) {
+        envelopeImages.set(m.ebayMessageId, imgs);
+      }
     }
-    return true;
-  });
+  }
+
+  // Mutate visible-sub rawMedia in-memory so the response carries the
+  // images. We deliberately do NOT persist this back to the DB — the
+  // envelope row still has the canonical HTML; we just project it onto
+  // the visible sub at read time.
+  type MessageRow = (typeof ticket.messages)[number];
+  const visibleMessages = ticket.messages
+    .filter((m) => {
+      const raw = m.rawData as Record<string, unknown> | null;
+      const isExplodedSub =
+        raw && typeof raw["digestSource"] === "string";
+      if (isExplodedSub) return true;
+      if (m.ebayMessageId && digestSourceIds.has(m.ebayMessageId)) {
+        return false;
+      }
+      return true;
+    })
+    .map<MessageRow>((m) => {
+      const raw = m.rawData as Record<string, unknown> | null;
+      const src =
+        raw && typeof raw["digestSource"] === "string"
+          ? (raw["digestSource"] as string)
+          : null;
+      const isLiveSub =
+        raw && raw["isLive"] === true;
+      if (!src || !isLiveSub) return m;
+      const imgs = envelopeImages.get(src);
+      if (!imgs || imgs.length === 0) return m;
+      // Merge with any existing rawMedia rather than overwriting (some
+      // future ingest path may already populate it). Cast to Prisma's
+      // JsonArray so the inferred row type stays compatible.
+      const existing: Prisma.JsonValue[] = Array.isArray(m.rawMedia)
+        ? (m.rawMedia as Prisma.JsonArray)
+        : [];
+      const merged = [
+        ...existing,
+        ...imgs.map((i) => i as unknown as Prisma.JsonValue),
+      ] as Prisma.JsonValue;
+      return { ...m, rawMedia: merged };
+    });
 
   // Mark as read on detail open: clear unreadCount.
   if (ticket.unreadCount > 0) {
