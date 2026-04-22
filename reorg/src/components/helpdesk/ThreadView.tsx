@@ -34,7 +34,7 @@
  *     /events route after the eBay action workers landed.
  */
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import {
   Loader2,
@@ -59,6 +59,10 @@ import {
   RotateCcw,
   Clock,
   CircleDashed,
+  ChevronLeft,
+  ChevronRight,
+  X as XIcon,
+  Download,
 } from "lucide-react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import type { HelpdeskTicketDetail, HelpdeskSyncStatus } from "@/hooks/use-helpdesk";
@@ -304,6 +308,50 @@ export function ThreadView({
   const [events, setEvents] = useState<SystemEvent[]>([]);
   const [eventsLoading, setEventsLoading] = useState(false);
 
+  // ── Image lightbox ─────────────────────────────────────────────
+  // A single Lightbox instance lives at the ThreadView root. Clicking
+  // any inline image opens it with the image set for THAT message
+  // (so prev/next stays scoped to "the 3 images this buyer sent on
+  // this turn" — not the entire thread, which would conflate images
+  // from different conversations on a long order). ESC + arrow keys
+  // are wired below so agents can pop through quickly.
+  const [lightbox, setLightbox] = useState<{
+    images: InlineImage[];
+    index: number;
+  } | null>(null);
+
+  const openLightbox = useCallback(
+    (images: InlineImage[], index: number) => {
+      if (images.length === 0) return;
+      setLightbox({ images, index: Math.max(0, Math.min(index, images.length - 1)) });
+    },
+    [],
+  );
+  const closeLightbox = useCallback(() => setLightbox(null), []);
+  const lightboxNext = useCallback(() => {
+    setLightbox((cur) =>
+      cur ? { ...cur, index: (cur.index + 1) % cur.images.length } : cur,
+    );
+  }, []);
+  const lightboxPrev = useCallback(() => {
+    setLightbox((cur) =>
+      cur
+        ? { ...cur, index: (cur.index - 1 + cur.images.length) % cur.images.length }
+        : cur,
+    );
+  }, []);
+
+  useEffect(() => {
+    if (!lightbox) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") closeLightbox();
+      else if (e.key === "ArrowRight") lightboxNext();
+      else if (e.key === "ArrowLeft") lightboxPrev();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [lightbox, closeLightbox, lightboxNext, lightboxPrev]);
+
   useEffect(() => {
     if (!ticketId) {
       setEvents([]);
@@ -525,6 +573,7 @@ export function ThreadView({
                         .toUpperCase()
                     }
                     agentAccent={agentAccent}
+                    onImageClick={openLightbox}
                   />
                 </div>
               );
@@ -534,6 +583,142 @@ export function ThreadView({
       </div>
 
       <Composer ticket={ticket} syncStatus={syncStatus} onSent={onSent} />
+
+      {lightbox && (
+        <Lightbox
+          images={lightbox.images}
+          index={lightbox.index}
+          onClose={closeLightbox}
+          onNext={lightboxNext}
+          onPrev={lightboxPrev}
+        />
+      )}
+    </div>
+  );
+}
+
+// ─── Lightbox ───────────────────────────────────────────────────────────────
+
+interface LightboxProps {
+  images: InlineImage[];
+  index: number;
+  onClose: () => void;
+  onNext: () => void;
+  onPrev: () => void;
+}
+
+/**
+ * Full-screen image viewer with prev/next navigation and a download
+ * button. Rendered as a fixed-position overlay so it sits above the
+ * thread, the composer, and the right-hand context panel. Clicking the
+ * dark backdrop or the X button closes; ←/→ + Esc are bound on the
+ * parent ThreadView's keydown listener.
+ *
+ * We deliberately render the original full-size URL (not the thumb),
+ * since the buyer-uploaded eBay images are reasonably small (<1MB) and
+ * agents need to actually read part numbers / damage detail off them.
+ */
+function Lightbox({ images, index, onClose, onNext, onPrev }: LightboxProps) {
+  const current = images[index];
+  if (!current) return null;
+  const multi = images.length > 1;
+
+  // Force a download via a synthetic anchor so the browser saves the
+  // file rather than navigating to it (the eBayimg URLs serve with
+  // Content-Disposition: inline).
+  const handleDownload = () => {
+    const a = document.createElement("a");
+    a.href = current.url;
+    // Try to extract a sensible filename from the URL path; fall back
+    // to a generic stamp.
+    const last = current.url.split("/").pop()?.split("?")[0] ?? "";
+    a.download = last && /\.[a-z0-9]{2,5}$/i.test(last) ? last : `image-${index + 1}.jpg`;
+    a.target = "_blank";
+    a.rel = "noopener noreferrer";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-sm"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Image viewer"
+      onClick={onClose}
+    >
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          onClose();
+        }}
+        className="absolute right-4 top-4 inline-flex h-10 w-10 cursor-pointer items-center justify-center rounded-full bg-black/40 text-white transition-colors hover:bg-black/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
+        title="Close (Esc)"
+        aria-label="Close"
+      >
+        <XIcon className="h-5 w-5" />
+      </button>
+
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          handleDownload();
+        }}
+        className="absolute right-16 top-4 inline-flex h-10 cursor-pointer items-center gap-1.5 rounded-full bg-black/40 px-3 text-sm text-white transition-colors hover:bg-black/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
+        title="Download"
+      >
+        <Download className="h-4 w-4" />
+        <span>Download</span>
+      </button>
+
+      {multi && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onPrev();
+          }}
+          className="absolute left-4 inline-flex h-12 w-12 cursor-pointer items-center justify-center rounded-full bg-black/40 text-white transition-colors hover:bg-black/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
+          title="Previous (←)"
+          aria-label="Previous image"
+        >
+          <ChevronLeft className="h-6 w-6" />
+        </button>
+      )}
+
+      {multi && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onNext();
+          }}
+          className="absolute right-4 bottom-1/2 inline-flex h-12 w-12 translate-y-1/2 cursor-pointer items-center justify-center rounded-full bg-black/40 text-white transition-colors hover:bg-black/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
+          title="Next (→)"
+          aria-label="Next image"
+        >
+          <ChevronRight className="h-6 w-6" />
+        </button>
+      )}
+
+      {/* Image — clicking the image itself does NOT close (so agents can
+          interact with it). Click the backdrop to close. */}
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={current.url}
+        alt={`Attachment ${index + 1} of ${images.length}`}
+        onClick={(e) => e.stopPropagation()}
+        className="max-h-[88vh] max-w-[90vw] cursor-default rounded shadow-2xl"
+      />
+
+      {multi && (
+        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 rounded-full bg-black/40 px-3 py-1 text-xs font-medium text-white tabular-nums">
+          {index + 1} / {images.length}
+        </div>
+      )}
     </div>
   );
 }
@@ -571,9 +756,20 @@ interface TimelineItemProps {
    * delivered message.
    */
   agentAccent: ReturnType<typeof agentBubbleClasses>;
+  /**
+   * Opens the lightbox at the ThreadView root with the supplied image
+   * set + starting index. Optional because system/day rows never call
+   * it, but message rows always pass it through.
+   */
+  onImageClick?: (images: InlineImage[], index: number) => void;
 }
 
-function TimelineItem({ row, buyerInitial, agentAccent }: TimelineItemProps) {
+function TimelineItem({
+  row,
+  buyerInitial,
+  agentAccent,
+  onImageClick,
+}: TimelineItemProps) {
   if (row.kind === "day") {
     return (
       <div className="my-2 flex items-center justify-center gap-3">
@@ -832,14 +1028,14 @@ function TimelineItem({ row, buyerInitial, agentAccent }: TimelineItemProps) {
 
           {inlineImages.length > 0 && (
             <div className="mt-2 flex flex-wrap gap-2">
-              {inlineImages.map((img) => (
-                <a
+              {inlineImages.map((img, idx) => (
+                <button
                   key={img.url}
-                  href={img.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="block overflow-hidden rounded border border-hairline bg-surface transition-opacity hover:opacity-90"
-                  title="Open image in a new tab"
+                  type="button"
+                  onClick={() => onImageClick?.(inlineImages, idx)}
+                  className="block cursor-pointer overflow-hidden rounded border border-hairline bg-surface transition-opacity hover:opacity-90 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+                  title="Click to view full size"
+                  aria-label={`Open image ${idx + 1} of ${inlineImages.length}`}
                 >
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
@@ -848,7 +1044,7 @@ function TimelineItem({ row, buyerInitial, agentAccent }: TimelineItemProps) {
                     loading="lazy"
                     className="h-32 w-32 object-cover"
                   />
-                </a>
+                </button>
               ))}
             </div>
           )}

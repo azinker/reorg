@@ -170,38 +170,57 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
   // images. We deliberately do NOT persist this back to the DB — the
   // envelope row still has the canonical HTML; we just project it onto
   // the visible sub at read time.
+  //
+  // CRITICAL: eBay's digest envelopes are CUMULATIVE — every envelope
+  // re-embeds the prior conversation, including the prior `previewImage
+  // ContN` blocks. Naively attaching each envelope's images to its own
+  // live sub means a single buyer-uploaded image appears in EVERY
+  // subsequent message's bubble (3 images → 6 → 9 → …).
+  //
+  // Dedupe strategy: walk live subs in chronological order, keep a
+  // ticket-wide set of image URLs already seen, and only attach a URL
+  // to the FIRST live sub where it appears. This pins the images to
+  // the message turn where the buyer actually uploaded them and
+  // eliminates duplicates downstream.
   type MessageRow = (typeof ticket.messages)[number];
-  const visibleMessages = ticket.messages
-    .filter((m) => {
-      const raw = m.rawData as Record<string, unknown> | null;
-      const isExplodedSub =
-        raw && typeof raw["digestSource"] === "string";
-      if (isExplodedSub) return true;
-      if (m.ebayMessageId && digestSourceIds.has(m.ebayMessageId)) {
-        return false;
-      }
-      return true;
-    })
+  const visibleMessages: MessageRow[] = ticket.messages.filter((m) => {
+    const raw = m.rawData as Record<string, unknown> | null;
+    const isExplodedSub =
+      raw && typeof raw["digestSource"] === "string";
+    if (isExplodedSub) return true;
+    if (m.ebayMessageId && digestSourceIds.has(m.ebayMessageId)) {
+      return false;
+    }
+    return true;
+  });
+
+  const seenImageUrls = new Set<string>();
+  const finalMessages: MessageRow[] = visibleMessages
+    .slice()
+    .sort((a, b) => a.sentAt.getTime() - b.sentAt.getTime())
     .map<MessageRow>((m) => {
       const raw = m.rawData as Record<string, unknown> | null;
       const src =
         raw && typeof raw["digestSource"] === "string"
           ? (raw["digestSource"] as string)
           : null;
-      const isLiveSub =
-        raw && raw["isLive"] === true;
+      const isLiveSub = raw && raw["isLive"] === true;
       if (!src || !isLiveSub) return m;
       const imgs = envelopeImages.get(src);
       if (!imgs || imgs.length === 0) return m;
-      // Merge with any existing rawMedia rather than overwriting (some
-      // future ingest path may already populate it). Cast to Prisma's
-      // JsonArray so the inferred row type stays compatible.
+      // Filter out images already attached to an earlier live sub.
+      const fresh = imgs.filter((i) => {
+        if (seenImageUrls.has(i.url)) return false;
+        seenImageUrls.add(i.url);
+        return true;
+      });
+      if (fresh.length === 0) return m;
       const existing: Prisma.JsonValue[] = Array.isArray(m.rawMedia)
         ? (m.rawMedia as Prisma.JsonArray)
         : [];
       const merged = [
         ...existing,
-        ...imgs.map((i) => i as unknown as Prisma.JsonValue),
+        ...fresh.map((i) => i as unknown as Prisma.JsonValue),
       ] as Prisma.JsonValue;
       return { ...m, rawMedia: merged };
     });
@@ -309,7 +328,7 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
       lastAgentMessageAt: ticket.lastAgentMessageAt,
       firstResponseAt: ticket.firstResponseAt,
       reopenCount: ticket.reopenCount,
-      messageCount: visibleMessages.length,
+      messageCount: finalMessages.length,
       noteCount: ticket.notes.length,
       tags: ticket.tags.map((tt) => ({
         id: tt.tag.id,
@@ -318,7 +337,7 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
       })),
       createdAt: ticket.createdAt,
       updatedAt: ticket.updatedAt,
-      messages: visibleMessages,
+      messages: finalMessages,
       notes: ticket.notes,
       pendingOutboundJobs: ticket.outboundJobs.map((job) => ({
         id: job.id,

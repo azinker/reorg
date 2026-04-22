@@ -936,8 +936,12 @@ function Cell({ column, ticket: t, isUnread, timeLeft, otherViewers }: CellProps
 
     case "type": {
       const cls = TYPE_BADGE_COLOR[t.type] ?? TYPE_BADGE_COLOR.OTHER;
+      // Surface archived state in search results — filtered tickets don't
+      // appear in folder views, so the only place an agent sees them is
+      // a global search hit. Showing the badge inline next to the type
+      // prevents the "why is this ticket here?" confusion.
       return (
-        <div className="px-2">
+        <div className="flex items-center gap-1 px-2">
           <span
             className={cn(
               "inline-flex items-center rounded border px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider",
@@ -946,6 +950,14 @@ function Cell({ column, ticket: t, isUnread, timeLeft, otherViewers }: CellProps
           >
             {TYPE_BADGE_LABEL[t.type] ?? "Query"}
           </span>
+          {t.isArchived ? (
+            <span
+              className="inline-flex items-center rounded border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider text-amber-600 dark:border-amber-400/40 dark:text-amber-300"
+              title="This ticket is in the Archived folder. A buyer reply will bounce it back to To Do."
+            >
+              Archived
+            </span>
+          ) : null}
         </div>
       );
     }

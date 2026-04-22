@@ -10,6 +10,7 @@ import {
   type RenderContext,
   type EbayOrderDetails,
 } from "@/lib/services/auto-responder-ebay";
+import { recordAutoResponderHelpdeskMessage } from "@/lib/services/helpdesk-ar-ingest";
 import type {
   Platform,
   AutoResponder,
@@ -590,7 +591,7 @@ export async function processAutoResponderJobs(): Promise<{
 type JobWithRelations = AutoResponderJob & {
   responder: AutoResponder;
   responderVersion: AutoResponderVersion;
-  integration: { id: string; config: unknown; label: string; enabled: boolean };
+  integration: { id: string; config: unknown; label: string; enabled: boolean; platform: Platform };
 };
 
 async function sendOneJob(
@@ -663,8 +664,10 @@ async function sendOneJob(
     );
 
     if (sendResult.success) {
+      const sentAt = new Date();
+      let sendLogId: string | null = null;
       try {
-        await db.autoResponderSendLog.create({
+        const sendLog = await db.autoResponderSendLog.create({
           data: {
             responderId: job.responderId,
             responderVersionId: job.responderVersionId,
@@ -679,10 +682,12 @@ async function sendOneJob(
             ebayItemId: itemId,
             ebayBuyerUserId: buyerUserId,
             queuedAt: job.createdAt,
-            attemptedAt: new Date(),
-            sentAt: new Date(),
+            attemptedAt: sentAt,
+            sentAt,
           },
+          select: { id: true },
         });
+        sendLogId = sendLog.id;
       } catch (err) {
         const isDupe = err instanceof Error && err.message.includes("Unique constraint");
         if (isDupe) {
@@ -691,6 +696,34 @@ async function sendOneJob(
         }
         throw err;
       }
+
+      // Mirror the AR send into Helpdesk so the message lands in the
+      // mailbox immediately (no waiting for a Sent-folder sync) and is
+      // properly tagged source=AUTO_RESPONDER. Wrapped in try/catch
+      // because helpdesk failures must NEVER fail the AR send — eBay
+      // already has the message; we just lose the helpdesk visibility,
+      // which the next nightly backfill can repair.
+      try {
+        await recordAutoResponderHelpdeskMessage({
+          integration: job.integration,
+          orderNumber: job.orderNumber,
+          buyerUserId,
+          buyerName,
+          itemId,
+          itemTitle,
+          subject: renderedSubject,
+          body: renderedBody,
+          sentAt,
+          sendLogId,
+        });
+      } catch (err) {
+        console.error(
+          `[auto-responder] helpdesk ingest failed for job ${job.id}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
+
       await db.autoResponderJob.update({ where: { id: job.id }, data: { status: "COMPLETED" } });
       return "sent";
     } else {
