@@ -145,6 +145,20 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
     string,
     Array<{ url: string; mimeType: string }>
   >();
+  // envelope.ebayMessageId → identity / source metadata that the digest
+  // parser drops when exploding the sub-message. We re-project these
+  // onto the visible SUB at read time so the timeline shows the right
+  // sender chip and the "Sent directly on eBay" pill for EBAY_UI sends.
+  // Without this every exploded SUB inherits source=EBAY and
+  // fromName=null (the parser's safe defaults for unknown turns) which
+  // makes agent eBay-UI replies look anonymous.
+  type EnvelopeMeta = {
+    source: (typeof ticket.messages)[number]["source"];
+    fromName: string | null;
+    fromIdentifier: string | null;
+    author: (typeof ticket.messages)[number]["author"];
+  };
+  const envelopeMeta = new Map<string, EnvelopeMeta>();
   for (const m of ticket.messages) {
     const raw = m.rawData as Record<string, unknown> | null;
     const src =
@@ -163,6 +177,12 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
       if (imgs.length > 0) {
         envelopeImages.set(m.ebayMessageId, imgs);
       }
+      envelopeMeta.set(m.ebayMessageId, {
+        source: m.source,
+        fromName: m.fromName,
+        fromIdentifier: m.fromIdentifier,
+        author: m.author,
+      });
     }
   }
 
@@ -206,23 +226,44 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
           : null;
       const isLiveSub = raw && raw["isLive"] === true;
       if (!src || !isLiveSub) return m;
+
+      // Two projections happen here, both keyed off the parent envelope
+      // we hid above:
+      //   1. Identity (source/fromName/...) — fixes "agent eBay-UI sends
+      //      look anonymous" and gates the "Sent directly on eBay" pill.
+      //   2. Image attachments — pins buyer-uploaded photos to the first
+      //      live sub they appear in (cumulative-envelope dedupe).
+      const meta = envelopeMeta.get(src);
+      let projected: MessageRow = m;
+      if (meta && meta.source === "EBAY_UI") {
+        // Only project EBAY_UI; leave EBAY/EMAIL/etc. alone so we don't
+        // overwrite a sub that legitimately knows its own source.
+        projected = {
+          ...projected,
+          source: meta.source,
+          fromName: projected.fromName ?? meta.fromName,
+          fromIdentifier: projected.fromIdentifier ?? meta.fromIdentifier,
+          author: projected.author ?? meta.author,
+        };
+      }
+
       const imgs = envelopeImages.get(src);
-      if (!imgs || imgs.length === 0) return m;
+      if (!imgs || imgs.length === 0) return projected;
       // Filter out images already attached to an earlier live sub.
       const fresh = imgs.filter((i) => {
         if (seenImageUrls.has(i.url)) return false;
         seenImageUrls.add(i.url);
         return true;
       });
-      if (fresh.length === 0) return m;
-      const existing: Prisma.JsonValue[] = Array.isArray(m.rawMedia)
-        ? (m.rawMedia as Prisma.JsonArray)
+      if (fresh.length === 0) return projected;
+      const existing: Prisma.JsonValue[] = Array.isArray(projected.rawMedia)
+        ? (projected.rawMedia as Prisma.JsonArray)
         : [];
       const merged = [
         ...existing,
         ...fresh.map((i) => i as unknown as Prisma.JsonValue),
       ] as Prisma.JsonValue;
-      return { ...m, rawMedia: merged };
+      return { ...projected, rawMedia: merged };
     });
 
   // Mark as read on detail open: clear unreadCount.

@@ -1180,10 +1180,15 @@ function TimelineItem({
             </div>
           )}
 
-          {/* Non-image attachments still surface through the existing
-              Attachments component — keeps the file/PDF/zip handling
-              centralized. */}
-          <Attachments rawMedia={m.rawMedia} />
+          {/* Non-image attachments (PDFs, zips, etc.) still surface
+              through the existing Attachments component — keeps the
+              file handling centralized. We pass excludeImages so it
+              doesn't double-render the buyer photos that the gallery
+              strip above already shows at h-32. Without that prop,
+              every image rendered twice (big in the strip, small here)
+              — Adam called these out as the "duplicate small thumbnails
+              under big previews". */}
+          <Attachments rawMedia={m.rawMedia} excludeImages />
         </div>
       </div>
     </div>

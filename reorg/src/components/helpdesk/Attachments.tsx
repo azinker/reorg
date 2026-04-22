@@ -18,15 +18,31 @@ import { parseMedia, truncateMid } from "@/lib/helpdesk/attachments";
 
 interface AttachmentsProps {
   rawMedia: unknown;
+  /**
+   * When true, suppresses the image grid. Use this from any caller that
+   * already renders image attachments via a sibling component (e.g. the
+   * ThreadView inline-image gallery strip). Without this, images render
+   * twice — once at h-32 w-32 in the gallery and once at h-16 w-16 here
+   * — which is the exact "duplicate small thumbnails under big previews"
+   * Adam reported.
+   *
+   * Non-image attachments (PDFs, zips, etc.) still render regardless,
+   * since nothing else handles those.
+   */
+  excludeImages?: boolean;
 }
 
-export function Attachments({ rawMedia }: AttachmentsProps) {
+export function Attachments({ rawMedia, excludeImages = false }: AttachmentsProps) {
   const [zoomed, setZoomed] = useState<string | null>(null);
   const items = parseMedia(rawMedia);
   if (items.length === 0) return null;
 
-  const images = items.filter((i) => i.isImage);
+  const images = excludeImages ? [] : items.filter((i) => i.isImage);
   const others = items.filter((i) => !i.isImage);
+
+  // If there's nothing left to render after filtering, bail to avoid
+  // emitting an empty wrapper div that adds vertical space below bubbles.
+  if (images.length === 0 && others.length === 0) return null;
 
   return (
     <div className="mt-2 space-y-1.5">
