@@ -270,8 +270,10 @@ function upgradeEbayImageUrl(url: string): string {
  * an unmatched payload just falls through to the regular Attachments
  * component below the bubble.
  */
-function extractInlineImages(rawMedia: unknown): InlineImage[] {
-  if (!rawMedia) return [];
+function extractInlineImages(
+  rawMedia: unknown,
+  bodyHtml?: string | null,
+): InlineImage[] {
   const collected: InlineImage[] = [];
   const visit = (node: unknown): void => {
     if (!node) return;
@@ -300,9 +302,24 @@ function extractInlineImages(rawMedia: unknown): InlineImage[] {
     // under .attachments or .images).
     for (const value of Object.values(obj)) visit(value);
   };
-  visit(rawMedia);
-  // Dedupe by URL so deeply-nested payloads don't render the same image
-  // multiple times.
+  if (rawMedia) visit(rawMedia);
+
+  // Belt-and-suspenders: also scrape `<img>` tags from the body HTML.
+  // Agent replies sent directly on eBay arrive with the image inline in
+  // the body (rawMedia stays empty), so without this pass the nice
+  // clickable strip wouldn't render and we'd be stuck with the small
+  // body-embedded `<img>`. We restrict to `i.ebayimg.com` so we don't
+  // also pick up tracking pixels or eBay-chrome sprites.
+  if (bodyHtml) {
+    const imgRe = /<img[^>]*\bsrc=["'](https:\/\/i\.ebayimg\.com\/[^"']+)["'][^>]*>/gi;
+    let mt: RegExpExecArray | null;
+    while ((mt = imgRe.exec(bodyHtml)) !== null) {
+      collected.push({ url: mt[1], thumb: null });
+    }
+  }
+
+  // Dedupe by URL so deeply-nested payloads + body scrapes don't render
+  // the same image multiple times.
   const seen = new Set<string>();
   return collected.filter((img) => {
     if (seen.has(img.url)) return false;
@@ -1048,7 +1065,10 @@ function TimelineItem({
     );
   };
 
-  const inlineImages = extractInlineImages(m.rawMedia);
+  // Pass the body so EBAY_UI / agent replies (which embed the photo
+  // inline in HTML rather than via rawMedia) still get surfaced through
+  // the clickable lightbox strip below.
+  const inlineImages = extractInlineImages(m.rawMedia, m.bodyText);
 
   // Right-aligned (agent / AR) vs left-aligned (buyer). We swap the row
   // direction with `flex-row-reverse` so the avatar always sits on the
@@ -1097,10 +1117,18 @@ function TimelineItem({
           </span>
           {isEbayUi && (
             <span
-              className="shrink-0 rounded border border-amber-500/30 bg-amber-500/10 px-1.5 py-0 text-[9px] font-semibold uppercase tracking-wider text-amber-700 dark:text-amber-300"
-              title="Sent directly on eBay (not from reorG)"
+              className="inline-flex shrink-0 items-center gap-1 rounded-full border border-amber-500/50 bg-amber-400/20 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-amber-800 shadow-sm dark:border-amber-400/60 dark:bg-amber-400/15 dark:text-amber-200"
+              title="This reply was sent directly through eBay's web inbox, not from reorG. The audit trail shows the agent who composed it (when known) but the send did not pass through the reorG composer."
             >
-              via eBay
+              <svg
+                viewBox="0 0 24 24"
+                aria-hidden="true"
+                className="h-3 w-3"
+                fill="currentColor"
+              >
+                <path d="M12 2 1 6v6c0 5.5 3.8 10.7 11 12 7.2-1.3 11-6.5 11-12V6l-11-4z" />
+              </svg>
+              Sent directly on eBay
             </span>
           )}
           {isInbound && (
@@ -1119,8 +1147,15 @@ function TimelineItem({
           )}
         >
           {/* SafeHtml sniffs the body itself and falls back to <pre> when
-              eBay's `isHtml` flag is wrong (which it often is). */}
-          <SafeHtml html={m.bodyText} forceHtml={m.isHtml} />
+              eBay's `isHtml` flag is wrong (which it often is). When we
+              have a curated inline-image strip below, strip the body's
+              own <img> tags so we don't render a tiny duplicate beside
+              every nice clickable thumbnail. */}
+          <SafeHtml
+            html={m.bodyText}
+            forceHtml={m.isHtml}
+            stripImages={inlineImages.length > 0}
+          />
 
           {inlineImages.length > 0 && (
             <div className="mt-2 flex flex-wrap gap-2">

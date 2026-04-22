@@ -35,6 +35,17 @@ interface SafeHtmlProps {
   /** When true, the body is treated as HTML even if it doesn't sniff as such. */
   forceHtml?: boolean;
   className?: string;
+  /**
+   * When true, ALL `<img>` tags are removed from the rendered body. Used
+   * by the message timeline whenever a separate inline-image strip is
+   * being rendered alongside this SafeHtml — otherwise eBay's body HTML
+   * embeds the same `i.ebayimg.com` thumbnails the strip already shows,
+   * producing visible duplicates (a small thumb under each big preview).
+   *
+   * Cache is keyed on this flag so toggling it doesn't return a stale
+   * pre-stripped variant from a different render path.
+   */
+  stripImages?: boolean;
 }
 
 // Match either real tags (<p>, <br/>, <table>) OR entity-encoded tags
@@ -696,11 +707,27 @@ function preferUserInputtedAnchor(body: string): string {
   return inner;
 }
 
-function computeSanitised(decoded: string): string {
+function computeSanitised(decoded: string, stripImages: boolean): string {
   ensureDompurifyHook();
   const anchored = preferUserInputtedAnchor(decoded);
   const clean = DOMPurify.sanitize(anchored, PURIFY_CONFIG);
-  return stripEbayChrome(clean);
+  const stripped = stripEbayChrome(clean);
+  if (!stripImages) return stripped;
+  // Server-side render: no DOMParser → fall back to a regex strip. It's
+  // a touch lossier than the DOM walk but only runs as a hydration-time
+  // best-effort; the client effect below re-runs computeSanitised
+  // anyway and the cached result wins.
+  if (typeof window === "undefined" || typeof DOMParser === "undefined") {
+    return stripped.replace(/<img\b[^>]*>/gi, "");
+  }
+  const doc = new DOMParser().parseFromString(
+    `<!doctype html><body>${stripped}</body>`,
+    "text/html",
+  );
+  for (const img of Array.from(doc.body.querySelectorAll("img"))) {
+    img.remove();
+  }
+  return doc.body.innerHTML;
 }
 
 type IdleCb = (cb: () => void, opts?: { timeout?: number }) => number;
@@ -789,17 +816,26 @@ function enqueueSanitise(cb: SanitiseTask): () => void {
   };
 }
 
-export function SafeHtml({ html, forceHtml, className }: SafeHtmlProps) {
+export function SafeHtml({
+  html,
+  forceHtml,
+  className,
+  stripImages = false,
+}: SafeHtmlProps) {
   const { isHtml, decoded } = useMemo(
     () => detectHtml(html ?? "", forceHtml),
     [html, forceHtml],
   );
 
+  // Cache is keyed on (body, stripImages) — same body rendered with
+  // images vs without is a different output and must not collide.
+  const cacheKey = `${stripImages ? "I0:" : "I1:"}${decoded}`;
+
   // Synchronous cache check on first render. If we've already processed this
   // exact body in this session (different ticket sharing the same eBay
   // template, or re-opening this ticket) the bubble paints with the final
   // sanitised HTML on the very first frame — zero extra work, zero flicker.
-  const initialCached = isHtml ? lruGet(decoded) ?? null : null;
+  const initialCached = isHtml ? lruGet(cacheKey) ?? null : null;
   const [sanitised, setSanitised] = useState<string | null>(initialCached);
 
   useEffect(() => {
@@ -807,7 +843,7 @@ export function SafeHtml({ html, forceHtml, className }: SafeHtmlProps) {
       if (sanitised !== null) setSanitised(null);
       return;
     }
-    const cached = lruGet(decoded);
+    const cached = lruGet(cacheKey);
     if (cached !== undefined) {
       if (cached !== sanitised) setSanitised(cached);
       return;
@@ -820,8 +856,8 @@ export function SafeHtml({ html, forceHtml, className }: SafeHtmlProps) {
     let cancelled = false;
     const cancel = enqueueSanitise(() => {
       if (cancelled) return;
-      const result = computeSanitised(decoded);
-      lruSet(decoded, result);
+      const result = computeSanitised(decoded, stripImages);
+      lruSet(cacheKey, result);
       if (!cancelled) setSanitised(result);
     });
     return () => {
@@ -831,7 +867,7 @@ export function SafeHtml({ html, forceHtml, className }: SafeHtmlProps) {
     // We deliberately do not include `sanitised` in deps — it's an output
     // of this effect, including it would loop.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [decoded, isHtml]);
+  }, [cacheKey, decoded, isHtml, stripImages]);
 
   if (!isHtml) {
     const cleaned = stripEbayPlainText(decoded);
