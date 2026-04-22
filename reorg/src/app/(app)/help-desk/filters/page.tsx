@@ -38,6 +38,7 @@ import type {
   FilterField,
   FilterOp,
 } from "@/lib/helpdesk/filters";
+import { HelpdeskGlobalSearch } from "@/components/helpdesk/HelpdeskGlobalSearch";
 
 interface FilterRow {
   id: string;
@@ -265,12 +266,18 @@ export default function HelpdeskFiltersPage() {
 
   return (
     <div className="mx-auto max-w-5xl px-6 py-8">
-      <Link
-        href="/help-desk"
-        className="mb-4 inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
-      >
-        <ArrowLeft className="h-3 w-3" /> Back to Help Desk
-      </Link>
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <Link
+          href="/help-desk"
+          className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+        >
+          <ArrowLeft className="h-3 w-3" /> Back to Help Desk
+        </Link>
+        {/* Global search — typing here jumps the agent back into the
+            inbox with the query pre-applied. Saves a click + breadcrumb
+            from every sub-page. */}
+        <HelpdeskGlobalSearch />
+      </div>
 
       <header className="mb-6 flex flex-wrap items-end justify-between gap-3">
         <div>

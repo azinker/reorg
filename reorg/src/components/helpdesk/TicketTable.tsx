@@ -112,6 +112,20 @@ const CHANNEL_BADGE: Record<string, string> = {
   TT_EBAY: "TT",
 };
 
+/**
+ * Per-channel pill colors. We use Tailwind's stable semantic palette
+ * (violet / emerald) instead of brand classes so the two eBay storefronts
+ * are instantly distinguishable at a glance — agents who manage both kept
+ * mistaking TT messages for TPP when both rendered with the same neutral
+ * surface badge. Keep these classes literal so Tailwind's JIT picks them up.
+ */
+const CHANNEL_BADGE_CLS: Record<string, string> = {
+  TPP_EBAY:
+    "border-violet-500/40 bg-violet-500/10 text-violet-700 dark:text-violet-300",
+  TT_EBAY:
+    "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
+};
+
 // ─── Time-Left logic ───────────────────────────────────────────────────────
 //
 // 24h SLA from first buyer message. Stops counting when an agent has replied
@@ -609,11 +623,37 @@ interface CellProps {
 
 function Cell({ column, ticket: t, isUnread, timeLeft, otherViewers }: CellProps) {
   switch (column) {
-    case "channel":
+    case "channel": {
+      const label = CHANNEL_BADGE[t.channel] ?? t.channel;
+      const pillCls =
+        CHANNEL_BADGE_CLS[t.channel] ??
+        "border-hairline bg-surface text-muted-foreground";
+      const isEbay = t.channel === "TPP_EBAY" || t.channel === "TT_EBAY";
       return (
         <div className="flex items-center gap-2 px-2">
-          <span className="inline-flex items-center rounded border border-hairline bg-surface px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-            {CHANNEL_BADGE[t.channel] ?? t.channel}
+          <span
+            className={cn(
+              "inline-flex items-center gap-1.5 rounded border px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider",
+              pillCls,
+            )}
+            title={isEbay ? `${label} · eBay` : label}
+          >
+            {isEbay && (
+              // Real eBay 4-color glyph (lives in /public/logos). We use a
+              // plain <img> because Next/Image isn't worth the wrapper for
+              // a tiny static svg, and we want the brand colors preserved
+              // so the icon reads as "eBay" instantly even when the
+              // surrounding pill is tinted violet/emerald.
+              <img
+                src="/logos/ebay.svg"
+                alt=""
+                width={16}
+                height={16}
+                className="h-3.5 w-3.5 shrink-0"
+                aria-hidden="true"
+              />
+            )}
+            {label}
           </span>
           {/* US flag indicator — eBay orders are 99% US so we always render. */}
           <span
@@ -626,6 +666,7 @@ function Cell({ column, ticket: t, isUnread, timeLeft, otherViewers }: CellProps
           </span>
         </div>
       );
+    }
 
     case "customer": {
       // Customer column prefers the buyer's real first/last name. Pre-sales

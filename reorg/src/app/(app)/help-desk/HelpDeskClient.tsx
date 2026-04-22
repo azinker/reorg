@@ -31,6 +31,15 @@ export default function HelpDeskClient() {
   const [search, setSearch] = useState("");
   const prefs = useHelpdeskPrefs();
 
+  // Pick up `?q=` from the URL — sub-pages (filters, dashboard, profile,
+  // global-settings) drive their global-search field by pushing
+  // `/help-desk?q=...`. We seed the inbox search from it on mount and
+  // again whenever the param actually changes (e.g. agent submits a new
+  // search from a sub-page while we were already mounted via back/forward).
+  // We do NOT mirror local `setSearch` calls back into the URL — the
+  // header debounces every keystroke and continuously rewriting the URL
+  // would fight the browser back-button.
+
   /**
    * Lightweight `/api/users/me` fetch on mount. Drives two things:
    *   - `isAdmin` so the FolderSidebar can show / hide the "Global Settings"
@@ -115,6 +124,22 @@ export default function HelpDeskClient() {
    */
   const searchParams = useSearchParams();
   const initialTicketIdRef = useRef<string | null>(searchParams.get("ticket"));
+
+  // Honor ?q=... → seed search field. We compare against a ref so we
+  // don't fight ourselves when the user types after navigation. On a
+  // brand-new q= we also wipe any pre-selected ticket so the inbox
+  // panel actually shows the search results instead of the previously
+  // open thread.
+  const lastQParamRef = useRef<string | null>(null);
+  useEffect(() => {
+    const q = searchParams.get("q");
+    if (q !== lastQParamRef.current) {
+      lastQParamRef.current = q;
+      if (q != null) {
+        setSearch(q);
+      }
+    }
+  }, [searchParams]);
 
   const {
     tickets,

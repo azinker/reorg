@@ -20,6 +20,7 @@ import {
   Send,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { HelpdeskGlobalSearch } from "@/components/helpdesk/HelpdeskGlobalSearch";
 
 type SlaBucket = "GREEN" | "AMBER" | "RED" | "MET" | "NA";
 
@@ -69,7 +70,7 @@ export default function HelpdeskDashboardPage() {
 
   return (
     <div className="flex flex-col gap-6 p-6">
-      <header className="flex items-center justify-between">
+      <header className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-xl font-semibold text-foreground">
             Help Desk · Dashboard
@@ -78,15 +79,18 @@ export default function HelpdeskDashboardPage() {
             Last {data?.windowDays ?? days} days · refreshes every 60s
           </p>
         </div>
-        <select
-          value={days}
-          onChange={(e) => setDays(Number(e.target.value))}
-          className="h-8 rounded-md border border-white/10 bg-background/40 px-2 text-xs text-foreground"
-        >
-          <option value={7}>Last 7 days</option>
-          <option value={14}>Last 14 days</option>
-          <option value={30}>Last 30 days</option>
-        </select>
+        <div className="flex flex-1 items-center justify-end gap-3">
+          <HelpdeskGlobalSearch />
+          <select
+            value={days}
+            onChange={(e) => setDays(Number(e.target.value))}
+            className="h-8 rounded-md border border-white/10 bg-background/40 px-2 text-xs text-foreground"
+          >
+            <option value={7}>Last 7 days</option>
+            <option value={14}>Last 14 days</option>
+            <option value={30}>Last 30 days</option>
+          </select>
+        </div>
       </header>
 
       {error && (

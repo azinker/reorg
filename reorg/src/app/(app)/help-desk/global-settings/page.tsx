@@ -50,6 +50,7 @@ import {
   Sparkles,
 } from "lucide-react";
 import type { HelpdeskSyncStatus } from "@/hooks/use-helpdesk";
+import { HelpdeskGlobalSearch } from "@/components/helpdesk/HelpdeskGlobalSearch";
 
 interface MeProfile {
   id: string;
@@ -216,12 +217,15 @@ export default function HelpdeskGlobalSettingsPage() {
 
   return (
     <div className="mx-auto max-w-4xl px-6 py-8">
-      <Link
-        href="/help-desk"
-        className="mb-4 inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
-      >
-        <ArrowLeft className="h-3 w-3" /> Back to Help Desk
-      </Link>
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <Link
+          href="/help-desk"
+          className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+        >
+          <ArrowLeft className="h-3 w-3" /> Back to Help Desk
+        </Link>
+        <HelpdeskGlobalSearch />
+      </div>
 
       <header className="mb-6 flex items-start gap-3">
         <div className="rounded-lg bg-brand-muted p-2">

@@ -66,6 +66,10 @@ import { Composer } from "@/components/helpdesk/Composer";
 import { Attachments } from "@/components/helpdesk/Attachments";
 import { Avatar } from "@/components/ui/avatar";
 import { SafeHtml } from "@/components/helpdesk/SafeHtml";
+import {
+  useHelpdeskPrefs,
+  agentBubbleClasses,
+} from "@/components/helpdesk/HelpdeskSettingsDialog";
 
 interface ThreadViewProps {
   ticket: HelpdeskTicketDetail | null;
@@ -286,6 +290,15 @@ export function ThreadView({
   showHeader = true,
 }: ThreadViewProps) {
   void safeMode;
+
+  // Agent message bubble accent — saved per-agent on this browser.
+  // Defaults to reorG purple after agents asked for the brand-red
+  // outbound bubble to be replaced with something less alarming.
+  const prefs = useHelpdeskPrefs();
+  const agentAccent = useMemo(
+    () => agentBubbleClasses(prefs.agentBubbleAccent),
+    [prefs.agentBubbleAccent],
+  );
 
   const ticketId = ticket?.id ?? null;
   const [events, setEvents] = useState<SystemEvent[]>([]);
@@ -511,6 +524,7 @@ export function ThreadView({
                         .charAt(0)
                         .toUpperCase()
                     }
+                    agentAccent={agentAccent}
                   />
                 </div>
               );
@@ -549,9 +563,17 @@ interface TimelineItemProps {
       }
     | { kind: "system"; key: string; data: SystemEvent; at: string };
   buyerInitial: string;
+  /**
+   * Class triplet for the agent's bubble — pre-computed by
+   * `agentBubbleClasses(prefs.agentBubbleAccent)` in the parent so we
+   * don't re-derive it on every row render. Pending outbound bubbles use
+   * the same accent so the queued reply visually matches the future
+   * delivered message.
+   */
+  agentAccent: ReturnType<typeof agentBubbleClasses>;
 }
 
-function TimelineItem({ row, buyerInitial }: TimelineItemProps) {
+function TimelineItem({ row, buyerInitial, agentAccent }: TimelineItemProps) {
   if (row.kind === "day") {
     return (
       <div className="my-2 flex items-center justify-center gap-3">
@@ -613,7 +635,12 @@ function TimelineItem({ row, buyerInitial }: TimelineItemProps) {
           {j.author ? (
             <Avatar user={j.author} size="sm" />
           ) : (
-            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-brand-muted text-sm font-semibold text-brand">
+            <div
+              className={cn(
+                "flex h-8 w-8 items-center justify-center rounded-full text-sm font-semibold",
+                agentAccent.dotBg,
+              )}
+            >
               ?
             </div>
           )}
@@ -625,12 +652,17 @@ function TimelineItem({ row, buyerInitial }: TimelineItemProps) {
                 "shrink-0 rounded border px-1.5 py-0 text-[9px] font-semibold uppercase tracking-wider",
                 blocked
                   ? "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300"
-                  : "border-brand/40 bg-brand-muted text-brand",
+                  : agentAccent.dotBg,
               )}
             >
               {statusLabel}
             </span>
-            <span className="truncate text-[13px] font-semibold text-brand">
+            <span
+              className={cn(
+                "truncate text-[13px] font-semibold",
+                agentAccent.name,
+              )}
+            >
               {j.author?.name ?? j.author?.email ?? "Agent"}
             </span>
           </div>
@@ -639,7 +671,7 @@ function TimelineItem({ row, buyerInitial }: TimelineItemProps) {
               "rounded-md border border-dashed px-3 py-2 text-[13px] leading-[1.5] opacity-90",
               blocked
                 ? "border-amber-500/50 bg-amber-50 text-foreground dark:bg-amber-950/20"
-                : "border-brand/50 bg-brand-muted/60 text-foreground",
+                : agentAccent.bubble,
             )}
           >
             <p className="whitespace-pre-wrap">{j.bodyText}</p>
@@ -692,7 +724,12 @@ function TimelineItem({ row, buyerInitial }: TimelineItemProps) {
   const renderAvatar = () => {
     if (isAR) {
       return (
-        <div className="flex h-8 w-8 items-center justify-center rounded-full bg-brand-muted text-brand">
+        <div
+          className={cn(
+            "flex h-8 w-8 items-center justify-center rounded-full",
+            agentAccent.dotBg,
+          )}
+        >
           <Bot className="h-4 w-4" />
         </div>
       );
@@ -708,7 +745,12 @@ function TimelineItem({ row, buyerInitial }: TimelineItemProps) {
       return <Avatar user={m.author} size="sm" />;
     }
     return (
-      <div className="flex h-8 w-8 items-center justify-center rounded-full bg-brand-muted text-sm font-semibold text-brand">
+      <div
+        className={cn(
+          "flex h-8 w-8 items-center justify-center rounded-full text-sm font-semibold",
+          agentAccent.dotBg,
+        )}
+      >
         {(displayName.charAt(0) || "?").toUpperCase()}
       </div>
     );
@@ -721,11 +763,15 @@ function TimelineItem({ row, buyerInitial }: TimelineItemProps) {
   // outside edge and the bubble's "tail" (the colored left-border accent)
   // visually anchors to the speaker side.
   const sideClass = isInbound ? "" : "flex-row-reverse";
+  // Agent bubble color follows the agent's accent pref. Buyer bubble is
+  // a neutral card (intentionally not themed — buyer "voice" should not
+  // change with agent settings). AR bubble shares the agent accent but
+  // dashed to convey "not a human reply".
   const bubbleClass = isInbound
     ? "border-hairline bg-card text-foreground"
     : isAR
-      ? "border-brand/40 border-dashed bg-brand-muted/60 text-foreground"
-      : "border-brand/50 bg-brand-muted text-foreground";
+      ? cn(agentAccent.bubble, "border-dashed opacity-90")
+      : agentAccent.bubble;
 
   return (
     <div className={cn("group/msg flex gap-3", sideClass)}>
@@ -751,8 +797,8 @@ function TimelineItem({ row, buyerInitial }: TimelineItemProps) {
               isInbound
                 ? "text-foreground"
                 : isAR
-                  ? "text-brand/80 italic"
-                  : "text-brand",
+                  ? cn(agentAccent.name, "italic opacity-80")
+                  : agentAccent.name,
             )}
           >
             {displayName}

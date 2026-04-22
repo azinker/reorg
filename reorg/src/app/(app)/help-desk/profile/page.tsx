@@ -23,6 +23,7 @@ import {
   updateHelpdeskPrefs,
   type HelpdeskPrefs,
 } from "@/components/helpdesk/HelpdeskSettingsDialog";
+import { HelpdeskGlobalSearch } from "@/components/helpdesk/HelpdeskGlobalSearch";
 
 interface MeProfile {
   id: string;
@@ -191,12 +192,15 @@ export default function HelpdeskProfilePage() {
 
   return (
     <div className="mx-auto max-w-3xl px-6 py-8">
-      <Link
-        href="/help-desk"
-        className="mb-4 inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
-      >
-        <ArrowLeft className="h-3 w-3" /> Back to Help Desk
-      </Link>
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <Link
+          href="/help-desk"
+          className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+        >
+          <ArrowLeft className="h-3 w-3" /> Back to Help Desk
+        </Link>
+        <HelpdeskGlobalSearch />
+      </div>
 
       <header className="mb-6">
         <h1 className="text-2xl font-semibold text-foreground">My Profile</h1>

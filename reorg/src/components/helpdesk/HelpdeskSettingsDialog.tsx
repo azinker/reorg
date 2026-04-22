@@ -40,6 +40,24 @@ export type HelpdeskLayout = "split" | "list";
  */
 export type HelpdeskDefaultSendStatus = "RESOLVED" | "WAITING" | "NONE";
 
+/**
+ * Color theme applied to the agent's outbound message bubbles in the
+ * thread. The original default was reorG brand red, but agents
+ * overwhelmingly preferred a calmer purple — so "purple" is now the new
+ * default and the rest of the palette is exposed as personal taste.
+ *
+ * Each value maps to a Tailwind color family in
+ * `agentBubbleClasses()` below; we deliberately use Tailwind's stable
+ * semantic colors (violet/blue/emerald/amber/rose) rather than minting
+ * new CSS variables so dark-mode contrast Just Works.
+ */
+export type HelpdeskAgentBubbleAccent =
+  | "purple"
+  | "blue"
+  | "emerald"
+  | "amber"
+  | "red";
+
 export interface HelpdeskPrefs {
   sendDelaySeconds: number;
   autoAdvance: boolean;
@@ -49,6 +67,7 @@ export interface HelpdeskPrefs {
   threadWidthPct: number;
   inboxWidthPct: number;
   defaultSendStatus: HelpdeskDefaultSendStatus;
+  agentBubbleAccent: HelpdeskAgentBubbleAccent;
 }
 
 const DEFAULTS: HelpdeskPrefs = {
@@ -63,6 +82,10 @@ const DEFAULTS: HelpdeskPrefs = {
   // close the ticket. Agents who want the old WAITING behaviour change
   // this once in Settings and it sticks (server-side persisted).
   defaultSendStatus: "RESOLVED",
+  // Agents reported the brand-red outbound bubble felt "alarming" against
+  // a long INBOUND thread. Purple is the reorG primary hue and reads as
+  // "ours" without screaming "error".
+  agentBubbleAccent: "purple",
 };
 
 function readPrefs(): HelpdeskPrefs {
@@ -85,6 +108,14 @@ function readPrefs(): HelpdeskPrefs {
         parsed.defaultSendStatus === "RESOLVED"
           ? parsed.defaultSendStatus
           : DEFAULTS.defaultSendStatus,
+      agentBubbleAccent:
+        parsed.agentBubbleAccent === "purple" ||
+        parsed.agentBubbleAccent === "blue" ||
+        parsed.agentBubbleAccent === "emerald" ||
+        parsed.agentBubbleAccent === "amber" ||
+        parsed.agentBubbleAccent === "red"
+          ? parsed.agentBubbleAccent
+          : DEFAULTS.agentBubbleAccent,
     };
   } catch {
     return DEFAULTS;
@@ -118,7 +149,8 @@ function writePrefs(p: HelpdeskPrefs, previous?: HelpdeskPrefs) {
     prev.layout !== p.layout ||
     prev.threadWidthPct !== p.threadWidthPct ||
     prev.inboxWidthPct !== p.inboxWidthPct ||
-    prev.defaultSendStatus !== p.defaultSendStatus;
+    prev.defaultSendStatus !== p.defaultSendStatus ||
+    prev.agentBubbleAccent !== p.agentBubbleAccent;
   if (!changed) return;
   window.localStorage.setItem(STORAGE_KEY, JSON.stringify(p));
   window.dispatchEvent(new CustomEvent("helpdesk:prefs-changed", { detail: p }));
@@ -160,6 +192,68 @@ function hydrateFromServerOnce(): Promise<void> {
     }
   })();
   return serverHydrationPromise;
+}
+
+/**
+ * Tailwind class triplet for the agent message bubble, keyed by the
+ * agent's chosen accent. Returns:
+ *   - bubble    : border + background + text classes for the chat bubble
+ *   - name      : text color for the displayed agent name above the bubble
+ *   - dotBg     : muted background for fallback avatar / accent dots
+ *   - swatch    : solid swatch class used in the settings dialog preview
+ *
+ * We hard-code each combination (instead of `border-${color}-500/50`) so
+ * Tailwind's JIT picks them up at build time — interpolated class names
+ * silently get tree-shaken away in production.
+ */
+export function agentBubbleClasses(accent: HelpdeskAgentBubbleAccent): {
+  bubble: string;
+  name: string;
+  dotBg: string;
+  swatch: string;
+} {
+  switch (accent) {
+    case "purple":
+      return {
+        bubble:
+          "border-violet-500/50 bg-violet-500/10 text-foreground dark:bg-violet-500/15",
+        name: "text-violet-700 dark:text-violet-300",
+        dotBg: "bg-violet-500/15 text-violet-700 dark:text-violet-300",
+        swatch: "bg-violet-500",
+      };
+    case "blue":
+      return {
+        bubble:
+          "border-sky-500/50 bg-sky-500/10 text-foreground dark:bg-sky-500/15",
+        name: "text-sky-700 dark:text-sky-300",
+        dotBg: "bg-sky-500/15 text-sky-700 dark:text-sky-300",
+        swatch: "bg-sky-500",
+      };
+    case "emerald":
+      return {
+        bubble:
+          "border-emerald-500/50 bg-emerald-500/10 text-foreground dark:bg-emerald-500/15",
+        name: "text-emerald-700 dark:text-emerald-300",
+        dotBg: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300",
+        swatch: "bg-emerald-500",
+      };
+    case "amber":
+      return {
+        bubble:
+          "border-amber-500/50 bg-amber-500/10 text-foreground dark:bg-amber-500/15",
+        name: "text-amber-700 dark:text-amber-300",
+        dotBg: "bg-amber-500/15 text-amber-700 dark:text-amber-300",
+        swatch: "bg-amber-500",
+      };
+    case "red":
+    default:
+      return {
+        bubble: "border-brand/50 bg-brand-muted text-foreground",
+        name: "text-brand",
+        dotBg: "bg-brand-muted text-brand",
+        swatch: "bg-brand",
+      };
+  }
 }
 
 /** Imperative server-side persist for the defaultSendStatus pref. */
@@ -357,10 +451,49 @@ export function HelpdeskSettingsDialog({ open, onClose }: HelpdeskSettingsDialog
               <option value="NONE">Send only (keep status)</option>
             </select>
           </Field>
+
+          <Field
+            label="Agent message color"
+            description="Background color of your outgoing messages in the thread."
+          >
+            <div className="flex items-center gap-1.5">
+              {(
+                [
+                  { value: "purple", label: "Purple" },
+                  { value: "blue", label: "Blue" },
+                  { value: "emerald", label: "Green" },
+                  { value: "amber", label: "Amber" },
+                  { value: "red", label: "Red" },
+                ] as const
+              ).map((opt) => {
+                const cls = agentBubbleClasses(opt.value);
+                const active = prefs.agentBubbleAccent === opt.value;
+                return (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    onClick={() => update("agentBubbleAccent", opt.value)}
+                    title={opt.label}
+                    aria-label={opt.label}
+                    aria-pressed={active}
+                    className={
+                      "relative h-6 w-6 rounded-full border-2 transition-all cursor-pointer " +
+                      cls.swatch +
+                      " " +
+                      (active
+                        ? "border-foreground scale-110 shadow-md"
+                        : "border-transparent hover:scale-105")
+                    }
+                  />
+                );
+              })}
+            </div>
+          </Field>
         </div>
 
         <p className="mt-5 text-[10px] text-muted-foreground">
-          Stored locally in your browser. Changes apply immediately.
+          Layout, density, separator widths, and accent color are saved on this browser per agent.
+          Default Send action is saved across browsers.
         </p>
       </div>
     </div>

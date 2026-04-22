@@ -205,7 +205,7 @@ export function HelpdeskHeader({
               }
             }}
             onBlur={() => commitNow(searchLocal)}
-            placeholder="Search by buyer username or eBay Order ID (NN-NNNNN-NNNNN)…"
+            placeholder="Search by buyer username or eBay Order ID"
             className="h-10 w-full rounded-md border border-hairline bg-surface pl-9 pr-9 text-sm text-foreground placeholder:text-muted-foreground focus:border-brand/40 focus:outline-none focus:ring-2 focus:ring-brand/20"
             aria-label="Search inbox by buyer username or eBay Order ID"
           />

@@ -72,6 +72,14 @@ interface FolderRow {
   tooltip: string;
   /** When true, the row renders with the indented "child" treatment. */
   child?: boolean;
+  /**
+   * Optional Tailwind text color class for the icon when the row is NOT
+   * active. Lets us color each folder distinctly (Pre-sales = sparkle yellow,
+   * Resolved = green, Spam = red) instead of every icon being the same brand
+   * red, which makes scanning the sidebar much faster. Defaults to
+   * "text-brand" for parity with the original look.
+   */
+  iconAccent?: string;
 }
 
 // ── Section A: pinned/primary folders shown at the very top ────────────────
@@ -82,6 +90,7 @@ const PRIMARY: FolderRow[] = [
     icon: Sparkles,
     tooltip:
       "Buyer questions before a purchase. Higher priority — these often convert when answered fast.",
+    iconAccent: "text-amber-500",
   },
   {
     key: "my_tickets",
@@ -89,6 +98,7 @@ const PRIMARY: FolderRow[] = [
     icon: User,
     tooltip:
       "Tickets where YOU are the assigned owner. You picked these up or they were assigned to you specifically — your queue.",
+    iconAccent: "text-violet-500",
   },
 ];
 
@@ -99,6 +109,7 @@ const ALL_PARENT: FolderRow = {
   icon: ListChecks,
   tooltip:
     "Every active ticket across the team, regardless of assignee or status. The New / To Do / Waiting rows below filter this view by triage status.",
+  iconAccent: "text-sky-500",
 };
 // Children of "All Tickets". Rendered as indented plain-text rows with no
 // icon and a right-aligned count, matching eDesk exactly. The folder icons
@@ -134,6 +145,7 @@ const PINNED_TAGS: FolderRow[] = [
     icon: Ban,
     tooltip:
       "Tickets routed here by any filter whose action is 'Move to Cancel Requests'. These are hidden from All Tickets / New / To Do / Waiting so they don't dilute the main inbox — handle them fast to avoid forced cancellations.",
+    iconAccent: "text-rose-500",
   },
 ];
 
@@ -146,6 +158,7 @@ const TAGS_GROUP: FolderRow[] = [
     tooltip:
       "Hidden until a chosen wake-up time, then reappear in their original folder.",
     child: true,
+    iconAccent: "text-indigo-500",
   },
   {
     key: "resolved",
@@ -154,6 +167,7 @@ const TAGS_GROUP: FolderRow[] = [
     tooltip:
       "Closed conversations. Tickets land here when an agent marks them resolved or when an outbound reply was the last word in the thread.",
     child: true,
+    iconAccent: "text-emerald-500",
   },
   {
     key: "unassigned",
@@ -162,6 +176,7 @@ const TAGS_GROUP: FolderRow[] = [
     tooltip:
       "Active tickets with no owner. Pick one up by assigning yourself.",
     child: true,
+    iconAccent: "text-zinc-400",
   },
   {
     key: "mentioned",
@@ -170,6 +185,7 @@ const TAGS_GROUP: FolderRow[] = [
     tooltip:
       "Tickets where another agent typed @your-handle in an internal note. Use this to follow conversations you've been pulled into without being the assignee.",
     child: true,
+    iconAccent: "text-violet-500",
   },
   {
     key: "favorites",
@@ -178,6 +194,7 @@ const TAGS_GROUP: FolderRow[] = [
     tooltip:
       "Tickets any agent has starred from the per-ticket header bar. Team-wide — useful for keeping VIP buyers, escalations, or weird edge cases handy without changing their folder.",
     child: true,
+    iconAccent: "text-amber-400",
   },
   {
     key: "spam",
@@ -186,6 +203,7 @@ const TAGS_GROUP: FolderRow[] = [
     tooltip:
       "Marked as spam by an agent or a filter. Hidden from the main inbox.",
     child: true,
+    iconAccent: "text-red-500",
   },
   {
     key: "archived",
@@ -194,6 +212,7 @@ const TAGS_GROUP: FolderRow[] = [
     tooltip:
       "Manually archived or auto-archived by a filter (e.g. shipping confirmations). Stored permanently — never deleted.",
     child: true,
+    iconAccent: "text-slate-400",
   },
 ];
 
@@ -276,21 +295,32 @@ export function FolderSidebar({
           <Tags className="h-3 w-3" /> Channel
         </div>
         <div className="grid grid-cols-3 gap-1 text-[11px]">
-          {(["ALL", "TPP_EBAY", "TT_EBAY"] as const).map((ch) => (
-            <button
-              key={ch}
-              type="button"
-              onClick={() => onChannelChange(ch)}
-              className={cn(
-                "rounded-md border px-1.5 py-1 font-medium transition-colors cursor-pointer",
-                channelFilter === ch
-                  ? "border-brand/40 bg-brand-muted text-brand"
-                  : "border-hairline bg-surface text-muted-foreground hover:bg-surface-2 hover:text-foreground",
-              )}
-            >
-              {ch === "ALL" ? "All" : ch === "TPP_EBAY" ? "TPP" : "TT"}
-            </button>
-          ))}
+          {(["ALL", "TPP_EBAY", "TT_EBAY"] as const).map((ch) => {
+            // Match the table's channel column color language so muscle
+            // memory transfers between sidebar and grid: TPP = violet,
+            // TT = emerald, ALL stays brand.
+            const activeCls =
+              ch === "TPP_EBAY"
+                ? "border-violet-500/40 bg-violet-500/15 text-violet-700 dark:text-violet-300"
+                : ch === "TT_EBAY"
+                  ? "border-emerald-500/40 bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
+                  : "border-brand/40 bg-brand-muted text-brand";
+            return (
+              <button
+                key={ch}
+                type="button"
+                onClick={() => onChannelChange(ch)}
+                className={cn(
+                  "rounded-md border px-1.5 py-1 font-medium transition-colors cursor-pointer",
+                  channelFilter === ch
+                    ? activeCls
+                    : "border-hairline bg-surface text-muted-foreground hover:bg-surface-2 hover:text-foreground",
+                )}
+              >
+                {ch === "ALL" ? "All" : ch === "TPP_EBAY" ? "TPP" : "TT"}
+              </button>
+            );
+          })}
         </div>
       </div>
 
@@ -380,7 +410,7 @@ export function FolderSidebar({
           className="flex items-center gap-2 rounded-md px-2 py-1.5 text-foreground transition-colors hover:bg-surface-2"
           title="Manage inbox rules — auto-archive, auto-tag, etc."
         >
-          <FilterIcon className="h-3.5 w-3.5 shrink-0 text-brand" />
+          <FilterIcon className="h-3.5 w-3.5 shrink-0 text-violet-500" />
           <span>Filters</span>
         </Link>
         <Link
@@ -388,7 +418,7 @@ export function FolderSidebar({
           className="flex items-center gap-2 rounded-md px-2 py-1.5 text-foreground transition-colors hover:bg-surface-2"
           title="Your agent profile — name, handle, avatar, signature."
         >
-          <UserCircle2 className="h-3.5 w-3.5 shrink-0 text-brand" />
+          <UserCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-500" />
           <span>My Profile</span>
         </Link>
         {isAdmin ? (
@@ -437,7 +467,18 @@ function FolderItem({ row, active, count, onSelect }: FolderItemProps) {
             : "text-foreground hover:bg-surface-2",
         )}
       >
-        {Icon ? <Icon className="h-3.5 w-3.5 shrink-0 text-brand" /> : null}
+        {Icon ? (
+          <Icon
+            className={cn(
+              "h-3.5 w-3.5 shrink-0",
+              // When active, force brand color so the icon visually merges
+              // with the brand-tinted active row. When inactive, fall back
+              // to per-row accent (so Resolved is green, Spam is red, etc.)
+              // and finally text-brand if no accent was specified.
+              active ? "text-brand" : (row.iconAccent ?? "text-brand"),
+            )}
+          />
+        ) : null}
         <span className="flex-1 truncate">{row.label}</span>
         {count > 0 ? (
           isPlainChild ? (
