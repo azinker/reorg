@@ -236,6 +236,34 @@ interface InlineImage {
 }
 
 /**
+ * eBay's `i.ebayimg.com` URLs encode an image size in the path. The
+ * `previewImageContN` blocks in a digest envelope embed the SMALL
+ * thumbnail variant (`s-l64` / `$_0.JPG` / `$_1.JPG`), which is what
+ * makes our lightbox look like a postage stamp instead of the
+ * eBay-native full-size view.
+ *
+ * We can't ask eBay for a size token; instead we rewrite the URL to
+ * the largest variant we know they serve. Two encoding families exist:
+ *
+ *   1. Modern: `…/s-l{N}.jpg`  where N ∈ {64, 96, 140, 300, 500, 800, 1600}
+ *   2. Legacy: `…/$_{N}.JPG`   where N ∈ {0, 1, 3, 10, 27, 35, 57}
+ *      (Higher N == bigger image; 57 is the typical full-frame variant
+ *       eBay uses for its own Messages lightbox.)
+ *
+ * Anything else (non-eBay CDN, no size token) returns the input
+ * unchanged so we don't break other media providers.
+ */
+function upgradeEbayImageUrl(url: string): string {
+  if (!url || !url.includes("ebayimg.com")) return url;
+  // Modern s-l{N} → s-l1600
+  const modern = url.replace(/\/s-l\d{2,4}(\.[a-z]+)/i, "/s-l1600$1");
+  if (modern !== url) return modern;
+  // Legacy $_{N}.JPG → $_57.JPG
+  const legacy = url.replace(/\/\$_\d+\.([a-z]+)/i, "/$_57.$1");
+  return legacy;
+}
+
+/**
  * eBay's media payloads are heterogeneous (REST attachments, Trading-API
  * inline base64, and our own outbound envelope). Walk the structure and
  * pull anything that looks like an image. Fail silently on weird shapes —
@@ -337,6 +365,16 @@ export function ThreadView({
     setLightbox((cur) =>
       cur
         ? { ...cur, index: (cur.index - 1 + cur.images.length) % cur.images.length }
+        : cur,
+    );
+  }, []);
+  const lightboxSelect = useCallback((next: number) => {
+    setLightbox((cur) =>
+      cur
+        ? {
+            ...cur,
+            index: Math.max(0, Math.min(next, cur.images.length - 1)),
+          }
         : cur,
     );
   }, []);
@@ -591,6 +629,7 @@ export function ThreadView({
           onClose={closeLightbox}
           onNext={lightboxNext}
           onPrev={lightboxPrev}
+          onSelect={lightboxSelect}
         />
       )}
     </div>
@@ -605,6 +644,7 @@ interface LightboxProps {
   onClose: () => void;
   onNext: () => void;
   onPrev: () => void;
+  onSelect: (next: number) => void;
 }
 
 /**
@@ -618,20 +658,34 @@ interface LightboxProps {
  * since the buyer-uploaded eBay images are reasonably small (<1MB) and
  * agents need to actually read part numbers / damage detail off them.
  */
-function Lightbox({ images, index, onClose, onNext, onPrev }: LightboxProps) {
+function Lightbox({
+  images,
+  index,
+  onClose,
+  onNext,
+  onPrev,
+  onSelect,
+}: LightboxProps) {
   const current = images[index];
+  // Resolved at the top so the entire component can lean on the same
+  // URL — main render, download button, ARIA labels — without each call
+  // site having to remember to upgrade. `current.url` from extraction
+  // is the small `s-l64` / `$_0` thumbnail; we want eBay's largest
+  // variant for the main view (matches eBay's own Messages lightbox).
+  const fullUrl = current ? upgradeEbayImageUrl(current.url) : "";
+  // Hold off on declaring `multi` until we know `current` exists so the
+  // early-return below stays the only null guard.
   if (!current) return null;
   const multi = images.length > 1;
 
   // Force a download via a synthetic anchor so the browser saves the
   // file rather than navigating to it (the eBayimg URLs serve with
-  // Content-Disposition: inline).
+  // Content-Disposition: inline). We download the full-size variant —
+  // the thumbnail URL is only useful for the inline preview / strip.
   const handleDownload = () => {
     const a = document.createElement("a");
-    a.href = current.url;
-    // Try to extract a sensible filename from the URL path; fall back
-    // to a generic stamp.
-    const last = current.url.split("/").pop()?.split("?")[0] ?? "";
+    a.href = fullUrl;
+    const last = fullUrl.split("/").pop()?.split("?")[0] ?? "";
     a.download = last && /\.[a-z0-9]{2,5}$/i.test(last) ? last : `image-${index + 1}.jpg`;
     a.target = "_blank";
     a.rel = "noopener noreferrer";
@@ -705,19 +759,61 @@ function Lightbox({ images, index, onClose, onNext, onPrev }: LightboxProps) {
       )}
 
       {/* Image — clicking the image itself does NOT close (so agents can
-          interact with it). Click the backdrop to close. */}
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img
-        src={current.url}
-        alt={`Attachment ${index + 1} of ${images.length}`}
+          interact with it). Click the backdrop to close. We render the
+          upgraded full-size variant; the inline strip uses the small
+          thumbnail. Reserve room at the bottom (pb-32 in the wrapper)
+          so the filmstrip never overlaps the photo. */}
+      <div
+        className="flex h-full w-full flex-col items-center justify-center gap-4 px-4 pb-32 pt-16"
         onClick={(e) => e.stopPropagation()}
-        className="max-h-[88vh] max-w-[90vw] cursor-default rounded shadow-2xl"
-      />
+      >
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={fullUrl}
+          alt={`Attachment ${index + 1} of ${images.length}`}
+          className="max-h-full max-w-full cursor-default rounded object-contain shadow-2xl"
+        />
+      </div>
 
       {multi && (
-        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 rounded-full bg-black/40 px-3 py-1 text-xs font-medium text-white tabular-nums">
-          {index + 1} / {images.length}
-        </div>
+        <>
+          {/* Filmstrip — matches eBay's own message viewer. Shows up to
+              all thumbs in a horizontally-scrollable row; the active
+              one gets a bright ring so the agent can orient quickly. */}
+          <div
+            className="absolute bottom-12 left-1/2 max-w-[90vw] -translate-x-1/2"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex max-w-full gap-2 overflow-x-auto rounded-lg bg-black/40 p-2 backdrop-blur-sm">
+              {images.map((img, i) => (
+                <button
+                  key={`${img.url}-${i}`}
+                  type="button"
+                  onClick={() => onSelect(i)}
+                  className={cn(
+                    "h-14 w-14 flex-shrink-0 cursor-pointer overflow-hidden rounded transition-all",
+                    i === index
+                      ? "ring-2 ring-white ring-offset-2 ring-offset-black/40"
+                      : "opacity-60 hover:opacity-100",
+                  )}
+                  title={`Image ${i + 1}`}
+                  aria-label={`View image ${i + 1}`}
+                  aria-current={i === index ? "true" : undefined}
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={img.thumb ?? img.url}
+                    alt={`Thumbnail ${i + 1}`}
+                    className="h-full w-full object-cover"
+                  />
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="absolute bottom-4 left-1/2 -translate-x-1/2 rounded-full bg-black/40 px-3 py-1 text-xs font-medium text-white tabular-nums">
+            {index + 1} / {images.length}
+          </div>
+        </>
       )}
     </div>
   );
