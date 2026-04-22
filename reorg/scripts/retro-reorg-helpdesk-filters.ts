@@ -329,9 +329,10 @@ async function processTicket(
     if (fromEbay.isFromEbay) {
       // Latest-wins for the systemMessageType chip — overwrite as we walk.
       nextSystemType = fromEbay.systemMessageType;
-      if (nextType !== HelpdeskTicketType.CANCELLATION) {
-        nextType = HelpdeskTicketType.SYSTEM;
-      }
+      // Inside the loop we only ever tag SYSTEM. The post-loop block below
+      // promotes to CANCELLATION when applicable, so the cancellation case
+      // is handled in one place rather than guarded here per-iteration.
+      nextType = HelpdeskTicketType.SYSTEM;
     }
   }
   if (isCancellation) {

@@ -49,6 +49,7 @@ const TYPE_LABELS: Record<HelpdeskTicketType, string> = {
   REFUND: "Refund",
   SHIPPING_QUERY: "Shipping Query",
   CANCELLATION: "Cancellation",
+  SYSTEM: "System",
   OTHER: "Other",
 };
 
