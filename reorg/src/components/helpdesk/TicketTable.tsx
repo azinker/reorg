@@ -27,7 +27,9 @@ import {
 import {
   ArrowDownAZ,
   ArrowUpAZ,
+  Check,
   CheckSquare,
+  Copy,
   Eye,
   Flag,
   Mail,
@@ -179,6 +181,95 @@ function computeTimeLeft(t: HelpdeskTicketSummary, now: number): TimeLeftResult 
   return { remainingMs: remaining, pct, label: `${remM}m` };
 }
 
+// ─── Copy button ───────────────────────────────────────────────────────────
+
+/**
+ * Tiny inline copy-to-clipboard button. Used next to order numbers (and
+ * other identifiers) in the table so an agent can grab the value without
+ * opening the ticket. Stops click propagation so clicking it doesn't
+ * also trigger row-select.
+ */
+function CopyInlineButton({
+  value,
+  label,
+}: {
+  value: string;
+  label?: string;
+}) {
+  const [copied, setCopied] = useState(false);
+  const timerRef = useRef<number | null>(null);
+  useEffect(
+    () => () => {
+      if (timerRef.current != null) window.clearTimeout(timerRef.current);
+    },
+    [],
+  );
+  function onClick(e: React.MouseEvent) {
+    e.stopPropagation();
+    e.preventDefault();
+    void navigator.clipboard
+      .writeText(value)
+      .then(() => {
+        setCopied(true);
+        if (timerRef.current != null) window.clearTimeout(timerRef.current);
+        timerRef.current = window.setTimeout(() => setCopied(false), 1200);
+      })
+      .catch(() => {
+        // Clipboard blocked — silently fail; the value is visible inline.
+      });
+  }
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground/70 transition-colors hover:bg-surface-2 hover:text-foreground cursor-pointer"
+      title={copied ? "Copied!" : (label ?? `Copy ${value}`)}
+      aria-label={label ?? `Copy ${value}`}
+    >
+      {copied ? (
+        <Check className="h-3 w-3 text-emerald-500" />
+      ) : (
+        <Copy className="h-3 w-3" />
+      )}
+    </button>
+  );
+}
+
+// ─── Column-width persistence (per agent, per browser via localStorage) ────
+
+const COL_WIDTHS_STORAGE_KEY = "reorg.helpdesk.col-widths.v1";
+const MIN_COL_PX = 60;
+const MAX_COL_PX = 800;
+
+function loadColumnWidths(): Partial<Record<ColumnKey, number>> {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = window.localStorage.getItem(COL_WIDTHS_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return {};
+    const out: Partial<Record<ColumnKey, number>> = {};
+    for (const k of KNOWN_COLUMN_KEYS) {
+      const v = (parsed as Record<string, unknown>)[k];
+      if (typeof v === "number" && Number.isFinite(v)) {
+        out[k] = Math.max(MIN_COL_PX, Math.min(MAX_COL_PX, v));
+      }
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+function saveColumnWidths(widths: Partial<Record<ColumnKey, number>>): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(COL_WIDTHS_STORAGE_KEY, JSON.stringify(widths));
+  } catch {
+    // Quota / disabled storage — fail silently.
+  }
+}
+
 // ─── Format helpers ────────────────────────────────────────────────────────
 
 function formatTime12h(date: string | null): string {
@@ -324,6 +415,26 @@ export function TicketTable({
     }
   }, []);
 
+  // ── Column widths (per agent, persisted via localStorage) ────────────────
+  // We store overrides in a partial map keyed on column key. Any column
+  // without an explicit width falls back to its default in COLUMN_DEFS.
+  const [colWidths, setColWidths] = useState<Partial<Record<ColumnKey, number>>>(
+    () => ({}),
+  );
+  useEffect(() => {
+    setColWidths(loadColumnWidths());
+  }, []);
+  const updateColWidth = useCallback((key: ColumnKey, width: number) => {
+    setColWidths((prev) => {
+      const next = {
+        ...prev,
+        [key]: Math.max(MIN_COL_PX, Math.min(MAX_COL_PX, Math.round(width))),
+      };
+      saveColumnWidths(next);
+      return next;
+    });
+  }, []);
+
   // ── Sort state ────────────────────────────────────────────────────────────
   const [sort, setSort] = useState<SortState>({ key: null, dir: "asc" });
 
@@ -393,10 +504,15 @@ export function TicketTable({
     parts.push("28px"); // important flag column (always-on indicator slot)
     for (const k of columns) {
       const def = COLUMN_DEFS[k];
-      parts.push(def.width ?? "minmax(200px, 1fr)");
+      const override = colWidths[k];
+      if (typeof override === "number") {
+        parts.push(`${override}px`);
+      } else {
+        parts.push(def.width ?? "minmax(200px, 1fr)");
+      }
     }
     return parts.join(" ");
-  }, [columns, showSelection]);
+  }, [columns, showSelection, colWidths]);
 
   return (
     <div className="flex h-full flex-col">
@@ -439,29 +555,19 @@ export function TicketTable({
           const def = COLUMN_DEFS[k];
           const isSorted = sort.key === k;
           return (
-            <button
+            <ColumnHeader
               key={k}
-              type="button"
-              onClick={() => toggleSort(k)}
-              disabled={!def.sortable}
-              className={cn(
-                "flex items-center gap-1 px-2 text-left",
-                def.align === "right" && "justify-end text-right",
-                def.sortable
-                  ? "cursor-pointer hover:text-foreground"
-                  : "cursor-default",
-                isSorted && "text-foreground",
-              )}
-              title={def.sortable ? `Sort by ${def.label}` : undefined}
-            >
-              <span className="truncate">{def.label}</span>
-              {isSorted &&
-                (sort.dir === "asc" ? (
-                  <ArrowUpAZ className="h-3 w-3" />
-                ) : (
-                  <ArrowDownAZ className="h-3 w-3" />
-                ))}
-            </button>
+              columnKey={k}
+              label={def.label}
+              align={def.align}
+              sortable={def.sortable}
+              isSorted={isSorted}
+              sortDir={sort.dir}
+              onSort={() => toggleSort(k)}
+              currentWidth={colWidths[k]}
+              defaultWidth={def.width}
+              onResize={(w) => updateColWidth(k, w)}
+            />
           );
         })}
       </div>
@@ -506,6 +612,130 @@ export function TicketTable({
       )}
     </div>
   );
+}
+
+// ─── Column header (clickable label + drag-to-resize handle) ──────────────
+
+interface ColumnHeaderProps {
+  columnKey: ColumnKey;
+  label: string;
+  align?: "left" | "right";
+  sortable: boolean;
+  isSorted: boolean;
+  sortDir: SortDir;
+  onSort: () => void;
+  currentWidth: number | undefined;
+  defaultWidth: string | undefined;
+  onResize: (newWidth: number) => void;
+}
+
+function ColumnHeader({
+  columnKey,
+  label,
+  align,
+  sortable,
+  isSorted,
+  sortDir,
+  onSort,
+  currentWidth,
+  defaultWidth,
+  onResize,
+}: ColumnHeaderProps) {
+  const headerRef = useRef<HTMLDivElement | null>(null);
+  const dragStateRef = useRef<{
+    startX: number;
+    startWidth: number;
+  } | null>(null);
+
+  function startResize(e: React.MouseEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    // Snapshot starting width from the actual rendered cell so we resize
+    // smoothly even when the column is currently using its default
+    // (string) width like "84px" or "minmax(...)".
+    const rect = headerRef.current?.getBoundingClientRect();
+    const startWidth =
+      typeof currentWidth === "number"
+        ? currentWidth
+        : rect
+          ? rect.width
+          : parsePxWidth(defaultWidth) ?? 160;
+    dragStateRef.current = { startX: e.clientX, startWidth };
+
+    function onMouseMove(ev: MouseEvent) {
+      const ds = dragStateRef.current;
+      if (!ds) return;
+      const delta = ev.clientX - ds.startX;
+      onResize(ds.startWidth + delta);
+    }
+    function onMouseUp() {
+      dragStateRef.current = null;
+      window.removeEventListener("mousemove", onMouseMove);
+      window.removeEventListener("mouseup", onMouseUp);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    }
+    window.addEventListener("mousemove", onMouseMove);
+    window.addEventListener("mouseup", onMouseUp);
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+  }
+
+  return (
+    <div
+      ref={headerRef}
+      className="relative flex items-center"
+      data-col={columnKey}
+    >
+      <button
+        type="button"
+        onClick={onSort}
+        disabled={!sortable}
+        className={cn(
+          "flex min-w-0 flex-1 items-center gap-1 px-2 text-left",
+          align === "right" && "justify-end text-right",
+          sortable
+            ? "cursor-pointer hover:text-foreground"
+            : "cursor-default",
+          isSorted && "text-foreground",
+        )}
+        title={sortable ? `Sort by ${label}` : undefined}
+      >
+        <span className="truncate">{label}</span>
+        {isSorted &&
+          (sortDir === "asc" ? (
+            <ArrowUpAZ className="h-3 w-3" />
+          ) : (
+            <ArrowDownAZ className="h-3 w-3" />
+          ))}
+      </button>
+      {/* Resize handle — hugs the right edge, full row height. */}
+      <span
+        role="separator"
+        aria-orientation="vertical"
+        aria-label={`Resize ${label} column`}
+        onMouseDown={startResize}
+        onClick={(e) => e.stopPropagation()}
+        onDoubleClick={(e) => {
+          // Double-click resets to the column default. We mirror this by
+          // sending a special width matching the default; if the default
+          // is flex/auto, we fall back to a reasonable 200px so the
+          // column doesn't collapse.
+          e.stopPropagation();
+          onResize(parsePxWidth(defaultWidth) ?? 200);
+        }}
+        className="absolute right-0 top-1/2 -translate-y-1/2 inline-block h-5 w-1.5 cursor-col-resize rounded-sm bg-transparent transition-colors hover:bg-brand/60"
+        title="Drag to resize · double-click to reset"
+      />
+    </div>
+  );
+}
+
+function parsePxWidth(width: string | undefined): number | null {
+  if (!width) return null;
+  const m = /^(\d+(?:\.\d+)?)px$/.exec(width.trim());
+  if (!m) return null;
+  return Number(m[1]);
 }
 
 // ─── Row ────────────────────────────────────────────────────────────────────
@@ -654,15 +884,6 @@ function Cell({ column, ticket: t, isUnread, timeLeft, otherViewers }: CellProps
               />
             )}
             {label}
-          </span>
-          {/* US flag indicator — eBay orders are 99% US so we always render. */}
-          <span
-            className="text-base leading-none"
-            role="img"
-            aria-label="United States"
-            title="Shipping to US"
-          >
-            🇺🇸
           </span>
         </div>
       );
@@ -852,16 +1073,31 @@ function Cell({ column, ticket: t, isUnread, timeLeft, otherViewers }: CellProps
 
     case "orderId":
       return (
-        <div className="px-2">
+        <div className="flex min-w-0 items-center gap-1.5 px-2">
           {t.ebayOrderNumber ? (
-            <span
-              className="block truncate font-mono text-sm text-foreground"
-              title={t.ebayOrderNumber}
-            >
-              {t.ebayOrderNumber}
-            </span>
+            <>
+              <span
+                className="min-w-0 truncate font-mono text-sm text-foreground"
+                title={t.ebayOrderNumber}
+              >
+                {t.ebayOrderNumber}
+              </span>
+              <CopyInlineButton
+                value={t.ebayOrderNumber}
+                label={`Copy order ${t.ebayOrderNumber}`}
+              />
+            </>
           ) : (
-            <span className="text-sm text-muted-foreground/60">—</span>
+            // No order number means this came in before any sale (pre-sales
+            // inquiry). The blank em-dash was confusing, so we surface a
+            // clear "PRE SALES" pill instead — matches the PRE_SALES type
+            // badge color so agents can spot it at a glance.
+            <span
+              className="inline-flex items-center rounded border border-sky-500/30 bg-sky-500/10 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider text-sky-700 dark:text-sky-300"
+              title="No order number — buyer messaged before purchase"
+            >
+              Pre Sales
+            </span>
           )}
         </div>
       );

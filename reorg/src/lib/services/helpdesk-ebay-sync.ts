@@ -491,6 +491,57 @@ async function reconcileMessages(args: ReconcileArgs): Promise<ReconcileResult> 
       }
     }
 
+    // Reverse adoption (item-only message → existing order ticket).
+    //
+    // Scenario from Adam's screenshots: we send the auto-responder on
+    // order 03-14496-19535 (creates `ord:...|buyer:...` ticket, then
+    // archived). The buyer later replies *without quoting the order
+    // number* — eBay routes it on the listing's contact-seller flow, so
+    // `extractedOrderNumber` is null and the buyer's body.itemID is the
+    // listing they bought. We'd compute `itm:<listing>|buyer:<buyer>`
+    // and create a brand-new ticket, leaving the AR archived and the
+    // reply orphaned in a different ticket.
+    //
+    // The fix: when threadKey is `itm:...|buyer:...` and we have no
+    // ticket at that key, look up MarketplaceSaleOrder for orders this
+    // buyer placed on this listing. If we find one, look for an
+    // existing `ord:<orderNumber>|buyer:...` ticket and adopt it. This
+    // merges the buyer's reply into the AR ticket and the inbound-
+    // status logic above will bounce it out of archive into TO_DO.
+    if (
+      !ticket &&
+      !extractedOrderNumber &&
+      itemId &&
+      buyerUserId &&
+      threadKey.startsWith("itm:")
+    ) {
+      const candidateOrders = await db.marketplaceSaleOrder.findMany({
+        where: {
+          platform: args.integration.platform,
+          buyerIdentifier: { equals: buyerUserId, mode: "insensitive" },
+          lines: { some: { platformItemId: itemId } },
+        },
+        select: { externalOrderId: true, orderDate: true },
+        orderBy: { orderDate: "desc" },
+        take: 5,
+      });
+      for (const order of candidateOrders) {
+        const orderTicketKey = `ord:${order.externalOrderId}|buyer:${buyerUserId.toLowerCase()}`;
+        const existingOrderTicket = await db.helpdeskTicket.findUnique({
+          where: {
+            integrationId_threadKey: {
+              integrationId: args.integration.id,
+              threadKey: orderTicketKey,
+            },
+          },
+        });
+        if (existingOrderTicket) {
+          ticket = existingOrderTicket;
+          break;
+        }
+      }
+    }
+
     const ticketUpdate: Prisma.HelpdeskTicketUpdateInput = {};
     if (direction === HelpdeskMessageDirection.INBOUND) {
       ticketUpdate.lastBuyerMessageAt = sentAt;

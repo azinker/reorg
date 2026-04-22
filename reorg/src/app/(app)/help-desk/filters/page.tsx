@@ -38,7 +38,6 @@ import type {
   FilterField,
   FilterOp,
 } from "@/lib/helpdesk/filters";
-import { HelpdeskGlobalSearch } from "@/components/helpdesk/HelpdeskGlobalSearch";
 
 interface FilterRow {
   id: string;
@@ -273,10 +272,10 @@ export default function HelpdeskFiltersPage() {
         >
           <ArrowLeft className="h-3 w-3" /> Back to Help Desk
         </Link>
-        {/* Global search — typing here jumps the agent back into the
-            inbox with the query pre-applied. Saves a click + breadcrumb
-            from every sub-page. */}
-        <HelpdeskGlobalSearch />
+        {/* Search field intentionally omitted on this sub-page — agents
+            should jump back to the main inbox to search the conversation
+            list. (Confused agents kept typing here looking for a filter
+            search; the field is now only on the main /help-desk view.) */}
       </div>
 
       <header className="mb-6 flex flex-wrap items-end justify-between gap-3">

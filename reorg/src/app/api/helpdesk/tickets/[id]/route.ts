@@ -78,6 +78,46 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
+  // ── Digest envelope dedupe.
+  //
+  // eBay's GetMyMessages returns each "message" as a giant HTML *digest*
+  // body that contains the entire conversation history embedded in
+  // <div id="UserInputtedText[N]"> blocks. The sync writer inserts the
+  // envelope as one HelpdeskMessage row AND then explodes each historical
+  // sub-message into its own row tagged with `rawData.digestSource =
+  // <envelope.ebayMessageId>`.
+  //
+  // Without filtering, the thread renders the envelope (the entire blob,
+  // which after SafeHtml strips quoted content collapses to "(No new
+  // message text — only quoted content from eBay.)") AND every sub-
+  // message — making each buyer turn appear two or three times.
+  //
+  // Strategy: any envelope row whose `ebayMessageId` is referenced as
+  // `rawData.digestSource` by another row on this ticket is redundant
+  // and gets hidden. This runs in pure JS over the already-loaded
+  // messages array — no extra DB roundtrip — and handles legacy data
+  // without a backfill since the test is data-driven.
+  const digestSourceIds = new Set<string>();
+  for (const m of ticket.messages) {
+    const raw = m.rawData as Record<string, unknown> | null;
+    const src =
+      raw && typeof raw["digestSource"] === "string"
+        ? (raw["digestSource"] as string)
+        : null;
+    if (src) digestSourceIds.add(src);
+  }
+  const visibleMessages = ticket.messages.filter((m) => {
+    const raw = m.rawData as Record<string, unknown> | null;
+    const isExplodedSub =
+      raw && typeof raw["digestSource"] === "string";
+    if (isExplodedSub) return true;
+    // Hide envelope rows whose explosions are already in the thread.
+    if (m.ebayMessageId && digestSourceIds.has(m.ebayMessageId)) {
+      return false;
+    }
+    return true;
+  });
+
   // Mark as read on detail open: clear unreadCount.
   if (ticket.unreadCount > 0) {
     await db.helpdeskTicket.update({
@@ -181,7 +221,7 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
       lastAgentMessageAt: ticket.lastAgentMessageAt,
       firstResponseAt: ticket.firstResponseAt,
       reopenCount: ticket.reopenCount,
-      messageCount: ticket.messages.length,
+      messageCount: visibleMessages.length,
       noteCount: ticket.notes.length,
       tags: ticket.tags.map((tt) => ({
         id: tt.tag.id,
@@ -190,7 +230,7 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
       })),
       createdAt: ticket.createdAt,
       updatedAt: ticket.updatedAt,
-      messages: ticket.messages,
+      messages: visibleMessages,
       notes: ticket.notes,
       pendingOutboundJobs: ticket.outboundJobs.map((job) => ({
         id: job.id,

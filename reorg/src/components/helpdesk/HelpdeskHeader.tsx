@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { usePathname, useRouter } from "next/navigation";
 import {
   LifeBuoy,
   RefreshCw,
@@ -75,6 +76,25 @@ export function HelpdeskHeader({
   const [settingsOpen, setSettingsOpen] = useState(false);
   const prefs = useHelpdeskPrefs();
   const safeMode = syncStatus?.flags.safeMode ?? true;
+  const router = useRouter();
+  const pathname = usePathname();
+
+  /**
+   * If the agent is on a sub-page (filters / profile / global-settings /
+   * dashboard / etc) and submits a search via Enter, we route them back
+   * to the main inbox with the query baked into the URL. The list view
+   * picks `?q=` up automatically and renders matching tickets.
+   */
+  function isOnInboxRoot(): boolean {
+    return pathname === "/help-desk" || pathname === "/help-desk/";
+  }
+  function routeToSearchResults(value: string) {
+    const trimmed = value.trim();
+    const target = trimmed
+      ? `/help-desk?q=${encodeURIComponent(trimmed)}`
+      : "/help-desk";
+    router.push(target);
+  }
 
   /**
    * Local mirror of the search input. Two reasons it lives here:
@@ -189,7 +209,10 @@ export function HelpdeskHeader({
         <div className="relative mx-auto">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <input
-            type="search"
+            // type="text" (NOT "search") — `type=search` triggers the browser's
+            // built-in clear (×) button, which collided with our custom one
+            // and produced a duplicate × in the field.
+            type="text"
             value={searchLocal}
             onChange={(e) => {
               const next = e.target.value;
@@ -198,6 +221,16 @@ export function HelpdeskHeader({
             }}
             onKeyDown={(e) => {
               if (e.key === "Enter") {
+                e.preventDefault();
+                // Submitting the search ALWAYS surfaces the agent in the
+                // inbox list view with results — even if they were
+                // currently reading a single ticket. Route first, then
+                // commit so the list mounts with the query already
+                // applied.
+                if (!isOnInboxRoot()) {
+                  routeToSearchResults(searchLocal);
+                  return;
+                }
                 commitNow(searchLocal);
               } else if (e.key === "Escape" && searchLocal.length > 0) {
                 setSearchLocal("");

@@ -50,7 +50,6 @@ import {
   Sparkles,
 } from "lucide-react";
 import type { HelpdeskSyncStatus } from "@/hooks/use-helpdesk";
-import { HelpdeskGlobalSearch } from "@/components/helpdesk/HelpdeskGlobalSearch";
 
 interface MeProfile {
   id: string;
@@ -224,7 +223,6 @@ export default function HelpdeskGlobalSettingsPage() {
         >
           <ArrowLeft className="h-3 w-3" /> Back to Help Desk
         </Link>
-        <HelpdeskGlobalSearch />
       </div>
 
       <header className="mb-6 flex items-start gap-3">

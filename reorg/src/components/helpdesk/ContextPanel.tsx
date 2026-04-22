@@ -549,6 +549,10 @@ function CustomerCard({
               >
                 {ticket.buyerUserId}
               </a>
+              <CopyButton
+                value={ticket.buyerUserId}
+                title="Copy eBay username"
+              />
             </p>
           ) : null}
           {phone ? (

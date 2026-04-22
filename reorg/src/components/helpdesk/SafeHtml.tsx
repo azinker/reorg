@@ -95,10 +95,20 @@ const PURIFY_CONFIG: PurifyConfig = {
 };
 
 /**
- * Hosts that serve eBay's marketing assets. Images/links pointing at these
+ * Hosts that serve eBay's *static template assets* — banner logos, button
+ * sprites, divider lines, social-icon strip, etc. Images pointing at these
  * are aggressively pruned during the post-sanitize pass.
+ *
+ * IMPORTANT: We deliberately do NOT match `i.ebayimg.com`. That host is
+ * eBay's user-content CDN — it serves both listing thumbnails AND
+ * buyer-uploaded message attachments (the photos a buyer attaches to a
+ * question or a return request). Stripping it here was visually nuking
+ * every customer-supplied image from inbound bubbles and was reported by
+ * Adam: "the message with the embedded images did not show up correctly
+ * on our help desk". User-content thumbnails stay; chrome goes.
  */
-const EBAY_CHROME_HOSTS = /\b(?:ebaystatic|ebayimg|ebay\.com\/img|i\.ebayimg|p\.ebaystatic)/i;
+const EBAY_CHROME_HOSTS =
+  /\b(?:ebaystatic\.com|p\.ebaystatic|pics\.ebaystatic|pages\.ebay\.com\/img|ir\.ebaystatic|q\.ebaystatic)/i;
 
 /**
  * Visible text from CTA buttons eBay attaches to every member-message email.
@@ -853,15 +863,19 @@ export function SafeHtml({ html, forceHtml, className }: SafeHtmlProps) {
   }
 
   // After DOMPurify + stripEbayChrome we may end up with literally nothing
-  // (e.g. a quoted-only "Re:" mail where the buyer added no new text). Show
-  // a friendly placeholder so the bubble isn't visually empty.
+  // (e.g. a quoted-only "Re:" mail where the buyer added no new text).
+  //
+  // Previously we rendered a verbose "(No new message text — only quoted
+  // content from eBay.)" italic placeholder here. Adam asked for that
+  // string to be removed: the typical case where it appeared was actually
+  // a digest *envelope* row, which we now suppress at the API layer (see
+  // tickets/[id]/route.ts → digestSourceIds). For the rare legitimate
+  // case of a truly empty body, we just return null — the parent bubble
+  // (header with sender + timestamp + any attachments) is enough context
+  // and looks intentional rather than apologetic.
   const trimmed = sanitised.trim();
   if (trimmed.length === 0) {
-    return (
-      <p className={`text-xs italic text-muted-foreground ${className ?? ""}`}>
-        (No new message text — only quoted content from eBay.)
-      </p>
-    );
+    return null;
   }
 
   return (
