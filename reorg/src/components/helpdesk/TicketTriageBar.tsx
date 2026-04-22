@@ -17,11 +17,13 @@
 import { useEffect, useRef, useState } from "react";
 import {
   AlertTriangle,
+  Archive,
   Clock,
   MoreHorizontal,
   Plus,
   Star,
   ChevronDown,
+  CircleCheck,
   Flag,
   UserPlus,
   Check,
@@ -92,6 +94,18 @@ export function TicketTriageBar({
 }: TicketTriageBarProps) {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Transient "just-succeeded" pulse keyed by action label. Drives the
+  // brief checkmark swap on the Archive / Resolve icons so the agent gets
+  // immediate visual confirmation that the click registered, then the
+  // button settles back into its normal state once the inbox refresh
+  // pulls in the new ticket flags. ~1.5s feels right — long enough to
+  // notice, short enough not to block a follow-up click.
+  const [justDone, setJustDone] = useState<string | null>(null);
+  useEffect(() => {
+    if (!justDone) return;
+    const t = setTimeout(() => setJustDone(null), 1500);
+    return () => clearTimeout(t);
+  }, [justDone]);
 
   // Live agent list (lazy — only fetched when the assign menu opens once).
   const [agents, setAgents] = useState<AgentOption[] | null>(null);
@@ -129,6 +143,7 @@ export function TicketTriageBar({
         };
         throw new Error(j.error?.message ?? `Failed (${res.status})`);
       }
+      setJustDone(label);
       onMutated();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Action failed");
@@ -199,6 +214,86 @@ export function TicketTriageBar({
         disabled={disabled}
         onPick={snooze}
       />
+
+      {/* Resolve — close the loop on a ticket with no further buyer action
+          expected. Toggles RESOLVED ↔ TO_DO (clicking again on a resolved
+          ticket reopens it). A buyer reply on a RESOLVED ticket bounces
+          it back to TO_DO via deriveStatusOnInbound, so this button is
+          safe even if the buyer ends up writing back. */}
+      {(() => {
+        const isResolved = ticket?.status === "RESOLVED";
+        const justResolved = justDone === "resolve";
+        return (
+          <IconButton
+            title={
+              isResolved
+                ? "Resolved — click to reopen as To Do"
+                : "Mark as Resolved (closes the conversation; buyer reply will bounce it back to To Do)"
+            }
+            disabled={disabled}
+            active={isResolved}
+            success={justResolved}
+            onClick={() =>
+              runBatch(
+                {
+                  action: "setStatus",
+                  status: isResolved ? "TO_DO" : "RESOLVED",
+                },
+                "resolve",
+              )
+            }
+          >
+            {justResolved ? (
+              <Check className="h-4 w-4 text-emerald-500" />
+            ) : (
+              <CircleCheck
+                className={cn(
+                  "h-4 w-4",
+                  isResolved && "text-emerald-500",
+                )}
+              />
+            )}
+          </IconButton>
+        );
+      })()}
+
+      {/* Archive — agent decision that this ticket will never need a
+          response (auto-responder confirmation, junk-but-not-spam, eBay
+          system noise). Toggles isArchived. As with Resolve, a buyer
+          reply will bounce it back out to To Do automatically. */}
+      {(() => {
+        const isArchived = !!ticket?.isArchived;
+        const justArchived = justDone === "archive";
+        return (
+          <IconButton
+            title={
+              isArchived
+                ? "Archived — click to unarchive"
+                : "Archive (moves to Archived; buyer reply will bounce it back to To Do)"
+            }
+            disabled={disabled}
+            active={isArchived}
+            success={justArchived}
+            onClick={() =>
+              runBatch(
+                { action: "archive", isArchived: !isArchived },
+                "archive",
+              )
+            }
+          >
+            {justArchived ? (
+              <Check className="h-4 w-4 text-emerald-500" />
+            ) : (
+              <Archive
+                className={cn(
+                  "h-4 w-4",
+                  isArchived && "text-amber-500",
+                )}
+              />
+            )}
+          </IconButton>
+        );
+      })()}
 
       <IconButton
         title="Mark as spam"
@@ -616,12 +711,20 @@ function AgentAvatar({ name, url }: { name: string; url: string | null }) {
 function IconButton({
   title,
   active,
+  success,
   disabled,
   onClick,
   children,
 }: {
   title: string;
   active?: boolean;
+  /**
+   * When true, the button paints a brief green-tinted ring to confirm the
+   * last action landed. The parent owns the timing (clears after ~1.5s).
+   * Independent from `active` so the "success" pulse can fire even on a
+   * toggle-off (un-archive, un-resolve) where `active` switches false.
+   */
+  success?: boolean;
   disabled?: boolean;
   onClick: () => void;
   children: React.ReactNode;
@@ -636,6 +739,8 @@ function IconButton({
       className={cn(
         "inline-flex h-8 w-8 items-center justify-center rounded-md border border-hairline bg-surface text-muted-foreground transition-colors hover:bg-surface-2 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40 cursor-pointer",
         active && "bg-surface-2 text-foreground",
+        success &&
+          "border-emerald-500/60 bg-emerald-500/15 text-emerald-600 ring-2 ring-emerald-500/30 dark:text-emerald-300",
       )}
     >
       {children}
