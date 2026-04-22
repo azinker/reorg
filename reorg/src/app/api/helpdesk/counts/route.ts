@@ -14,6 +14,7 @@ const FOLDERS: HelpdeskFolderKey[] = [
   "all_to_do",
   "all_waiting",
   "buyer_cancellation",
+  "from_ebay",
   "snoozed",
   "resolved",
   "unassigned",

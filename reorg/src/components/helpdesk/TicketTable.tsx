@@ -912,8 +912,9 @@ function Cell({ column, ticket: t, isUnread, timeLeft, otherViewers }: CellProps
         : username
           ? `No first/last name on file for ${username}`
           : "Unknown buyer";
+      const copyValue = realName ?? username ?? "";
       return (
-        <div className="flex min-w-0 items-center gap-2 px-2">
+        <div className="flex min-w-0 items-center gap-1.5 px-2">
           {isUnread && (
             <span
               aria-hidden
@@ -930,6 +931,12 @@ function Cell({ column, ticket: t, isUnread, timeLeft, otherViewers }: CellProps
           >
             {display}
           </span>
+          {copyValue ? (
+            <CopyInlineButton
+              value={copyValue}
+              label={`Copy ${realName ? "name" : "username"} ${copyValue}`}
+            />
+          ) : null}
         </div>
       );
     }
@@ -1116,14 +1123,20 @@ function Cell({ column, ticket: t, isUnread, timeLeft, otherViewers }: CellProps
 
     case "ebayUsername":
       return (
-        <div className="px-2">
+        <div className="flex min-w-0 items-center gap-1.5 px-2">
           {t.buyerUserId ? (
-            <span
-              className="block truncate text-sm text-muted-foreground"
-              title={t.buyerUserId}
-            >
-              {t.buyerUserId}
-            </span>
+            <>
+              <span
+                className="min-w-0 truncate text-sm text-muted-foreground"
+                title={t.buyerUserId}
+              >
+                {t.buyerUserId}
+              </span>
+              <CopyInlineButton
+                value={t.buyerUserId}
+                label={`Copy username ${t.buyerUserId}`}
+              />
+            </>
           ) : (
             <span className="text-sm text-muted-foreground/60">—</span>
           )}

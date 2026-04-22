@@ -54,6 +54,7 @@ export type HelpdeskTicketType =
   | "REFUND"
   | "SHIPPING_QUERY"
   | "CANCELLATION"
+  | "SYSTEM"
   | "OTHER";
 
 export type HelpdeskFolderKey =
@@ -64,6 +65,7 @@ export type HelpdeskFolderKey =
   | "all_to_do"
   | "all_waiting"
   | "buyer_cancellation"
+  | "from_ebay"
   | "snoozed"
   | "resolved"
   | "unassigned"
@@ -104,6 +106,13 @@ export interface HelpdeskTicketSummary {
   kind: "PRE_SALES" | "POST_SALES";
   type: HelpdeskTicketType;
   typeOverridden: boolean;
+  /**
+   * Sub-type for SYSTEM tickets — see SYSTEM_MESSAGE_TYPES in
+   * `lib/helpdesk/from-ebay-detect.ts`. Null on non-SYSTEM tickets and on
+   * SYSTEM tickets where detection couldn't pin a sub-type. Powers the
+   * filter chips on the From eBay folder.
+   */
+  systemMessageType: string | null;
   status: "NEW" | "TO_DO" | "WAITING" | "RESOLVED" | "SPAM" | "ARCHIVED";
   isSpam: boolean;
   isArchived: boolean;
@@ -222,6 +231,12 @@ interface UseHelpdeskArgs {
   folder: HelpdeskFolderKey;
   channel?: "TPP_EBAY" | "TT_EBAY";
   search?: string;
+  /**
+   * Active From-eBay event-type chip (e.g. "RETURN_APPROVED"). Only honored
+   * by the API on `folder === "from_ebay"`; passing it on other folders is a
+   * no-op so URL-driven state can remain in sync without extra guards.
+   */
+  systemMessageType?: string | null;
 }
 
 interface UseHelpdeskReturn {
@@ -281,12 +296,15 @@ function emptySnapshot(): InboxPageSnapshot {
 }
 
 export function useHelpdesk(args: UseHelpdeskArgs): UseHelpdeskReturn {
-  const { folder, channel, search } = args;
+  const { folder, channel, search, systemMessageType } = args;
 
   // Stable cache key that drives hydration on mount and on filter change.
+  // The systemMessageType chip is included so each chip selection on the
+  // From eBay folder gets its own cached page (otherwise switching chips
+  // would briefly flash stale ticket lists from a different chip).
   const filterKey = useMemo(
-    () => buildFilterKey({ folder, channel, search }),
-    [folder, channel, search],
+    () => buildFilterKey({ folder, channel, search, systemMessageType }),
+    [folder, channel, search, systemMessageType],
   );
 
   // Hydrate state synchronously from the module-level cache (if present) so
@@ -388,6 +406,9 @@ export function useHelpdesk(args: UseHelpdeskArgs): UseHelpdeskReturn {
         if (cursor) params.set("cursor", cursor);
         if (channel) params.set("channel", channel);
         if (search) params.set("search", search);
+        // Sub-filter chip is server-validated to apply only on from_ebay,
+        // so passing it on other folders is a no-op rather than an error.
+        if (systemMessageType) params.set("systemMessageType", systemMessageType);
 
         // Tickets is the only thing that depends on the current filter
         // (folder/channel/search/cursor). Counts and sync-status are global

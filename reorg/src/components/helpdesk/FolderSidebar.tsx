@@ -59,6 +59,7 @@ import {
   ChevronDown,
   ChevronRight,
   HelpCircle,
+  Inbox,
 } from "lucide-react";
 import type { HelpdeskFolderKey } from "@/hooks/use-helpdesk";
 
@@ -148,14 +149,31 @@ const ALL_CHILDREN: FolderRow[] = [
 ];
 
 // ── Section C: pinned tag-backed folder above the Tags drawer ──────────────
+// Cancel Requests is the parent; "From eBay" sits underneath it as an
+// indented child (same visual treatment as To Do / Waiting under All Tickets).
+// Both folders are now hardcoded, not user-filter-driven:
+//   - Cancel Requests is keyed off the BUYER_CANCELLATION_TAG_NAME tag, which
+//     the sync stamps automatically when `detectCancellationRequest` matches.
+//   - From eBay is keyed off `type=SYSTEM`, stamped by `detectFromEbay`.
 const PINNED_TAGS: FolderRow[] = [
   {
     key: "buyer_cancellation",
     label: "Cancel Requests",
     icon: Ban,
     tooltip:
-      "Tickets routed here by any filter whose action is 'Move to Cancel Requests'. These are hidden from All Tickets / New / To Do / Waiting so they don't dilute the main inbox — handle them fast to avoid forced cancellations.",
+      "Tickets where the buyer asked to cancel an order. Auto-routed by hardcoded sync logic (no user filter required). Hidden from All Tickets / To Do / Waiting so they don't dilute the main inbox — handle them fast to avoid forced cancellations.",
     iconAccent: "text-rose-500",
+  },
+  {
+    key: "from_ebay",
+    label: "From eBay",
+    icon: Inbox,
+    tooltip:
+      "Notifications eBay sent us itself — not buyer messages. Examples: Return Approved, Item Delivered, Buyer Shipped Item, Case Closed, We Sent Your Payout. Auto-routed by hardcoded sync logic. Use the chips above the table to filter by event type.",
+    child: true,
+    iconAccent: "text-sky-500",
+    helpDetail:
+      "Anything eBay's bookkeeping system sends us (NOT a buyer message) lands here automatically. The sync inspects the message's sender, subject, and body to stamp `type=SYSTEM` plus a sub-type like RETURN_APPROVED or ITEM_DELIVERED. From-eBay tickets are excluded from All Tickets / To Do / Waiting so the main inbox stays focused on buyer mail. Inside this folder, use the chips above the table to drill into a single event type.",
   },
 ];
 

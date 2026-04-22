@@ -158,7 +158,7 @@ function recordCall(args: {
   responseBytes: number;
 }): void {
   void recordNetworkTransferSample({
-    channel: "MARKETPLACE_INBOUND",
+    channel: "HELPDESK",
     label: `helpdesk_ebay / ${args.callName}`,
     bytesEstimate: args.requestBytes + args.responseBytes,
     integrationId: args.integrationId,

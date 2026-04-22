@@ -202,6 +202,7 @@ export const ALL_CHANNELS: NetworkTransferChannel[] = [
   "AUTO_RESPONDER",
   "DATABASE_IO",
   "WEBHOOK_INBOUND",
+  "HELPDESK",
   "OTHER",
 ];
 

@@ -62,6 +62,7 @@ const folderEnum = z.enum([
   "all_to_do",
   "all_waiting",
   "buyer_cancellation",
+  "from_ebay",
   "snoozed",
   "resolved",
   "unassigned",
@@ -77,6 +78,11 @@ const querySchema = z.object({
   search: z.string().trim().min(1).max(120).optional(),
   cursor: z.string().optional(),
   limit: z.coerce.number().int().min(1).max(100).default(50),
+  // Sub-filter chip on the From eBay folder. When set, narrows the
+  // resultset to tickets whose `systemMessageType` matches one of the
+  // tokens defined in `lib/helpdesk/from-ebay-detect.ts` (e.g.
+  // RETURN_APPROVED, ITEM_DELIVERED). Ignored on every other folder.
+  systemMessageType: z.string().trim().min(1).max(64).optional(),
 });
 
 export async function GET(request: NextRequest) {
@@ -94,7 +100,7 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  const { folder, channel, search, cursor, limit } = parsed.data;
+  const { folder, channel, search, cursor, limit, systemMessageType } = parsed.data;
   // When a global search is active we deliberately ignore the folder filter
   // so the agent can find resolved / spam / archived tickets too — this is
   // how eDesk behaves and matches user expectation ("search the whole
@@ -106,6 +112,12 @@ export async function GET(request: NextRequest) {
         ...buildFolderWhere(folder as HelpdeskFolderKey, { userId: session.user.id }),
       };
   if (channel) where.channel = channel as Platform;
+  // From-eBay sub-filter chip: only honored when the agent is actually
+  // viewing the from_ebay folder. Honoring it on other folders would let
+  // a stale URL parameter silently empty out a regular folder view.
+  if (systemMessageType && folder === "from_ebay") {
+    where.systemMessageType = systemMessageType;
+  }
 
   // Global search: STRICT mode — eBay Order ID OR buyer username, never both.
   // The shape resolution lives in `lib/helpdesk/search.ts` so it's unit-
@@ -188,6 +200,7 @@ export async function GET(request: NextRequest) {
       kind: t.kind,
       type: t.type,
       typeOverridden: t.typeOverridden,
+      systemMessageType: t.systemMessageType,
       status: t.status,
       isSpam: t.isSpam,
       isArchived: t.isArchived,

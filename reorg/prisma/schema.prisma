@@ -105,6 +105,7 @@ enum NetworkTransferChannel {
   AUTO_RESPONDER
   DATABASE_IO
   WEBHOOK_INBOUND
+  HELPDESK
   OTHER
 }
 
@@ -216,7 +217,14 @@ enum HelpdeskTicketType {
   NEGATIVE_FEEDBACK     // buyer left negative feedback or threatened to
   REFUND                // refund request
   SHIPPING_QUERY        // tracking / delivery / customs questions
-  CANCELLATION          // buyer wants to cancel
+  CANCELLATION          // buyer wants to cancel (active cancellation request)
+  /// Inbound notification sent by eBay itself (not a buyer). Examples:
+  /// "Return approved", "Item delivered", "Buyer shipped item",
+  /// "Your case is on hold", "We sent your payout", etc. These are routed
+  /// to the dedicated "From eBay" sub-folder under Cancel Requests and are
+  /// hidden from All Tickets / To Do / Waiting so the inbox is not buried
+  /// in eBay's own bookkeeping noise.
+  SYSTEM
   OTHER
 }
 
@@ -1114,6 +1122,12 @@ model HelpdeskTicket {
   /// Marks the row with a flag badge in the inbox. Doesn't change folder
   /// routing — purely a visual "look at this one" hint.
   isImportant        Boolean              @default(false)
+  /// Sub-classification for `type = SYSTEM` tickets (eBay-originated
+  /// notifications). Examples: "RETURN_APPROVED", "ITEM_DELIVERED",
+  /// "BUYER_SHIPPED", "CASE_CLOSED", "CASE_ON_HOLD", "PAYOUT_SENT", etc.
+  /// Powers the type-filter chips on the "From eBay" sub-folder so agents
+  /// can pivot quickly between event types. Null on non-SYSTEM tickets.
+  systemMessageType  String?
   archivedAt         DateTime?
   snoozedUntil       DateTime?
   snoozedById        String?
@@ -1154,6 +1168,7 @@ model HelpdeskTicket {
   @@index([isArchived, status])
   @@index([isFavorite])
   @@index([type])
+  @@index([systemMessageType])
   @@map("helpdesk_tickets")
 }
 

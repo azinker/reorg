@@ -26,6 +26,7 @@ import {
   HelpdeskMessageSource,
   HelpdeskTicketStatus,
   HelpdeskTicketKind,
+  HelpdeskTicketType,
   type HelpdeskFilter,
   type Integration,
   type Prisma,
@@ -39,6 +40,7 @@ import {
   type EbayMessageHeader,
 } from "@/lib/services/helpdesk-ebay";
 import { applyFilterAction, pickMatchingFilters } from "@/lib/helpdesk/filters";
+import { BUYER_CANCELLATION_TAG_NAME } from "@/lib/helpdesk/folders";
 import { helpdeskFlags } from "@/lib/helpdesk/flags";
 import {
   deriveStatusOnInbound,
@@ -46,6 +48,10 @@ import {
 } from "@/lib/helpdesk/status-routing";
 import { classifyMessageSource } from "@/lib/helpdesk/message-source";
 import { detectTicketType } from "@/lib/helpdesk/type-detect";
+import {
+  detectFromEbay,
+  detectCancellationRequest,
+} from "@/lib/helpdesk/from-ebay-detect";
 import {
   extractBuyerNameFromAutoResponderBody,
   resolveBuyerForDigest,
@@ -596,17 +602,59 @@ async function reconcileMessages(args: ReconcileArgs): Promise<ReconcileResult> 
       }
     }
 
-    // Auto-detect ticket type from this message (subject + body + eBay
-    // questionType). Only used on create OR when the existing row hasn't
-    // been overridden by an agent and is still on the default QUERY value.
-    const detectedType =
+    // ── Hardcoded From-eBay & Cancellation Request detection ──────────────
+    // These two detectors REPLACE three obsolete user-defined filters
+    // ("From eBay Messages", "A buyer wants to cancel an order", and the
+    // AR-only-archive filter — the third is handled further down right
+    // after the message insert). They run on every inbound message so:
+    //
+    //   1. Messages eBay sent us itself (Return Approved, Item Delivered,
+    //      "We sent your payout", etc.) get type=SYSTEM and a sub-type
+    //      stamped on `systemMessageType`. The folder layer hides them
+    //      from All Tickets / To Do / Waiting and routes them to the
+    //      dedicated "From eBay" sub-folder under Cancel Requests.
+    //
+    //   2. Cancellation requests get type=CANCELLATION and the reserved
+    //      `BUYER_CANCELLATION_TAG_NAME` tag — the same tag the
+    //      buyer_cancellation folder already keys off, so they appear in
+    //      Cancel Requests automatically.
+    //
+    // We deliberately scope detection to INBOUND messages: outbound mail
+    // we sent through reorG would never be classified as "from eBay" or
+    // a cancellation request.
+    const fromEbayResult =
       direction === HelpdeskMessageDirection.INBOUND
-        ? detectTicketType({
+        ? detectFromEbay({
+            sender: body.sender ?? null,
+            subject,
+            bodyText: body.text ?? null,
             ebayQuestionType: body.questionType ?? null,
+          })
+        : null;
+    const isCancellationRequest =
+      direction === HelpdeskMessageDirection.INBOUND
+        ? detectCancellationRequest({
+            sender: body.sender ?? null,
             subject,
             bodyText: body.text ?? null,
           })
-        : null;
+        : false;
+
+    // Auto-detect generic ticket type from this message (subject + body +
+    // eBay questionType). Skipped when From-eBay/Cancellation already
+    // pinned the type so we don't downgrade a SYSTEM/CANCELLATION ticket
+    // back to QUERY.
+    const detectedType: HelpdeskTicketType | null = isCancellationRequest
+      ? HelpdeskTicketType.CANCELLATION
+      : fromEbayResult?.isFromEbay
+        ? HelpdeskTicketType.SYSTEM
+        : direction === HelpdeskMessageDirection.INBOUND
+          ? detectTicketType({
+              ebayQuestionType: body.questionType ?? null,
+              subject,
+              bodyText: body.text ?? null,
+            })
+          : null;
 
     if (!ticket) {
       ticket = await db.helpdeskTicket.create({
@@ -622,6 +670,9 @@ async function reconcileMessages(args: ReconcileArgs): Promise<ReconcileResult> 
           subject,
           kind: isPreSales ? HelpdeskTicketKind.PRE_SALES : HelpdeskTicketKind.POST_SALES,
           ...(detectedType ? { type: detectedType } : {}),
+          ...(fromEbayResult?.isFromEbay && fromEbayResult.systemMessageType
+            ? { systemMessageType: fromEbayResult.systemMessageType }
+            : {}),
           // v2 folder semantics: every unanswered buyer message lives in
           // TO_DO. The legacy NEW value is preserved in the enum for
           // historical rows but new tickets never start there. Outbound-only
@@ -698,13 +749,29 @@ async function reconcileMessages(args: ReconcileArgs): Promise<ReconcileResult> 
       // later message reclassify the ticket (e.g. buyer's first message was
       // generic, second message says "I want to return this"). We never
       // overwrite a non-default type or an explicit override.
-      if (
-        detectedType &&
-        !ticket.typeOverridden &&
-        ticket.type === "QUERY" &&
-        detectedType !== "QUERY"
-      ) {
-        ticketUpdate.type = detectedType;
+      //
+      // Hardcoded SYSTEM/CANCELLATION detection is treated as authoritative:
+      // even if the ticket's current type was already upgraded to (say)
+      // RETURN_REQUEST by an earlier heuristic, an unmistakable eBay system
+      // notification or cancellation request lands the ticket in the right
+      // bucket. We still respect an explicit human override (typeOverridden).
+      if (detectedType && !ticket.typeOverridden) {
+        const isHardcodedDetection =
+          detectedType === HelpdeskTicketType.SYSTEM ||
+          detectedType === HelpdeskTicketType.CANCELLATION;
+        if (
+          isHardcodedDetection ||
+          (ticket.type === "QUERY" && detectedType !== "QUERY")
+        ) {
+          ticketUpdate.type = detectedType;
+        }
+      }
+      // Stamp/refresh the system message sub-type whenever this message is
+      // a recognized From-eBay notification. Always overwrite — the latest
+      // detection wins so a thread that morphs from "Return approved" into
+      // "Return closed" reflects the most recent state.
+      if (fromEbayResult?.isFromEbay && fromEbayResult.systemMessageType) {
+        ticketUpdate.systemMessageType = fromEbayResult.systemMessageType;
       }
     }
 
@@ -1083,6 +1150,112 @@ async function reconcileMessages(args: ReconcileArgs): Promise<ReconcileResult> 
         // move on — the digest envelope row is already in the DB so the
         // agent will at minimum see the latest message.
         console.error("[helpdesk-sync] digest parse failed", err);
+      }
+    }
+
+    // ── Hardcoded routing rules (replaces three obsolete user-defined
+    // filters). Runs AFTER digest expansion so the AR-only-archive rule
+    // sees the true final message count for the ticket, not the partial
+    // count mid-loop.
+    //
+    // We re-fetch the ticket here so isArchived / type / status reflect
+    // any earlier ticketUpdate or auto-resolve transitions in this loop
+    // iteration. Cheap — one indexed PK lookup.
+    const refreshedTicket = await db.helpdeskTicket.findUnique({
+      where: { id: ticket.id },
+      select: {
+        id: true,
+        type: true,
+        isArchived: true,
+        archivedAt: true,
+        status: true,
+      },
+    });
+    if (refreshedTicket) {
+      // Rule 1 — Cancellation Request tag.
+      // When THIS message is detected as a buyer-initiated cancellation
+      // request, attach the BUYER_CANCELLATION_TAG_NAME tag (lazily
+      // upserted, mirrors filters.ts). The folder layer already excludes
+      // tagged tickets from All Tickets / To Do / Waiting and routes them
+      // to the Cancel Requests folder via `buildFolderWhere("buyer_cancellation")`.
+      if (isCancellationRequest) {
+        try {
+          const tag = await db.helpdeskTag.upsert({
+            where: { name: BUYER_CANCELLATION_TAG_NAME },
+            update: {},
+            create: {
+              name: BUYER_CANCELLATION_TAG_NAME,
+              description:
+                "Buyer asked to cancel the order. Auto-tagged by hardcoded sync rule (replaces obsolete 'A buyer wants to cancel an order' filter).",
+              color: "#ef4444",
+            },
+            select: { id: true },
+          });
+          await db.helpdeskTicketTag.createMany({
+            data: [{ ticketId: ticket.id, tagId: tag.id }],
+            skipDuplicates: true,
+          });
+        } catch (err) {
+          console.error(
+            "[helpdesk-sync] cancellation tag attach failed",
+            err,
+          );
+        }
+      }
+
+      // Rule 2 — Auto-Responder-only Archive (with bounce-out persistence).
+      // The OLD user filter unconditionally re-archived any ticket whose
+      // first AR body matched a string, which kept knocking buyer
+      // follow-ups back into Archived after they'd been bounced into TO_DO.
+      //
+      // The fix is to gate solely on message COUNT: a ticket gets
+      // auto-archived ONLY while it has exactly one message AND that one
+      // message is the AR. The instant a buyer (or anyone) replies, count
+      // becomes 2 and this rule structurally cannot fire again — making
+      // the bounce-out permanent without needing any extra "do not
+      // re-archive" flag.
+      //
+      // We also respect manual de-archives: if a ticket already has
+      // archivedAt set and the count is still 1, we skip — meaning
+      // archives done by this rule stay archived but we never re-archive
+      // a ticket that was manually unarchived.
+      if (!refreshedTicket.isArchived) {
+        const messageCount = await db.helpdeskMessage.count({
+          where: { ticketId: ticket.id },
+        });
+        if (messageCount === 1) {
+          const lone = await db.helpdeskMessage.findFirst({
+            where: { ticketId: ticket.id },
+            select: { source: true, direction: true },
+          });
+          if (
+            lone &&
+            lone.direction === HelpdeskMessageDirection.OUTBOUND &&
+            lone.source === HelpdeskMessageSource.AUTO_RESPONDER
+          ) {
+            try {
+              await db.helpdeskTicket.update({
+                where: { id: ticket.id },
+                data: {
+                  isArchived: true,
+                  archivedAt: new Date(),
+                  // Auto-archived AR-only tickets are functionally
+                  // resolved from the agent's POV — they don't need a
+                  // human reply unless the buyer follows up. Setting
+                  // RESOLVED keeps them out of WAITING-status counters
+                  // too. The de-archive flow (buyer reply) will flip
+                  // back to TO_DO via deriveStatusOnInbound.
+                  status: HelpdeskTicketStatus.RESOLVED,
+                },
+              });
+            } catch (err) {
+              console.error(
+                "[helpdesk-sync] AR-only archive update failed",
+                err,
+              );
+            }
+          }
+        }
       }
     }
 

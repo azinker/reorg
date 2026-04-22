@@ -18,6 +18,7 @@ import {
   ChevronRight,
   Database,
   Globe,
+  LifeBuoy,
   Loader2,
   RefreshCw,
   Server,
@@ -36,6 +37,7 @@ const CHANNEL_KEYS = [
   "AUTO_RESPONDER",
   "DATABASE_IO",
   "WEBHOOK_INBOUND",
+  "HELPDESK",
   "OTHER",
 ] as const;
 
@@ -50,6 +52,7 @@ const CHANNEL_LABEL: Record<ChannelKey, string> = {
   AUTO_RESPONDER: "Auto Responder",
   DATABASE_IO: "Database I/O (Neon)",
   WEBHOOK_INBOUND: "Webhook Inbound",
+  HELPDESK: "Help Desk",
   OTHER: "Other",
 };
 
@@ -62,6 +65,7 @@ const CHANNEL_DESCRIPTION: Record<ChannelKey, string> = {
   AUTO_RESPONDER: "Message sends, previews, reconciliation, test messages",
   DATABASE_IO: "Prisma query round-trips to Neon PostgreSQL",
   WEBHOOK_INBOUND: "Incoming webhook payloads from eBay, BigCommerce, Shopify",
+  HELPDESK: "Help Desk eBay sync (member messages pull, send, mark read, etc.)",
   OTHER: "Uncategorized network transfer events",
 };
 
@@ -74,6 +78,7 @@ const CHANNEL_ICON: Record<ChannelKey, typeof Globe> = {
   AUTO_RESPONDER: Zap,
   DATABASE_IO: Database,
   WEBHOOK_INBOUND: Server,
+  HELPDESK: LifeBuoy,
   OTHER: Globe,
 };
 
@@ -86,6 +91,7 @@ const CHANNEL_STROKE: Record<ChannelKey, string> = {
   AUTO_RESPONDER: "hsl(300, 70%, 60%)",
   DATABASE_IO: "hsl(0, 75%, 55%)",
   WEBHOOK_INBOUND: "hsl(220, 70%, 55%)",
+  HELPDESK: "hsl(15, 85%, 55%)",
   OTHER: "hsl(215, 20%, 55%)",
 };
 
@@ -98,6 +104,7 @@ const CHANNEL_LEGEND_LABEL: Record<ChannelKey, string> = {
   AUTO_RESPONDER: "Auto Responder",
   DATABASE_IO: "Database I/O",
   WEBHOOK_INBOUND: "Webhooks",
+  HELPDESK: "Help Desk",
   OTHER: "Other",
 };
 

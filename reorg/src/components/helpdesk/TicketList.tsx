@@ -99,6 +99,14 @@ interface TicketListProps {
    * inbox feels snappier than ours).
    */
   onPrefetch?: (id: string) => void;
+  /**
+   * Optional slot rendered between the toolbar and the ticket rows. Used by
+   * the From eBay folder to surface its event-type chip bar (Return
+   * Approved / Item Not Received / …) right above the list. Kept as a
+   * generic slot so future folders can reuse the same affordance without
+   * baking new flags into TicketList.
+   */
+  headerExtra?: React.ReactNode;
 }
 
 const STATUS_COLOR: Record<string, string> = {
@@ -157,6 +165,7 @@ export function TicketList({
   onPrevPage,
   onNextPage,
   onPrefetch,
+  headerExtra,
 }: TicketListProps) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
@@ -420,6 +429,8 @@ export function TicketList({
           />
         </div>
       )}
+
+      {headerExtra}
 
       <div className="flex-1 overflow-y-auto">
         {/*

@@ -7,6 +7,7 @@
 import {
   HelpdeskTicketStatus,
   HelpdeskTicketKind,
+  HelpdeskTicketType,
   type Prisma,
 } from "@prisma/client";
 
@@ -18,6 +19,7 @@ export type HelpdeskFolderKey =
   | "all_to_do"
   | "all_waiting"
   | "buyer_cancellation"
+  | "from_ebay"
   | "snoozed"
   | "resolved"
   | "unassigned"
@@ -104,11 +106,20 @@ export function buildFolderWhere(
       },
     },
   };
+  // Re-used by every "open" folder below — From-eBay system notifications
+  // (Return Approved, Item Delivered, "We sent your payout", etc.) are
+  // routed to the dedicated `from_ebay` sub-folder and must NOT appear in
+  // All Tickets / To Do / Waiting / etc. Per the user spec, hardcoded sync
+  // logic stamps `type=SYSTEM` so we can key off that single column instead
+  // of subject-pattern guesswork.
+  const notSystem: Prisma.HelpdeskTicketWhereInput = {
+    type: { not: HelpdeskTicketType.SYSTEM },
+  };
 
   switch (folder) {
     case "pre_sales":
       return {
-        AND: [open, notSnoozed, notCancellation, { kind: HelpdeskTicketKind.PRE_SALES }],
+        AND: [open, notSnoozed, notCancellation, notSystem, { kind: HelpdeskTicketKind.PRE_SALES }],
       };
     case "my_tickets":
       return {
@@ -116,6 +127,7 @@ export function buildFolderWhere(
           open,
           notSnoozed,
           notCancellation,
+          notSystem,
           {
             OR: [
               { primaryAssigneeId: ctx.userId },
@@ -125,7 +137,7 @@ export function buildFolderWhere(
         ],
       };
     case "all_tickets":
-      return { AND: [open, notSnoozed, notCancellation] };
+      return { AND: [open, notSnoozed, notCancellation, notSystem] };
     case "all_new":
     case "all_to_do":
       // v2: TO_DO is the single "needs response" bucket. We accept legacy
@@ -142,6 +154,7 @@ export function buildFolderWhere(
           },
           notSnoozed,
           notCancellation,
+          notSystem,
         ],
       };
     case "all_waiting":
@@ -150,6 +163,7 @@ export function buildFolderWhere(
           { status: HelpdeskTicketStatus.WAITING, isArchived: false, isSpam: false },
           notSnoozed,
           notCancellation,
+          notSystem,
         ],
       };
     case "buyer_cancellation":
@@ -167,6 +181,18 @@ export function buildFolderWhere(
               },
             },
           },
+        ],
+      };
+    case "from_ebay":
+      // Tickets stamped `type=SYSTEM` by the hardcoded From-eBay detector.
+      // We deliberately drop the `open` status filter here — eBay system
+      // notifications can land in any status (TO_DO/WAITING/RESOLVED) but
+      // the agent still wants them visible under one roof. We DO drop
+      // archived/spam rows so manually-archived noise stays hidden.
+      return {
+        AND: [
+          { type: HelpdeskTicketType.SYSTEM, isArchived: false, isSpam: false },
+          notSnoozed,
         ],
       };
     case "snoozed":
@@ -217,6 +243,7 @@ export const FOLDER_LABELS: Record<HelpdeskFolderKey, string> = {
   all_to_do: "To Do",
   all_waiting: "Waiting",
   buyer_cancellation: "Buyer Request Cancellation",
+  from_ebay: "From eBay",
   snoozed: "Snoozed",
   resolved: "Resolved",
   unassigned: "Unassigned",

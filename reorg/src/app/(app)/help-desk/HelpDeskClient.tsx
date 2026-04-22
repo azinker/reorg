@@ -13,6 +13,7 @@ import {
   updateHelpdeskPrefs,
 } from "@/components/helpdesk/HelpdeskSettingsDialog";
 import { HelpdeskSplit } from "@/components/helpdesk/HelpdeskSplit";
+import { FromEbayChips } from "@/components/helpdesk/FromEbayChips";
 import { cn } from "@/lib/utils";
 
 export default function HelpDeskClient() {
@@ -29,6 +30,15 @@ export default function HelpDeskClient() {
     "ALL" | "NEW" | "TO_DO" | "WAITING" | "RESOLVED"
   >("ALL");
   const [search, setSearch] = useState("");
+  /**
+   * From-eBay sub-filter chip ("Return Approved", "Item Not Received", …).
+   * Only applies when `folder === "from_ebay"`. Cleared whenever the agent
+   * switches to a different folder so a stale chip can't silently filter
+   * a different list.
+   */
+  const [systemMessageType, setSystemMessageType] = useState<string | null>(
+    null,
+  );
   const prefs = useHelpdeskPrefs();
 
   // Pick up `?q=` from the URL — sub-pages (filters, dashboard, profile,
@@ -148,7 +158,12 @@ export default function HelpDeskClient() {
     triggerManualSync,
     manualSyncing,
     prefetchTicket,
-  } = useHelpdesk({ folder, channel: channelArg, search: searchArg });
+  } = useHelpdesk({
+    folder,
+    channel: channelArg,
+    search: searchArg,
+    systemMessageType: folder === "from_ebay" ? systemMessageType : null,
+  });
 
   // Honor ?q=... → seed search field. We compare against a ref so we
   // don't fight ourselves when the user types after navigation. On a
@@ -368,6 +383,11 @@ export default function HelpDeskClient() {
           onChange={(f) => {
             setFolder(f);
             selectTicket(null);
+            // Reset the From eBay chip whenever the agent navigates away
+            // from the From eBay folder; otherwise re-entering would
+            // silently re-apply the previous chip without any visible
+            // indicator.
+            if (f !== "from_ebay") setSystemMessageType(null);
           }}
           channelFilter={channelFilter}
           onChannelChange={setChannelFilter}
@@ -420,6 +440,14 @@ export default function HelpDeskClient() {
                 paging={paging}
                 onPrevPage={goPrevPage}
                 onNextPage={goNextPage}
+                headerExtra={
+                  folder === "from_ebay" ? (
+                    <FromEbayChips
+                      active={systemMessageType}
+                      onChange={setSystemMessageType}
+                    />
+                  ) : null
+                }
               />
             </div>
             {/*
@@ -491,6 +519,14 @@ export default function HelpDeskClient() {
                 paging={paging}
                 onPrevPage={goPrevPage}
                 onNextPage={goNextPage}
+                headerExtra={
+                  folder === "from_ebay" ? (
+                    <FromEbayChips
+                      active={systemMessageType}
+                      onChange={setSystemMessageType}
+                    />
+                  ) : null
+                }
               />
             }
             right={

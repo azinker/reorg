@@ -39,10 +39,12 @@
  *
  * KEY SHAPE
  * ─────────
- * `${folder}|${channel ?? "ALL"}|${search ?? ""}`
+ * `${folder}|${channel ?? "ALL"}|${search ?? ""}|${systemMessageType ?? ""}`
  *
  * Search is included so typing in the global search doesn't pollute the cache
- * for the unfiltered inbox.
+ * for the unfiltered inbox. systemMessageType is included so each From eBay
+ * sub-filter chip (RETURN_APPROVED, INR_OPENED, etc.) gets its own cached
+ * page — without it, switching chips would briefly flash a stale list.
  */
 
 import type {
@@ -101,8 +103,11 @@ export function buildFilterKey(opts: {
   folder: string;
   channel?: string;
   search?: string;
+  systemMessageType?: string | null;
 }): string {
-  return `${opts.folder}|${opts.channel ?? "ALL"}|${opts.search ?? ""}`;
+  return `${opts.folder}|${opts.channel ?? "ALL"}|${opts.search ?? ""}|${
+    opts.systemMessageType ?? ""
+  }`;
 }
 
 export function getInbox(key: string): InboxPageSnapshot | undefined {
