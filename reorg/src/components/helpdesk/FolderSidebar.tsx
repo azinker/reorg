@@ -58,6 +58,7 @@ import {
   Ban,
   ChevronDown,
   ChevronRight,
+  HelpCircle,
 } from "lucide-react";
 import type { HelpdeskFolderKey } from "@/hooks/use-helpdesk";
 
@@ -80,6 +81,13 @@ interface FolderRow {
    * "text-brand" for parity with the original look.
    */
   iconAccent?: string;
+  /**
+   * Optional richer explanation surfaced as a click/hover popover next to
+   * the label. Used for folders whose semantics aren't obvious from the
+   * name alone (Waiting, Resolved) — agents kept asking what gets routed
+   * where, so we expose the rules inline instead of burying them in docs.
+   */
+  helpDetail?: string;
 }
 
 // ── Section A: pinned/primary folders shown at the very top ────────────────
@@ -134,6 +142,8 @@ const ALL_CHILDREN: FolderRow[] = [
     label: "Waiting",
     tooltip: "Replied to the buyer — waiting for them to respond.",
     child: true,
+    helpDetail:
+      "A ticket lands in Waiting when the LAST message in the thread is from an agent (a reply or external email) and the ticket isn't archived/resolved/spam. As soon as the buyer replies it bounces back to To Do. Use this folder to scan for stalled conversations where the buyer hasn't come back to you.",
   },
 ];
 
@@ -168,6 +178,8 @@ const TAGS_GROUP: FolderRow[] = [
       "Closed conversations. Tickets land here when an agent marks them resolved or when an outbound reply was the last word in the thread.",
     child: true,
     iconAccent: "text-emerald-500",
+    helpDetail:
+      "Resolved is the closed-conversation bucket. Tickets get here three ways: (1) an agent picks 'Send + Resolve' on a reply, (2) an agent clicks Resolve on the ticket header, or (3) the nightly auto-resolve sweeps tickets where the agent had the last word and the buyer never came back. If the buyer DOES reply later, the ticket bounces back to To Do automatically — Resolved is reversible, not destructive.",
   },
   {
     key: "unassigned",
@@ -452,8 +464,13 @@ function FolderItem({ row, active, count, onSelect }: FolderItemProps) {
   // count rendered as plain text rather than a pill. Parent / top-level
   // rows keep the icon + pill treatment they've always had.
   const isPlainChild = row.child && !Icon;
+  // The helpDetail popover lives next to the row (not inside the button)
+  // so hovering the (?) doesn't fight the row's hover background. We use
+  // an outer relative wrapper and a sibling button sibling-to-the-anchor
+  // pattern: that way the popover is keyboard-accessible (focus on the
+  // anchor reveals it) without trapping clicks on the folder itself.
   return (
-    <li>
+    <li className="group/folder relative">
       <button
         type="button"
         onClick={() => onSelect(row.key)}
@@ -480,6 +497,7 @@ function FolderItem({ row, active, count, onSelect }: FolderItemProps) {
           />
         ) : null}
         <span className="flex-1 truncate">{row.label}</span>
+        {row.helpDetail ? <FolderHelpAffordance detail={row.helpDetail} label={row.label} /> : null}
         {count > 0 ? (
           isPlainChild ? (
             <span
@@ -505,6 +523,50 @@ function FolderItem({ row, active, count, onSelect }: FolderItemProps) {
         ) : null}
       </button>
     </li>
+  );
+}
+
+interface FolderHelpAffordanceProps {
+  detail: string;
+  label: string;
+}
+
+/**
+ * Inline (?) icon that reveals a popover explaining the folder's routing
+ * rules. Click toggles, blur closes — keeps it keyboard-accessible without
+ * pulling in a popover library. We stop click propagation so tapping the
+ * icon doesn't also navigate to the folder.
+ */
+function FolderHelpAffordance({ detail, label }: FolderHelpAffordanceProps) {
+  const [open, setOpen] = useState(false);
+  return (
+    <span
+      className="relative inline-flex"
+      onClick={(e) => e.stopPropagation()}
+    >
+      <button
+        type="button"
+        aria-label={`What is the ${label} folder?`}
+        aria-expanded={open}
+        onClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          setOpen((v) => !v);
+        }}
+        onBlur={() => setOpen(false)}
+        className="inline-flex h-4 w-4 items-center justify-center rounded text-muted-foreground/70 transition-colors hover:bg-surface-2 hover:text-foreground focus:outline-none focus:ring-1 focus:ring-brand/40 cursor-help"
+      >
+        <HelpCircle className="h-3 w-3" />
+      </button>
+      {open ? (
+        <span
+          role="tooltip"
+          className="absolute left-full top-1/2 z-30 ml-2 w-72 -translate-y-1/2 rounded-md border border-hairline bg-popover px-3 py-2 text-[11px] leading-relaxed text-popover-foreground shadow-lg"
+        >
+          {detail}
+        </span>
+      ) : null}
+    </span>
   );
 }
 

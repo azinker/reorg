@@ -110,6 +110,16 @@ export function Composer({
   const [expanded, setExpanded] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
+  // Tracking number for this ticket's related order. Populated lazily from
+  // the same endpoint ContextPanel uses; the server keeps a 5-min in-memory
+  // cache (`getOrderContextCached`) so even though both components fetch we
+  // only hit eBay once. We store just the two fields the templates actually
+  // need — keeping the Composer's footprint small.
+  const [orderTracking, setOrderTracking] = useState<{
+    number: string | null;
+    carrier: string | null;
+  }>({ number: null, carrier: null });
+
   const flags = syncStatus?.flags;
   const safeMode = flags?.safeMode ?? true;
 
@@ -122,7 +132,39 @@ export function Composer({
     setStatusOverridden(false);
     setExpanded(false);
     setStatusMenuOpen(false);
+    setOrderTracking({ number: null, carrier: null });
   }, [ticket.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Lazily pull the tracking number from the order-context endpoint so the
+  // {{trackingNumber}} template token resolves correctly. We only fetch when
+  // the ticket has an eBay order number — pre-sales / non-eBay channels
+  // would just get a null payload back from the server and waste a round-
+  // trip. Aborts cleanly on ticket change so a fast clicker doesn't see
+  // stale tracking flash into a different ticket.
+  useEffect(() => {
+    if (!ticket.ebayOrderNumber) return;
+    const ac = new AbortController();
+    void (async () => {
+      try {
+        const res = await fetch(
+          `/api/helpdesk/tickets/${ticket.id}/order-context`,
+          { cache: "no-store", signal: ac.signal },
+        );
+        if (!res.ok) return;
+        const j = (await res.json()) as {
+          data: { trackingNumber: string | null; trackingCarrier: string | null } | null;
+        };
+        if (ac.signal.aborted || !j.data) return;
+        setOrderTracking({
+          number: j.data.trackingNumber ?? null,
+          carrier: j.data.trackingCarrier ?? null,
+        });
+      } catch {
+        // Best-effort: tracking is a nice-to-have for templates, not required.
+      }
+    })();
+    return () => ac.abort();
+  }, [ticket.id, ticket.ebayOrderNumber]);
 
   // Track preference changes from Settings dialog while the composer is
   // open. We deliberately skip this when the agent has explicitly picked
@@ -181,6 +223,14 @@ export function Composer({
     const handle = window.setInterval(tick, 250);
     return () => window.clearInterval(handle);
   }, [pending, onSent]);
+
+  // Memoize so all three template-aware children (quick chips,
+  // TemplatePicker, QuickActionMenu) share the same context object and
+  // re-render only when something they actually consume changes.
+  const templateCtx = useMemo(
+    () => ticketToContext(ticket, orderTracking),
+    [ticket, orderTracking],
+  );
 
   const ticketIsArchived = ticket.isArchived;
 
@@ -455,7 +505,7 @@ export function Composer({
               key={a.id}
               type="button"
               onClick={() => {
-                const filled = fillTemplate(a.body, ticketToContext(ticket));
+                const filled = fillTemplate(a.body, templateCtx);
                 setBody((prev) => (prev.trim() ? `${prev}\n\n${filled}` : filled));
                 window.setTimeout(() => textareaRef.current?.focus(), 0);
               }}
@@ -497,7 +547,7 @@ export function Composer({
         {mode !== "NOTE" && (
           <>
             <TemplatePicker
-              ctx={ticketToContext(ticket)}
+              ctx={templateCtx}
               disabled={!!pending || modeMeta.disabled}
               onPick={(filled) => {
                 setBody((prev) =>
@@ -507,7 +557,7 @@ export function Composer({
               }}
             />
             <QuickActionMenu
-              ctx={ticketToContext(ticket)}
+              ctx={templateCtx}
               disabled={!!pending || modeMeta.disabled}
               onPick={(filled) => {
                 setBody((prev) =>
@@ -645,7 +695,13 @@ export function Composer({
   );
 }
 
-function ticketToContext(ticket: HelpdeskTicketDetail): TemplateContext {
+function ticketToContext(
+  ticket: HelpdeskTicketDetail,
+  tracking: { number: string | null; carrier: string | null } = {
+    number: null,
+    carrier: null,
+  },
+): TemplateContext {
   return {
     buyerName: ticket.buyerName,
     buyerUserId: ticket.buyerUserId,
@@ -653,7 +709,11 @@ function ticketToContext(ticket: HelpdeskTicketDetail): TemplateContext {
     ebayItemTitle: ticket.ebayItemTitle,
     ebayOrderNumber: ticket.ebayOrderNumber,
     storeName: ticket.integrationLabel,
-    trackingNumber: null, // TODO: lookup from related order in Phase 4
+    // Pulled lazily from the order-context endpoint (see useEffect above).
+    // Stays null for pre-sales tickets and non-eBay channels — templates
+    // that reference {{trackingNumber}} render the empty fallback in that
+    // case (matches AutoResponder template-fill behaviour).
+    trackingNumber: tracking.number,
   };
 }
 

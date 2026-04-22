@@ -33,5 +33,25 @@ reorg/qa-thread-*
 reorg/helpdesk-*.png
 reorg/help-desk-*.png
 reorg/order-info-*.png
+
+# One-shot diagnostic / perf scripts. These are ad-hoc tools written during a
+# debugging session (dump a body, time a query, sniff an eBay payload). They
+# aren't part of the product and we don't want them swept into a stray
+# `git add .` and committed. If a script graduates to a reusable tool, drop
+# the prefix or move it out of scripts/.
+reorg/scripts/diag-*.ts
+reorg/scripts/diag-*.xml
+reorg/scripts/perf-*.ts
+reorg/scripts/perf-*.report.md
+reorg/scripts/wipe-*.ts
+reorg/scripts/tmp-bodies/
+reorg/scripts/verify-render-*.ts
+
+# Repo-root perf artifacts left behind by perf-*.ts runs.
+perf-*.log
+perf-*.png
+verify-*.png
+reorg/perf-*.png
+
 # User-specific Cursor keybindings (different per machine)
 keybindings.json

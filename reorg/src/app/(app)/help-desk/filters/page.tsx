@@ -299,7 +299,7 @@ export default function HelpdeskFiltersPage() {
             type="button"
             onClick={autoResolve}
             disabled={autoResolveBusy}
-            className="inline-flex items-center gap-2 rounded-md border border-white/10 bg-background/60 px-3 py-2 text-xs text-foreground/90 hover:bg-white/5 disabled:opacity-50 cursor-pointer"
+            className="inline-flex items-center gap-2 rounded-md border border-hairline bg-surface px-3 py-2 text-xs text-foreground/90 hover:bg-surface-2 disabled:opacity-50 cursor-pointer"
             title="Mark every open ticket whose last message is from an agent as Resolved."
           >
             {autoResolveBusy ? (
@@ -312,7 +312,7 @@ export default function HelpdeskFiltersPage() {
           <button
             type="button"
             onClick={() => setEditing(emptyDraft())}
-            className="inline-flex items-center gap-2 rounded-md bg-[#C43E3E] px-3 py-2 text-xs font-medium text-white shadow-sm hover:bg-[#B23535] cursor-pointer"
+            className="inline-flex items-center gap-2 rounded-md bg-brand px-3 py-2 text-xs font-medium text-brand-foreground shadow-sm hover:opacity-90 cursor-pointer"
           >
             <Plus className="h-3.5 w-3.5" /> New filter
           </button>
@@ -320,12 +320,12 @@ export default function HelpdeskFiltersPage() {
       </header>
 
       {error ? (
-        <div className="mb-4 rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-300">
+        <div className="mb-4 rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-700 dark:text-red-300">
           {error}
         </div>
       ) : null}
       {success ? (
-        <div className="mb-4 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-300">
+        <div className="mb-4 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-700 dark:text-emerald-300">
           {success}
         </div>
       ) : null}
@@ -335,7 +335,7 @@ export default function HelpdeskFiltersPage() {
           <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
         </div>
       ) : filters.length === 0 ? (
-        <div className="rounded-xl border border-dashed border-white/10 bg-background/30 p-8 text-center text-sm text-muted-foreground">
+        <div className="rounded-xl border border-dashed border-hairline bg-surface p-8 text-center text-sm text-muted-foreground">
           No filters yet. Create one to start sorting messages automatically.
         </div>
       ) : (
@@ -343,7 +343,7 @@ export default function HelpdeskFiltersPage() {
           {filters.map((f) => (
             <li
               key={f.id}
-              className="rounded-xl border border-white/10 bg-background/40 p-4"
+              className="rounded-xl border border-hairline bg-card p-4"
             >
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0 flex-1">
@@ -351,14 +351,14 @@ export default function HelpdeskFiltersPage() {
                     <h3 className="text-sm font-semibold text-foreground">{f.name}</h3>
                     {f.isSystem ? (
                       <span
-                        className="inline-flex items-center gap-1 rounded bg-sky-500/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-sky-300"
+                        className="inline-flex items-center gap-1 rounded bg-sky-500/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-sky-700 dark:text-sky-300"
                         title="Built-in filter. Can be disabled but not deleted."
                       >
                         <Sparkles className="h-2.5 w-2.5" /> System
                       </span>
                     ) : null}
                     {!f.enabled ? (
-                      <span className="rounded bg-white/5 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                      <span className="rounded bg-surface-2 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
                         Disabled
                       </span>
                     ) : null}
@@ -385,7 +385,7 @@ export default function HelpdeskFiltersPage() {
                       type="button"
                       disabled={busyId === f.id}
                       onClick={() => toggleEnabled(f)}
-                      className="inline-flex h-7 items-center gap-1 rounded-md border border-white/10 bg-background/60 px-2 text-[11px] text-foreground/90 hover:bg-white/5 disabled:opacity-50 cursor-pointer"
+                      className="inline-flex h-7 items-center gap-1 rounded-md border border-hairline bg-surface px-2 text-[11px] text-foreground/90 hover:bg-surface-2 disabled:opacity-50 cursor-pointer"
                       title={f.enabled ? "Disable" : "Enable"}
                     >
                       <Power className="h-3 w-3" />
@@ -395,7 +395,7 @@ export default function HelpdeskFiltersPage() {
                       type="button"
                       disabled={busyId === f.id}
                       onClick={() => runFilter(f)}
-                      className="inline-flex h-7 items-center gap-1 rounded-md border border-white/10 bg-background/60 px-2 text-[11px] text-foreground/90 hover:bg-white/5 disabled:opacity-50 cursor-pointer"
+                      className="inline-flex h-7 items-center gap-1 rounded-md border border-hairline bg-surface px-2 text-[11px] text-foreground/90 hover:bg-surface-2 disabled:opacity-50 cursor-pointer"
                       title="Run this filter once over the existing inbox."
                     >
                       {busyId === f.id ? (
@@ -409,7 +409,7 @@ export default function HelpdeskFiltersPage() {
                       type="button"
                       disabled={busyId === f.id}
                       onClick={() => setEditing(f)}
-                      className="inline-flex h-7 items-center gap-1 rounded-md border border-white/10 bg-background/60 px-2 text-[11px] text-foreground/90 hover:bg-white/5 disabled:opacity-50 cursor-pointer"
+                      className="inline-flex h-7 items-center gap-1 rounded-md border border-hairline bg-surface px-2 text-[11px] text-foreground/90 hover:bg-surface-2 disabled:opacity-50 cursor-pointer"
                     >
                       <Pencil className="h-3 w-3" /> Edit
                     </button>
@@ -418,13 +418,13 @@ export default function HelpdeskFiltersPage() {
                         type="button"
                         disabled={busyId === f.id}
                         onClick={() => deleteFilter(f)}
-                        className="inline-flex h-7 items-center gap-1 rounded-md border border-red-500/20 bg-red-500/10 px-2 text-[11px] text-red-300 hover:bg-red-500/15 disabled:opacity-50 cursor-pointer"
+                        className="inline-flex h-7 items-center gap-1 rounded-md border border-red-500/20 bg-red-500/10 px-2 text-[11px] text-red-700 dark:text-red-300 hover:bg-red-500/15 disabled:opacity-50 cursor-pointer"
                       >
                         <Trash2 className="h-3 w-3" /> Delete
                       </button>
                     ) : (
                       <span
-                        className="inline-flex h-7 items-center gap-1 rounded-md border border-white/5 bg-background/30 px-2 text-[11px] text-muted-foreground"
+                        className="inline-flex h-7 items-center gap-1 rounded-md border border-hairline bg-surface px-2 text-[11px] text-muted-foreground"
                         title="System filters can only be disabled, never deleted."
                       >
                         <Lock className="h-3 w-3" />
@@ -454,7 +454,7 @@ export default function HelpdeskFiltersPage() {
 function ConditionsSummary({ conditions }: { conditions: FilterConditions }) {
   const joiner = conditions.match === "ALL" ? "AND" : "OR";
   return (
-    <div className="mt-2 rounded-md bg-background/30 px-3 py-2 text-xs">
+    <div className="mt-2 rounded-md bg-surface px-3 py-2 text-xs">
       <div className="font-semibold text-muted-foreground">
         When a message matches{" "}
         <span className="text-foreground/90">{conditions.match}</span> of:
@@ -465,7 +465,7 @@ function ConditionsSummary({ conditions }: { conditions: FilterConditions }) {
             <span className="text-muted-foreground">{i > 0 ? `${joiner} ` : ""}</span>
             <span className="font-medium">{FIELD_LABEL[r.field] ?? r.field}</span>{" "}
             <span className="text-muted-foreground">{OP_LABEL[r.op] ?? r.op}</span>{" "}
-            <span className="rounded bg-white/5 px-1 py-0.5 font-mono text-[11px]">
+            <span className="rounded bg-surface-2 px-1 py-0.5 font-mono text-[11px]">
               {r.value}
             </span>
           </li>
@@ -477,7 +477,7 @@ function ConditionsSummary({ conditions }: { conditions: FilterConditions }) {
 
 function ActionSummary({ action }: { action: FilterAction }) {
   return (
-    <div className="mt-2 rounded-md bg-background/30 px-3 py-2 text-xs">
+    <div className="mt-2 rounded-md bg-surface px-3 py-2 text-xs">
       <div>
         <span className="font-semibold text-muted-foreground">Then: </span>
         <span className="text-foreground/90">
@@ -545,15 +545,15 @@ function FilterEditor({ draft, onChange, onClose, onSave, busy }: EditorProps) {
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="max-h-full w-full max-w-2xl overflow-y-auto rounded-xl border border-white/10 bg-[#171717] shadow-2xl">
-        <div className="flex items-center justify-between border-b border-white/10 px-5 py-3">
+      <div className="max-h-full w-full max-w-2xl overflow-y-auto rounded-xl border border-hairline bg-popover shadow-2xl">
+        <div className="flex items-center justify-between border-b border-hairline px-5 py-3">
           <h2 className="text-sm font-semibold text-foreground">
             {isNew ? "New filter" : `Edit "${draft.name}"`}
           </h2>
           <button
             type="button"
             onClick={onClose}
-            className="rounded p-1 text-muted-foreground hover:bg-white/5 hover:text-foreground cursor-pointer"
+            className="rounded p-1 text-muted-foreground hover:bg-surface-2 hover:text-foreground cursor-pointer"
             aria-label="Close"
           >
             <X className="h-4 w-4" />
@@ -567,7 +567,7 @@ function FilterEditor({ draft, onChange, onClose, onSave, busy }: EditorProps) {
             <input
               value={draft.name}
               onChange={(e) => onChange({ ...draft, name: e.target.value })}
-              className="h-9 w-full rounded-md border border-white/10 bg-background/60 px-3 text-sm text-foreground focus:border-[#C43E3E]/40 focus:outline-none"
+              className="h-9 w-full rounded-md border border-hairline bg-surface px-3 text-sm text-foreground focus:border-brand/40 focus:outline-none"
               placeholder="Archive shipped notifications"
               disabled={draft.isSystem}
             />
@@ -585,7 +585,7 @@ function FilterEditor({ draft, onChange, onClose, onSave, busy }: EditorProps) {
             <input
               value={draft.description ?? ""}
               onChange={(e) => onChange({ ...draft, description: e.target.value })}
-              className="h-9 w-full rounded-md border border-white/10 bg-background/60 px-3 text-sm text-foreground focus:border-[#C43E3E]/40 focus:outline-none"
+              className="h-9 w-full rounded-md border border-hairline bg-surface px-3 text-sm text-foreground focus:border-brand/40 focus:outline-none"
               placeholder="Why this filter exists"
             />
           </div>
@@ -606,7 +606,7 @@ function FilterEditor({ draft, onChange, onClose, onSave, busy }: EditorProps) {
                     },
                   })
                 }
-                className="h-7 rounded-md border border-white/10 bg-background/60 px-2 text-xs text-foreground focus:outline-none cursor-pointer"
+                className="h-7 rounded-md border border-hairline bg-surface px-2 text-xs text-foreground focus:outline-none cursor-pointer"
               >
                 <option value="ALL">ALL of the rules</option>
                 <option value="ANY">ANY of the rules</option>
@@ -616,12 +616,12 @@ function FilterEditor({ draft, onChange, onClose, onSave, busy }: EditorProps) {
               {draft.conditions.rules.map((r, i) => (
                 <div
                   key={i}
-                  className="flex flex-wrap items-center gap-2 rounded-md border border-white/10 bg-background/30 p-2"
+                  className="flex flex-wrap items-center gap-2 rounded-md border border-hairline bg-surface p-2"
                 >
                   <select
                     value={r.field}
                     onChange={(e) => setRule(i, { field: e.target.value as FilterField })}
-                    className="h-8 rounded-md border border-white/10 bg-background/60 px-2 text-xs text-foreground focus:outline-none cursor-pointer"
+                    className="h-8 rounded-md border border-hairline bg-surface px-2 text-xs text-foreground focus:outline-none cursor-pointer"
                   >
                     {Object.entries(FIELD_LABEL).map(([k, v]) => (
                       <option key={k} value={k}>
@@ -632,7 +632,7 @@ function FilterEditor({ draft, onChange, onClose, onSave, busy }: EditorProps) {
                   <select
                     value={r.op}
                     onChange={(e) => setRule(i, { op: e.target.value as FilterOp })}
-                    className="h-8 rounded-md border border-white/10 bg-background/60 px-2 text-xs text-foreground focus:outline-none cursor-pointer"
+                    className="h-8 rounded-md border border-hairline bg-surface px-2 text-xs text-foreground focus:outline-none cursor-pointer"
                   >
                     {Object.entries(OP_LABEL).map(([k, v]) => (
                       <option key={k} value={k}>
@@ -644,7 +644,7 @@ function FilterEditor({ draft, onChange, onClose, onSave, busy }: EditorProps) {
                     value={r.value}
                     onChange={(e) => setRule(i, { value: e.target.value })}
                     placeholder="value"
-                    className="h-8 flex-1 min-w-[160px] rounded-md border border-white/10 bg-background/60 px-2 text-xs text-foreground focus:border-[#C43E3E]/40 focus:outline-none"
+                    className="h-8 flex-1 min-w-[160px] rounded-md border border-hairline bg-surface px-2 text-xs text-foreground focus:border-brand/40 focus:outline-none"
                   />
                   <label
                     className="inline-flex items-center gap-1 text-[11px] text-muted-foreground"
@@ -656,7 +656,7 @@ function FilterEditor({ draft, onChange, onClose, onSave, busy }: EditorProps) {
                       onChange={(e) =>
                         setRule(i, { caseSensitive: e.target.checked })
                       }
-                      className="accent-[#C43E3E]"
+                      className="accent-brand"
                     />
                     Match case
                   </label>
@@ -664,7 +664,7 @@ function FilterEditor({ draft, onChange, onClose, onSave, busy }: EditorProps) {
                     type="button"
                     onClick={() => removeRule(i)}
                     disabled={draft.conditions.rules.length <= 1}
-                    className="rounded p-1 text-muted-foreground hover:bg-white/5 hover:text-red-300 disabled:opacity-30 cursor-pointer"
+                    className="rounded p-1 text-muted-foreground hover:bg-surface-2 hover:text-red-700 dark:text-red-300 disabled:opacity-30 cursor-pointer"
                     title="Remove rule"
                   >
                     <X className="h-3.5 w-3.5" />
@@ -696,7 +696,7 @@ function FilterEditor({ draft, onChange, onClose, onSave, busy }: EditorProps) {
                   },
                 })
               }
-              className="h-9 w-full rounded-md border border-white/10 bg-background/60 px-3 text-sm text-foreground focus:outline-none cursor-pointer"
+              className="h-9 w-full rounded-md border border-hairline bg-surface px-3 text-sm text-foreground focus:outline-none cursor-pointer"
             >
               {Object.entries(FOLDER_LABEL).map(([k, v]) => (
                 <option key={k} value={k}>
@@ -709,13 +709,13 @@ function FilterEditor({ draft, onChange, onClose, onSave, busy }: EditorProps) {
             </p>
           </div>
 
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-white/10 pt-3">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-hairline pt-3">
             <label className="inline-flex items-center gap-2 text-xs text-muted-foreground">
               <input
                 type="checkbox"
                 checked={draft.enabled}
                 onChange={(e) => onChange({ ...draft, enabled: e.target.checked })}
-                className="accent-[#C43E3E]"
+                className="accent-brand"
               />
               Enabled
             </label>
@@ -735,7 +735,7 @@ function FilterEditor({ draft, onChange, onClose, onSave, busy }: EditorProps) {
                     sortOrder: Number(e.target.value) || 0,
                   })
                 }
-                className="h-7 w-16 rounded-md border border-white/10 bg-background/60 px-2 text-xs text-foreground focus:outline-none"
+                className="h-7 w-16 rounded-md border border-hairline bg-surface px-2 text-xs text-foreground focus:outline-none"
               />
               <span className="text-[10px] text-muted-foreground/70">
                 (lower runs first)
@@ -743,11 +743,11 @@ function FilterEditor({ draft, onChange, onClose, onSave, busy }: EditorProps) {
             </label>
           </div>
         </div>
-        <div className="flex items-center justify-end gap-2 border-t border-white/10 px-5 py-3">
+        <div className="flex items-center justify-end gap-2 border-t border-hairline px-5 py-3">
           <button
             type="button"
             onClick={onClose}
-            className="inline-flex items-center gap-1 rounded-md px-3 py-1.5 text-xs text-muted-foreground hover:bg-white/5 cursor-pointer"
+            className="inline-flex items-center gap-1 rounded-md px-3 py-1.5 text-xs text-muted-foreground hover:bg-surface-2 cursor-pointer"
           >
             Cancel
           </button>
@@ -755,7 +755,7 @@ function FilterEditor({ draft, onChange, onClose, onSave, busy }: EditorProps) {
             type="button"
             onClick={() => onSave(draft)}
             disabled={!canSave || busy}
-            className="inline-flex items-center gap-2 rounded-md bg-[#C43E3E] px-3 py-1.5 text-xs font-medium text-white shadow-sm hover:bg-[#B23535] disabled:opacity-50 cursor-pointer"
+            className="inline-flex items-center gap-2 rounded-md bg-brand px-3 py-1.5 text-xs font-medium text-brand-foreground shadow-sm hover:opacity-90 disabled:opacity-50 cursor-pointer"
           >
             {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
             {isNew ? "Create filter" : "Save changes"}

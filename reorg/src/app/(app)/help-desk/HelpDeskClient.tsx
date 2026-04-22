@@ -125,21 +125,7 @@ export default function HelpDeskClient() {
   const searchParams = useSearchParams();
   const initialTicketIdRef = useRef<string | null>(searchParams.get("ticket"));
 
-  // Honor ?q=... → seed search field. We compare against a ref so we
-  // don't fight ourselves when the user types after navigation. On a
-  // brand-new q= we also wipe any pre-selected ticket so the inbox
-  // panel actually shows the search results instead of the previously
-  // open thread.
   const lastQParamRef = useRef<string | null>(null);
-  useEffect(() => {
-    const q = searchParams.get("q");
-    if (q !== lastQParamRef.current) {
-      lastQParamRef.current = q;
-      if (q != null) {
-        setSearch(q);
-      }
-    }
-  }, [searchParams]);
 
   const {
     tickets,
@@ -163,6 +149,34 @@ export default function HelpDeskClient() {
     manualSyncing,
     prefetchTicket,
   } = useHelpdesk({ folder, channel: channelArg, search: searchArg });
+
+  // Honor ?q=... → seed search field. We compare against a ref so we
+  // don't fight ourselves when the user types after navigation. On a
+  // brand-new q= we also wipe any pre-selected ticket so the inbox
+  // panel actually shows the search results instead of the previously
+  // open thread (this is the behaviour an agent expects when they
+  // submit a fresh search from the global header while a ticket is
+  // already open: the reader closes and the result list appears).
+  //
+  // We also handle the inverse: q removed (back-button to a clean
+  // /help-desk URL) clears the search field so the agent returns to
+  // the unfiltered inbox state, matching what a top-nav click should
+  // do.
+  useEffect(() => {
+    const q = searchParams.get("q");
+    if (q !== lastQParamRef.current) {
+      const previous = lastQParamRef.current;
+      lastQParamRef.current = q;
+      if (q != null) {
+        setSearch(q);
+        setSelectedTicketId(null);
+      } else if (previous != null) {
+        setSearch("");
+      }
+    }
+    // setSelectedTicketId is stable across renders.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
 
   /**
    * All selection changes (open ticket, back-to-inbox, prev/next, folder

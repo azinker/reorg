@@ -20,7 +20,6 @@ import {
   Send,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { HelpdeskGlobalSearch } from "@/components/helpdesk/HelpdeskGlobalSearch";
 
 type SlaBucket = "GREEN" | "AMBER" | "RED" | "MET" | "NA";
 
@@ -79,12 +78,11 @@ export default function HelpdeskDashboardPage() {
             Last {data?.windowDays ?? days} days · refreshes every 60s
           </p>
         </div>
-        <div className="flex flex-1 items-center justify-end gap-3">
-          <HelpdeskGlobalSearch />
+        <div className="flex items-center justify-end gap-3">
           <select
             value={days}
             onChange={(e) => setDays(Number(e.target.value))}
-            className="h-8 rounded-md border border-white/10 bg-background/40 px-2 text-xs text-foreground"
+            className="h-8 rounded-md border border-hairline bg-card px-2 text-xs text-foreground"
           >
             <option value={7}>Last 7 days</option>
             <option value={14}>Last 14 days</option>
@@ -94,7 +92,7 @@ export default function HelpdeskDashboardPage() {
       </header>
 
       {error && (
-        <div className="rounded-md border border-red-500/30 bg-red-500/10 p-3 text-xs text-red-300">
+        <div className="rounded-md border border-red-500/30 bg-red-500/10 p-3 text-xs text-red-700 dark:text-red-300">
           {error}
         </div>
       )}
@@ -181,7 +179,7 @@ export default function HelpdeskDashboardPage() {
                   .slice()
                   .sort((a, b) => b.resolved - a.resolved)
                   .map((p) => (
-                    <tr key={p.userId ?? "unknown"} className="border-t border-white/5">
+                    <tr key={p.userId ?? "unknown"} className="border-t border-hairline">
                       <td className="px-2 py-1 text-foreground/90">
                         {p.name ?? p.email ?? p.userId ?? "Unknown"}
                       </td>
@@ -214,12 +212,12 @@ function Kpi({
 }) {
   const palette = {
     neutral: "text-foreground",
-    red: "text-red-300",
-    amber: "text-amber-300",
-    emerald: "text-emerald-300",
+    red: "text-red-700 dark:text-red-300",
+    amber: "text-amber-700 dark:text-amber-300",
+    emerald: "text-emerald-700 dark:text-emerald-300",
   }[tone];
   return (
-    <div className="rounded-lg border border-white/10 bg-background/40 p-3">
+    <div className="rounded-lg border border-hairline bg-card p-3">
       <div className="flex items-center gap-1.5 text-[11px] uppercase tracking-wider text-muted-foreground">
         <Icon className="h-3 w-3" />
         {label}
@@ -239,7 +237,7 @@ function Card({
   children: React.ReactNode;
 }) {
   return (
-    <div className="rounded-lg border border-white/10 bg-background/40 p-3">
+    <div className="rounded-lg border border-hairline bg-card p-3">
       <div className="mb-2 flex items-center gap-2 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
         {icon}
         {title}
@@ -298,7 +296,7 @@ function StatusMix({ mix }: { mix: Record<string, number> }) {
           label={s.replace("_", " ")}
           value={c}
           total={total}
-          color={colors[s] ?? "bg-white/40"}
+          color={colors[s] ?? "bg-muted"}
         />
       ))}
     </div>
@@ -325,7 +323,7 @@ function Bar({
           {value} <span className="text-muted-foreground">({pct}%)</span>
         </span>
       </div>
-      <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-white/5">
+      <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-surface-2">
         <div className={cn("h-full", color)} style={{ width: `${pct}%` }} />
       </div>
     </div>
@@ -414,12 +412,14 @@ function Heatmap({ matrix }: { matrix: number[][] }) {
                   <td key={h} className="p-0.5" title={`${days[dow]} ${h}:00 — ${v}`}>
                     <div
                       className="h-3.5 w-3.5 rounded-sm"
-                      style={{
-                        backgroundColor:
-                          v === 0
-                            ? "rgba(255,255,255,0.04)"
-                            : `rgba(196, 62, 62, ${0.15 + intensity * 0.75})`,
-                      }}
+                      style={
+                        v === 0
+                          ? { backgroundColor: "var(--surface-2)" }
+                          : {
+                              backgroundColor: "var(--brand)",
+                              opacity: 0.2 + intensity * 0.8,
+                            }
+                      }
                     />
                   </td>
                 );
