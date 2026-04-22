@@ -1,9 +1,9 @@
 "use client";
 
 /**
- * TicketTriageBar — eDesk-style per-ticket header.
+ * TicketTriageBar — per-ticket action header.
  *
- *   [+ New Ticket ▾] [Type ▾] · [💤] [⚠ Spam] [⋯] [👤 Assign ▾]
+ *   [Type ▾] [💤 Snooze] [✓ Resolve] [📦 Archive] [⚠ Spam] [⋯] [👤 Assign ▾]
  *
  * Sits between the ticket info row and the thread. Optimistic UX: we fire
  * the mutation, then call `onMutated()` so the parent (HelpDeskClient) can
@@ -12,6 +12,12 @@
  * All actions go through the existing batch endpoint so audit logging,
  * permission checks, and folder routing stay in one place. Snooze flips
  * to the dedicated /snooze route (its own audit path).
+ *
+ * NB: there is intentionally NO "New Ticket" button here. reorG only
+ * responds to messages eBay syncs into the system — we never originate a
+ * conversation, and eBay's API doesn't even support agent-initiated
+ * threads. The earlier eDesk-style placeholder for this was removed at
+ * Adam's request once he confirmed it'd never light up.
  */
 
 import { useEffect, useRef, useState } from "react";
@@ -20,7 +26,6 @@ import {
   Archive,
   Clock,
   MoreHorizontal,
-  Plus,
   Star,
   ChevronDown,
   CircleCheck,
@@ -79,18 +84,11 @@ interface AgentOption {
 interface TicketTriageBarProps {
   ticket: HelpdeskTicketDetail | null;
   onMutated: () => void;
-  /**
-   * Hook for the host to open its "compose new ticket" dialog. We don't
-   * own that dialog yet; for now the button is rendered disabled if no
-   * handler is supplied.
-   */
-  onNewTicket?: () => void;
 }
 
 export function TicketTriageBar({
   ticket,
   onMutated,
-  onNewTicket,
 }: TicketTriageBarProps) {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -187,20 +185,6 @@ export function TicketTriageBar({
 
   return (
     <div className="flex h-11 shrink-0 items-center gap-1.5 border-b border-hairline bg-card px-3 sm:px-4">
-      {/* New Ticket button — wraps eventual compose dialog. */}
-      <button
-        type="button"
-        onClick={onNewTicket}
-        disabled={!onNewTicket}
-        className="inline-flex h-8 items-center gap-1.5 rounded-md border border-hairline bg-surface px-2.5 text-xs font-medium text-foreground transition-colors hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-40 cursor-pointer"
-        title="Create a new ticket"
-      >
-        <Plus className="h-3.5 w-3.5" />
-        New Ticket
-      </button>
-
-      <div className="mx-1 h-5 w-px bg-hairline" aria-hidden />
-
       <TypeMenu
         value={ticket?.type ?? null}
         disabled={disabled}
