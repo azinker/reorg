@@ -155,28 +155,36 @@ export async function helpdeskFlagsSnapshotAsync(): Promise<HelpdeskFlagsSnapsho
   let globalWriteLock = false;
   let dbSafeMode: boolean | null = null;
   let dbReadSync = false;
+  let dbEbaySend: boolean | null = null;
+  let dbResendExternal: boolean | null = null;
   try {
-    const [lockRow, safeModeRow, readSyncRow] = await Promise.all([
+    const [lockRow, safeModeRow, readSyncRow, ebaySendRow, resendRow] = await Promise.all([
       db.appSetting.findUnique({ where: { key: "global_write_lock" } }),
       db.appSetting.findUnique({ where: { key: "helpdesk_safe_mode" } }),
       db.appSetting.findUnique({ where: { key: "helpdesk_read_sync" } }),
+      db.appSetting.findUnique({ where: { key: "helpdesk_ebay_send" } }),
+      db.appSetting.findUnique({ where: { key: "helpdesk_resend_external" } }),
     ]);
     globalWriteLock = lockRow?.value === true;
     dbSafeMode = safeModeRow ? safeModeRow.value === true : null;
     dbReadSync = readSyncRow?.value === true;
+    dbEbaySend = ebaySendRow ? ebaySendRow.value === true : null;
+    dbResendExternal = resendRow ? resendRow.value === true : null;
   } catch {
     globalWriteLock = true;
     dbSafeMode = true;
   }
   // DB toggle overrides the env var when it exists. This lets admins flip
-  // safe mode from the UI without a redeploy. When no DB row exists we
-  // fall back to the env default.
+  // flags from the UI without a redeploy. When no DB row exists we fall
+  // back to the env default.
   const effectiveSafeMode = dbSafeMode !== null ? dbSafeMode : base.envSafeMode;
   const merged = {
     ...base,
     envSafeMode: effectiveSafeMode,
     safeMode: effectiveSafeMode,
     enableEbayReadSync: base.enableEbayReadSync || dbReadSync,
+    enableEbaySend: dbEbaySend !== null ? dbEbaySend : base.enableEbaySend,
+    enableResendExternal: dbResendExternal !== null ? dbResendExternal : base.enableResendExternal,
   };
   return applyGlobalWriteLock(merged, globalWriteLock);
 }

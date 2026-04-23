@@ -86,16 +86,24 @@ export default function HelpdeskGlobalSettingsPage() {
   const [readSyncDb, setReadSyncDb] = useState<boolean | null>(null);
   const [readSyncToggling, setReadSyncToggling] = useState(false);
 
+  const [ebaySendDb, setEbaySendDb] = useState<boolean | null>(null);
+  const [ebaySendToggling, setEbaySendToggling] = useState(false);
+
+  const [resendExternalDb, setResendExternalDb] = useState<boolean | null>(null);
+  const [resendExternalToggling, setResendExternalToggling] = useState(false);
+
   // ── Initial load: who am I + current sync status ──────────────────────────
   useEffect(() => {
     let cancelled = false;
     void (async () => {
       try {
-        const [meRes, syncRes, smRes, rsRes] = await Promise.all([
+        const [meRes, syncRes, smRes, rsRes, esRes, reRes] = await Promise.all([
           fetch("/api/users/me", { cache: "no-store" }),
           fetch("/api/helpdesk/sync-status", { cache: "no-store" }),
           fetch("/api/settings?key=helpdesk_safe_mode", { cache: "no-store" }),
           fetch("/api/settings?key=helpdesk_read_sync", { cache: "no-store" }),
+          fetch("/api/settings?key=helpdesk_ebay_send", { cache: "no-store" }),
+          fetch("/api/settings?key=helpdesk_resend_external", { cache: "no-store" }),
         ]);
         if (!meRes.ok) throw new Error(`me ${meRes.status}`);
         const meJson = (await meRes.json()) as { data: MeProfile };
@@ -112,6 +120,14 @@ export default function HelpdeskGlobalSettingsPage() {
         if (rsRes.ok) {
           const rsJson = (await rsRes.json()) as { data: boolean | null };
           if (!cancelled) setReadSyncDb(rsJson.data ?? false);
+        }
+        if (esRes.ok) {
+          const esJson = (await esRes.json()) as { data: boolean | null };
+          if (!cancelled) setEbaySendDb(esJson.data ?? false);
+        }
+        if (reRes.ok) {
+          const reJson = (await reRes.json()) as { data: boolean | null };
+          if (!cancelled) setResendExternalDb(reJson.data ?? false);
         }
       } catch (e) {
         if (!cancelled) {
@@ -177,6 +193,46 @@ export default function HelpdeskGlobalSettingsPage() {
       // best-effort
     } finally {
       setReadSyncToggling(false);
+    }
+  }
+
+  async function onToggleEbaySend() {
+    setEbaySendToggling(true);
+    try {
+      const newVal = !ebaySendDb;
+      const res = await fetch("/api/settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ key: "helpdesk_ebay_send", value: newVal }),
+      });
+      if (res.ok) {
+        setEbaySendDb(newVal);
+        await refreshSyncStatus();
+      }
+    } catch {
+      // best-effort
+    } finally {
+      setEbaySendToggling(false);
+    }
+  }
+
+  async function onToggleResendExternal() {
+    setResendExternalToggling(true);
+    try {
+      const newVal = !resendExternalDb;
+      const res = await fetch("/api/settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ key: "helpdesk_resend_external", value: newVal }),
+      });
+      if (res.ok) {
+        setResendExternalDb(newVal);
+        await refreshSyncStatus();
+      }
+    } catch {
+      // best-effort
+    } finally {
+      setResendExternalToggling(false);
     }
   }
 
@@ -414,24 +470,76 @@ export default function HelpdeskGlobalSettingsPage() {
           </div>
         </div>
 
+        {/* eBay Sends toggle */}
+        <div className="mb-4 grid gap-4 sm:grid-cols-2">
+          <div className="rounded-lg border border-hairline bg-surface p-4">
+            <div className="flex items-center justify-between gap-4">
+              <div className="min-w-0">
+                <span className="text-sm font-semibold text-foreground">
+                  eBay sends
+                </span>
+                <p className="mt-0.5 text-xs text-muted-foreground">
+                  Allow agents to send eBay buyer messages.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={onToggleEbaySend}
+                disabled={ebaySendToggling}
+                className={
+                  "relative inline-flex h-6 w-11 shrink-0 items-center rounded-full border-2 border-transparent transition-colors cursor-pointer disabled:opacity-50 " +
+                  ((ebaySendDb ?? false)
+                    ? "bg-brand"
+                    : "bg-zinc-300 dark:bg-zinc-600")
+                }
+              >
+                <span
+                  className={
+                    "inline-block h-4 w-4 rounded-full bg-white shadow transition-transform " +
+                    ((ebaySendDb ?? false) ? "translate-x-5" : "translate-x-0.5")
+                  }
+                />
+              </button>
+            </div>
+          </div>
+
+          {/* External email toggle */}
+          <div className="rounded-lg border border-hairline bg-surface p-4">
+            <div className="flex items-center justify-between gap-4">
+              <div className="min-w-0">
+                <span className="text-sm font-semibold text-foreground">
+                  External email
+                </span>
+                <p className="mt-0.5 text-xs text-muted-foreground">
+                  Allow the External composer mode (Resend email).
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={onToggleResendExternal}
+                disabled={resendExternalToggling}
+                className={
+                  "relative inline-flex h-6 w-11 shrink-0 items-center rounded-full border-2 border-transparent transition-colors cursor-pointer disabled:opacity-50 " +
+                  ((resendExternalDb ?? false)
+                    ? "bg-brand"
+                    : "bg-zinc-300 dark:bg-zinc-600")
+                }
+              >
+                <span
+                  className={
+                    "inline-block h-4 w-4 rounded-full bg-white shadow transition-transform " +
+                    ((resendExternalDb ?? false) ? "translate-x-5" : "translate-x-0.5")
+                  }
+                />
+              </button>
+            </div>
+          </div>
+        </div>
+
         {syncLoading ? (
           <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
         ) : flags ? (
           <div className="grid gap-2 sm:grid-cols-2">
-            <FlagRow
-              label="eBay sends"
-              value={flags.enableEbaySend}
-              hint="Allow agents to send eBay buyer messages."
-              good={(v) => v && !flags.safeMode}
-              env="HELPDESK_ENABLE_EBAY_SEND"
-            />
-            <FlagRow
-              label="External email"
-              value={flags.enableResendExternal}
-              hint="Allow the External composer mode (Resend email)."
-              good={(v) => v && !flags.safeMode}
-              env="HELPDESK_ENABLE_RESEND_EXTERNAL"
-            />
             <FlagRow
               label="Outbound attachments"
               value={flags.enableAttachments}
@@ -469,9 +577,8 @@ export default function HelpdeskGlobalSettingsPage() {
           </div>
         ) : null}
         <p className="mt-4 text-[11px] text-muted-foreground">
-          Channel flags (eBay sends, External email, Attachments) are set via
-          environment variables (Vercel → Settings → Environment Variables).
-          Safe Mode and Read Sync can be toggled above or from{" "}
+          Outbound Attachments is set via environment variable. All other flags
+          can be toggled above. Safe Mode and Read Sync are also visible under{" "}
           <Link href="/settings" className="text-brand hover:underline">
             Settings
           </Link>
