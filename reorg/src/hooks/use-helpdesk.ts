@@ -129,6 +129,7 @@ export interface HelpdeskTicketSummary {
   messageCount?: number;
   /** @deprecated server no longer ships these on the inbox list (perf). */
   noteCount?: number;
+  agentFolderId: string | null;
   tags: { id: string; name: string; color: string | null }[];
   createdAt: string;
   updatedAt: string;
@@ -239,6 +240,8 @@ interface UseHelpdeskArgs {
    * no-op so URL-driven state can remain in sync without extra guards.
    */
   systemMessageType?: string | null;
+  /** When set, fetches tickets belonging to this agent folder instead of the system folder. */
+  agentFolderId?: string | null;
 }
 
 interface UseHelpdeskReturn {
@@ -298,15 +301,15 @@ function emptySnapshot(): InboxPageSnapshot {
 }
 
 export function useHelpdesk(args: UseHelpdeskArgs): UseHelpdeskReturn {
-  const { folder, channel, search, systemMessageType } = args;
+  const { folder, channel, search, systemMessageType, agentFolderId } = args;
 
   // Stable cache key that drives hydration on mount and on filter change.
   // The systemMessageType chip is included so each chip selection on the
   // From eBay folder gets its own cached page (otherwise switching chips
   // would briefly flash stale ticket lists from a different chip).
   const filterKey = useMemo(
-    () => buildFilterKey({ folder, channel, search, systemMessageType }),
-    [folder, channel, search, systemMessageType],
+    () => buildFilterKey({ folder, channel, search, systemMessageType, agentFolderId }),
+    [folder, channel, search, systemMessageType, agentFolderId],
   );
 
   // Hydrate state synchronously from the module-level cache (if present) so
@@ -408,9 +411,8 @@ export function useHelpdesk(args: UseHelpdeskArgs): UseHelpdeskReturn {
         if (cursor) params.set("cursor", cursor);
         if (channel) params.set("channel", channel);
         if (search) params.set("search", search);
-        // Sub-filter chip is server-validated to apply only on from_ebay,
-        // so passing it on other folders is a no-op rather than an error.
         if (systemMessageType) params.set("systemMessageType", systemMessageType);
+        if (agentFolderId) params.set("agentFolderId", agentFolderId);
 
         // Tickets is the only thing that depends on the current filter
         // (folder/channel/search/cursor). Counts and sync-status are global

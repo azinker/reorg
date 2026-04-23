@@ -38,7 +38,7 @@
  */
 
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { cn } from "@/lib/utils";
 import {
@@ -61,8 +61,21 @@ import {
   ChevronRight,
   HelpCircle,
   Inbox,
+  FolderPlus,
+  Folder,
+  Pencil,
+  Trash2,
+  X,
 } from "lucide-react";
 import type { HelpdeskFolderKey } from "@/hooks/use-helpdesk";
+
+export interface AgentFolderData {
+  id: string;
+  name: string;
+  color: string;
+  ticketCount: number;
+  createdBy: { id: string; name: string | null; email: string };
+}
 
 interface FolderRow {
   key: HelpdeskFolderKey;
@@ -279,13 +292,13 @@ interface FolderSidebarProps {
   onChange: (folder: HelpdeskFolderKey) => void;
   channelFilter: "TPP_EBAY" | "TT_EBAY" | "ALL";
   onChannelChange: (channel: "TPP_EBAY" | "TT_EBAY" | "ALL") => void;
-  /**
-   * When true, renders an extra "Global Settings" link in the bottom nav row
-   * that points at /help-desk/global-settings (Safe Mode, sync controls,
-   * write locks, retro auto-resolve). Hidden for non-admins so we don't tease
-   * features they can't use.
-   */
   isAdmin?: boolean;
+  agentFolders: AgentFolderData[];
+  activeAgentFolderId: string | null;
+  onAgentFolderSelect: (folderId: string) => void;
+  onAgentFolderCreate: (name: string, color: string) => Promise<void>;
+  onAgentFolderDelete: (folderId: string) => Promise<void>;
+  onAgentFolderRename: (folderId: string, name: string) => Promise<void>;
 }
 
 export function FolderSidebar({
@@ -295,19 +308,35 @@ export function FolderSidebar({
   channelFilter,
   onChannelChange,
   isAdmin = false,
+  agentFolders,
+  activeAgentFolderId,
+  onAgentFolderSelect,
+  onAgentFolderCreate,
+  onAgentFolderDelete,
+  onAgentFolderRename,
 }: FolderSidebarProps) {
   const [tagsOpen, setTagsOpen] = useState(true);
+  const [agentFoldersOpen, setAgentFoldersOpen] = useState(true);
 
   // Hydrate persisted collapse state on mount. We do this in an effect to
   // avoid SSR/CSR markup mismatches (localStorage is client-only).
   useEffect(() => {
     setTagsOpen(readBool(TAGS_OPEN_KEY, true));
+    setAgentFoldersOpen(readBool("helpdesk.sidebar.agentFoldersOpen", true));
   }, []);
 
   function toggleTags() {
     setTagsOpen((prev) => {
       const next = !prev;
       writeBool(TAGS_OPEN_KEY, next);
+      return next;
+    });
+  }
+
+  function toggleAgentFolders() {
+    setAgentFoldersOpen((prev) => {
+      const next = !prev;
+      writeBool("helpdesk.sidebar.agentFoldersOpen", next);
       return next;
     });
   }
@@ -365,7 +394,7 @@ export function FolderSidebar({
             <FolderItem
               key={f.key}
               row={f}
-              active={active === f.key}
+              active={active === f.key && !activeAgentFolderId}
               count={counts[f.key] ?? 0}
               onSelect={onChange}
             />
@@ -383,7 +412,7 @@ export function FolderSidebar({
         <ul className="mt-2 space-y-0.5">
           <FolderItem
             row={ALL_PARENT}
-            active={active === ALL_PARENT.key}
+            active={active === ALL_PARENT.key && !activeAgentFolderId}
             count={counts[ALL_PARENT.key] ?? 0}
             onSelect={onChange}
           />
@@ -391,7 +420,7 @@ export function FolderSidebar({
             <FolderItem
               key={f.key}
               row={f}
-              active={active === f.key}
+              active={active === f.key && !activeAgentFolderId}
               count={counts[f.key] ?? 0}
               onSelect={onChange}
             />
@@ -404,7 +433,7 @@ export function FolderSidebar({
             <FolderItem
               key={f.key}
               row={f}
-              active={active === f.key}
+              active={active === f.key && !activeAgentFolderId}
               count={counts[f.key] ?? 0}
               onSelect={onChange}
             />
@@ -425,12 +454,32 @@ export function FolderSidebar({
                 <FolderItem
                   key={f.key}
                   row={f}
-                  active={active === f.key}
+                  active={active === f.key && !activeAgentFolderId}
                   count={counts[f.key] ?? 0}
-                  onSelect={onChange}
+                  onSelect={(k) => { onChange(k); }}
                 />
               ))}
             </ul>
+          ) : null}
+        </div>
+
+        {/* Section E: Agent Folders — user-created folders */}
+        <div className="mt-2">
+          <SectionDisclosure
+            label="Agent Folders"
+            icon={FolderPlus}
+            open={agentFoldersOpen}
+            onToggle={toggleAgentFolders}
+          />
+          {agentFoldersOpen ? (
+            <AgentFoldersSection
+              folders={agentFolders}
+              activeId={activeAgentFolderId}
+              onSelect={onAgentFolderSelect}
+              onCreate={onAgentFolderCreate}
+              onDelete={onAgentFolderDelete}
+              onRename={onAgentFolderRename}
+            />
           ) : null}
         </div>
       </nav>
@@ -654,5 +703,249 @@ function SectionDisclosure({
       <Icon className="h-3 w-3" />
       <span className="flex-1">{label}</span>
     </button>
+  );
+}
+
+// ── Agent Folders section ─────────────────────────────────────────────────
+
+const COLOR_OPTIONS = [
+  { value: "violet", cls: "bg-violet-500" },
+  { value: "blue", cls: "bg-blue-500" },
+  { value: "emerald", cls: "bg-emerald-500" },
+  { value: "amber", cls: "bg-amber-500" },
+  { value: "rose", cls: "bg-rose-500" },
+  { value: "sky", cls: "bg-sky-500" },
+  { value: "orange", cls: "bg-orange-500" },
+  { value: "teal", cls: "bg-teal-500" },
+  { value: "pink", cls: "bg-pink-500" },
+  { value: "indigo", cls: "bg-indigo-500" },
+] as const;
+
+const FOLDER_COLOR_TEXT: Record<string, string> = {
+  violet: "text-violet-500",
+  blue: "text-blue-500",
+  emerald: "text-emerald-500",
+  amber: "text-amber-500",
+  rose: "text-rose-500",
+  sky: "text-sky-500",
+  orange: "text-orange-500",
+  teal: "text-teal-500",
+  pink: "text-pink-500",
+  indigo: "text-indigo-500",
+};
+
+interface AgentFoldersSectionProps {
+  folders: AgentFolderData[];
+  activeId: string | null;
+  onSelect: (id: string) => void;
+  onCreate: (name: string, color: string) => Promise<void>;
+  onDelete: (id: string) => Promise<void>;
+  onRename: (id: string, name: string) => Promise<void>;
+}
+
+function AgentFoldersSection({
+  folders,
+  activeId,
+  onSelect,
+  onCreate,
+  onDelete,
+  onRename,
+}: AgentFoldersSectionProps) {
+  const [creating, setCreating] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [newColor, setNewColor] = useState("violet");
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editName, setEditName] = useState("");
+  const inputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    if (creating && inputRef.current) inputRef.current.focus();
+  }, [creating]);
+
+  const handleCreate = useCallback(async () => {
+    const trimmed = newName.trim();
+    if (!trimmed) return;
+    await onCreate(trimmed, newColor);
+    setNewName("");
+    setNewColor("violet");
+    setCreating(false);
+  }, [newName, newColor, onCreate]);
+
+  const handleRename = useCallback(async (id: string) => {
+    const trimmed = editName.trim();
+    if (!trimmed) { setEditingId(null); return; }
+    await onRename(id, trimmed);
+    setEditingId(null);
+  }, [editName, onRename]);
+
+  return (
+    <div className="mt-0.5">
+      <ul className="space-y-0.5">
+        {folders.map((f) => {
+          const isActive = activeId === f.id;
+          const isEditing = editingId === f.id;
+          const colorCls = FOLDER_COLOR_TEXT[f.color] ?? "text-violet-500";
+          return (
+            <li key={f.id} className="group/agfolder relative">
+              {isEditing ? (
+                <div className="flex items-center gap-1 pl-7 pr-2 py-1">
+                  <input
+                    type="text"
+                    value={editName}
+                    onChange={(e) => setEditName(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") handleRename(f.id);
+                      if (e.key === "Escape") setEditingId(null);
+                    }}
+                    className="flex-1 rounded border border-hairline bg-surface px-1.5 py-0.5 text-xs text-foreground outline-none focus:border-brand/60"
+                    autoFocus
+                  />
+                  <button
+                    type="button"
+                    onClick={() => handleRename(f.id)}
+                    className="text-emerald-500 hover:text-emerald-400 cursor-pointer"
+                    title="Save"
+                  >
+                    <CheckCircle2 className="h-3.5 w-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setEditingId(null)}
+                    className="text-muted-foreground hover:text-foreground cursor-pointer"
+                    title="Cancel"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => onSelect(f.id)}
+                  className={cn(
+                    "flex w-full items-center gap-2 rounded-md pl-7 pr-2 py-1.5 text-left text-sm transition-colors cursor-pointer",
+                    isActive
+                      ? "bg-brand-muted text-brand"
+                      : "text-foreground hover:bg-surface-2",
+                  )}
+                >
+                  <Folder className={cn("h-3.5 w-3.5 shrink-0", isActive ? "text-brand" : colorCls)} />
+                  <span className="flex-1 truncate">{f.name}</span>
+                  {f.ticketCount > 0 ? (
+                    <span
+                      className={cn(
+                        "text-[11px] tabular-nums",
+                        isActive ? "text-brand" : "text-muted-foreground",
+                      )}
+                    >
+                      {f.ticketCount}
+                    </span>
+                  ) : null}
+                  <span className="hidden items-center gap-0.5 group-hover/agfolder:flex">
+                    <span
+                      role="button"
+                      tabIndex={0}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setEditingId(f.id);
+                        setEditName(f.name);
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.stopPropagation();
+                          setEditingId(f.id);
+                          setEditName(f.name);
+                        }
+                      }}
+                      className="rounded p-0.5 text-muted-foreground hover:text-foreground cursor-pointer"
+                      title="Rename folder"
+                    >
+                      <Pencil className="h-3 w-3" />
+                    </span>
+                    <span
+                      role="button"
+                      tabIndex={0}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onDelete(f.id);
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.stopPropagation();
+                          onDelete(f.id);
+                        }
+                      }}
+                      className="rounded p-0.5 text-muted-foreground hover:text-red-500 cursor-pointer"
+                      title="Delete folder"
+                    >
+                      <Trash2 className="h-3 w-3" />
+                    </span>
+                  </span>
+                </button>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+
+      {creating ? (
+        <div className="mt-1 space-y-1.5 pl-7 pr-2">
+          <input
+            ref={inputRef}
+            type="text"
+            placeholder="Folder name…"
+            value={newName}
+            onChange={(e) => setNewName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") handleCreate();
+              if (e.key === "Escape") { setCreating(false); setNewName(""); }
+            }}
+            className="w-full rounded border border-hairline bg-surface px-2 py-1 text-xs text-foreground outline-none focus:border-brand/60"
+          />
+          <div className="flex flex-wrap gap-1">
+            {COLOR_OPTIONS.map((c) => (
+              <button
+                key={c.value}
+                type="button"
+                onClick={() => setNewColor(c.value)}
+                className={cn(
+                  "h-4 w-4 rounded-full transition-all cursor-pointer",
+                  c.cls,
+                  newColor === c.value
+                    ? "ring-2 ring-white ring-offset-1 ring-offset-card"
+                    : "opacity-50 hover:opacity-100",
+                )}
+                title={c.value}
+              />
+            ))}
+          </div>
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={handleCreate}
+              disabled={!newName.trim()}
+              className="rounded bg-brand px-2 py-0.5 text-[11px] font-medium text-white transition-colors hover:bg-brand/90 disabled:opacity-40 cursor-pointer"
+            >
+              Create
+            </button>
+            <button
+              type="button"
+              onClick={() => { setCreating(false); setNewName(""); }}
+              className="rounded px-2 py-0.5 text-[11px] text-muted-foreground hover:text-foreground cursor-pointer"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={() => setCreating(true)}
+          className="mt-1 flex w-full items-center gap-2 rounded-md pl-7 pr-2 py-1 text-left text-[11px] text-muted-foreground transition-colors hover:bg-surface-2 hover:text-foreground cursor-pointer"
+        >
+          <FolderPlus className="h-3 w-3" />
+          <span>New folder</span>
+        </button>
+      )}
+    </div>
   );
 }

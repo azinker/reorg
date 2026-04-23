@@ -313,6 +313,7 @@ model User {
   helpdeskPrimaryAssignments HelpdeskTicket[]       @relation("HelpdeskPrimaryAssignee")
   helpdeskResolvedTickets    HelpdeskTicket[]       @relation("HelpdeskResolvedBy")
   helpdeskSnoozedTickets     HelpdeskTicket[]       @relation("HelpdeskSnoozedBy")
+  helpdeskAgentFolders       HelpdeskAgentFolder[]  @relation("HelpdeskAgentFolderCreator")
   helpdeskMessages           HelpdeskMessage[]      @relation("HelpdeskMessageAuthor")
   helpdeskNotes              HelpdeskNote[]         @relation("HelpdeskNoteAuthor")
   helpdeskCreatedTags        HelpdeskTag[]          @relation("HelpdeskTagCreator")
@@ -1166,10 +1167,28 @@ model HelpdeskTicket {
   @@index([snoozedUntil])
   @@index([kind, status])
   @@index([isArchived, status])
+  agentFolderId      String?
+  agentFolder        HelpdeskAgentFolder? @relation(fields: [agentFolderId], references: [id], onDelete: SetNull)
+
   @@index([isFavorite])
   @@index([type])
   @@index([systemMessageType])
+  @@index([agentFolderId])
   @@map("helpdesk_tickets")
+}
+
+model HelpdeskAgentFolder {
+  id        String   @id @default(cuid())
+  name      String
+  color     String   @default("violet")
+  createdById String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  createdBy User             @relation("HelpdeskAgentFolderCreator", fields: [createdById], references: [id], onDelete: Cascade)
+  tickets   HelpdeskTicket[]
+
+  @@map("helpdesk_agent_folders")
 }
 
 model HelpdeskMessage {

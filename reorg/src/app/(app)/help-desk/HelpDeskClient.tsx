@@ -5,7 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { useHelpdesk, type HelpdeskFolderKey } from "@/hooks/use-helpdesk";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { HelpdeskHeader } from "@/components/helpdesk/HelpdeskHeader";
-import { FolderSidebar } from "@/components/helpdesk/FolderSidebar";
+import { FolderSidebar, type AgentFolderData } from "@/components/helpdesk/FolderSidebar";
 import { TicketList } from "@/components/helpdesk/TicketList";
 import { TicketReader } from "@/components/helpdesk/TicketReader";
 import {
@@ -105,6 +105,67 @@ export default function HelpDeskClient() {
     };
   }, []);
 
+  // ─── Agent folders state ─────────────────────────────────────────────────────
+  const [agentFolders, setAgentFolders] = useState<AgentFolderData[]>([]);
+  const [activeAgentFolderId, setActiveAgentFolderId] = useState<string | null>(null);
+
+  const fetchAgentFolders = useCallback(async () => {
+    try {
+      const res = await fetch("/api/helpdesk/agent-folders", { cache: "no-store" });
+      if (!res.ok) return;
+      const j = (await res.json()) as { data?: AgentFolderData[] };
+      if (j.data) setAgentFolders(j.data);
+    } catch { /* best-effort */ }
+  }, []);
+
+  useEffect(() => { void fetchAgentFolders(); }, [fetchAgentFolders]);
+
+  const handleAgentFolderSelect = useCallback((folderId: string) => {
+    setActiveAgentFolderId(folderId);
+  }, []);
+
+  const handleAgentFolderCreate = useCallback(async (name: string, color: string) => {
+    try {
+      const res = await fetch("/api/helpdesk/agent-folders", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name, color }),
+      });
+      if (!res.ok) return;
+      await fetchAgentFolders();
+    } catch { /* best-effort */ }
+  }, [fetchAgentFolders]);
+
+  const handleAgentFolderDelete = useCallback(async (folderId: string) => {
+    try {
+      const res = await fetch(`/api/helpdesk/agent-folders/${folderId}`, {
+        method: "DELETE",
+      });
+      if (!res.ok) return;
+      if (activeAgentFolderId === folderId) setActiveAgentFolderId(null);
+      await fetchAgentFolders();
+    } catch { /* best-effort */ }
+  }, [activeAgentFolderId, fetchAgentFolders]);
+
+  const handleAgentFolderRename = useCallback(async (folderId: string, name: string) => {
+    try {
+      const res = await fetch(`/api/helpdesk/agent-folders/${folderId}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name }),
+      });
+      if (!res.ok) return;
+      await fetchAgentFolders();
+    } catch { /* best-effort */ }
+  }, [fetchAgentFolders]);
+
+  // When a system folder is selected, clear agent folder selection
+  const handleSystemFolderChange = useCallback((f: HelpdeskFolderKey) => {
+    setActiveAgentFolderId(null);
+    setFolder(f);
+    if (f !== "from_ebay") setSystemMessageType(null);
+  }, []);
+
   const channelArg = channelFilter === "ALL" ? undefined : channelFilter;
   // Network-side debounce on top of the header's input-side debounce.
   //
@@ -163,6 +224,7 @@ export default function HelpDeskClient() {
     channel: channelArg,
     search: searchArg,
     systemMessageType: folder === "from_ebay" ? systemMessageType : null,
+    agentFolderId: activeAgentFolderId,
   });
 
   // Honor ?q=... → seed search field. We compare against a ref so we
@@ -319,7 +381,8 @@ export default function HelpDeskClient() {
       | { kind: "setStatus"; status: string }
       | { kind: "markSpam"; isSpam: boolean }
       | { kind: "assign"; userId: string | null }
-      | { kind: "markRead"; isRead: boolean },
+      | { kind: "markRead"; isRead: boolean }
+      | { kind: "moveToFolder"; agentFolderId: string | null },
     ticketIds: string[],
   ) {
     let body: Record<string, unknown>;
@@ -339,6 +402,9 @@ export default function HelpDeskClient() {
       case "markRead":
         body = { action: "markRead", ticketIds, isRead: action.isRead };
         break;
+      case "moveToFolder":
+        body = { action: "moveToFolder", ticketIds, agentFolderId: action.agentFolderId };
+        break;
     }
     const res = await fetch("/api/helpdesk/tickets/batch", {
       method: "POST",
@@ -350,6 +416,7 @@ export default function HelpDeskClient() {
       alert(`Batch action failed: ${j.error?.message ?? res.status}`);
     }
     refresh();
+    if (action.kind === "moveToFolder") void fetchAgentFolders();
   }
 
   return (
@@ -381,17 +448,21 @@ export default function HelpDeskClient() {
           active={folder}
           counts={counts}
           onChange={(f) => {
-            setFolder(f);
+            handleSystemFolderChange(f);
             selectTicket(null);
-            // Reset the From eBay chip whenever the agent navigates away
-            // from the From eBay folder; otherwise re-entering would
-            // silently re-apply the previous chip without any visible
-            // indicator.
-            if (f !== "from_ebay") setSystemMessageType(null);
           }}
           channelFilter={channelFilter}
           onChannelChange={setChannelFilter}
           isAdmin={isAdmin}
+          agentFolders={agentFolders}
+          activeAgentFolderId={activeAgentFolderId}
+          onAgentFolderSelect={(id) => {
+            handleAgentFolderSelect(id);
+            selectTicket(null);
+          }}
+          onAgentFolderCreate={handleAgentFolderCreate}
+          onAgentFolderDelete={handleAgentFolderDelete}
+          onAgentFolderRename={handleAgentFolderRename}
         />
 
         {prefs.layout === "list" ? (
@@ -440,6 +511,7 @@ export default function HelpDeskClient() {
                 paging={paging}
                 onPrevPage={goPrevPage}
                 onNextPage={goNextPage}
+                agentFolders={agentFolders}
                 headerExtra={
                   folder === "from_ebay" ? (
                     <FromEbayChips
@@ -484,6 +556,7 @@ export default function HelpDeskClient() {
                   hasPrev={!!prevTicketId}
                   hasNext={!!nextTicketId}
                   onSent={refresh}
+                  agentFolders={agentFolders}
                 />
               </div>
             )}
@@ -519,6 +592,7 @@ export default function HelpDeskClient() {
                 paging={paging}
                 onPrevPage={goPrevPage}
                 onNextPage={goNextPage}
+                agentFolders={agentFolders}
                 headerExtra={
                   folder === "from_ebay" ? (
                     <FromEbayChips
@@ -541,6 +615,7 @@ export default function HelpDeskClient() {
                 hasPrev={!!prevTicketId}
                 hasNext={!!nextTicketId}
                 onSent={refresh}
+                agentFolders={agentFolders}
               />
             }
           />

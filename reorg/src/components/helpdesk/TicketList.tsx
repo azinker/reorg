@@ -41,7 +41,8 @@ export type BulkAction =
   | { kind: "setStatus"; status: "RESOLVED" | "TO_DO" | "WAITING" }
   | { kind: "markSpam"; isSpam: boolean }
   | { kind: "assign"; userId: string | null }
-  | { kind: "markRead"; isRead: boolean };
+  | { kind: "markRead"; isRead: boolean }
+  | { kind: "moveToFolder"; agentFolderId: string | null };
 
 interface TicketListProps {
   tickets: HelpdeskTicketSummary[];
@@ -107,6 +108,8 @@ interface TicketListProps {
    * baking new flags into TicketList.
    */
   headerExtra?: React.ReactNode;
+  /** Agent folders for the "Move to folder" bulk action. */
+  agentFolders?: Array<{ id: string; name: string; color: string }>;
 }
 
 const STATUS_COLOR: Record<string, string> = {
@@ -166,12 +169,15 @@ export function TicketList({
   onNextPage,
   onPrefetch,
   headerExtra,
+  agentFolders = [],
 }: TicketListProps) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
   const [agents, setAgents] = useState<AgentBadge[]>([]);
   const [showAssignMenu, setShowAssignMenu] = useState(false);
+  const [showMoveMenu, setShowMoveMenu] = useState(false);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
+  const moveMenuRef = useRef<HTMLDivElement | null>(null);
   const assignMenuRef = useRef<HTMLDivElement | null>(null);
   const contextMenuRef = useRef<HTMLDivElement | null>(null);
   const prefs = useHelpdeskPrefs();
@@ -207,6 +213,18 @@ export function TicketList({
     document.addEventListener("mousedown", onDoc);
     return () => document.removeEventListener("mousedown", onDoc);
   }, [showAssignMenu]);
+
+  // Click-away to close move-to-folder menu.
+  useEffect(() => {
+    if (!showMoveMenu) return;
+    function onDoc(e: MouseEvent) {
+      if (moveMenuRef.current && !moveMenuRef.current.contains(e.target as Node)) {
+        setShowMoveMenu(false);
+      }
+    }
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [showMoveMenu]);
 
   // Right-click context menu close-on-click-outside / Esc.
   useEffect(() => {
@@ -776,6 +794,52 @@ export function TicketList({
             >
               <AlertOctagon className="h-3 w-3" /> Spam
             </button>
+
+            {agentFolders.length > 0 ? (
+              <div className="relative" ref={moveMenuRef}>
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => setShowMoveMenu((v) => !v)}
+                  className="inline-flex items-center gap-1 rounded-md border border-hairline bg-surface px-2 py-1 text-[11px] text-foreground hover:bg-surface-2 disabled:opacity-50 cursor-pointer"
+                  title="Move to folder"
+                >
+                  <Inbox className="h-3 w-3" /> Move to folder
+                </button>
+                {showMoveMenu ? (
+                  <div className="absolute bottom-full left-0 mb-1 max-h-64 w-56 overflow-y-auto rounded-md border border-hairline bg-popover py-1 text-[12px] text-popover-foreground shadow-xl">
+                    {agentFolders.map((af) => (
+                      <button
+                        key={af.id}
+                        type="button"
+                        disabled={busy}
+                        onClick={() => {
+                          runAction({ kind: "moveToFolder", agentFolderId: af.id });
+                          setShowMoveMenu(false);
+                        }}
+                        className="flex w-full items-center gap-2 px-2 py-1.5 text-left text-foreground hover:bg-surface-2 disabled:opacity-50 cursor-pointer"
+                      >
+                        <span className={cn("h-2.5 w-2.5 rounded-full", `bg-${af.color}-500`)} />
+                        <span className="truncate">{af.name}</span>
+                      </button>
+                    ))}
+                    <div className="my-1 border-t border-hairline" />
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => {
+                        runAction({ kind: "moveToFolder", agentFolderId: null });
+                        setShowMoveMenu(false);
+                      }}
+                      className="flex w-full items-center gap-2 px-2 py-1.5 text-left text-muted-foreground hover:bg-surface-2 disabled:opacity-50 cursor-pointer"
+                    >
+                      Remove from folder
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+
             <button
               type="button"
               disabled={busy}

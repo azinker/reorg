@@ -104,10 +104,11 @@ export function buildFilterKey(opts: {
   channel?: string;
   search?: string;
   systemMessageType?: string | null;
+  agentFolderId?: string | null;
 }): string {
   return `${opts.folder}|${opts.channel ?? "ALL"}|${opts.search ?? ""}|${
     opts.systemMessageType ?? ""
-  }`;
+  }|${opts.agentFolderId ?? ""}`;
 }
 
 export function getInbox(key: string): InboxPageSnapshot | undefined {

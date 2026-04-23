@@ -50,6 +50,7 @@ interface TicketReaderProps {
   hasPrev?: boolean;
   hasNext?: boolean;
   onSent: () => void;
+  agentFolders?: { id: string; name: string; color: string }[];
 }
 
 export function TicketReader({
@@ -64,6 +65,7 @@ export function TicketReader({
   hasPrev = false,
   hasNext = false,
   onSent,
+  agentFolders = [],
 }: TicketReaderProps) {
   const prefs = useHelpdeskPrefs();
 
@@ -249,6 +251,18 @@ export function TicketReader({
           )}
         </div>
 
+        {ticket?.ebayOrderNumber && (
+          <a
+            href={`https://www.ebay.com/mesh/ord/details?orderid=${ticket.ebayOrderNumber}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="hidden h-8 items-center gap-1 rounded-md border border-brand/30 bg-surface px-2.5 text-[11px] text-muted-foreground transition-colors hover:border-brand/60 hover:bg-brand/10 hover:text-brand cursor-pointer sm:inline-flex"
+            title="Open this message thread on eBay in a new tab"
+          >
+            <ExternalLink className="h-3 w-3" /> View message
+          </a>
+        )}
+
         {ticket?.ebayItemId && (
           <a
             href={`https://www.ebay.com/itm/${ticket.ebayItemId}`}
@@ -268,7 +282,7 @@ export function TicketReader({
        * when no ticket is selected (controls disable themselves) so the
        * layout doesn't reflow on selection change.
        */}
-      <TicketTriageBar ticket={ticket} onMutated={onSent} />
+      <TicketTriageBar ticket={ticket} onMutated={onSent} agentFolders={agentFolders} />
 
       {/* Thread + Context split */}
       <div className="flex flex-1 overflow-hidden">

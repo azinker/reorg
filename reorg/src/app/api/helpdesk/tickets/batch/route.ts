@@ -86,6 +86,10 @@ const actionSchema = z.discriminatedUnion("action", [
     action: z.literal("snooze"),
     snoozedUntil: z.string().datetime().nullable(),
   }),
+  baseSchema.extend({
+    action: z.literal("moveToFolder"),
+    agentFolderId: z.string().min(1).nullable(),
+  }),
 ]);
 
 export async function POST(request: NextRequest) {
@@ -210,6 +214,25 @@ export async function POST(request: NextRequest) {
         },
       });
       summary = { count: r.count, snoozedUntil: action.snoozedUntil };
+      break;
+    }
+    case "moveToFolder": {
+      if (action.agentFolderId) {
+        const folder = await db.helpdeskAgentFolder.findUnique({
+          where: { id: action.agentFolderId },
+        });
+        if (!folder) {
+          return NextResponse.json(
+            { error: { message: "Agent folder not found" } },
+            { status: 404 },
+          );
+        }
+      }
+      const r = await db.helpdeskTicket.updateMany({
+        where: { id: { in: ids } },
+        data: { agentFolderId: action.agentFolderId },
+      });
+      summary = { count: r.count, agentFolderId: action.agentFolderId };
       break;
     }
     case "markRead": {

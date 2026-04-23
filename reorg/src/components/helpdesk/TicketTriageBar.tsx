@@ -33,6 +33,8 @@ import {
   UserPlus,
   Check,
   Loader2,
+  FolderInput,
+  X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type {
@@ -82,14 +84,22 @@ interface AgentOption {
   avatarUrl?: string | null;
 }
 
+interface AgentFolderOption {
+  id: string;
+  name: string;
+  color: string;
+}
+
 interface TicketTriageBarProps {
   ticket: HelpdeskTicketDetail | null;
   onMutated: () => void;
+  agentFolders?: AgentFolderOption[];
 }
 
 export function TicketTriageBar({
   ticket,
   onMutated,
+  agentFolders = [],
 }: TicketTriageBarProps) {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -316,6 +326,15 @@ export function TicketTriageBar({
         onOpen={loadAgents}
         onPick={(userId) =>
           runBatch({ action: "assignPrimary", userId }, "assign")
+        }
+      />
+
+      <MoveToFolderMenu
+        currentFolderId={ticket?.agentFolderId ?? null}
+        folders={agentFolders}
+        disabled={disabled}
+        onPick={(folderId) =>
+          runBatch({ action: "moveToFolder", agentFolderId: folderId }, "moveToFolder")
         }
       />
 
@@ -691,6 +710,110 @@ function AgentAvatar({ name, url }: { name: string; url: string | null }) {
   return (
     <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-brand/15 text-[10px] font-semibold text-brand">
       {initials}
+    </div>
+  );
+}
+
+// ─── Move to Agent Folder ────────────────────────────────────────────────────
+
+const FOLDER_COLORS: Record<string, string> = {
+  violet: "bg-violet-500",
+  blue: "bg-blue-500",
+  green: "bg-green-500",
+  amber: "bg-amber-500",
+  red: "bg-red-500",
+  pink: "bg-pink-500",
+  cyan: "bg-cyan-500",
+  orange: "bg-orange-500",
+};
+
+function MoveToFolderMenu({
+  currentFolderId,
+  folders,
+  disabled,
+  onPick,
+}: {
+  currentFolderId: string | null;
+  folders: AgentFolderOption[];
+  disabled: boolean;
+  onPick: (folderId: string | null) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function onClick(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    }
+    window.addEventListener("mousedown", onClick);
+    return () => window.removeEventListener("mousedown", onClick);
+  }, [open]);
+
+  return (
+    <div ref={ref} className="relative">
+      <IconButton
+        title={currentFolderId ? "Move to different folder" : "Move to folder"}
+        disabled={disabled}
+        active={!!currentFolderId}
+        accent="violet"
+        onClick={() => setOpen((v) => !v)}
+      >
+        <FolderInput className="h-4 w-4" />
+      </IconButton>
+      {open && (
+        <div className="absolute right-0 top-full z-30 mt-1 w-52 rounded-md border border-hairline bg-popover p-1 text-popover-foreground shadow-xl">
+          {folders.length === 0 && (
+            <div className="px-2.5 py-2 text-xs text-muted-foreground">
+              No agent folders yet.
+            </div>
+          )}
+          {folders.map((f) => {
+            const isCurrent = currentFolderId === f.id;
+            return (
+              <button
+                key={f.id}
+                type="button"
+                onClick={() => {
+                  onPick(f.id);
+                  setOpen(false);
+                }}
+                className={cn(
+                  "flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-xs text-foreground hover:bg-surface-2 cursor-pointer",
+                  isCurrent && "bg-surface-2 font-medium",
+                )}
+              >
+                <span
+                  className={cn(
+                    "h-2.5 w-2.5 shrink-0 rounded-full",
+                    FOLDER_COLORS[f.color] ?? "bg-violet-500",
+                  )}
+                />
+                <span className="min-w-0 flex-1 truncate">{f.name}</span>
+                {isCurrent && <Check className="h-3.5 w-3.5" />}
+              </button>
+            );
+          })}
+          {currentFolderId && (
+            <>
+              <div className="my-1 h-px bg-hairline" aria-hidden />
+              <button
+                type="button"
+                onClick={() => {
+                  onPick(null);
+                  setOpen(false);
+                }}
+                className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-xs text-red-600 hover:bg-surface-2 dark:text-red-300 cursor-pointer"
+              >
+                <X className="h-3.5 w-3.5" />
+                Remove from folder
+              </button>
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 }

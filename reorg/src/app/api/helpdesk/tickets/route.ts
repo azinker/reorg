@@ -83,6 +83,7 @@ const querySchema = z.object({
   // tokens defined in `lib/helpdesk/from-ebay-detect.ts` (e.g.
   // RETURN_APPROVED, ITEM_DELIVERED). Ignored on every other folder.
   systemMessageType: z.string().trim().min(1).max(64).optional(),
+  agentFolderId: z.string().min(1).optional(),
 });
 
 export async function GET(request: NextRequest) {
@@ -100,17 +101,19 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  const { folder, channel, search, cursor, limit, systemMessageType } = parsed.data;
+  const { folder, channel, search, cursor, limit, systemMessageType, agentFolderId } = parsed.data;
   // When a global search is active we deliberately ignore the folder filter
   // so the agent can find resolved / spam / archived tickets too — this is
   // how eDesk behaves and matches user expectation ("search the whole
   // mailbox"). The folder still drives the count badges in the sidebar
   // (separate endpoint), so the UX remains coherent.
-  const where: Prisma.HelpdeskTicketWhereInput = search
-    ? {}
-    : {
-        ...buildFolderWhere(folder as HelpdeskFolderKey, { userId: session.user.id }),
-      };
+  const where: Prisma.HelpdeskTicketWhereInput = agentFolderId
+    ? { agentFolderId }
+    : search
+      ? {}
+      : {
+          ...buildFolderWhere(folder as HelpdeskFolderKey, { userId: session.user.id }),
+        };
   if (channel) where.channel = channel as Platform;
   // From-eBay sub-filter chip: only honored when the agent is actually
   // viewing the from_ebay folder. Honoring it on other folders would let
