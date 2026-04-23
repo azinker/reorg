@@ -1258,56 +1258,48 @@ async function reconcileMessages(args: ReconcileArgs): Promise<ReconcileResult> 
       }
 
       // Rule 2 — Auto-Responder-only Archive (with bounce-out persistence).
-      // The OLD user filter unconditionally re-archived any ticket whose
-      // first AR body matched a string, which kept knocking buyer
-      // follow-ups back into Archived after they'd been bounced into TO_DO.
       //
-      // The fix is to gate solely on message COUNT: a ticket gets
-      // auto-archived ONLY while it has exactly one message AND that one
-      // message is the AR. The instant a buyer (or anyone) replies, count
-      // becomes 2 and this rule structurally cannot fire again — making
-      // the bounce-out permanent without needing any extra "do not
-      // re-archive" flag.
+      // A ticket is "AR-only" when it has at least one AUTO_RESPONDER
+      // message and ZERO inbound (buyer) messages. Digest expansion
+      // creates both an envelope row AND sub-message rows for the same
+      // conversation, so a simple `messageCount === 1` check doesn't
+      // work — an AR-only ticket typically has 2+ rows (envelope + AR
+      // sub-message). Instead we check for the ABSENCE of any inbound
+      // messages, which structurally guarantees the buyer hasn't replied.
       //
-      // We also respect manual de-archives: if a ticket already has
-      // archivedAt set and the count is still 1, we skip — meaning
-      // archives done by this rule stay archived but we never re-archive
-      // a ticket that was manually unarchived.
+      // Once a buyer replies (inboundCount > 0), this rule can never
+      // fire again — making the bounce-out permanent without any extra
+      // "do not re-archive" flag.
       if (!refreshedTicket.isArchived) {
-        const messageCount = await db.helpdeskMessage.count({
-          where: { ticketId: ticket.id },
-        });
-        if (messageCount === 1) {
-          const lone = await db.helpdeskMessage.findFirst({
-            where: { ticketId: ticket.id },
-            select: { source: true, direction: true },
-          });
-          if (
-            lone &&
-            lone.direction === HelpdeskMessageDirection.OUTBOUND &&
-            lone.source === HelpdeskMessageSource.AUTO_RESPONDER
-          ) {
-            try {
-              await db.helpdeskTicket.update({
-                where: { id: ticket.id },
-                data: {
-                  isArchived: true,
-                  archivedAt: new Date(),
-                  // Auto-archived AR-only tickets are functionally
-                  // resolved from the agent's POV — they don't need a
-                  // human reply unless the buyer follows up. Setting
-                  // RESOLVED keeps them out of WAITING-status counters
-                  // too. The de-archive flow (buyer reply) will flip
-                  // back to TO_DO via deriveStatusOnInbound.
-                  status: HelpdeskTicketStatus.RESOLVED,
-                },
-              });
-            } catch (err) {
-              console.error(
-                "[helpdesk-sync] AR-only archive update failed",
-                err,
-              );
-            }
+        const [inboundCount, arCount] = await Promise.all([
+          db.helpdeskMessage.count({
+            where: {
+              ticketId: ticket.id,
+              direction: HelpdeskMessageDirection.INBOUND,
+            },
+          }),
+          db.helpdeskMessage.count({
+            where: {
+              ticketId: ticket.id,
+              source: HelpdeskMessageSource.AUTO_RESPONDER,
+            },
+          }),
+        ]);
+        if (inboundCount === 0 && arCount > 0) {
+          try {
+            await db.helpdeskTicket.update({
+              where: { id: ticket.id },
+              data: {
+                isArchived: true,
+                archivedAt: new Date(),
+                status: HelpdeskTicketStatus.RESOLVED,
+              },
+            });
+          } catch (err) {
+            console.error(
+              "[helpdesk-sync] AR-only archive update failed",
+              err,
+            );
           }
         }
       }

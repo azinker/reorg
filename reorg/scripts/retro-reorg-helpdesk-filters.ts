@@ -351,44 +351,33 @@ async function processTicket(
   // off the enum) treat them consistently going forward.
   const arRowsToPromote: string[] = [];
 
-  if (messages.length === 1) {
-    const lone = messages[0]!;
-    if (isAutoResponderMessage(lone)) {
-      if (lone.source !== HelpdeskMessageSource.AUTO_RESPONDER) {
-        arRowsToPromote.push(lone.id);
-      }
-      if (!t.isArchived) archiveAction = "archive";
-    }
-  } else if (t.isArchived) {
-    // Reverse sweep — was this archive done by the OLD AR filter and
-    // does the buyer message history say it should bounce? Heuristic:
-    // earliest message looks like an AR AND there is at least one
-    // INBOUND message strictly newer than it. The OLD filter re-archived
-    // such tickets on every sync; the new rule never would.
-    const first = messages[0]!;
-    if (isAutoResponderMessage(first)) {
-      if (first.source !== HelpdeskMessageSource.AUTO_RESPONDER) {
-        arRowsToPromote.push(first.id);
-      }
-      const hasLaterInbound = messages.some(
-        (m, i) =>
-          i > 0 &&
-          m.direction === HelpdeskMessageDirection.INBOUND &&
-          m.sentAt.getTime() > first.sentAt.getTime(),
-      );
-      if (hasLaterInbound) archiveAction = "unarchive";
-    }
-  } else {
-    // Tickets with multiple messages where the FIRST is an AR but it's
-    // not currently archived: still promote the source so the AR row is
-    // labelled correctly in ThreadView, but don't change archive state.
-    const first = messages[0]!;
+  // AR detection: digest expansion creates envelope + sub-message rows,
+  // so a ticket with only our AR may have 2+ messages. Instead of
+  // checking messages.length === 1, check for ZERO inbound messages and
+  // at least one AR message.
+  const hasArMessage = messages.some((m) => isAutoResponderMessage(m));
+  const hasInbound = messages.some(
+    (m) => m.direction === HelpdeskMessageDirection.INBOUND,
+  );
+
+  // Promote source on all AR-detected messages regardless of archive action
+  for (const m of messages) {
     if (
-      isAutoResponderMessage(first) &&
-      first.source !== HelpdeskMessageSource.AUTO_RESPONDER
+      isAutoResponderMessage(m) &&
+      m.source !== HelpdeskMessageSource.AUTO_RESPONDER
     ) {
-      arRowsToPromote.push(first.id);
+      arRowsToPromote.push(m.id);
     }
+  }
+
+  if (hasArMessage && !hasInbound) {
+    // No buyer messages — this is an AR-only ticket → archive
+    if (!t.isArchived) archiveAction = "archive";
+  } else if (t.isArchived && hasArMessage && hasInbound) {
+    // Reverse sweep — ticket was archived (by old filter or earlier retro
+    // run) but buyer HAS replied → un-archive so agent sees it in To Do.
+    // The new hardcoded rule will never re-archive it.
+    archiveAction = "unarchive";
   }
 
   // ── Rule 4 — From eBay un-archive ─────────────────────────────────────
