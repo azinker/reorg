@@ -54,6 +54,7 @@ import {
 } from "@/lib/helpdesk/from-ebay-detect";
 import {
   extractBuyerNameFromAutoResponderBody,
+  getSellerUserId,
   resolveBuyerForDigest,
   type ResolvedBuyer,
 } from "@/lib/helpdesk/buyer-resolve";
@@ -500,6 +501,36 @@ async function reconcileMessages(args: ReconcileArgs): Promise<ReconcileResult> 
       }
     }
 
+    // Buyer-agnostic → buyer-identified adoption. Sent-folder messages
+    // may create tickets keyed as `ord:<order>` (no buyer) because the
+    // eBay API sets both sender and recipientUserID to the seller's own
+    // handle in the sent folder. When a later inbox message arrives with
+    // the correct buyer, the threadKey is `ord:<order>|buyer:<buyer>`.
+    // If we don't have a ticket at that key yet, look for an existing
+    // buyer-agnostic ticket at `ord:<order>` and adopt it.
+    if (!ticket && extractedOrderNumber && buyerUserId) {
+      const agnosticKey = `ord:${extractedOrderNumber}`;
+      const agnosticTicket = await db.helpdeskTicket.findUnique({
+        where: {
+          integrationId_threadKey: {
+            integrationId: args.integration.id,
+            threadKey: agnosticKey,
+          },
+        },
+      });
+      if (agnosticTicket) {
+        ticket = await db.helpdeskTicket.update({
+          where: { id: agnosticTicket.id },
+          data: {
+            threadKey,
+            buyerUserId,
+            buyerName: buyerName ?? agnosticTicket.buyerName,
+            buyerEmail: buyerEmail ?? agnosticTicket.buyerEmail,
+          },
+        });
+      }
+    }
+
     // Reverse adoption (item-only message → existing order ticket).
     //
     // Scenario from Adam's screenshots: we send the auto-responder on
@@ -786,7 +817,20 @@ async function reconcileMessages(args: ReconcileArgs): Promise<ReconcileResult> 
     // Insert message (idempotent on (ticketId, externalId))
     let inserted = false;
     const messageBodyText = body.text ?? "";
-    const messageFromName = body.sender ?? null;
+    const sellerUserIdLower = getSellerUserId(args.integration)?.toLowerCase() ?? null;
+    const rawSender = body.sender?.trim() || null;
+    const senderIsSeller =
+      rawSender != null &&
+      sellerUserIdLower != null &&
+      rawSender.toLowerCase() === sellerUserIdLower;
+    const messageFromName =
+      direction === HelpdeskMessageDirection.INBOUND
+        ? (senderIsSeller ? buyerName ?? buyerUserId : rawSender) ?? null
+        : null;
+    const messageFromIdentifier =
+      direction === HelpdeskMessageDirection.INBOUND
+        ? (senderIsSeller ? buyerUserId : rawSender) ?? null
+        : null;
 
     // Source determination is delegated to a pure classifier so the
     // priority ordering (reorG envelope > AR log > catch-all EBAY_UI) is
@@ -807,7 +851,7 @@ async function reconcileMessages(args: ReconcileArgs): Promise<ReconcileResult> 
           externalId: body.messageID,
           ebayMessageId: body.messageID,
           fromName: messageFromName,
-          fromIdentifier: messageFromName,
+          fromIdentifier: messageFromIdentifier,
           subject,
           bodyText: messageBodyText,
           // eBay's GetMyMessages only sets ContentType reliably when the

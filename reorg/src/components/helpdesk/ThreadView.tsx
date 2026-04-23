@@ -906,13 +906,13 @@ function TimelineItem({
             "inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-[11px]",
             classForEventKind(ev.kind),
           )}
-          title={formatDateTime(ev.at)}
+          title={formatRelativeTime(ev.at)}
         >
           <Icon className="h-3 w-3" />
           <span className="font-medium">{ev.text}</span>
           <span className="opacity-60">·</span>
           <span className="tabular-nums opacity-80">
-            {formatRelativeTime(ev.at)}
+            {formatDateTime(ev.at)}
           </span>
         </span>
         <span className="h-px flex-1 max-w-[18%] bg-hairline" />
@@ -1005,8 +1005,8 @@ function TimelineItem({
           <span>
             Internal note · {n.author.name ?? n.author.email ?? "Agent"}
           </span>
-          <span className="opacity-70" title={formatDateTime(n.createdAt)}>
-            · {formatRelativeTime(n.createdAt)}
+          <span className="opacity-70" title={formatRelativeTime(n.createdAt)}>
+            · {formatDateTime(n.createdAt)}
           </span>
           {n.editedAt && <span className="opacity-60">(edited)</span>}
         </div>
@@ -1098,9 +1098,9 @@ function TimelineItem({
           {!isInbound && (
             <span
               className="text-[11px] tabular-nums text-muted-foreground"
-              title={formatDateTime(m.sentAt)}
+              title={formatRelativeTime(m.sentAt)}
             >
-              {formatRelativeTime(m.sentAt)}
+              {formatDateTime(m.sentAt)}
             </span>
           )}
           <span
@@ -1134,9 +1134,9 @@ function TimelineItem({
           {isInbound && (
             <span
               className="text-[11px] tabular-nums text-muted-foreground"
-              title={formatDateTime(m.sentAt)}
+              title={formatRelativeTime(m.sentAt)}
             >
-              {formatRelativeTime(m.sentAt)}
+              {formatDateTime(m.sentAt)}
             </span>
           )}
         </div>

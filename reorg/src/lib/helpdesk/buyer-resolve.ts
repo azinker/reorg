@@ -329,11 +329,10 @@ export async function resolveBuyer(args: {
         ? recipientClean
         : null;
 
-  if (fromOrder?.userId) {
-    // Prefer the real "First Last" from the order, but keep the username
-    // from the header when one is available (the order's buyerIdentifier
-    // IS the username, but envelope-level header is the more authoritative
-    // source for which side of the conversation actually sent this msg).
+  if (
+    fromOrder?.userId &&
+    !isSystemOrSellerSender(fromOrder.userId, sellerUserId)
+  ) {
     return {
       buyerUserId: headerHandle ?? fromOrder.userId,
       buyerName: fromOrder.label ?? headerHandle ?? fromOrder.userId,
