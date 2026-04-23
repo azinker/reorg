@@ -92,7 +92,7 @@ const BACKFILL_DAYS = Number.parseInt(
 );
 
 /** Max body fetch chunks per tick (each chunk = 10 messages). */
-const MAX_BODY_CHUNKS_PER_TICK = 8;
+const MAX_BODY_CHUNKS_PER_TICK = 20;
 
 /** Wall-clock budget in ms ΓÇö used to bail out gracefully. */
 const TICK_BUDGET_MS = 75_000;
@@ -304,15 +304,17 @@ async function pollIntegrationFolder(
   // ΓöÇΓöÇ Stage 3: hydrate bodies in chunks ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
   const startedAt = Date.now();
   let chunksFetched = 0;
+  let processedUpTo = 0;
   for (let i = 0; i < missing.length; i += 10) {
     if (chunksFetched >= MAX_BODY_CHUNKS_PER_TICK) break;
-    if (Date.now() - startedAt > 30_000) break;
+    if (Date.now() - startedAt > 55_000) break;
     const chunk = missing.slice(i, i + 10);
     const ids = chunk.map((c) => c.messageID).filter(Boolean);
     if (ids.length === 0) continue;
     const bodies = await getMyMessagesBodies(integration.id, config, ids);
     summary.bodiesFetched += bodies.length;
     chunksFetched++;
+    processedUpTo = i + chunk.length;
     const reconciled = await reconcileMessages({
       integration,
       folderKey,
@@ -323,31 +325,39 @@ async function pollIntegrationFolder(
     summary.ticketsUpdated += reconciled.ticketsUpdated;
     summary.messagesInserted += reconciled.messagesInserted;
   }
+  const allMissingProcessed = processedUpTo >= missing.length;
+  const processedHeaders = missing.slice(0, processedUpTo);
 
   // ΓöÇΓöÇ Update checkpoint ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
   if (needsBackfill) {
-    const advancedCursor = windowStart;
-    const backfillNowDone =
-      advancedCursor.getTime() <= now.getTime() - BACKFILL_DAYS * 86_400_000;
-    await db.helpdeskSyncCheckpoint.update({
-      where: { id: checkpoint.id },
-      data: {
-        backfillCursor: advancedCursor,
-        backfillDone: backfillNowDone,
-        lastFullSyncAt: backfillNowDone ? now : checkpoint.lastFullSyncAt,
-      },
-    });
-    summary.backfillAdvanced = true;
-    summary.backfillDone = backfillNowDone;
+    // Only advance the cursor past this window when ALL missing messages
+    // in the window were processed. Otherwise the next tick retries the
+    // same window and picks up the remaining messages.
+    if (allMissingProcessed) {
+      const advancedCursor = windowStart;
+      const backfillNowDone =
+        advancedCursor.getTime() <= now.getTime() - BACKFILL_DAYS * 86_400_000;
+      await db.helpdeskSyncCheckpoint.update({
+        where: { id: checkpoint.id },
+        data: {
+          backfillCursor: advancedCursor,
+          backfillDone: backfillNowDone,
+          lastFullSyncAt: backfillNowDone ? now : checkpoint.lastFullSyncAt,
+        },
+      });
+      summary.backfillAdvanced = true;
+      summary.backfillDone = backfillNowDone;
+    }
   } else {
-    // Set watermark to the latest message receive time we processed (or now).
-    const latest = missing
+    // Only advance the watermark to the latest receive time of messages
+    // we actually fetched bodies for — never jump past unprocessed ones.
+    const latest = processedHeaders
       .map((m) => (m.receiveDate ? new Date(m.receiveDate).getTime() : 0))
       .reduce((max, t) => (t > max ? t : max), wmTime);
     await db.helpdeskSyncCheckpoint.update({
       where: { id: checkpoint.id },
       data: {
-        lastWatermark: latest > 0 ? new Date(latest) : now,
+        lastWatermark: latest > 0 ? new Date(latest) : undefined,
         lastFullSyncAt: now,
       },
     });
