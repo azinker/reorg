@@ -83,15 +83,19 @@ export default function HelpdeskGlobalSettingsPage() {
   const [safeModeToggling, setSafeModeToggling] = useState(false);
   const [safeModeDb, setSafeModeDb] = useState<boolean | null>(null);
 
+  const [readSyncDb, setReadSyncDb] = useState<boolean | null>(null);
+  const [readSyncToggling, setReadSyncToggling] = useState(false);
+
   // ── Initial load: who am I + current sync status ──────────────────────────
   useEffect(() => {
     let cancelled = false;
     void (async () => {
       try {
-        const [meRes, syncRes, smRes] = await Promise.all([
+        const [meRes, syncRes, smRes, rsRes] = await Promise.all([
           fetch("/api/users/me", { cache: "no-store" }),
           fetch("/api/helpdesk/sync-status", { cache: "no-store" }),
           fetch("/api/settings?key=helpdesk_safe_mode", { cache: "no-store" }),
+          fetch("/api/settings?key=helpdesk_read_sync", { cache: "no-store" }),
         ]);
         if (!meRes.ok) throw new Error(`me ${meRes.status}`);
         const meJson = (await meRes.json()) as { data: MeProfile };
@@ -104,6 +108,10 @@ export default function HelpdeskGlobalSettingsPage() {
         if (smRes.ok) {
           const smJson = (await smRes.json()) as { data: boolean | null };
           if (!cancelled) setSafeModeDb(smJson.data ?? true);
+        }
+        if (rsRes.ok) {
+          const rsJson = (await rsRes.json()) as { data: boolean | null };
+          if (!cancelled) setReadSyncDb(rsJson.data ?? false);
         }
       } catch (e) {
         if (!cancelled) {
@@ -150,6 +158,25 @@ export default function HelpdeskGlobalSettingsPage() {
       // best-effort
     } finally {
       setSafeModeToggling(false);
+    }
+  }
+
+  async function onToggleReadSync() {
+    setReadSyncToggling(true);
+    try {
+      const newVal = !readSyncDb;
+      const res = await fetch("/api/settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ key: "helpdesk_read_sync", value: newVal }),
+      });
+      if (res.ok) {
+        setReadSyncDb(newVal);
+      }
+    } catch {
+      // best-effort
+    } finally {
+      setReadSyncToggling(false);
     }
   }
 
@@ -350,6 +377,43 @@ export default function HelpdeskGlobalSettingsPage() {
           </div>
         </div>
 
+        {/* Read Sync toggle */}
+        <div className="mb-4 rounded-lg border border-hairline bg-surface p-4">
+          <div className="flex items-center justify-between gap-4">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <RefreshCw className="h-4 w-4 text-brand" />
+                <span className="text-sm font-semibold text-foreground">
+                  eBay Read/Unread Sync
+                </span>
+              </div>
+              <p className="mt-1 text-xs text-muted-foreground">
+                When ON, opening a ticket in Help Desk marks it read on eBay,
+                and messages marked read/unread on eBay are mirrored into Help Desk.
+                FROM EBAY (System) tickets are always excluded from sync.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={onToggleReadSync}
+              disabled={readSyncToggling}
+              className={
+                "relative inline-flex h-6 w-11 shrink-0 items-center rounded-full border-2 border-transparent transition-colors cursor-pointer disabled:opacity-50 " +
+                ((readSyncDb ?? false)
+                  ? "bg-brand"
+                  : "bg-zinc-300 dark:bg-zinc-600")
+              }
+            >
+              <span
+                className={
+                  "inline-block h-4 w-4 rounded-full bg-white shadow transition-transform " +
+                  ((readSyncDb ?? false) ? "translate-x-5" : "translate-x-0.5")
+                }
+              />
+            </button>
+          </div>
+        </div>
+
         {syncLoading ? (
           <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
         ) : flags ? (
@@ -405,9 +469,9 @@ export default function HelpdeskGlobalSettingsPage() {
           </div>
         ) : null}
         <p className="mt-4 text-[11px] text-muted-foreground">
-          Channel flags (eBay sends, External email, Attachments, Read sync) are
-          set via environment variables (Vercel → Settings → Environment
-          Variables). Safe Mode can be toggled above or from{" "}
+          Channel flags (eBay sends, External email, Attachments) are set via
+          environment variables (Vercel → Settings → Environment Variables).
+          Safe Mode and Read Sync can be toggled above or from{" "}
           <Link href="/settings" className="text-brand hover:underline">
             Settings
           </Link>

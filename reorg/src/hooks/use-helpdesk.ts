@@ -514,6 +514,20 @@ export function useHelpdesk(args: UseHelpdeskArgs): UseHelpdeskReturn {
         const json = (await res.json()) as { data: HelpdeskTicketDetail };
         setSelectedTicket(json.data);
         setDetail(id, json.data);
+
+        // Auto-mark-read: when an agent opens an unread ticket, mark it read
+        // immediately. This also mirrors to eBay when read sync is enabled.
+        if (json.data.unreadCount > 0) {
+          void fetch("/api/helpdesk/tickets/batch", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              action: "markRead",
+              ticketIds: [id],
+              isRead: true,
+            }),
+          }).catch(() => {});
+        }
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err));
       } finally {

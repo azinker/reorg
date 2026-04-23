@@ -154,24 +154,25 @@ export async function helpdeskFlagsSnapshotAsync(): Promise<HelpdeskFlagsSnapsho
   const base = helpdeskFlagsSnapshot();
   let globalWriteLock = false;
   let dbSafeMode = false;
+  let dbReadSync = false;
   try {
-    const [lockRow, safeModeRow] = await Promise.all([
+    const [lockRow, safeModeRow, readSyncRow] = await Promise.all([
       db.appSetting.findUnique({ where: { key: "global_write_lock" } }),
       db.appSetting.findUnique({ where: { key: "helpdesk_safe_mode" } }),
+      db.appSetting.findUnique({ where: { key: "helpdesk_read_sync" } }),
     ]);
     globalWriteLock = lockRow?.value === true;
     dbSafeMode = safeModeRow?.value === true;
+    dbReadSync = readSyncRow?.value === true;
   } catch {
-    // Fail closed — assume all locks on during DB outage.
     globalWriteLock = true;
     dbSafeMode = true;
   }
-  return applyGlobalWriteLock(
-    {
-      ...base,
-      envSafeMode: base.envSafeMode || dbSafeMode,
-      safeMode: base.envSafeMode || dbSafeMode,
-    },
-    globalWriteLock,
-  );
+  const merged = {
+    ...base,
+    envSafeMode: base.envSafeMode || dbSafeMode,
+    safeMode: base.envSafeMode || dbSafeMode,
+    enableEbayReadSync: base.enableEbayReadSync || dbReadSync,
+  };
+  return applyGlobalWriteLock(merged, globalWriteLock);
 }

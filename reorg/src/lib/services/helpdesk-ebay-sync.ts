@@ -41,7 +41,7 @@ import {
 } from "@/lib/services/helpdesk-ebay";
 import { applyFilterAction, pickMatchingFilters } from "@/lib/helpdesk/filters";
 import { BUYER_CANCELLATION_TAG_NAME } from "@/lib/helpdesk/folders";
-import { helpdeskFlags } from "@/lib/helpdesk/flags";
+import { helpdeskFlags, helpdeskFlagsSnapshotAsync } from "@/lib/helpdesk/flags";
 import {
   deriveStatusOnInbound,
   deriveStatusOnSyncedOutbound,
@@ -284,8 +284,9 @@ async function pollIntegrationFolder(
   // a message is now read on eBay (one-directional). Going the other way
   // (eBay says unread ΓåÆ reorG marks unread) would constantly fight an agent
   // who already triaged a thread in reorG.
+  const flagsSnapshot = await helpdeskFlagsSnapshotAsync();
   if (
-    helpdeskFlags.enableEbayReadSync &&
+    flagsSnapshot.enableEbayReadSync &&
     folderKey === "inbox" &&
     existingExternalIds.size > 0
   ) {
