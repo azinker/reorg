@@ -1549,7 +1549,7 @@ async function reconcileEbayReadState(
       ebayMessageId: true,
       ticketId: true,
       sentAt: true,
-      ticket: { select: { unreadCount: true, lastBuyerMessageAt: true } },
+      ticket: { select: { unreadCount: true, status: true, lastBuyerMessageAt: true } },
     },
   });
   if (localMessages.length === 0) return;
@@ -1578,6 +1578,22 @@ async function reconcileEbayReadState(
       where: { id: { in: ticketsToClear } },
       data: { unreadCount: 0 },
     });
+    // Also resolve TO_DO/NEW tickets that are now fully read on eBay.
+    // "Read on eBay" = the agent saw it and moved on, so it's handled.
+    const toDoTicketsToClear = ticketsToClear.filter((tid) => {
+      const msg = localMessages.find((m) => m.ticketId === tid);
+      return (
+        msg &&
+        (msg.ticket.status === HelpdeskTicketStatus.NEW ||
+          msg.ticket.status === HelpdeskTicketStatus.TO_DO)
+      );
+    });
+    if (toDoTicketsToClear.length > 0) {
+      await db.helpdeskTicket.updateMany({
+        where: { id: { in: toDoTicketsToClear } },
+        data: { status: HelpdeskTicketStatus.RESOLVED },
+      });
+    }
   }
 
   // ── eBay unread → HelpDesk unread (set unreadCount = 1)
