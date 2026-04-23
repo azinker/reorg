@@ -153,7 +153,7 @@ export function applyGlobalWriteLock(
 export async function helpdeskFlagsSnapshotAsync(): Promise<HelpdeskFlagsSnapshot> {
   const base = helpdeskFlagsSnapshot();
   let globalWriteLock = false;
-  let dbSafeMode = false;
+  let dbSafeMode: boolean | null = null;
   let dbReadSync = false;
   try {
     const [lockRow, safeModeRow, readSyncRow] = await Promise.all([
@@ -162,16 +162,20 @@ export async function helpdeskFlagsSnapshotAsync(): Promise<HelpdeskFlagsSnapsho
       db.appSetting.findUnique({ where: { key: "helpdesk_read_sync" } }),
     ]);
     globalWriteLock = lockRow?.value === true;
-    dbSafeMode = safeModeRow?.value === true;
+    dbSafeMode = safeModeRow ? safeModeRow.value === true : null;
     dbReadSync = readSyncRow?.value === true;
   } catch {
     globalWriteLock = true;
     dbSafeMode = true;
   }
+  // DB toggle overrides the env var when it exists. This lets admins flip
+  // safe mode from the UI without a redeploy. When no DB row exists we
+  // fall back to the env default.
+  const effectiveSafeMode = dbSafeMode !== null ? dbSafeMode : base.envSafeMode;
   const merged = {
     ...base,
-    envSafeMode: base.envSafeMode || dbSafeMode,
-    safeMode: base.envSafeMode || dbSafeMode,
+    envSafeMode: effectiveSafeMode,
+    safeMode: effectiveSafeMode,
     enableEbayReadSync: base.enableEbayReadSync || dbReadSync,
   };
   return applyGlobalWriteLock(merged, globalWriteLock);
