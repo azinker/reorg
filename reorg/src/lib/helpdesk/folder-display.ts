@@ -41,7 +41,7 @@ export const FOLDER_LABELS: Record<HelpdeskFolderKey, string> = {
   all_new: "New",
   all_to_do: "To Do",
   all_to_do_unread: "Unread",
-  all_to_do_awaiting: "Awaiting Reply",
+  all_to_do_awaiting: "Read",
   all_waiting: "Waiting",
   buyer_cancellation: "Buyer Request Cancellation",
   from_ebay: "From eBay",
@@ -76,7 +76,7 @@ const BUYER_CANCELLATION_TAG_NAME = "Buyer Request Cancellation";
  *   7.  kind=PRE_SALES        → Pre-sales
  *   8.  status=WAITING        → Waiting
  *   9.  unreadCount > 0       → To Do · Unread
- *  10.  otherwise             → To Do · Awaiting Reply
+ *  10.  otherwise             → To Do · Read
  *
  * The precedence must stay in lockstep with the `buildFolderWhere` clauses
  * in `folders.ts` — if a sidebar exclusion changes, update both.

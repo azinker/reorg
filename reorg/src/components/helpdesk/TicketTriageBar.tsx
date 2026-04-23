@@ -392,13 +392,13 @@ function CurrentFolderPill({
 
   const label = FOLDER_LABELS[folderKey];
   // Two-level label for To Do sub-buckets so the agent sees the full
-  // hierarchy (To Do · Unread / To Do · Awaiting Reply) without having
+  // hierarchy (To Do · Unread / To Do · Read) without having
   // to glance at the sidebar.
   const display =
     folderKey === "all_to_do_unread"
       ? "To Do · Unread"
       : folderKey === "all_to_do_awaiting"
-        ? "To Do · Awaiting Reply"
+        ? "To Do · Read"
         : label;
 
   return (

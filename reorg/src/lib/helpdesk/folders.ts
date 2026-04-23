@@ -164,7 +164,7 @@ export function buildFolderWhere(
       // one agents watch — it aligns with eBay's own "Unread from members"
       // badge because we only count tickets that still have at least one
       // unread buyer message. Auto-mark-read flips unreadCount to 0 when an
-      // agent opens a ticket, moving it to the "Awaiting Reply" sibling.
+      // agent opens a ticket, moving it to the "Read" sibling.
       return {
         AND: [
           {
@@ -181,9 +181,11 @@ export function buildFolderWhere(
         ],
       };
     case "all_to_do_awaiting":
-      // v3: "Awaiting Reply" sub-folder under To Do. Tickets the agent has
-      // read (unreadCount=0) but hasn't responded to yet. Keeps the overall
-      // pending workload visible without inflating the scary "Unread" badge.
+      // v3: "Read" sub-folder under To Do (formerly "Awaiting Reply"). Tickets
+      // the agent has read (unreadCount=0) but hasn't responded to yet. Keeps
+      // the overall pending workload visible without inflating the scary
+      // "Unread" badge. Storage key stays `all_to_do_awaiting` so any saved
+      // view / link / cached count keeps resolving correctly.
       return {
         AND: [
           {
@@ -284,7 +286,7 @@ export const FOLDER_LABELS: Record<HelpdeskFolderKey, string> = {
   all_new: "New",
   all_to_do: "To Do",
   all_to_do_unread: "Unread",
-  all_to_do_awaiting: "Awaiting Reply",
+  all_to_do_awaiting: "Read",
   all_waiting: "Waiting",
   buyer_cancellation: "Buyer Request Cancellation",
   from_ebay: "From eBay",

@@ -234,11 +234,11 @@ export function Composer({
 
   const ticketIsArchived = ticket.isArchived;
 
-  const canSubmit =
-    !submitting &&
-    !pending &&
-    body.trim().length > 0 &&
-    (mode === "NOTE" ? !ticketIsArchived || true : !ticketIsArchived);
+  // Archived tickets can still be replied to — the server will un-archive
+  // the ticket on send (per user decision `unarchive_waiting`). We surface
+  // an informational banner above the composer so the agent knows clicking
+  // "Send" will pull the ticket back into Waiting; nothing is blocked.
+  const canSubmit = !submitting && !pending && body.trim().length > 0;
 
   const modeMeta = useMemo(() => {
     if (mode === "REPLY") {
@@ -347,19 +347,17 @@ export function Composer({
     }
   }
 
-  if (ticketIsArchived) {
-    return (
-      <div className="shrink-0 border-t border-hairline bg-card px-5 py-3">
-        <div className="flex items-center gap-2 rounded-md border border-hairline bg-surface px-3 py-2 text-xs text-muted-foreground">
-          <AlertTriangle className="h-4 w-4 shrink-0" />
-          <span>
-            Archived ticket — read only. New buyer messages will reopen it
-            automatically.
-          </span>
-        </div>
-      </div>
-    );
-  }
+  // Archived banner — informational only. The composer stays fully
+  // functional; sending will un-archive and move the ticket to Waiting.
+  const archivedBanner = ticketIsArchived ? (
+    <div className="mx-5 mt-3 flex items-center gap-2 rounded-md border border-hairline bg-surface px-3 py-2 text-xs text-muted-foreground">
+      <AlertTriangle className="h-4 w-4 shrink-0" />
+      <span>
+        Archived ticket — sending a reply will un-archive it and move it to
+        Waiting. Notes leave the archive state alone.
+      </span>
+    </div>
+  ) : null;
 
   // Collapsed pill (eDesk-style). Click to expand into the full composer.
   // Renders at the bottom of the thread pane and replaces all the chrome
@@ -372,24 +370,28 @@ export function Composer({
           ? "Reply…"
           : "Send external email…";
     return (
-      <div className="shrink-0 border-t border-hairline bg-card px-4 py-3">
-        <button
-          type="button"
-          onClick={() => {
-            setExpanded(true);
-            window.setTimeout(() => textareaRef.current?.focus(), 0);
-          }}
-          className="block w-full cursor-text rounded-md border border-hairline bg-surface px-3 py-2 text-left text-sm text-muted-foreground transition-colors hover:bg-surface-2 hover:text-foreground"
-          title="Click to compose a reply"
-        >
-          {placeholder}
-        </button>
+      <div className="shrink-0 border-t border-hairline bg-card">
+        {archivedBanner}
+        <div className="px-4 py-3">
+          <button
+            type="button"
+            onClick={() => {
+              setExpanded(true);
+              window.setTimeout(() => textareaRef.current?.focus(), 0);
+            }}
+            className="block w-full cursor-text rounded-md border border-hairline bg-surface px-3 py-2 text-left text-sm text-muted-foreground transition-colors hover:bg-surface-2 hover:text-foreground"
+            title="Click to compose a reply"
+          >
+            {placeholder}
+          </button>
+        </div>
       </div>
     );
   }
 
   return (
     <div className="shrink-0 border-t border-hairline bg-card">
+      {archivedBanner}
       {/* Mode tabs */}
       <div className="flex items-center gap-1 border-b border-hairline px-3 py-1.5 text-xs">
         <ModeTab

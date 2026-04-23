@@ -7,6 +7,8 @@ import {
 } from "@prisma/client";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
+import { helpdeskFlagsSnapshotAsync } from "@/lib/helpdesk/flags";
+import { mirrorReadStateToEbay } from "@/lib/services/helpdesk-read-mirror";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -266,12 +268,54 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
       return { ...projected, rawMedia: merged };
     });
 
-  // Mark as read on detail open: clear unreadCount.
+  // Mark as read on detail open: clear unreadCount AND mirror to eBay so
+  // eBay's own inbox reflects the same read-state. Without the mirror,
+  // eBay's "Unread from members" badge keeps the message flagged unread
+  // even after an agent opened it in reorG — which is exactly the drift
+  // the user flagged ("Help Desk needs to always be in sync with our eBay
+  // integrations").
+  //
+  // Gating matches the batch mark-read path:
+  //   - helpdeskFlagsSnapshotAsync().effectiveCanSyncReadState must be true
+  //     (respects HELPDESK_SAFE_MODE + HELPDESK_ENABLE_EBAY_READ_SYNC +
+  //     global write lock).
+  //   - SYSTEM tickets are excluded inside mirrorReadStateToEbay itself
+  //     so "From eBay" tickets never push read-state to ReviseMyMessages.
+  //
+  // Best-effort — a failed mirror must never block the detail response.
+  // We always clear unreadCount locally; the mirror is fire-and-forget in
+  // error terms (logged, not thrown).
   if (ticket.unreadCount > 0) {
     await db.helpdeskTicket.update({
       where: { id: ticket.id },
       data: { unreadCount: 0 },
     });
+    try {
+      const flags = await helpdeskFlagsSnapshotAsync();
+      if (
+        flags.effectiveCanSyncReadState &&
+        ticket.type !== HelpdeskTicketType.SYSTEM
+      ) {
+        const ebaySummary = await mirrorReadStateToEbay([ticket.id], true);
+        console.info("[helpdesk.ticketOpen] mirrorReadStateToEbay result", {
+          ticketId: ticket.id,
+          ebaySummary,
+        });
+      } else {
+        console.info("[helpdesk.ticketOpen] mirror skipped", {
+          ticketId: ticket.id,
+          type: ticket.type,
+          safeMode: flags.safeMode,
+          enableEbayReadSync: flags.enableEbayReadSync,
+          globalWriteLock: flags.globalWriteLock,
+        });
+      }
+    } catch (err) {
+      console.error("[helpdesk.ticketOpen] mirror threw", {
+        ticketId: ticket.id,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
   }
 
   // Stamp a "ticket opened" audit row so the reader timeline can show

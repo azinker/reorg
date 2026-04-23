@@ -60,11 +60,54 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     return NextResponse.json({ error: "Ticket not found" }, { status: 404 });
   }
 
-  if (ticket.isArchived && parsed.data.composerMode !== HelpdeskComposerMode.NOTE) {
-    return NextResponse.json(
-      { error: "Archived ticket — reopen before sending" },
-      { status: 409 },
-    );
+  // Archived + outbound (REPLY / EXTERNAL) path: un-archive on send.
+  //
+  // Per user decision `unarchive_waiting`, sending an outbound reply from an
+  // archived ticket (the common case is an AR-only archived ticket the
+  // agent decided to proactively message the buyer on) pulls the ticket
+  // BACK into the working queue instead of blocking. Archive becomes a
+  // "workflow-empty" state rather than a hard quarantine — exactly what the
+  // user asked for: the ticket "will either be sent + mark as resolved or
+  // send + mark as waiting".
+  //
+  // Notes on archived tickets are still fine — they stay archived, because
+  // a note is internal-only and doesn't change the external conversation
+  // state.
+  const wasArchived =
+    ticket.isArchived &&
+    parsed.data.composerMode !== HelpdeskComposerMode.NOTE;
+  if (wasArchived) {
+    // Default to WAITING when the agent didn't pick a status explicitly.
+    // The typical archived outbound path is "I want to send the buyer a
+    // proactive message" — we're now waiting on the buyer to reply, which
+    // is exactly WAITING. If the agent explicitly picks RESOLVED we honor
+    // that; the worker will re-apply setStatus after the send succeeds but
+    // writing it now makes the inbox reflect the change immediately.
+    const unarchiveStatus =
+      parsed.data.setStatus === "RESOLVED"
+        ? HelpdeskTicketStatus.RESOLVED
+        : HelpdeskTicketStatus.WAITING;
+    await db.helpdeskTicket.update({
+      where: { id },
+      data: {
+        isArchived: false,
+        archivedAt: null,
+        status: unarchiveStatus,
+      },
+    });
+    await db.auditLog.create({
+      data: {
+        userId: session.user.id,
+        action: "HELPDESK_TICKET_UNARCHIVED_ON_SEND",
+        entityType: "HelpdeskTicket",
+        entityId: id,
+        details: {
+          reason: "outbound_reply_from_archived",
+          newStatus: unarchiveStatus,
+          composerMode: parsed.data.composerMode,
+        },
+      },
+    });
   }
 
   // Note path: write directly. Notes never queue.

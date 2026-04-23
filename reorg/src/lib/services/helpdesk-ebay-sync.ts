@@ -1533,14 +1533,22 @@ const ORDER_NUMBER_LABEL_RE =
   /(?:order\s*(?:number|no\.?|#|id)\s*[:#]?\s*)([A-Z0-9-]+)/i;
 
 /**
- * One-way mirror of eBay's read-state into reorG.
+ * Two-way mirror of eBay's read-state into reorG.
  *
- * If a header we already have locally is now `read=true` on eBay, and the
- * owning ticket's only unread inbound message is this one (or older), zero
- * out the ticket's `unreadCount`. We never raise unread back up from this
- * path ΓÇö that would constantly fight an agent who already triaged in reorG.
+ * Direction 1 — eBay read → reorG read:
+ *   If a header we already have locally is now `read=true` on eBay, and
+ *   the owning ticket's only unread inbound message is this one (or older),
+ *   zero out the ticket's `unreadCount`. TO_DO / NEW tickets also get
+ *   resolved because "read on eBay" means an agent saw it there.
  *
- * Cheap: one ticket-grouping query, one updateMany. No per-message writes.
+ * Direction 2 — eBay unread → reorG unread (per user decision `status_to_do`):
+ *   If a message that was read in reorG is flipped back to unread on eBay,
+ *   pull the ticket back into the work queue: set `unreadCount=1`, un-archive
+ *   it, and bump status back to TO_DO. This keeps Help Desk honest whenever
+ *   a seller uses eBay's "mark as unread" to re-queue a message they want to
+ *   re-handle. SYSTEM tickets are filtered out at the top of the function.
+ *
+ * Cheap: one ticket-grouping query, one updateMany per direction.
  */
 async function reconcileEbayReadState(
   integrationId: string,
@@ -1574,7 +1582,15 @@ async function reconcileEbayReadState(
       ebayMessageId: true,
       ticketId: true,
       sentAt: true,
-      ticket: { select: { unreadCount: true, status: true, lastBuyerMessageAt: true } },
+      ticket: {
+        select: {
+          unreadCount: true,
+          status: true,
+          isArchived: true,
+          isSpam: true,
+          lastBuyerMessageAt: true,
+        },
+      },
     },
   });
   if (localMessages.length === 0) return;
@@ -1621,10 +1637,18 @@ async function reconcileEbayReadState(
     }
   }
 
-  // ── eBay unread → HelpDesk unread (set unreadCount = 1)
+  // ── eBay unread → HelpDesk unread (set unreadCount = 1 + bounce to TO_DO
+  // + un-archive).
+  //
+  // Per user decision `status_to_do`: when eBay flips a message from read
+  // back to unread (usually because the seller used eBay's "mark unread" to
+  // re-queue a conversation they want to revisit), the reorG ticket must
+  // rejoin the work queue. Spam tickets are excluded — marking spam unread
+  // on eBay does not mean we want it back in To Do.
   const ticketsToMarkUnread: string[] = [];
   for (const m of localMessages) {
     if (!m.ebayMessageId || !unreadOnEbay.has(m.ebayMessageId)) continue;
+    if (m.ticket.isSpam) continue;
     if (m.ticket.unreadCount > 0) continue; // already unread locally
     if (!ticketsToMarkUnread.includes(m.ticketId)) {
       ticketsToMarkUnread.push(m.ticketId);
@@ -1633,8 +1657,17 @@ async function reconcileEbayReadState(
   if (ticketsToMarkUnread.length > 0) {
     await db.helpdeskTicket.updateMany({
       where: { id: { in: ticketsToMarkUnread } },
-      data: { unreadCount: 1 },
+      data: {
+        unreadCount: 1,
+        isArchived: false,
+        archivedAt: null,
+        status: HelpdeskTicketStatus.TO_DO,
+      },
     });
+    console.info(
+      "[helpdesk-sync] eBay unread bounced tickets to TO_DO + un-archived",
+      { integrationId, ticketIds: ticketsToMarkUnread },
+    );
   }
 }
 
@@ -1783,6 +1816,184 @@ function extractFromText(text: string | null | undefined): string | null {
     return (shapeMatch[1] ?? shapeMatch[2] ?? "").trim() || null;
   }
   return null;
+}
+
+// ─── Targeted ingest: pull a specific order into the helpdesk ────────────
+//
+// Why this exists:
+//   The cron-driven backfill is bounded by HELPDESK_BACKFILL_DAYS so a fresh
+//   wipe can't accidentally replay months of history. But operators sometimes
+//   need to re-ingest ONE specific order whose messages fall outside that
+//   window (e.g. an older return case the buyer is still emailing about).
+//   Rather than bumping the global horizon — which would trigger a full
+//   replay across both stores — this helper scans eBay headers for a wider
+//   window, filters bodies down to the target order, and runs the exact same
+//   reconciliation pipeline that the cron uses. Everything else (write locks,
+//   sent-folder logic, read reconcile) is bypassed: the ONLY side-effect is
+//   creating/updating tickets and messages for the matching order.
+//
+// Safety:
+//   - Read-only against eBay. No ReviseMyMessages, no message sends.
+//   - Touches only HelpdeskTicket / HelpdeskMessage rows for the matched order.
+//   - Idempotent: duplicate messageIDs are dropped by the reconcile unique key.
+
+export interface IngestOrderOptions {
+  /** eBay order number in the 17-14480-10344 format (or sibling shapes). */
+  orderNumber: string;
+  /** How far back to scan eBay headers. Default 120 days. */
+  withinDays?: number;
+  /** Which folders to scan. Default ["inbox", "sent"] for a complete thread. */
+  folders?: Array<"inbox" | "sent">;
+  /** Optional progress logger (defaults to console.log). */
+  log?: (line: string) => void;
+}
+
+export interface IngestOrderResult {
+  integrationId: string;
+  platform: Platform;
+  folder: string;
+  headersScanned: number;
+  bodiesFetched: number;
+  bodiesMatched: number;
+  ticketsCreated: number;
+  ticketsUpdated: number;
+  messagesInserted: number;
+  error?: string;
+}
+
+/**
+ * Scan eBay headers for the given integration + folders, fetch message
+ * bodies in chunks of 10, filter to messages whose text mentions the
+ * target order number, and run them through the normal reconcile
+ * pipeline. Called by scripts/helpdesk-ingest-order.ts.
+ */
+export async function ingestOrderIntoHelpdesk(
+  integration: Integration,
+  opts: IngestOrderOptions,
+): Promise<IngestOrderResult[]> {
+  const log = opts.log ?? ((line: string) => console.log(line));
+  const folders = (opts.folders ?? ["inbox", "sent"]).map((k) =>
+    k === "inbox" ? { id: 0, key: "inbox" } : { id: 1, key: "sent" },
+  );
+  const withinDays = opts.withinDays ?? 120;
+  const target = opts.orderNumber.trim();
+  if (!target) throw new Error("orderNumber is required");
+
+  const config = buildEbayConfig(integration);
+  if (!config.appId || !config.refreshToken) {
+    return folders.map((f) => ({
+      integrationId: integration.id,
+      platform: integration.platform,
+      folder: f.key,
+      headersScanned: 0,
+      bodiesFetched: 0,
+      bodiesMatched: 0,
+      ticketsCreated: 0,
+      ticketsUpdated: 0,
+      messagesInserted: 0,
+      error: "missing eBay credentials",
+    }));
+  }
+
+  // Load filters once (matches the cron's one-per-pass load).
+  const filters = await db.helpdeskFilter.findMany({
+    where: { enabled: true },
+    orderBy: { sortOrder: "asc" },
+  });
+
+  const results: IngestOrderResult[] = [];
+  const now = new Date();
+  const horizon = new Date(now.getTime() - withinDays * 86_400_000);
+
+  for (const folder of folders) {
+    const summary: IngestOrderResult = {
+      integrationId: integration.id,
+      platform: integration.platform,
+      folder: folder.key,
+      headersScanned: 0,
+      bodiesFetched: 0,
+      bodiesMatched: 0,
+      ticketsCreated: 0,
+      ticketsUpdated: 0,
+      messagesInserted: 0,
+    };
+
+    try {
+      // Pass 1 (cheap): walk the full window in 7-day slices, fetching only
+      // HEADERS (no body hydrate). eBay order-event messages almost always
+      // embed the order number directly in the subject line
+      // (e.g. "Buyer requested a return · Order 17-14480-10344"), so we can
+      // identify candidate messages without paying the body-fetch cost for
+      // every message in the inbox. This keeps a 120-day targeted pull cheap
+      // even on a store that moves 500+ messages/week.
+      let windowEnd = now;
+      const subjectHits: EbayMessageHeader[] = [];
+      while (windowEnd.getTime() > horizon.getTime()) {
+        const windowStart = new Date(
+          Math.max(
+            horizon.getTime(),
+            windowEnd.getTime() - HEADERS_WINDOW_DAYS * 86_400_000,
+          ),
+        );
+        const headers = await getMyMessagesHeaders(integration.id, config, {
+          startTime: windowStart,
+          endTime: windowEnd,
+          folderID: folder.id,
+        });
+        summary.headersScanned += headers.length;
+        const thisWindowHits = headers.filter((h) =>
+          h.subject ? h.subject.includes(target) : false,
+        );
+        for (const h of thisWindowHits) subjectHits.push(h);
+
+        log(
+          `  [${integration.label} / ${folder.key}] window ${windowStart.toISOString().slice(0, 10)}..${windowEnd.toISOString().slice(0, 10)} headers=${headers.length} subjectHits=${thisWindowHits.length}`,
+        );
+
+        windowEnd = windowStart;
+        if (windowStart.getTime() <= horizon.getTime()) break;
+      }
+
+      // Pass 2: hydrate bodies for the subject hits and re-check with the
+      // canonical order-number extractor (which looks at body text too in
+      // case we see an edge case where the subject is truncated). Any that
+      // match the target get fed into the reconcile pipeline.
+      const collectedBodies: EbayMessageBody[] = [];
+      const ids = subjectHits
+        .map((h) => h.messageID)
+        .filter((id): id is string => Boolean(id));
+      for (let i = 0; i < ids.length; i += 10) {
+        const chunk = ids.slice(i, i + 10);
+        const bodies = await getMyMessagesBodies(integration.id, config, chunk);
+        summary.bodiesFetched += bodies.length;
+        for (const body of bodies) {
+          const ord = extractEbayOrderNumber(body);
+          if (ord === target) {
+            collectedBodies.push(body);
+            summary.bodiesMatched++;
+          }
+        }
+      }
+
+      if (collectedBodies.length > 0) {
+        const reconciled = await reconcileMessages({
+          integration,
+          folderKey: folder.key,
+          bodies: collectedBodies,
+          filters,
+        });
+        summary.ticketsCreated = reconciled.ticketsCreated;
+        summary.ticketsUpdated = reconciled.ticketsUpdated;
+        summary.messagesInserted = reconciled.messagesInserted;
+      }
+    } catch (err) {
+      summary.error = err instanceof Error ? err.message : String(err);
+    }
+
+    results.push(summary);
+  }
+
+  return results;
 }
 
 // Re-export for tests / cron integration.
