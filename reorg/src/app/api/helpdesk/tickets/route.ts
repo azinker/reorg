@@ -60,6 +60,8 @@ const folderEnum = z.enum([
   "all_tickets",
   "all_new",
   "all_to_do",
+  "all_to_do_unread",
+  "all_to_do_awaiting",
   "all_waiting",
   "buyer_cancellation",
   "from_ebay",

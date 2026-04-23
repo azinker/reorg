@@ -462,7 +462,34 @@ async function reconcileMessages(args: ReconcileArgs): Promise<ReconcileResult> 
     const buyerName = resolved.buyerName;
     const buyerEmail = resolved.buyerEmail;
 
-    const threadKey = computeThreadKey(body, buyerUserId, extractedOrderNumber);
+    // Hardcoded From-eBay detection runs BEFORE computeThreadKey so system
+    // notifications can be routed into dedicated sys: threadKeys, keeping
+    // them isolated from buyer conversation tickets on the same order. See
+    // the detection comment further down for the full rationale.
+    const fromEbayResult =
+      direction === HelpdeskMessageDirection.INBOUND
+        ? detectFromEbay({
+            sender: body.sender ?? null,
+            subject,
+            bodyText: body.text ?? null,
+            ebayQuestionType: body.questionType ?? null,
+          })
+        : null;
+    const isCancellationRequest =
+      direction === HelpdeskMessageDirection.INBOUND
+        ? detectCancellationRequest({
+            sender: body.sender ?? null,
+            subject,
+            bodyText: body.text ?? null,
+          })
+        : false;
+
+    const threadKey = computeThreadKey(
+      body,
+      buyerUserId,
+      extractedOrderNumber,
+      fromEbayResult,
+    );
     if (!threadKey) continue;
 
     const isPreSales =
@@ -649,44 +676,6 @@ async function reconcileMessages(args: ReconcileArgs): Promise<ReconcileResult> 
       }
     }
 
-    // ── Hardcoded From-eBay & Cancellation Request detection ──────────────
-    // These two detectors REPLACE three obsolete user-defined filters
-    // ("From eBay Messages", "A buyer wants to cancel an order", and the
-    // AR-only-archive filter — the third is handled further down right
-    // after the message insert). They run on every inbound message so:
-    //
-    //   1. Messages eBay sent us itself (Return Approved, Item Delivered,
-    //      "We sent your payout", etc.) get type=SYSTEM and a sub-type
-    //      stamped on `systemMessageType`. The folder layer hides them
-    //      from All Tickets / To Do / Waiting and routes them to the
-    //      dedicated "From eBay" sub-folder under Cancel Requests.
-    //
-    //   2. Cancellation requests get type=CANCELLATION and the reserved
-    //      `BUYER_CANCELLATION_TAG_NAME` tag — the same tag the
-    //      buyer_cancellation folder already keys off, so they appear in
-    //      Cancel Requests automatically.
-    //
-    // We deliberately scope detection to INBOUND messages: outbound mail
-    // we sent through reorG would never be classified as "from eBay" or
-    // a cancellation request.
-    const fromEbayResult =
-      direction === HelpdeskMessageDirection.INBOUND
-        ? detectFromEbay({
-            sender: body.sender ?? null,
-            subject,
-            bodyText: body.text ?? null,
-            ebayQuestionType: body.questionType ?? null,
-          })
-        : null;
-    const isCancellationRequest =
-      direction === HelpdeskMessageDirection.INBOUND
-        ? detectCancellationRequest({
-            sender: body.sender ?? null,
-            subject,
-            bodyText: body.text ?? null,
-          })
-        : false;
-
     // Auto-detect generic ticket type from this message (subject + body +
     // eBay questionType). Skipped when From-eBay/Cancellation already
     // pinned the type so we don't downgrade a SYSTEM/CANCELLATION ticket
@@ -806,18 +795,33 @@ async function reconcileMessages(args: ReconcileArgs): Promise<ReconcileResult> 
         const isHardcodedDetection =
           detectedType === HelpdeskTicketType.SYSTEM ||
           detectedType === HelpdeskTicketType.CANCELLATION;
+        // Defensive guard: NEVER flip an existing conversation ticket into
+        // SYSTEM. The threadKey routing above already isolates system
+        // notifications into their own sys:... tickets, but this guard
+        // protects legacy rows (created before the routing fix) from being
+        // silently reclassified and hidden in the "From eBay" folder while
+        // they still hold buyer/agent correspondence.
+        const wouldDemoteToSystem =
+          detectedType === HelpdeskTicketType.SYSTEM &&
+          ticket.type !== HelpdeskTicketType.SYSTEM;
         if (
-          isHardcodedDetection ||
-          (ticket.type === "QUERY" && detectedType !== "QUERY")
+          !wouldDemoteToSystem &&
+          (isHardcodedDetection ||
+            (ticket.type === "QUERY" && detectedType !== "QUERY"))
         ) {
           ticketUpdate.type = detectedType;
         }
       }
       // Stamp/refresh the system message sub-type whenever this message is
-      // a recognized From-eBay notification. Always overwrite — the latest
-      // detection wins so a thread that morphs from "Return approved" into
-      // "Return closed" reflects the most recent state.
-      if (fromEbayResult?.isFromEbay && fromEbayResult.systemMessageType) {
+      // a recognized From-eBay notification AND the ticket is already a
+      // SYSTEM ticket (post-routing). Never stamp it on a conversation
+      // ticket — the threadKey split above means we should never hit this
+      // path for mixed tickets, but we're defensive in case of legacy data.
+      if (
+        fromEbayResult?.isFromEbay &&
+        fromEbayResult.systemMessageType &&
+        ticket.type === HelpdeskTicketType.SYSTEM
+      ) {
         ticketUpdate.systemMessageType = fromEbayResult.systemMessageType;
       }
     }
@@ -1441,10 +1445,31 @@ function computeThreadKey(
   body: EbayMessageBody,
   buyerUserId: string | null,
   orderNumber: string | null,
+  fromEbayResult?: { isFromEbay: boolean; systemMessageType?: string | null } | null,
 ): string | null {
   const buyer = buyerUserId?.trim() || null;
   const itemId = body.itemID?.trim();
   const subject = body.subject?.trim();
+
+  // Eventful eBay system notifications (Return Requested, Payout Sent, Case
+  // Closed, etc.) live in their OWN isolated tickets keyed by the event type.
+  // They must never share a ticket with the buyer's conversation — the "From
+  // eBay" folder is reserved strictly for system bookkeeping. This keeps
+  // tickets like "buyer asked for a label" (type=QUERY) distinct from the
+  // related "eBay opened a return case" SYSTEM ticket on the same order.
+  if (fromEbayResult?.isFromEbay) {
+    const sysType = fromEbayResult.systemMessageType ?? "OTHER";
+    if (orderNumber) {
+      return `sys:ord:${orderNumber}|type:${sysType}`;
+    }
+    if (itemId) {
+      return `sys:itm:${itemId}|type:${sysType}`;
+    }
+    if (body.messageID) {
+      return `sys:msg:${body.messageID}`;
+    }
+    return null;
+  }
 
   if (orderNumber && buyer) {
     return `ord:${orderNumber}|buyer:${buyer.toLowerCase()}`;

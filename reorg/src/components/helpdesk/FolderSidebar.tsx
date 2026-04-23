@@ -89,6 +89,11 @@ interface FolderRow {
   /** When true, the row renders with the indented "child" treatment. */
   child?: boolean;
   /**
+   * When set, double-indents the row (grandchild). Used for the "Unread" and
+   * "Awaiting Reply" sub-buckets under "To Do".
+   */
+  grandchild?: boolean;
+  /**
    * Optional Tailwind text color class for the icon when the row is NOT
    * active. Lets us color each folder distinctly (Pre-sales = sparkle yellow,
    * Resolved = green, Spam = red) instead of every icon being the same brand
@@ -149,8 +154,26 @@ const ALL_CHILDREN: FolderRow[] = [
     key: "all_to_do",
     label: "To Do",
     tooltip:
-      "Tickets needing an agent reply — every unanswered buyer message lives here, brand-new or follow-up.",
+      "Tickets needing an agent reply — every unanswered buyer message lives here. The two sub-buckets split them by read status so agents can focus on truly unread mail first.",
     child: true,
+    helpDetail:
+      "To Do is every ticket where the buyer had the last word and you haven't replied yet. The two sub-buckets split the queue: 'Unread' is the count that mirrors eBay's own 'Unread from members' badge (buyer messages you haven't even opened yet). 'Awaiting Reply' is tickets you've read but haven't answered. Opening a ticket auto-marks it read and moves it from Unread → Awaiting Reply; sending your reply moves it out of To Do entirely.",
+  },
+  {
+    key: "all_to_do_unread",
+    label: "Unread",
+    tooltip:
+      "Unread buyer messages — matches eBay's own 'Unread from members' count. This is the one you watch. Opening a ticket auto-marks it read and flips it to Awaiting Reply.",
+    child: true,
+    grandchild: true,
+  },
+  {
+    key: "all_to_do_awaiting",
+    label: "Awaiting Reply",
+    tooltip:
+      "Read buyer messages you still owe a response to. Not scary like Unread — but don't let this pile up.",
+    child: true,
+    grandchild: true,
   },
   {
     key: "all_waiting",
@@ -547,6 +570,10 @@ function FolderItem({ row, active, count, onSelect }: FolderItemProps) {
           "flex w-full items-center gap-2 rounded-md py-1.5 text-left text-sm transition-colors cursor-pointer",
           isPlainChild ? "pl-8 pr-2 font-normal" : "px-2 font-medium",
           row.child && Icon ? "pl-7 pr-2" : "",
+          // Grandchild rows (Unread / Awaiting Reply under To Do) nest one
+          // level deeper with a smaller, muted label so the hierarchy reads
+          // at a glance without relying on vertical tree glyphs.
+          row.grandchild ? "pl-12 pr-2 text-[12px]" : "",
           active
             ? "bg-brand-muted text-brand"
             : "text-foreground hover:bg-surface-2",

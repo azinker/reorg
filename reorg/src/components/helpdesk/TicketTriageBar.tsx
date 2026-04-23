@@ -20,7 +20,7 @@
  * Adam's request once he confirmed it'd never light up.
  */
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
   Archive,
@@ -34,6 +34,7 @@ import {
   Check,
   Loader2,
   FolderInput,
+  Inbox,
   X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -41,6 +42,10 @@ import type {
   HelpdeskTicketDetail,
   HelpdeskTicketType,
 } from "@/hooks/use-helpdesk";
+import {
+  FOLDER_LABELS,
+  deriveTicketFolder,
+} from "@/lib/helpdesk/folder-display";
 
 const TYPE_LABELS: Record<HelpdeskTicketType, string> = {
   QUERY: "Query",
@@ -352,7 +357,59 @@ export function TicketTriageBar({
           {error}
         </span>
       )}
+
+      {/* Right-anchored "in <folder>" status pill — derived from the
+          ticket's own state (not the currently selected sidebar folder)
+          so an agent arriving via deep-link or search still sees where
+          this ticket actually lives. Read-only signal; not a button. */}
+      <CurrentFolderPill ticket={ticket} />
     </div>
+  );
+}
+
+// ─── Current-folder status pill ─────────────────────────────────────────────
+
+function CurrentFolderPill({
+  ticket,
+}: {
+  ticket: HelpdeskTicketDetail | null;
+}) {
+  const folderKey = useMemo(() => {
+    if (!ticket) return null;
+    return deriveTicketFolder({
+      status: ticket.status,
+      isArchived: ticket.isArchived,
+      isSpam: ticket.isSpam,
+      type: ticket.type,
+      kind: ticket.kind,
+      snoozedUntil: ticket.snoozedUntil,
+      unreadCount: ticket.unreadCount,
+      tags: ticket.tags,
+    });
+  }, [ticket]);
+
+  if (!folderKey || !ticket) return null;
+
+  const label = FOLDER_LABELS[folderKey];
+  // Two-level label for To Do sub-buckets so the agent sees the full
+  // hierarchy (To Do · Unread / To Do · Awaiting Reply) without having
+  // to glance at the sidebar.
+  const display =
+    folderKey === "all_to_do_unread"
+      ? "To Do · Unread"
+      : folderKey === "all_to_do_awaiting"
+        ? "To Do · Awaiting Reply"
+        : label;
+
+  return (
+    <span
+      className="ml-auto inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md border border-hairline bg-surface/60 px-2 text-[11px] font-medium text-muted-foreground"
+      title={`This ticket currently lives in the "${display}" folder. The folder is derived from ticket state (snooze, resolved, system, unread, etc.) so it updates automatically as you work.`}
+    >
+      <Inbox className="h-3.5 w-3.5 opacity-70" />
+      <span className="text-muted-foreground/80">in</span>
+      <span className="text-foreground">{display}</span>
+    </span>
   );
 }
 

@@ -247,19 +247,49 @@ export async function POST(request: NextRequest) {
 
       // Mirror to eBay when the read-sync flag is on AND safe-mode is off.
       // Best-effort: eBay rejection must never block the local update — the
-      // user already sees the row as read. Surfaced through the audit log.
+      // user already sees the row as read. Surfaced through the audit log
+      // AND the API response so the UI can show a toast if eBay refused.
       // The async snapshot makes sure the global write lock can shut this
       // down without anyone touching env vars.
       const flags = await helpdeskFlagsSnapshotAsync();
+      // Verbose log so we can trace exactly why a mark-unread didn't land
+      // on eBay. The previous version was silent when flags gated the
+      // mirror path — hard to diagnose from the UI alone. Always logged
+      // per-click (low volume, high value for the current debugging arc).
+      console.info("[helpdesk.markRead] gating", {
+        ticketIds: ids,
+        isRead: action.isRead,
+        flags: {
+          safeMode: flags.safeMode,
+          enableEbayReadSync: flags.enableEbayReadSync,
+          effectiveCanSyncReadState: flags.effectiveCanSyncReadState,
+          globalWriteLock: flags.globalWriteLock,
+        },
+      });
       if (flags.effectiveCanSyncReadState) {
         const ebaySummary = await mirrorReadStateToEbay(ids, action.isRead);
+        console.info("[helpdesk.markRead] mirrorReadStateToEbay result", {
+          ticketIds: ids,
+          isRead: action.isRead,
+          ebaySummary,
+        });
         summary = { ...summary, ebay: ebaySummary };
       } else if (flags.enableEbayReadSync && flags.safeMode) {
+        const skipReason = flags.globalWriteLock ? "globalWriteLock" : "safeMode";
+        console.warn("[helpdesk.markRead] mirror skipped", { skipReason, ticketIds: ids });
         summary = {
           ...summary,
           ebay: {
-            skipped: flags.globalWriteLock ? "globalWriteLock" : "safeMode",
+            skipped: skipReason,
           } as Record<string, unknown>,
+        };
+      } else if (!flags.enableEbayReadSync) {
+        console.warn("[helpdesk.markRead] mirror skipped: enableEbayReadSync=false", {
+          ticketIds: ids,
+        });
+        summary = {
+          ...summary,
+          ebay: { skipped: "readSyncDisabled" } as Record<string, unknown>,
         };
       }
       break;
@@ -383,9 +413,29 @@ async function mirrorReadStateToEbay(
   succeeded: number;
   failed: number;
   errors: string[];
+  skippedReason?: string;
+  perIntegration?: Array<{
+    integrationId: string;
+    integrationLabel: string;
+    platform: string;
+    messageCount: number;
+    succeeded: number;
+    failed: number;
+    errors: string[];
+  }>;
 }> {
-  const out = { attempted: 0, succeeded: 0, failed: 0, errors: [] as string[] };
-  if (ticketIds.length === 0) return out;
+  const out = {
+    attempted: 0,
+    succeeded: 0,
+    failed: 0,
+    errors: [] as string[],
+    perIntegration: [] as NonNullable<
+      Awaited<ReturnType<typeof mirrorReadStateToEbay>>["perIntegration"]
+    >,
+  };
+  if (ticketIds.length === 0) {
+    return { ...out, skippedReason: "noTicketIds" };
+  }
 
   const messages = await db.helpdeskMessage.findMany({
     where: {
@@ -400,7 +450,14 @@ async function mirrorReadStateToEbay(
       ticket: { select: { integrationId: true } },
     },
   });
-  if (messages.length === 0) return out;
+  console.info("[helpdesk.mirrorReadStateToEbay] eligible messages", {
+    ticketIds,
+    isRead,
+    messageCount: messages.length,
+  });
+  if (messages.length === 0) {
+    return { ...out, skippedReason: "noEligibleEbayMessages" };
+  }
 
   const byIntegration = new Map<string, string[]>();
   for (const m of messages) {
@@ -414,15 +471,41 @@ async function mirrorReadStateToEbay(
     const integration = await db.integration.findUnique({
       where: { id: integrationId },
     });
-    if (!integration || !integration.enabled) continue;
+    const integrationLabel = integration?.label ?? "(unknown integration)";
+    const platform = integration?.platform ?? "UNKNOWN";
+    const perRow = {
+      integrationId,
+      integrationLabel,
+      platform: String(platform),
+      messageCount: msgIds.length,
+      succeeded: 0,
+      failed: 0,
+      errors: [] as string[],
+    };
+    if (!integration || !integration.enabled) {
+      perRow.errors.push(
+        integration ? "integration disabled" : "integration not found",
+      );
+      perRow.failed = msgIds.length;
+      out.perIntegration.push(perRow);
+      continue;
+    }
     if (
       integration.platform !== Platform.TPP_EBAY &&
       integration.platform !== Platform.TT_EBAY
     ) {
+      perRow.errors.push(`unsupported platform ${integration.platform}`);
+      perRow.failed = msgIds.length;
+      out.perIntegration.push(perRow);
       continue;
     }
     const config = buildEbayConfig(integration);
-    if (!config.appId || !config.refreshToken) continue;
+    if (!config.appId || !config.refreshToken) {
+      perRow.errors.push("missing appId or refreshToken");
+      perRow.failed = msgIds.length;
+      out.perIntegration.push(perRow);
+      continue;
+    }
 
     // ReviseMyMessages caps at 10 IDs per call.
     for (let i = 0; i < msgIds.length; i += 10) {
@@ -433,17 +516,43 @@ async function mirrorReadStateToEbay(
           messageIDs: chunk,
           read: isRead,
         });
+        console.info("[helpdesk.mirrorReadStateToEbay] reviseMyMessages", {
+          integrationId,
+          integrationLabel,
+          platform: String(platform),
+          chunkSize: chunk.length,
+          sampleIds: chunk.slice(0, 3),
+          isRead,
+          success: res.success,
+          ack: res.ack,
+          error: res.error,
+        });
         if (res.success) {
           out.succeeded += chunk.length;
+          perRow.succeeded += chunk.length;
         } else {
           out.failed += chunk.length;
-          if (res.error) out.errors.push(res.error);
+          perRow.failed += chunk.length;
+          if (res.error) {
+            out.errors.push(res.error);
+            perRow.errors.push(res.error);
+          }
         }
       } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error("[helpdesk.mirrorReadStateToEbay] exception", {
+          integrationId,
+          integrationLabel,
+          platform: String(platform),
+          error: msg,
+        });
         out.failed += chunk.length;
-        out.errors.push(err instanceof Error ? err.message : String(err));
+        perRow.failed += chunk.length;
+        out.errors.push(msg);
+        perRow.errors.push(msg);
       }
     }
+    out.perIntegration.push(perRow);
   }
 
   return out;
