@@ -140,27 +140,38 @@ export function applyGlobalWriteLock(
 }
 
 /**
- * Async snapshot that ALSO consults the global write lock from the DB
- * (`AppSetting.global_write_lock`). When the lock is ON, `safeMode` is
- * forced TRUE and every outbound capability is forced FALSE — regardless
- * of env flags.
+ * Async snapshot that consults both the global write lock AND the
+ * DB-stored Help Desk safe mode toggle (`AppSetting.helpdesk_safe_mode`).
+ *
+ * Priority: env `HELPDESK_SAFE_MODE` OR DB `helpdesk_safe_mode` OR
+ * `global_write_lock` — ANY of these being true forces safe mode on.
+ * The DB toggle lets admins flip safe mode from the UI without a redeploy.
  *
  * This is the snapshot every server route / cron worker / outbound worker
- * MUST call before talking to eBay. It guarantees the user-visible Write
- * Safety toggle in Settings actually shuts off Help Desk outbound traffic.
+ * MUST call before talking to eBay.
  */
 export async function helpdeskFlagsSnapshotAsync(): Promise<HelpdeskFlagsSnapshot> {
   const base = helpdeskFlagsSnapshot();
   let globalWriteLock = false;
+  let dbSafeMode = false;
   try {
-    const row = await db.appSetting.findUnique({
-      where: { key: "global_write_lock" },
-    });
-    globalWriteLock = row?.value === true;
+    const [lockRow, safeModeRow] = await Promise.all([
+      db.appSetting.findUnique({ where: { key: "global_write_lock" } }),
+      db.appSetting.findUnique({ where: { key: "helpdesk_safe_mode" } }),
+    ]);
+    globalWriteLock = lockRow?.value === true;
+    dbSafeMode = safeModeRow?.value === true;
   } catch {
-    // If the DB lookup fails we FAIL CLOSED — assume the lock is on so we
-    // never accidentally send to eBay during a partial outage.
+    // Fail closed — assume all locks on during DB outage.
     globalWriteLock = true;
+    dbSafeMode = true;
   }
-  return applyGlobalWriteLock(base, globalWriteLock);
+  return applyGlobalWriteLock(
+    {
+      ...base,
+      envSafeMode: base.envSafeMode || dbSafeMode,
+      safeMode: base.envSafeMode || dbSafeMode,
+    },
+    globalWriteLock,
+  );
 }

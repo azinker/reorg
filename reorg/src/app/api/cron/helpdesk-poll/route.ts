@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { runHelpdeskPoll } from "@/lib/services/helpdesk-ebay-sync";
 import { runHelpdeskActionsPoll } from "@/lib/services/helpdesk-ebay-actions";
 import { recordHelpdeskPollStatus } from "@/lib/services/helpdesk-poll-status";
+import { purgeOldTickets } from "@/lib/services/helpdesk-purge";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -50,7 +51,20 @@ export async function POST(request: NextRequest) {
       summaries: result.summaries,
       error: null,
     });
-    return NextResponse.json({ ok: true, ...result, actions: actionsResult });
+    // Purge old tickets once per day (on the first tick after midnight ET)
+    let purgeResult: { ticketsDeleted: number } | null = null;
+    const nowET = new Date().toLocaleString("en-US", { timeZone: "America/New_York" });
+    const hourET = new Date(nowET).getHours();
+    const minuteET = new Date(nowET).getMinutes();
+    if (hourET === 3 && minuteET < 15) {
+      try {
+        purgeResult = await purgeOldTickets(/* dryRun */ false);
+      } catch (purgeErr) {
+        console.error("[cron/helpdesk-poll] purge failed", purgeErr);
+      }
+    }
+
+    return NextResponse.json({ ok: true, ...result, actions: actionsResult, purge: purgeResult });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     await recordHelpdeskPollStatus({

@@ -735,6 +735,32 @@ export default function SettingsPage() {
                 className={cn(settings.livePushEnabled && "!bg-red-500 hover:!bg-red-600")}
               />
             </div>
+            <div className="h-px bg-border" />
+            <div className="flex items-start justify-between gap-6">
+              <div className="flex-1">
+                <div className="flex items-center gap-2">
+                  {settings.helpdeskSafeMode ? (
+                    <Lock className="h-5 w-5 text-amber-500" />
+                  ) : (
+                    <Unlock className="h-5 w-5 text-muted-foreground" />
+                  )}
+                  <span className="font-medium">Help Desk Safe Mode</span>
+                </div>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  When ON, all Help Desk outbound actions are blocked: no eBay replies, no email
+                  sends, and no read/unread sync between eBay and Help Desk. Incoming sync
+                  (pulling messages) still works. Also manageable from{" "}
+                  <a href="/help-desk/global-settings" className="text-primary hover:underline">
+                    Help Desk → Global Settings
+                  </a>.
+                </p>
+              </div>
+              <ToggleSwitch
+                checked={settings.helpdeskSafeMode}
+                onCheckedChange={(v) => update({ helpdeskSafeMode: v })}
+                className={cn(settings.helpdeskSafeMode && "!bg-amber-500 hover:!bg-amber-600")}
+              />
+            </div>
             <div className="flex items-center gap-2">
               <span className="text-xs text-muted-foreground">Environment:</span>
               <span className="inline-flex items-center rounded-full border border-border bg-muted px-2.5 py-0.5 text-xs font-medium">

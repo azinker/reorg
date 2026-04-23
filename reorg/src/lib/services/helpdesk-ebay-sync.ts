@@ -62,6 +62,11 @@ import {
   parseEbayDigest,
   hashBodyForMatch,
 } from "@/lib/helpdesk/ebay-digest-parser";
+import {
+  cleanMessageHtml,
+  extractEnvelopePreviewImages,
+  envelopeStubBody,
+} from "@/lib/helpdesk/html-clean";
 
 // ΓöÇΓöÇΓöÇ Constants ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 
@@ -863,12 +868,7 @@ async function reconcileMessages(args: ReconcileArgs): Promise<ReconcileResult> 
           fromName: messageFromName,
           fromIdentifier: messageFromIdentifier,
           subject,
-          bodyText: messageBodyText,
-          // eBay's GetMyMessages only sets ContentType reliably when the
-          // sender uploaded as text/html ΓÇö a huge swath of buyer-facing
-          // notifications come back without it even though the body itself
-          // is full HTML markup. Sniff the actual body so SafeHtml renders
-          // correctly downstream.
+          bodyText: cleanMessageHtml(messageBodyText),
           isHtml:
             (body.contentType ?? "").toLowerCase().includes("html") ||
             looksLikeHtmlBody(messageBodyText),
@@ -1098,7 +1098,7 @@ async function reconcileMessages(args: ReconcileArgs): Promise<ReconcileResult> 
                       ? buyerUserId
                       : null,
                   subject: null,
-                  bodyText: sub.bodyHtml,
+                  bodyText: cleanMessageHtml(sub.bodyHtml),
                   isHtml: true,
                   rawMedia: [] as Prisma.InputJsonValue,
                   rawData: {
@@ -1199,6 +1199,51 @@ async function reconcileMessages(args: ReconcileArgs): Promise<ReconcileResult> 
             }
           }
         }
+
+          // ── Strip the digest envelope body now that sub-messages are
+          // extracted. The envelope HTML duplicates all sub-message content
+          // and averages 20-50 KB. Lift any preview images onto the live
+          // sub-message first so they aren't lost.
+          try {
+            const previewImgs = extractEnvelopePreviewImages(
+              messageBodyText,
+            );
+            if (previewImgs.length > 0) {
+              const liveSub = await db.helpdeskMessage.findFirst({
+                where: {
+                  ticketId: ticket.id,
+                  AND: [
+                    { rawData: { path: ["digestSource"], equals: body.messageID } },
+                    { rawData: { path: ["isLive"], equals: true } },
+                  ],
+                },
+                select: { id: true, rawMedia: true },
+              });
+              if (liveSub) {
+                const existing = Array.isArray(liveSub.rawMedia)
+                  ? (liveSub.rawMedia as Array<{ url: string }>)
+                  : [];
+                const existingUrls = new Set(existing.map((e) => e.url));
+                const newMedia = [
+                  ...existing,
+                  ...previewImgs.filter((p) => !existingUrls.has(p.url)),
+                ];
+                await db.helpdeskMessage.update({
+                  where: { id: liveSub.id },
+                  data: { rawMedia: newMedia as unknown as Prisma.InputJsonValue },
+                });
+              }
+            }
+            await db.helpdeskMessage.updateMany({
+              where: {
+                ticketId: ticket.id,
+                externalId: body.messageID,
+              },
+              data: { bodyText: envelopeStubBody() },
+            });
+          } catch {
+            // Non-fatal — the envelope stays full-sized if this fails
+          }
       } catch (err) {
         // Parser failures must never block envelope-level sync. Log and
         // move on — the digest envelope row is already in the DB so the
@@ -1475,19 +1520,32 @@ async function reconcileEbayReadState(
   integrationId: string,
   headers: EbayMessageHeader[],
 ): Promise<void> {
-  const readHeaderIds = headers
-    .filter((h) => h.read === true && h.messageID)
-    .map((h) => h.messageID as string);
-  if (readHeaderIds.length === 0) return;
+  // Build maps of eBay message ID → read state
+  const readOnEbay = new Set<string>();
+  const unreadOnEbay = new Set<string>();
+  for (const h of headers) {
+    if (!h.messageID) continue;
+    if (h.read === true) readOnEbay.add(h.messageID);
+    else if (h.read === false) unreadOnEbay.add(h.messageID);
+  }
+  if (readOnEbay.size === 0 && unreadOnEbay.size === 0) return;
 
-  // Find the local messages for these eBay IDs along with their ticket id.
+  const allIds = [...readOnEbay, ...unreadOnEbay];
+
+  // Find local messages — exclude SYSTEM (FROM EBAY) tickets entirely.
+  // FROM EBAY tickets must NEVER have their read/unread state synced
+  // in either direction.
   const localMessages = await db.helpdeskMessage.findMany({
     where: {
-      ebayMessageId: { in: readHeaderIds },
+      ebayMessageId: { in: allIds },
       direction: HelpdeskMessageDirection.INBOUND,
-      ticket: { integrationId },
+      ticket: {
+        integrationId,
+        type: { not: HelpdeskTicketType.SYSTEM },
+      },
     },
     select: {
+      ebayMessageId: true,
       ticketId: true,
       sentAt: true,
       ticket: { select: { unreadCount: true, lastBuyerMessageAt: true } },
@@ -1495,11 +1553,10 @@ async function reconcileEbayReadState(
   });
   if (localMessages.length === 0) return;
 
-  // Group by ticket and pick the most recent inbound `sentAt` we've seen
-  // marked-read on eBay. If that timestamp is >= the ticket's
-  // lastBuyerMessageAt, the ticket has truly been caught up on eBay.
+  // ── eBay read → HelpDesk read (clear unreadCount)
   const ticketLatestRead = new Map<string, number>();
   for (const m of localMessages) {
+    if (!m.ebayMessageId || !readOnEbay.has(m.ebayMessageId)) continue;
     const t = m.sentAt?.getTime() ?? 0;
     const prev = ticketLatestRead.get(m.ticketId) ?? 0;
     if (t > prev) ticketLatestRead.set(m.ticketId, t);
@@ -1508,18 +1565,35 @@ async function reconcileEbayReadState(
   const ticketsToClear: string[] = [];
   for (const m of localMessages) {
     if (m.ticket.unreadCount <= 0) continue;
+    if (!m.ebayMessageId || !readOnEbay.has(m.ebayMessageId)) continue;
     const lastBuyer = m.ticket.lastBuyerMessageAt?.getTime() ?? 0;
     const latestRead = ticketLatestRead.get(m.ticketId) ?? 0;
     if (latestRead >= lastBuyer && !ticketsToClear.includes(m.ticketId)) {
       ticketsToClear.push(m.ticketId);
     }
   }
-  if (ticketsToClear.length === 0) return;
+  if (ticketsToClear.length > 0) {
+    await db.helpdeskTicket.updateMany({
+      where: { id: { in: ticketsToClear } },
+      data: { unreadCount: 0 },
+    });
+  }
 
-  await db.helpdeskTicket.updateMany({
-    where: { id: { in: ticketsToClear } },
-    data: { unreadCount: 0 },
-  });
+  // ── eBay unread → HelpDesk unread (set unreadCount = 1)
+  const ticketsToMarkUnread: string[] = [];
+  for (const m of localMessages) {
+    if (!m.ebayMessageId || !unreadOnEbay.has(m.ebayMessageId)) continue;
+    if (m.ticket.unreadCount > 0) continue; // already unread locally
+    if (!ticketsToMarkUnread.includes(m.ticketId)) {
+      ticketsToMarkUnread.push(m.ticketId);
+    }
+  }
+  if (ticketsToMarkUnread.length > 0) {
+    await db.helpdeskTicket.updateMany({
+      where: { id: { in: ticketsToMarkUnread } },
+      data: { unreadCount: 1 },
+    });
+  }
 }
 
 function extractEbayOrderNumber(body: EbayMessageBody): string | null {

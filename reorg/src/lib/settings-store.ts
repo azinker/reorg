@@ -17,6 +17,7 @@ export interface AppSettings {
   autoExpandVariations: boolean;
   globalWriteLock: boolean;
   livePushEnabled: boolean;
+  helpdeskSafeMode: boolean;
 }
 
 const DEFAULTS: AppSettings = {
@@ -31,6 +32,7 @@ const DEFAULTS: AppSettings = {
   autoExpandVariations: false,
   globalWriteLock: false,
   livePushEnabled: false,
+  helpdeskSafeMode: true,
 };
 
 let cached: AppSettings | null = null;
@@ -76,6 +78,12 @@ function persist(settings: AppSettings) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ key: "live_push_enabled", value: settings.livePushEnabled }),
   }).catch((err) => console.error("[settings] live_push_enabled persist failed", err));
+
+  fetch("/api/settings", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ key: "helpdesk_safe_mode", value: settings.helpdeskSafeMode }),
+  }).catch((err) => console.error("[settings] helpdesk_safe_mode persist failed", err));
 }
 
 export function getSettings(): AppSettings {
@@ -112,10 +120,11 @@ export async function hydrateSettings(): Promise<void> {
   if (hydrated) return;
   hydrated = true;
   try {
-    const [resApp, resLock, resLivePush] = await Promise.all([
+    const [resApp, resLock, resLivePush, resSafeMode] = await Promise.all([
       fetch(`/api/settings?key=${DB_KEY}`),
       fetch(`/api/settings?key=global_write_lock`),
       fetch(`/api/settings?key=live_push_enabled`),
+      fetch(`/api/settings?key=helpdesk_safe_mode`),
     ]);
     let merged: Partial<AppSettings> = { ...DEFAULTS };
     if (resApp.ok) {
@@ -134,6 +143,12 @@ export async function hydrateSettings(): Promise<void> {
       const json = await resLivePush.json();
       if (typeof json.data === "boolean") {
         merged.livePushEnabled = json.data;
+      }
+    }
+    if (resSafeMode.ok) {
+      const json = await resSafeMode.json();
+      if (typeof json.data === "boolean") {
+        merged.helpdeskSafeMode = json.data;
       }
     }
     cached = { ...DEFAULTS, ...merged };

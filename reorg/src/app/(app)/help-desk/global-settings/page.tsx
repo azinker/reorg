@@ -80,14 +80,18 @@ export default function HelpdeskGlobalSettingsPage() {
   const [autoResolveError, setAutoResolveError] = useState<string | null>(null);
   const [autoResolveConfirm, setAutoResolveConfirm] = useState(false);
 
+  const [safeModeToggling, setSafeModeToggling] = useState(false);
+  const [safeModeDb, setSafeModeDb] = useState<boolean | null>(null);
+
   // ── Initial load: who am I + current sync status ──────────────────────────
   useEffect(() => {
     let cancelled = false;
     void (async () => {
       try {
-        const [meRes, syncRes] = await Promise.all([
+        const [meRes, syncRes, smRes] = await Promise.all([
           fetch("/api/users/me", { cache: "no-store" }),
           fetch("/api/helpdesk/sync-status", { cache: "no-store" }),
+          fetch("/api/settings?key=helpdesk_safe_mode", { cache: "no-store" }),
         ]);
         if (!meRes.ok) throw new Error(`me ${meRes.status}`);
         const meJson = (await meRes.json()) as { data: MeProfile };
@@ -96,6 +100,10 @@ export default function HelpdeskGlobalSettingsPage() {
         if (syncRes.ok) {
           const sJson = (await syncRes.json()) as { data: HelpdeskSyncStatus };
           if (!cancelled) setSync(sJson.data);
+        }
+        if (smRes.ok) {
+          const smJson = (await smRes.json()) as { data: boolean | null };
+          if (!cancelled) setSafeModeDb(smJson.data ?? true);
         }
       } catch (e) {
         if (!cancelled) {
@@ -122,6 +130,26 @@ export default function HelpdeskGlobalSettingsPage() {
       }
     } catch {
       // best-effort
+    }
+  }
+
+  async function onToggleSafeMode() {
+    setSafeModeToggling(true);
+    try {
+      const newVal = !safeModeDb;
+      const res = await fetch("/api/settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ key: "helpdesk_safe_mode", value: newVal }),
+      });
+      if (res.ok) {
+        setSafeModeDb(newVal);
+        await refreshSyncStatus();
+      }
+    } catch {
+      // best-effort
+    } finally {
+      setSafeModeToggling(false);
     }
   }
 
@@ -252,9 +280,8 @@ export default function HelpdeskGlobalSettingsPage() {
               Outbound Safety
             </h2>
             <p className="mt-1 text-xs text-muted-foreground">
-              Controls which channels can actually send messages. Driven by
-              environment variables so a config change is always a deploy
-              event (auditable in git).
+              Controls which channels can send messages and sync read state
+              with eBay.
             </p>
           </div>
           <span
@@ -276,17 +303,57 @@ export default function HelpdeskGlobalSettingsPage() {
             )}
           </span>
         </div>
+
+        {/* Safe Mode toggle */}
+        <div className="mb-4 rounded-lg border border-hairline bg-surface p-4">
+          <div className="flex items-center justify-between gap-4">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <ShieldAlert className="h-4 w-4 text-amber-500" />
+                <span className="text-sm font-semibold text-foreground">
+                  Help Desk Safe Mode
+                </span>
+              </div>
+              <p className="mt-1 text-xs text-muted-foreground">
+                When ON, all outbound actions are blocked: no eBay replies, no
+                email sends, and no read/unread sync between eBay and Help Desk.
+                Incoming sync (pulling messages) still works normally. Turn this
+                OFF when ready to go live.
+              </p>
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                Also visible under{" "}
+                <Link href="/settings" className="text-brand hover:underline">
+                  Settings → Safety Controls
+                </Link>
+                . The Global Write Lock overrides this — if the write lock is ON,
+                safe mode is forced ON regardless of this toggle.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={onToggleSafeMode}
+              disabled={safeModeToggling}
+              className={
+                "relative inline-flex h-6 w-11 shrink-0 items-center rounded-full border-2 border-transparent transition-colors cursor-pointer disabled:opacity-50 " +
+                ((safeModeDb ?? true)
+                  ? "bg-amber-500"
+                  : "bg-zinc-300 dark:bg-zinc-600")
+              }
+            >
+              <span
+                className={
+                  "inline-block h-4 w-4 rounded-full bg-white shadow transition-transform " +
+                  ((safeModeDb ?? true) ? "translate-x-5" : "translate-x-0.5")
+                }
+              />
+            </button>
+          </div>
+        </div>
+
         {syncLoading ? (
           <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
         ) : flags ? (
           <div className="grid gap-2 sm:grid-cols-2">
-            <FlagRow
-              label="Safe Mode"
-              value={flags.safeMode}
-              hint="When ON, all outbound paths are blocked. Sync still works."
-              good={(v) => !v}
-              env="HELPDESK_SAFE_MODE"
-            />
             <FlagRow
               label="eBay sends"
               value={flags.enableEbaySend}
@@ -308,6 +375,13 @@ export default function HelpdeskGlobalSettingsPage() {
               good={(v) => v}
               env="HELPDESK_ENABLE_ATTACHMENTS"
             />
+            <FlagRow
+              label="eBay read sync"
+              value={flags.enableEbayReadSync}
+              hint="Sync read/unread state between eBay and Help Desk. FROM EBAY tickets are always excluded."
+              good={(v) => v && !flags.safeMode}
+              env="HELPDESK_ENABLE_EBAY_READ_SYNC"
+            />
           </div>
         ) : (
           <p className="text-xs text-muted-foreground">
@@ -315,7 +389,7 @@ export default function HelpdeskGlobalSettingsPage() {
           </p>
         )}
         {flags ? (
-          <div className="mt-4 grid gap-2 sm:grid-cols-2 text-xs">
+          <div className="mt-4 grid gap-2 sm:grid-cols-3 text-xs">
             <EffectiveRow
               label="Effective: can send eBay"
               ok={flags.effectiveCanSendEbay}
@@ -324,12 +398,20 @@ export default function HelpdeskGlobalSettingsPage() {
               label="Effective: can send email"
               ok={flags.effectiveCanSendEmail}
             />
+            <EffectiveRow
+              label="Effective: read sync"
+              ok={flags.effectiveCanSyncReadState}
+            />
           </div>
         ) : null}
         <p className="mt-4 text-[11px] text-muted-foreground">
-          To change a flag, update the value in your hosting environment
-          (Vercel → Settings → Environment Variables) and redeploy. There's no
-          UI toggle on purpose: a config change should always be a deploy.
+          Channel flags (eBay sends, External email, Attachments, Read sync) are
+          set via environment variables (Vercel → Settings → Environment
+          Variables). Safe Mode can be toggled above or from{" "}
+          <Link href="/settings" className="text-brand hover:underline">
+            Settings
+          </Link>
+          .
         </p>
       </section>
 

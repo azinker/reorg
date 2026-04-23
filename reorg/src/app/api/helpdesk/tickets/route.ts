@@ -165,11 +165,10 @@ export async function GET(request: NextRequest) {
       where: {
         ticketId: { in: ticketIds },
         deletedAt: null,
-        // Exclude un-exploded digest envelopes — their body is the entire
-        // notification chrome, not a real message. Exploded sub-messages
-        // still have HTML bodies but never contain the marker div, so we
-        // can filter the envelopes out cheaply at the SQL layer.
-        NOT: { bodyText: { contains: "UserInputtedText" } },
+        NOT: [
+          { bodyText: { contains: "UserInputtedText" } },
+          { bodyText: { startsWith: "[digest envelope" } },
+        ],
       },
       orderBy: { sentAt: "desc" },
       select: { ticketId: true, bodyText: true, isHtml: true },

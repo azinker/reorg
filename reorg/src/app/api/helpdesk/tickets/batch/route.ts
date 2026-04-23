@@ -369,6 +369,8 @@ async function mirrorReadStateToEbay(
       ticketId: { in: ticketIds },
       direction: HelpdeskMessageDirection.INBOUND,
       ebayMessageId: { not: null },
+      // FROM EBAY (SYSTEM) tickets must NEVER push read/unread state to eBay
+      ticket: { type: { not: HelpdeskTicketType.SYSTEM } },
     },
     select: {
       ebayMessageId: true,

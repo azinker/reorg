@@ -208,8 +208,10 @@ export interface HelpdeskSyncStatus {
     enableEbaySend: boolean;
     enableResendExternal: boolean;
     enableAttachments: boolean;
+    enableEbayReadSync: boolean;
     effectiveCanSendEbay: boolean;
     effectiveCanSendEmail: boolean;
+    effectiveCanSyncReadState: boolean;
   };
   lastTickAt: string | null;
   lastOutcome: string | null;
