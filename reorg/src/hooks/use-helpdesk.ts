@@ -216,6 +216,12 @@ export interface HelpdeskSyncStatus {
     effectiveCanSendEmail: boolean;
     effectiveCanSyncReadState: boolean;
   };
+  /**
+   * Active backfill window in days (mirrors HELPDESK_BACKFILL_DAYS env var).
+   * Optional so older clients / cached payloads don't break the header.
+   * Defaults to 60 on the server when unset.
+   */
+  backfillDays?: number;
   lastTickAt: string | null;
   lastOutcome: string | null;
   lastSummary: unknown;

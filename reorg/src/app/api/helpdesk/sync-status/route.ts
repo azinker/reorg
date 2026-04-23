@@ -31,9 +31,19 @@ export async function GET(_request: NextRequest) {
     : [];
   const integrationMap = new Map(integrations.map((i) => [i.id, i]));
 
+  // Surface the *actual* backfill window so the header badge shows the
+  // real value (2 / 7 / 60 days etc.) instead of a hardcoded string. This
+  // reads the same env var the sync uses (HELPDESK_BACKFILL_DAYS), with
+  // a 60-day default to match the sync's fallback.
+  const backfillDays = Number.parseInt(
+    process.env.HELPDESK_BACKFILL_DAYS ?? "60",
+    10,
+  ) || 60;
+
   return NextResponse.json({
     data: {
       flags,
+      backfillDays,
       lastTickAt: (lastTickAt?.value as string | undefined) ?? null,
       lastOutcome: (lastOutcome?.value as string | undefined) ?? null,
       lastSummary: lastSummary?.value ?? null,

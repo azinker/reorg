@@ -220,7 +220,7 @@ export function HelpdeskHeader({
         {backfillInProgress && (
           <span className="inline-flex items-center gap-1 rounded-md border border-blue-500/30 bg-blue-500/10 px-2 py-0.5 text-[11px] font-medium text-blue-700 dark:text-blue-300">
             <Loader2 className="h-3 w-3 animate-spin" />
-            Backfilling 60 days
+            Backfilling {syncStatus?.backfillDays ?? 60} {(syncStatus?.backfillDays ?? 60) === 1 ? "day" : "days"}
           </span>
         )}
       </div>
