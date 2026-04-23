@@ -38,7 +38,8 @@
  */
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { cn } from "@/lib/utils";
 import {
   User,
@@ -557,12 +558,36 @@ interface FolderHelpAffordanceProps {
  */
 function FolderHelpAffordance({ detail, label }: FolderHelpAffordanceProps) {
   const [open, setOpen] = useState(false);
+  const [coords, setCoords] = useState<{ top: number; left: number } | null>(
+    null,
+  );
+  const buttonRef = useRef<HTMLButtonElement | null>(null);
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  // Recompute position whenever the popover is opened. Using fixed positioning
+  // anchored to the trigger button's viewport rect lets the tooltip escape the
+  // sidebar's `overflow-y: auto` clipping, which previously hid it behind the
+  // adjacent panel.
+  useEffect(() => {
+    if (!open || !buttonRef.current) return;
+    const rect = buttonRef.current.getBoundingClientRect();
+    setCoords({
+      top: rect.top + rect.height / 2,
+      left: rect.right + 8,
+    });
+  }, [open]);
+
   return (
     <span
       className="relative inline-flex"
       onClick={(e) => e.stopPropagation()}
     >
       <button
+        ref={buttonRef}
         type="button"
         aria-label={`What is the ${label} folder?`}
         aria-expanded={open}
@@ -576,14 +601,23 @@ function FolderHelpAffordance({ detail, label }: FolderHelpAffordanceProps) {
       >
         <HelpCircle className="h-3 w-3" />
       </button>
-      {open ? (
-        <span
-          role="tooltip"
-          className="absolute left-full top-1/2 z-30 ml-2 w-72 -translate-y-1/2 rounded-md border border-hairline bg-popover px-3 py-2 text-[11px] leading-relaxed text-popover-foreground shadow-lg"
-        >
-          {detail}
-        </span>
-      ) : null}
+      {open && mounted && coords
+        ? createPortal(
+            <span
+              role="tooltip"
+              style={{
+                position: "fixed",
+                top: coords.top,
+                left: coords.left,
+                transform: "translateY(-50%)",
+              }}
+              className="z-[100] w-72 rounded-md border border-hairline bg-popover px-3 py-2 text-[11px] leading-relaxed text-popover-foreground shadow-lg pointer-events-none"
+            >
+              {detail}
+            </span>,
+            document.body,
+          )
+        : null}
     </span>
   );
 }
