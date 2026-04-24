@@ -973,15 +973,33 @@ function Cell({ column, ticket: t, isUnread, timeLeft, otherViewers }: CellProps
       const text = previewLatest(t);
       return (
         <div className="min-w-0 px-2">
-          <p
-            className={cn(
-              "truncate",
-              isUnread ? "text-foreground" : "text-muted-foreground",
-            )}
-            title={text}
-          >
-            {text}
-          </p>
+          <div className="flex min-w-0 items-center gap-2">
+            {isUnread ? (
+              // Purple unread indicator. Matches the WAITING chip palette
+              // already established in TicketList so unread state reads as
+              // "needs attention" without introducing a new hue. A plain
+              // color dot would fail the "color alone isn't the signal"
+              // rule, so the row's latest-update text also bolds/darkens
+              // via isUnread above, and an sr-only label explains it to AT.
+              <span
+                className="inline-flex shrink-0 items-center justify-center"
+                title="Unread"
+                aria-hidden="true"
+              >
+                <span className="h-2 w-2 rounded-full bg-purple-500 shadow-[0_0_6px_rgba(168,85,247,0.6)] dark:bg-purple-400" />
+              </span>
+            ) : null}
+            {isUnread ? <span className="sr-only">Unread message.</span> : null}
+            <p
+              className={cn(
+                "min-w-0 flex-1 truncate",
+                isUnread ? "text-foreground" : "text-muted-foreground",
+              )}
+              title={text}
+            >
+              {text}
+            </p>
+          </div>
         </div>
       );
     }

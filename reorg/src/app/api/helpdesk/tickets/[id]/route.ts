@@ -438,7 +438,14 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       isImportant: ticket.isImportant,
       snoozedUntil: ticket.snoozedUntil,
       primaryAssignee: ticket.primaryAssignee,
-      unreadCount: 0,
+      // Return the REAL unreadCount so the client can fire the explicit
+      // auto-mark-read POST in loadSelected() when an agent opens an unread
+      // ticket. Returning 0 here short-circuits that conditional, which was
+      // the regression that meant clicking a ticket no longer flipped it to
+      // read. The POST path (tickets/batch?action=markRead) is the sole
+      // writer for unreadCount + eBay mirror; GET stays side-effect-free so
+      // hover-prefetch can't accidentally mark things read.
+      unreadCount: ticket.unreadCount,
       lastBuyerMessageAt: ticket.lastBuyerMessageAt,
       lastAgentMessageAt: ticket.lastAgentMessageAt,
       firstResponseAt: ticket.firstResponseAt,

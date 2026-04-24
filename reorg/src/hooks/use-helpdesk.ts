@@ -525,7 +525,24 @@ export function useHelpdesk(args: UseHelpdeskArgs): UseHelpdeskReturn {
 
         // Auto-mark-read: when an agent opens an unread ticket, mark it read
         // immediately. This also mirrors to eBay when read sync is enabled.
+        // Side-effects live on the batch POST path (sole writer for
+        // unreadCount + eBay mirror); GET stays side-effect-free so hover
+        // prefetch can't accidentally flip state.
         if (json.data.unreadCount > 0) {
+          // Optimistic: clear unread locally so the list row + unread dot
+          // stop showing as unread the instant the agent opens the ticket.
+          // Without this the badge stays "unread" for up to 60 s until the
+          // next background poll, which looks broken from the agent's POV.
+          setSnapshot((prev) => ({
+            ...prev,
+            tickets: prev.tickets.map((t) =>
+              t.id === id ? { ...t, unreadCount: 0 } : t,
+            ),
+          }));
+          setSelectedTicket((prev) =>
+            prev && prev.id === id ? { ...prev, unreadCount: 0 } : prev,
+          );
+
           void fetch("/api/helpdesk/tickets/batch", {
             method: "POST",
             headers: { "content-type": "application/json" },
