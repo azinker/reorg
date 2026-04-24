@@ -528,7 +528,14 @@ export function useHelpdesk(args: UseHelpdeskArgs): UseHelpdeskReturn {
         // Side-effects live on the batch POST path (sole writer for
         // unreadCount + eBay mirror); GET stays side-effect-free so hover
         // prefetch can't accidentally flip state.
-        if (json.data.unreadCount > 0) {
+        //
+        // IMPORTANT: only fire on explicit opens (silent=false). Silent refreshes
+        // are triggered by `refresh()` after every mutation — including the
+        // agent deliberately marking a ticket unread from the folder pill
+        // dropdown. Without this guard, the auto-mark-read immediately flips
+        // the unread state back to read, so "Mark as Unread" appears to do
+        // nothing. The explicit-open path already covers the intent here.
+        if (!silent && json.data.unreadCount > 0) {
           // Optimistic: clear unread locally so the list row + unread dot
           // stop showing as unread the instant the agent opens the ticket.
           // Without this the badge stays "unread" for up to 60 s until the
