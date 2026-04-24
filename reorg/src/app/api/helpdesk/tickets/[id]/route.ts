@@ -7,8 +7,6 @@ import {
 } from "@prisma/client";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { helpdeskFlagsSnapshotAsync } from "@/lib/helpdesk/flags";
-import { mirrorReadStateToEbay } from "@/lib/services/helpdesk-read-mirror";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -17,11 +15,17 @@ interface RouteParams {
   params: Promise<{ id: string }>;
 }
 
-export async function GET(_request: NextRequest, { params }: RouteParams) {
+export async function GET(request: NextRequest, { params }: RouteParams) {
   const session = await auth();
   if (!session?.user?.id) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+
+  // The ticket list prefetches this endpoint on row hover/focus to warm the
+  // detail cache (see use-helpdesk.ts → prefetchTicket). Prefetch calls
+  // append ?prefetch=1 so we can keep the response pure for hover but still
+  // stamp audit "opened" rows on real clicks.
+  const isPrefetch = request.nextUrl.searchParams.get("prefetch") === "1";
 
   const { id } = await params;
   const ticket = await db.helpdeskTicket.findUnique({
@@ -268,55 +272,16 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
       return { ...projected, rawMedia: merged };
     });
 
-  // Mark as read on detail open: clear unreadCount AND mirror to eBay so
-  // eBay's own inbox reflects the same read-state. Without the mirror,
-  // eBay's "Unread from members" badge keeps the message flagged unread
-  // even after an agent opened it in reorG — which is exactly the drift
-  // the user flagged ("Help Desk needs to always be in sync with our eBay
-  // integrations").
-  //
-  // Gating matches the batch mark-read path:
-  //   - helpdeskFlagsSnapshotAsync().effectiveCanSyncReadState must be true
-  //     (respects HELPDESK_SAFE_MODE + HELPDESK_ENABLE_EBAY_READ_SYNC +
-  //     global write lock).
-  //   - SYSTEM tickets are excluded inside mirrorReadStateToEbay itself
-  //     so "From eBay" tickets never push read-state to ReviseMyMessages.
-  //
-  // Best-effort — a failed mirror must never block the detail response.
-  // We always clear unreadCount locally; the mirror is fire-and-forget in
-  // error terms (logged, not thrown).
-  if (ticket.unreadCount > 0) {
-    await db.helpdeskTicket.update({
-      where: { id: ticket.id },
-      data: { unreadCount: 0 },
-    });
-    try {
-      const flags = await helpdeskFlagsSnapshotAsync();
-      if (
-        flags.effectiveCanSyncReadState &&
-        ticket.type !== HelpdeskTicketType.SYSTEM
-      ) {
-        const ebaySummary = await mirrorReadStateToEbay([ticket.id], true);
-        console.info("[helpdesk.ticketOpen] mirrorReadStateToEbay result", {
-          ticketId: ticket.id,
-          ebaySummary,
-        });
-      } else {
-        console.info("[helpdesk.ticketOpen] mirror skipped", {
-          ticketId: ticket.id,
-          type: ticket.type,
-          safeMode: flags.safeMode,
-          enableEbayReadSync: flags.enableEbayReadSync,
-          globalWriteLock: flags.globalWriteLock,
-        });
-      }
-    } catch (err) {
-      console.error("[helpdesk.ticketOpen] mirror threw", {
-        ticketId: ticket.id,
-        error: err instanceof Error ? err.message : String(err),
-      });
-    }
-  }
+  // NOTE: this GET endpoint is intentionally side-effect-free w.r.t. read
+  // state. The ticket list UI fires this same endpoint from `onMouseEnter`
+  // (see use-helpdesk.ts → prefetchTicket → TicketList onMouseEnter/onFocus)
+  // to warm the cache before a click, so marking-read here would mean every
+  // hover of a row silently marks its ticket read AND pushes read=true to
+  // eBay via mirrorReadStateToEbay — surfacing as "tickets went read on
+  // eBay without an agent actually opening them". The explicit click path
+  // (`loadSelected` in use-helpdesk.ts) already owns the mark-as-read
+  // contract by POSTing to /api/helpdesk/tickets/batch with action=markRead,
+  // which is the ONLY path allowed to mirror read-state to eBay.
 
   // Stamp a "ticket opened" audit row so the reader timeline can show
   // "Adam opened the ticket". Two-part dedupe so the timeline stays clean
@@ -337,17 +302,22 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
   //      we just don't stamp another "opened" event.
   //
   // Cheap lookup — uses the (entityType, entityId) audit_logs index.
+  // Prefetch (hover/focus) never stamps — otherwise moving the cursor
+  // across a dozen rows would create a dozen "opened by Adam" timeline
+  // rows. Only explicit clicks (which load without ?prefetch=1) stamp.
   const thirtyMinutesAgo = new Date(Date.now() - 30 * 60_000);
-  const recentOpen = await db.auditLog.findFirst({
-    where: {
-      action: "HELPDESK_TICKET_OPENED",
-      entityType: "HelpdeskTicket",
-      entityId: ticket.id,
-      userId: session.user.id,
-      createdAt: { gte: thirtyMinutesAgo },
-    },
-    select: { id: true },
-  });
+  const recentOpen = isPrefetch
+    ? ({ id: "prefetch-skip" } as const)
+    : await db.auditLog.findFirst({
+        where: {
+          action: "HELPDESK_TICKET_OPENED",
+          entityType: "HelpdeskTicket",
+          entityId: ticket.id,
+          userId: session.user.id,
+          createdAt: { gte: thirtyMinutesAgo },
+        },
+        select: { id: true },
+      });
   if (!recentOpen) {
     // Find the most recent prior open by this agent (any time).
     const lastOpen = await db.auditLog.findFirst({

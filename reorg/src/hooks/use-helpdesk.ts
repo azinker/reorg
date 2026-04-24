@@ -746,7 +746,14 @@ function prefetchTicket(id: string): void {
   // Fire and forget — we deliberately do not await. Errors are swallowed
   // because this is a hint, not a contract; if the user clicks anyway the
   // regular `loadSelected` path will surface any failure.
-  void fetch(`/api/helpdesk/tickets/${id}`, { cache: "no-store" })
+  //
+  // IMPORTANT: we tag this with ?prefetch=1 so the server keeps the
+  // response SIDE-EFFECT-FREE: no audit "ticket opened" stamp, no
+  // mark-as-read, no mirror-to-eBay. Without this, hovering a row would
+  // silently push read=true to eBay via mirrorReadStateToEbay and flip
+  // real unread messages read on the buyer's inbox — see the fix in
+  // src/app/api/helpdesk/tickets/[id]/route.ts (GET).
+  void fetch(`/api/helpdesk/tickets/${id}?prefetch=1`, { cache: "no-store" })
     .then(async (res) => {
       if (!res.ok) return;
       const json = (await res.json()) as { data: HelpdeskTicketDetail };
