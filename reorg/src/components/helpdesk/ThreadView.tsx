@@ -1115,7 +1115,14 @@ function TimelineItem({
           >
             {displayName}
           </span>
-          {isEbayUi && (
+          {/* The "Sent directly on eBay" pill is an *agent-side* audit marker:
+              it exists to distinguish "agent replied from the eBay web inbox"
+              from "agent replied through reorG". Buyer messages always arrive
+              via eBay regardless of which interface the buyer used, so the
+              pill is meaningless on INBOUND rows — and historically confused
+              users who thought it implied the buyer had some other channel.
+              Restrict to outbound only. */}
+          {!isInbound && isEbayUi && (
             <span
               className="inline-flex shrink-0 items-center gap-1 rounded-full border border-amber-500/50 bg-amber-400/20 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-amber-800 shadow-sm dark:border-amber-400/60 dark:bg-amber-400/15 dark:text-amber-200"
               title="This reply was sent directly through eBay's web inbox, not from reorG. The audit trail shows the agent who composed it (when known) but the send did not pass through the reorG composer."

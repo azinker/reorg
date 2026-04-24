@@ -208,14 +208,86 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
   // to the FIRST live sub where it appears. This pins the images to
   // the message turn where the buyer actually uploaded them and
   // eliminates duplicates downstream.
+  // ── Commerce-Message vs Trading-API dedupe.
+  //
+  // Once a ticket is bound to an eBay Commerce Message conversation, the
+  // sweep ingests every message with externalId = `cm:<messageId>` and
+  // source = EBAY_UI. Those rows are the canonical copy — they carry the
+  // real per-message ID, the true sent time, and the correct direction.
+  //
+  // The Trading-API digest path *also* ingests the same messages (as a
+  // digest envelope plus an exploded `:live` / `:N` sub-message), which
+  // is what the agent sees twice in the thread: once as "Buyer — no pill"
+  // and a second time 30s later as "Buyer (via eBay)" (or the agent-side
+  // pair, where the second copy carries the amber "Sent directly on eBay"
+  // badge). Both copies are the SAME physical message.
+  //
+  // Strategy: build a set of (direction, normalized-body) keys from every
+  // CM-origin row on this ticket, then hide any Trading-origin exploded
+  // sub whose (direction, normalized-body) matches. We keep the CM row
+  // because it has the correct identity/timestamps. Envelope rows are
+  // already hidden by the `digestSourceIds` rule above.
+  //
+  // Normalization is plain-text, whitespace-collapsed, lowercased — the
+  // same shape both paths store ultimately carries, but eBay occasionally
+  // round-trips HTML/plain differently between the two APIs so we can't
+  // trust raw string equality. This local normalizer is intentionally
+  // cheap — we don't import the digest parser's cyrb53 hasher because
+  // a substring compare on a single ticket's message set is O(n²) of
+  // n≈30 at worst.
+  function normalizeBodyForDedup(body: string | null | undefined): string {
+    if (!body) return "";
+    return body
+      .replace(/<[^>]+>/g, " ")
+      .replace(/&nbsp;/gi, " ")
+      .replace(/&amp;/gi, "&")
+      .replace(/&lt;/gi, "<")
+      .replace(/&gt;/gi, ">")
+      .replace(/&quot;/gi, '"')
+      .replace(/&#39;/gi, "'")
+      .replace(/\s+/g, " ")
+      .trim()
+      .toLowerCase();
+  }
+  const cmBodyKeys = new Set<string>();
+  for (const m of ticket.messages) {
+    const extId = m.externalId ?? "";
+    if (!extId.startsWith("cm:")) continue;
+    const body = normalizeBodyForDedup(m.bodyText);
+    if (!body) continue;
+    cmBodyKeys.add(`${m.direction}::${body}`);
+  }
+
   type MessageRow = (typeof ticket.messages)[number];
   const visibleMessages: MessageRow[] = ticket.messages.filter((m) => {
     const raw = m.rawData as Record<string, unknown> | null;
     const isExplodedSub =
       raw && typeof raw["digestSource"] === "string";
-    if (isExplodedSub) return true;
+    if (isExplodedSub) {
+      // Hide the Trading-API exploded sub when a Commerce-Message row
+      // already carries the same content on this ticket. The CM row is
+      // the canonical copy; this prevents the dupe-rendered thread.
+      const body = normalizeBodyForDedup(m.bodyText);
+      if (body && cmBodyKeys.has(`${m.direction}::${body}`)) return false;
+      return true;
+    }
     if (m.ebayMessageId && digestSourceIds.has(m.ebayMessageId)) {
       return false;
+    }
+    // Outbound Trading-API rows written by the Help Desk worker itself
+    // (externalId starts with "outbound:" or is the Trading messageId
+    // returned by AddMemberMessageRTQ) ALSO duplicate later when the
+    // sweep ingests the CM echo. Same rule: if a CM row has the same
+    // body+direction, hide our local copy in favor of the CM record so
+    // the thread doesn't render "agent said X" twice.
+    const extId = m.externalId ?? "";
+    const isLocalOutboundRow =
+      !extId.startsWith("cm:") &&
+      !isExplodedSub &&
+      m.direction === "OUTBOUND";
+    if (isLocalOutboundRow) {
+      const body = normalizeBodyForDedup(m.bodyText);
+      if (body && cmBodyKeys.has(`${m.direction}::${body}`)) return false;
     }
     return true;
   });

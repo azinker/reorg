@@ -191,18 +191,33 @@ async function sendEbayReply(
   }
 
   // Find the most recent inbound buyer message to use as parent.
+  //
+  // CRITICAL: the Trading API's AddMemberMessageRTQ requires a *Trading
+  // API* messageId as `parentMessageID`. Commerce Message API rows
+  // (source=EBAY_UI, externalId="cm:…") carry Commerce-namespace IDs
+  // that the Trading API rejects with Ack=Failure, which is what caused
+  // agent replies to "send" and then disappear: the job went FAILED
+  // silently once the UI stopped showing SENDING.
+  //
+  // Fix: restrict the parent lookup to Trading-origin rows (source=EBAY).
+  // Those cover the digest envelopes and their exploded sub-messages —
+  // both variants carry the digest's Trading messageId, which RTQ will
+  // accept. If a ticket literally has no Trading-origin buyer message
+  // (very new conversations that only arrived via Commerce Message API),
+  // we fall back to AAQToPartner using the item+recipient context — eBay
+  // will thread the reply into the same buyer conversation anyway since
+  // (ItemID, BuyerID) is the canonical thread key on their side.
   const parent = await db.helpdeskMessage.findFirst({
     where: {
       ticketId: job.ticketId,
       direction: HelpdeskMessageDirection.INBOUND,
       ebayMessageId: { not: null },
+      source: HelpdeskMessageSource.EBAY,
     },
     orderBy: { sentAt: "desc" },
   });
 
-  if (!parent?.ebayMessageId) {
-    throw new Error("No buyer message to reply to (eBay AAQToPartner blocked in v1)");
-  }
+  const parentMessageID = parent?.ebayMessageId ?? undefined;
 
   const config = buildEbayConfig(job.ticket.integration);
   const subject =
@@ -216,7 +231,7 @@ async function sendEbayReply(
       recipientID: job.ticket.buyerUserId,
       subject,
       body: job.bodyText,
-      parentMessageID: parent.ebayMessageId,
+      parentMessageID,
     },
   );
 
