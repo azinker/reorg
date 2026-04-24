@@ -207,10 +207,17 @@ export async function runHelpdeskPoll(): Promise<HelpdeskPollResult> {
   // read/unread each tick. They're retained in this file for
   // diagnostics and potential reuse on non-buyer (SYSTEM) tickets, but
   // are no longer part of the normal sync path.
+  //
+  // The unread sweep also returns per-conversation eBay `last_modified_date`
+  // timestamps, which we feed into sweepCommerceMessageInbound so it can
+  // prioritize tickets whose eBay-side activity is newer than our DB
+  // (i.e. tickets where an agent replied via the eBay web UI and the
+  // reply never landed in our legacy scrape).
+  let commerceActivity: CommerceActivitySignals = new Map();
   try {
     const flags = await helpdeskFlagsSnapshotAsync();
     if (flags.effectiveCanSyncReadState) {
-      await sweepUnreadConversationsFromWebUi(integrations);
+      commerceActivity = await sweepUnreadConversationsFromWebUi(integrations);
     }
   } catch (err) {
     console.error(
@@ -228,7 +235,7 @@ export async function runHelpdeskPoll(): Promise<HelpdeskPollResult> {
   try {
     const flags = await helpdeskFlagsSnapshotAsync();
     if (flags.effectiveCanSyncReadState) {
-      await sweepCommerceMessageInbound(integrations);
+      await sweepCommerceMessageInbound(integrations, commerceActivity);
     }
   } catch (err) {
     console.error(
@@ -2391,14 +2398,26 @@ const COMMERCE_PAGE_SIZE = 50;
  *
  * Gated by effectiveCanSyncReadState at the caller.
  */
+/**
+ * Signal captured by the unread sweep: eBay-side last-modified timestamp
+ * for every conversation we scanned this tick. Consumed by the inbound
+ * sweep to find tickets where eBay has newer activity than our DB (i.e.
+ * the agent replied via the eBay web UI and the message never landed in
+ * our legacy Trading-API scrape).
+ *
+ * Key = conversationId (globally unique across integrations, so a single
+ * flat map is fine).
+ */
+type CommerceActivitySignals = Map<string, Date>;
+
 async function sweepUnreadConversationsFromWebUi(
   integrations: Integration[],
-): Promise<void> {
+): Promise<CommerceActivitySignals> {
   // Run integrations in parallel. The per-integration path is entirely
   // self-contained (scoped by integrationId in every DB query + API call),
   // so parallelism is safe and roughly halves wall time on 2-integration
   // setups — critical for staying under Vercel's gateway timeout.
-  await Promise.all(
+  const results = await Promise.all(
     integrations.map((integration) =>
       sweepUnreadConversationsForIntegration(integration).catch((err) => {
         console.error(
@@ -2409,22 +2428,33 @@ async function sweepUnreadConversationsFromWebUi(
             error: err instanceof Error ? err.message : String(err),
           },
         );
+        return new Map<string, Date>() as CommerceActivitySignals;
       }),
     ),
   );
+  const merged: CommerceActivitySignals = new Map();
+  for (const m of results) {
+    for (const [k, v] of m) merged.set(k, v);
+  }
+  return merged;
 }
 
 async function sweepUnreadConversationsForIntegration(
   integration: Integration,
-): Promise<void> {
+): Promise<CommerceActivitySignals> {
+  // Signals we hand back to sweepCommerceMessageInbound so it can
+  // prioritize tickets where eBay's last-modified timestamp is newer
+  // than our local lastAgentMessageAt — the exact ones missing a web-UI
+  // agent reply.
+  const signals: CommerceActivitySignals = new Map();
   {
     if (
       integration.platform !== Platform.TPP_EBAY &&
       integration.platform !== Platform.TT_EBAY
     )
-      return;
+      return signals;
     const config = buildEbayConfig(integration);
-    if (!config.appId || !config.refreshToken) return;
+    if (!config.appId || !config.refreshToken) return signals;
 
     const selfUsername = getSellerUserId(integration) ?? undefined;
 
@@ -2503,6 +2533,13 @@ async function sweepUnreadConversationsForIntegration(
             });
           }
         }
+        // Record the eBay-side last-modified timestamp for this
+        // conversation so the inbound sweep can identify tickets whose
+        // DB state is stale relative to eBay.
+        if (c.conversationId && c.lastMessageDate) {
+          const d = new Date(c.lastMessageDate);
+          if (!Number.isNaN(d.getTime())) signals.set(c.conversationId, d);
+        }
         // Primary signal: unreadMessageCount. eBay always populates this
         // on the list response. The previous version additionally required
         // `latestMessage.readStatus === false` AND `senderUsername !=
@@ -2534,7 +2571,7 @@ async function sweepUnreadConversationsForIntegration(
       // Short page → eBay's end of data.
       if (conversations.length < COMMERCE_PAGE_SIZE) break;
     }
-    if (needsReauthLogged) return;
+    if (needsReauthLogged) return signals;
 
     // ── 2. Bump local unread where eBay reports unread ───────────────────
     let bumpedUnread = 0;
@@ -2742,9 +2779,11 @@ async function sweepUnreadConversationsForIntegration(
         bumpedUnread,
         clearedStaleUnread,
         convoIdsPersisted,
+        activitySignals: signals.size,
       },
     );
   }
+  return signals;
 }
 
 // ─── Commerce Message inbound ingest ────────────────────────────────────────
@@ -2801,6 +2840,7 @@ const COMMERCE_INGEST_ACTIVITY_DAYS = 60;
  */
 async function sweepCommerceMessageInbound(
   integrations: Integration[],
+  activitySignals: CommerceActivitySignals,
 ): Promise<void> {
   const cutoff = new Date(
     Date.now() - COMMERCE_INGEST_ACTIVITY_DAYS * 24 * 60 * 60 * 1000,
@@ -2810,18 +2850,20 @@ async function sweepCommerceMessageInbound(
   // by integrationId in all reads and writes, so no cross-interference.
   await Promise.all(
     integrations.map((integration) =>
-      sweepCommerceMessageInboundForIntegration(integration, cutoff).catch(
-        (err) => {
-          console.error(
-            "[helpdesk-sync] commerce message inbound ingest failed for integration",
-            {
-              integrationId: integration.id,
-              integrationLabel: integration.label,
-              error: err instanceof Error ? err.message : String(err),
-            },
-          );
-        },
-      ),
+      sweepCommerceMessageInboundForIntegration(
+        integration,
+        cutoff,
+        activitySignals,
+      ).catch((err) => {
+        console.error(
+          "[helpdesk-sync] commerce message inbound ingest failed for integration",
+          {
+            integrationId: integration.id,
+            integrationLabel: integration.label,
+            error: err instanceof Error ? err.message : String(err),
+          },
+        );
+      }),
     ),
   );
 }
@@ -2829,6 +2871,7 @@ async function sweepCommerceMessageInbound(
 async function sweepCommerceMessageInboundForIntegration(
   integration: Integration,
   cutoff: Date,
+  activitySignals: CommerceActivitySignals,
 ): Promise<void> {
   {
     if (
@@ -2840,37 +2883,115 @@ async function sweepCommerceMessageInboundForIntegration(
     if (!config.appId || !config.refreshToken) return;
     const selfUsername = getSellerUserId(integration) ?? undefined;
 
-    // Select tickets whose conversationId is bound AND has recent
-    // activity. Order by most-recent activity so we consume the budget on
-    // the likeliest-to-matter tickets first; agents almost always reply
-    // on the freshest threads.
-    const tickets = await db.helpdeskTicket.findMany({
-      where: {
-        integrationId: integration.id,
-        ebayConversationId: { not: null },
-        isSpam: false,
-        type: { not: HelpdeskTicketType.SYSTEM },
-        OR: [
-          { lastBuyerMessageAt: { gte: cutoff } },
-          { lastAgentMessageAt: { gte: cutoff } },
+    // Selection strategy, in priority order:
+    //
+    //   (A) STALE tickets — tickets whose ebayConversationId appears in
+    //       this tick's activitySignals AND where eBay's last-modified
+    //       timestamp is newer than our max(lastBuyer,lastAgent). These
+    //       are the exact tickets where an agent replied on the eBay web
+    //       UI and the message is missing from Help Desk. The previous
+    //       version ordered everything by lastAgentMessageAt DESC, which
+    //       pushed these tickets to the BOTTOM of the list (their DB
+    //       timestamps are stale by definition) so they never got
+    //       serviced.
+    //
+    //   (B) Fresh tickets — the rest of the activity window, activity
+    //       DESC. Fills any remaining budget.
+    //
+    // Per-integration budget is COMMERCE_INGEST_BUDGET (currently 15),
+    // shared across both tiers.
+    const candidateConvIds = Array.from(activitySignals.keys());
+    let tickets: Array<{
+      id: string;
+      ebayConversationId: string | null;
+      buyerUserId: string | null;
+      buyerName: string | null;
+      lastBuyerMessageAt: Date | null;
+      lastAgentMessageAt: Date | null;
+    }> = [];
+
+    if (candidateConvIds.length > 0) {
+      // Grab every ticket bound to a conversation eBay touched this
+      // tick, then filter to the stale subset in JS (Prisma can't
+      // express `max(a,b) < ebay_ts` natively).
+      const maybeStale = await db.helpdeskTicket.findMany({
+        where: {
+          integrationId: integration.id,
+          ebayConversationId: { in: candidateConvIds },
+          isSpam: false,
+          type: { not: HelpdeskTicketType.SYSTEM },
+        },
+        select: {
+          id: true,
+          ebayConversationId: true,
+          buyerUserId: true,
+          buyerName: true,
+          lastBuyerMessageAt: true,
+          lastAgentMessageAt: true,
+        },
+      });
+      const stale = maybeStale
+        .map((t) => {
+          const ebayTs =
+            t.ebayConversationId != null
+              ? activitySignals.get(t.ebayConversationId)
+              : undefined;
+          if (!ebayTs) return null;
+          const ourTs = Math.max(
+            t.lastBuyerMessageAt?.getTime() ?? 0,
+            t.lastAgentMessageAt?.getTime() ?? 0,
+          );
+          // Skew pad: ignore sub-minute clock skew so we don't spin on
+          // the same tickets every tick.
+          const SKEW_MS = 60 * 1000;
+          if (ebayTs.getTime() <= ourTs + SKEW_MS) return null;
+          return { ticket: t, delta: ebayTs.getTime() - ourTs };
+        })
+        .filter(
+          (
+            v,
+          ): v is {
+            ticket: (typeof maybeStale)[number];
+            delta: number;
+          } => v !== null,
+        )
+        // Most-stale first — the ticket the user is most likely to open.
+        .sort((a, b) => b.delta - a.delta)
+        .slice(0, COMMERCE_INGEST_BUDGET)
+        .map((v) => v.ticket);
+      tickets.push(...stale);
+    }
+
+    // Fill remaining budget with recent-activity tickets (tier B).
+    if (tickets.length < COMMERCE_INGEST_BUDGET) {
+      const fill = await db.helpdeskTicket.findMany({
+        where: {
+          integrationId: integration.id,
+          ebayConversationId: { not: null },
+          isSpam: false,
+          type: { not: HelpdeskTicketType.SYSTEM },
+          id: { notIn: tickets.map((t) => t.id) },
+          OR: [
+            { lastBuyerMessageAt: { gte: cutoff } },
+            { lastAgentMessageAt: { gte: cutoff } },
+          ],
+        },
+        select: {
+          id: true,
+          ebayConversationId: true,
+          buyerUserId: true,
+          buyerName: true,
+          lastBuyerMessageAt: true,
+          lastAgentMessageAt: true,
+        },
+        orderBy: [
+          { lastAgentMessageAt: { sort: "desc", nulls: "last" } },
+          { lastBuyerMessageAt: { sort: "desc", nulls: "last" } },
         ],
-      },
-      select: {
-        id: true,
-        ebayConversationId: true,
-        buyerUserId: true,
-        buyerName: true,
-        lastBuyerMessageAt: true,
-        lastAgentMessageAt: true,
-      },
-      orderBy: [
-        // Prisma can't order by MAX(a, b) natively; use a two-key order
-        // that approximates "most-recent activity first" well enough.
-        { lastAgentMessageAt: { sort: "desc", nulls: "last" } },
-        { lastBuyerMessageAt: { sort: "desc", nulls: "last" } },
-      ],
-      take: COMMERCE_INGEST_BUDGET,
-    });
+        take: COMMERCE_INGEST_BUDGET - tickets.length,
+      });
+      tickets.push(...fill);
+    }
     if (tickets.length === 0) return;
 
     let needsReauthLogged = false;
@@ -3066,6 +3187,7 @@ async function ingestCommerceMessage(args: {
   const rawBody = m.messageBody ?? "";
   const bodyText = m.isHtml ? cleanMessageHtml(rawBody) : rawBody;
 
+  const finalSentAt = Number.isNaN(sentAt.getTime()) ? new Date() : sentAt;
   try {
     await db.helpdeskMessage.create({
       data: {
@@ -3091,9 +3213,56 @@ async function ingestCommerceMessage(args: {
           readStatus: m.readStatus ?? null,
           messageDirection: m.messageDirection ?? null,
         } as Prisma.InputJsonValue,
-        sentAt: Number.isNaN(sentAt.getTime()) ? new Date() : sentAt,
+        sentAt: finalSentAt,
       },
     });
+
+    // Bump the ticket's last-activity timestamp on the matching side.
+    // Without this, the stale-ticket selector in
+    // sweepCommerceMessageInbound keeps flagging the same ticket as
+    // stale every tick (eBay's last_modified_date stays newer than our
+    // DB timestamp forever), burning budget and never converging. We
+    // only advance the timestamp (never rewind it) — the WHERE clause
+    // gates on the current DB value being older than what we just
+    // ingested, so out-of-order backfills can't clobber a newer
+    // legitimate value.
+    try {
+      if (direction === HelpdeskMessageDirection.INBOUND) {
+        await db.helpdeskTicket.updateMany({
+          where: {
+            id: ticketId,
+            OR: [
+              { lastBuyerMessageAt: null },
+              { lastBuyerMessageAt: { lt: finalSentAt } },
+            ],
+          },
+          data: { lastBuyerMessageAt: finalSentAt },
+        });
+      } else {
+        await db.helpdeskTicket.updateMany({
+          where: {
+            id: ticketId,
+            OR: [
+              { lastAgentMessageAt: null },
+              { lastAgentMessageAt: { lt: finalSentAt } },
+            ],
+          },
+          data: { lastAgentMessageAt: finalSentAt },
+        });
+        await db.helpdeskTicket.updateMany({
+          where: { id: ticketId, firstResponseAt: null },
+          data: { firstResponseAt: finalSentAt },
+        });
+      }
+    } catch (err) {
+      console.warn(
+        "[helpdesk-sync] failed to bump ticket timestamp after commerce ingest",
+        {
+          ticketId,
+          error: err instanceof Error ? err.message : String(err),
+        },
+      );
+    }
   } catch (err) {
     // Unique-constraint races are expected (two ticks racing the same
     // message). Anything else we want to see.
