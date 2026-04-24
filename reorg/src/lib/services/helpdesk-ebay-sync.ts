@@ -39,7 +39,11 @@ import {
   type EbayMessageBody,
   type EbayMessageHeader,
 } from "@/lib/services/helpdesk-ebay";
-import { getConversations } from "@/lib/services/helpdesk-commerce-message";
+import {
+  getConversations,
+  getConversationMessages,
+  type CommerceMessage,
+} from "@/lib/services/helpdesk-commerce-message";
 import { applyFilterAction, pickMatchingFilters } from "@/lib/helpdesk/filters";
 import { BUYER_CANCELLATION_TAG_NAME } from "@/lib/helpdesk/folders";
 import { helpdeskFlags, helpdeskFlagsSnapshotAsync } from "@/lib/helpdesk/flags";
@@ -211,6 +215,24 @@ export async function runHelpdeskPoll(): Promise<HelpdeskPollResult> {
   } catch (err) {
     console.error(
       "[helpdesk-sync] web-ui read-state sweep failed",
+      err instanceof Error ? err.message : err,
+    );
+  }
+
+  // Ingest agent replies sent from eBay's modern web UI. Those never
+  // land in the legacy Trading API "Sent" folder (which runHelpdeskPoll
+  // scrapes), so without this pass Help Desk silently loses every web-UI
+  // reply. Gated by the same read-state flag as the unread sweep — both
+  // read the Commerce Message API and only make sense when the
+  // integration's reconciliation is enabled.
+  try {
+    const flags = await helpdeskFlagsSnapshotAsync();
+    if (flags.effectiveCanSyncReadState) {
+      await sweepCommerceMessageInbound(integrations);
+    }
+  } catch (err) {
+    console.error(
+      "[helpdesk-sync] commerce message inbound ingest failed",
       err instanceof Error ? err.message : err,
     );
   }
@@ -2396,6 +2418,21 @@ async function sweepUnreadConversationsFromWebUi(
     // branch — we only clear local unread for buyers we KNOW we saw and
     // confirmed aren't unread. Buyers beyond the window are left alone.
     const allSeenBuyersLower = new Set<string>();
+    // Every scanned conversation keyed by buyerUsername.toLowerCase().
+    // Used post-scan to opportunistically bootstrap ebayConversationId on
+    // tickets that lack one — including READ conversations, which aren't
+    // touched by the unread-matching branch above. This is what lets the
+    // new Commerce-Message inbound sweep (sweepCommerceMessageInbound)
+    // operate on more than just tickets that went through an explicit
+    // mark-read/unread action.
+    const scannedByBuyer = new Map<
+      string,
+      {
+        conversationId: string;
+        lastMessageDate?: string;
+        itemId?: string;
+      }
+    >();
     let needsReauthLogged = false;
     let totalScanned = 0;
     for (
@@ -2431,7 +2468,17 @@ async function sweepUnreadConversationsFromWebUi(
       totalScanned += conversations.length;
       for (const c of conversations) {
         if (c.otherPartyUsername) {
-          allSeenBuyersLower.add(c.otherPartyUsername.toLowerCase());
+          const key = c.otherPartyUsername.toLowerCase();
+          allSeenBuyersLower.add(key);
+          // Keep the most recent conversation per buyer (we sort by
+          // last_modified_date desc so earlier pages win).
+          if (!scannedByBuyer.has(key)) {
+            scannedByBuyer.set(key, {
+              conversationId: c.conversationId,
+              lastMessageDate: c.lastMessageDate,
+              itemId: c.itemId,
+            });
+          }
         }
         // Primary signal: unreadMessageCount. eBay always populates this
         // on the list response. The previous version additionally required
@@ -2468,6 +2515,7 @@ async function sweepUnreadConversationsFromWebUi(
 
     // ── 2. Bump local unread where eBay reports unread ───────────────────
     let bumpedUnread = 0;
+    let convoIdsPersisted = 0;
     const unreadBuyersLower = new Set<string>();
     for (const c of unread) {
       if (!c.otherPartyUsername) continue;
@@ -2496,6 +2544,7 @@ async function sweepUnreadConversationsFromWebUi(
           unreadCount: true,
           ebayItemId: true,
           lastBuyerMessageAt: true,
+          ebayConversationId: true,
         },
       });
       if (candidates.length === 0) continue;
@@ -2510,12 +2559,101 @@ async function sweepUnreadConversationsFromWebUi(
         return tb - ta;
       });
       const target = picked[0];
-      if (target && target.unreadCount === 0) {
+      if (!target) continue;
+      // Bootstrap ebayConversationId for the new Commerce Message inbound
+      // sweep. We do this on EVERY matched ticket (even ones already at
+      // unreadCount=1) so the sweep's working set grows over time without
+      // requiring a mirror-read/unread action first.
+      if (!target.ebayConversationId) {
+        try {
+          await db.helpdeskTicket.update({
+            where: { id: target.id },
+            data: { ebayConversationId: c.conversationId },
+          });
+          convoIdsPersisted += 1;
+        } catch (err) {
+          // Unique collisions would never happen (column isn't unique);
+          // log other failures but keep the sweep going.
+          console.warn(
+            "[helpdesk-sync] failed to persist ebayConversationId",
+            {
+              ticketId: target.id,
+              conversationId: c.conversationId,
+              error: err instanceof Error ? err.message : String(err),
+            },
+          );
+        }
+      }
+      if (target.unreadCount === 0) {
         await db.helpdeskTicket.update({
           where: { id: target.id },
           data: { unreadCount: 1 },
         });
         bumpedUnread += 1;
+      }
+    }
+
+    // ── 2b. Bootstrap ebayConversationId for READ conversations ────────
+    // The unread-matching branch above only persists IDs when a match
+    // carries unreadCount>0. We want the inbound sweep (step 4) to have
+    // the broadest possible working set, so do one batched lookup of
+    // tickets whose buyer we scanned but whose ebayConversationId is
+    // still null. A single query covers the full scanned window.
+    if (scannedByBuyer.size > 0) {
+      const buyerKeys = Array.from(scannedByBuyer.keys());
+      // Chunk the IN() list to keep query sizes bounded on 800-buyer
+      // sweeps. 200 per chunk keeps us well inside Postgres's practical
+      // parameter limits and the resulting queries small.
+      const CHUNK = 200;
+      for (let i = 0; i < buyerKeys.length; i += CHUNK) {
+        const chunk = buyerKeys.slice(i, i + CHUNK);
+        const chunkTickets = await db.helpdeskTicket.findMany({
+          where: {
+            integrationId: integration.id,
+            ebayConversationId: null,
+            isSpam: false,
+            type: { not: HelpdeskTicketType.SYSTEM },
+            OR: [
+              { buyerUserId: { in: chunk, mode: "insensitive" } },
+              {
+                AND: [
+                  { buyerUserId: null },
+                  { buyerName: { in: chunk, mode: "insensitive" } },
+                ],
+              },
+            ],
+          },
+          select: {
+            id: true,
+            buyerUserId: true,
+            buyerName: true,
+            ebayItemId: true,
+          },
+        });
+        for (const ticket of chunkTickets) {
+          const key = (ticket.buyerUserId ?? ticket.buyerName ?? "").toLowerCase();
+          const conv = scannedByBuyer.get(key);
+          if (!conv) continue;
+          // Prefer a conversation whose itemId matches the ticket's
+          // ebayItemId when we have it; otherwise use whatever the
+          // buyer's most-recent row was.
+          try {
+            await db.helpdeskTicket.update({
+              where: { id: ticket.id },
+              data: { ebayConversationId: conv.conversationId },
+            });
+            convoIdsPersisted += 1;
+          } catch (err) {
+            console.warn(
+              "[helpdesk-sync] failed to bootstrap ebayConversationId",
+              {
+                ticketId: ticket.id,
+                conversationId: conv.conversationId,
+                error: err instanceof Error ? err.message : String(err),
+              },
+            );
+          }
+        }
       }
     }
 
@@ -2564,8 +2702,344 @@ async function sweepUnreadConversationsFromWebUi(
         buyersSeen: allSeenBuyersLower.size,
         bumpedUnread,
         clearedStaleUnread,
+        convoIdsPersisted,
       },
     );
+  }
+}
+
+// ─── Commerce Message inbound ingest ────────────────────────────────────────
+
+/** Max tickets we pull messages for per integration per tick. TPP typically
+ *  has <10 conversations with new web-UI activity per tick; 40 gives us 4x
+ *  headroom and still keeps the sweep inside the per-tick budget. */
+const COMMERCE_INGEST_BUDGET = 40;
+
+/** Activity window — only ingest for tickets whose last buyer or agent
+ *  message is within this many days. Mirrors the web UI's "Last 60 days"
+ *  default and keeps the working set bounded. */
+const COMMERCE_INGEST_ACTIVITY_DAYS = 60;
+
+/**
+ * Fetch messages directly from the eBay Commerce Message API for tickets
+ * we've already bound to a conversationId, and ingest anything we don't
+ * already have.
+ *
+ * Why this exists:
+ *   runHelpdeskPoll scrapes agent outbound from the legacy Trading API
+ *   "Sent" folder. Agent replies sent from eBay's modern web UI
+ *   (ebay.com/mesg) are delivered through the Commerce Message API and
+ *   NEVER appear in the Trading Sent folder. Without this sweep, those
+ *   replies are invisible to Help Desk — the exact bug the user hit on
+ *   ticket 09-14501-65972.
+ *
+ * Selection criteria:
+ *   - `ebayConversationId IS NOT NULL` (bootstrapped by
+ *     sweepUnreadConversationsFromWebUi + mirrorReadStateToEbay).
+ *   - Active within the last COMMERCE_INGEST_ACTIVITY_DAYS. Tickets older
+ *     than that are assumed to be closed out on eBay's side; agents
+ *     almost never reply on them.
+ *   - Non-SYSTEM, non-spam.
+ *   - Ordered so the most-recently-active tickets consume the budget
+ *     first.
+ *
+ * Dedupe:
+ *   We use `ebayMessageId` + `externalId = "cm:<messageId>"` so Commerce
+ *   Message IDs live in a separate namespace from Trading API IDs (there
+ *   is no guaranteed overlap — eBay's systems assign them independently).
+ *   The `@@unique([ticketId, externalId])` constraint catches any retries
+ *   as a soft error we swallow.
+ *
+ * Direction:
+ *   Re-derived locally via `senderUsername === selfUsername` because the
+ *   raw `messageDirection` field is inconsistently populated. OUTBOUND =
+ *   agent reply from eBay web UI (the whole reason this sweep exists).
+ *
+ * Gated by effectiveCanSyncReadState at the caller.
+ */
+async function sweepCommerceMessageInbound(
+  integrations: Integration[],
+): Promise<void> {
+  const cutoff = new Date(
+    Date.now() - COMMERCE_INGEST_ACTIVITY_DAYS * 24 * 60 * 60 * 1000,
+  );
+  for (const integration of integrations) {
+    if (
+      integration.platform !== Platform.TPP_EBAY &&
+      integration.platform !== Platform.TT_EBAY
+    )
+      continue;
+    const config = buildEbayConfig(integration);
+    if (!config.appId || !config.refreshToken) continue;
+    const selfUsername = getSellerUserId(integration) ?? undefined;
+
+    // Select tickets whose conversationId is bound AND has recent
+    // activity. Order by most-recent activity so we consume the budget on
+    // the likeliest-to-matter tickets first; agents almost always reply
+    // on the freshest threads.
+    const tickets = await db.helpdeskTicket.findMany({
+      where: {
+        integrationId: integration.id,
+        ebayConversationId: { not: null },
+        isSpam: false,
+        type: { not: HelpdeskTicketType.SYSTEM },
+        OR: [
+          { lastBuyerMessageAt: { gte: cutoff } },
+          { lastAgentMessageAt: { gte: cutoff } },
+        ],
+      },
+      select: {
+        id: true,
+        ebayConversationId: true,
+        buyerUserId: true,
+        buyerName: true,
+        lastBuyerMessageAt: true,
+        lastAgentMessageAt: true,
+      },
+      orderBy: [
+        // Prisma can't order by MAX(a, b) natively; use a two-key order
+        // that approximates "most-recent activity first" well enough.
+        { lastAgentMessageAt: { sort: "desc", nulls: "last" } },
+        { lastBuyerMessageAt: { sort: "desc", nulls: "last" } },
+      ],
+      take: COMMERCE_INGEST_BUDGET,
+    });
+    if (tickets.length === 0) continue;
+
+    let needsReauthLogged = false;
+    let ticketsHit = 0;
+    let messagesInserted = 0;
+    let apiCalls = 0;
+
+    for (const ticket of tickets) {
+      if (!ticket.ebayConversationId) continue;
+
+      // Pull everything newer than our most-recent known message for the
+      // ticket, with a small skew pad so we don't miss borderline
+      // timestamps. "since" is optional — if we've never had activity
+      // on the ticket (unlikely given the WHERE clause), omit it and
+      // let eBay return the first page.
+      const lastKnownMs = Math.max(
+        ticket.lastBuyerMessageAt?.getTime() ?? 0,
+        ticket.lastAgentMessageAt?.getTime() ?? 0,
+      );
+      const since =
+        lastKnownMs > 0
+          ? new Date(lastKnownMs - 5 * 60 * 1000).toISOString()
+          : undefined;
+
+      apiCalls += 1;
+      const { messages, status, needsReauth } = await getConversationMessages(
+        integration.id,
+        config,
+        {
+          conversationId: ticket.ebayConversationId,
+          since,
+          limit: 50,
+        },
+      );
+      if (needsReauth) {
+        if (!needsReauthLogged) {
+          console.info(
+            "[helpdesk-sync] commerce.message scope missing — re-authorize integration",
+            {
+              integrationId: integration.id,
+              integrationLabel: integration.label,
+            },
+          );
+          needsReauthLogged = true;
+        }
+        break;
+      }
+      if (status < 200 || status >= 300) continue;
+      if (messages.length === 0) continue;
+
+      // Dedupe against messages we already have for this ticket. Match
+      // by ebayMessageId primarily; the unique constraint on
+      // (ticketId, externalId) is a safety net.
+      const incomingIds = messages
+        .map((m) => m.messageId)
+        .filter((id): id is string => !!id);
+      if (incomingIds.length === 0) continue;
+      const existing = await db.helpdeskMessage.findMany({
+        where: {
+          ticketId: ticket.id,
+          ebayMessageId: { in: incomingIds },
+        },
+        select: { ebayMessageId: true },
+      });
+      const existingIds = new Set(
+        existing.map((e) => e.ebayMessageId).filter((v): v is string => !!v),
+      );
+      const novel = messages.filter((m) => !existingIds.has(m.messageId));
+      if (novel.length === 0) continue;
+
+      // Snapshot for lastAgent/lastBuyerMessageAt recomputation.
+      let latestBuyer = ticket.lastBuyerMessageAt ?? null;
+      let latestAgent = ticket.lastAgentMessageAt ?? null;
+
+      for (const m of novel) {
+        await ingestCommerceMessage({
+          ticketId: ticket.id,
+          message: m,
+          selfUsername,
+          buyerName: ticket.buyerName ?? ticket.buyerUserId ?? null,
+          buyerUserId: ticket.buyerUserId ?? null,
+        });
+        messagesInserted += 1;
+        const sentAt = m.createdDate ? new Date(m.createdDate) : null;
+        if (sentAt && !Number.isNaN(sentAt.getTime())) {
+          const isOutbound =
+            !!selfUsername &&
+            !!m.senderUsername &&
+            m.senderUsername === selfUsername;
+          if (isOutbound) {
+            if (!latestAgent || sentAt > latestAgent) latestAgent = sentAt;
+          } else {
+            if (!latestBuyer || sentAt > latestBuyer) latestBuyer = sentAt;
+          }
+        }
+      }
+      ticketsHit += 1;
+
+      // Keep the ticket's activity timestamps in sync so folder routing
+      // ("Waiting" vs "To Do") and the inbox's Latest Update column
+      // reflect the new messages immediately. We intentionally DON'T
+      // touch status/isArchived here — that's the ingest pipeline's job
+      // in runHelpdeskPoll, and we'd rather not race it.
+      const updates: Prisma.HelpdeskTicketUpdateInput = {};
+      if (
+        latestBuyer &&
+        (!ticket.lastBuyerMessageAt ||
+          latestBuyer > ticket.lastBuyerMessageAt)
+      ) {
+        updates.lastBuyerMessageAt = latestBuyer;
+      }
+      if (
+        latestAgent &&
+        (!ticket.lastAgentMessageAt ||
+          latestAgent > ticket.lastAgentMessageAt)
+      ) {
+        updates.lastAgentMessageAt = latestAgent;
+      }
+      if (Object.keys(updates).length > 0) {
+        try {
+          await db.helpdeskTicket.update({
+            where: { id: ticket.id },
+            data: updates,
+          });
+        } catch (err) {
+          console.warn(
+            "[helpdesk-sync] failed to refresh ticket activity timestamps",
+            {
+              ticketId: ticket.id,
+              error: err instanceof Error ? err.message : String(err),
+            },
+          );
+        }
+      }
+    }
+    if (needsReauthLogged) continue;
+
+    console.info("[helpdesk-sync] commerce message inbound ingest finished", {
+      integrationId: integration.id,
+      integrationLabel: integration.label,
+      ticketsScanned: tickets.length,
+      apiCalls,
+      ticketsWithNewMessages: ticketsHit,
+      messagesInserted,
+    });
+  }
+}
+
+/**
+ * Insert a single Commerce Message API message into the ticket's thread.
+ * Separated into its own function so the main sweep stays focused on
+ * iteration + budget accounting, and so unit tests can hammer just the
+ * direction/source classification rules in isolation.
+ */
+async function ingestCommerceMessage(args: {
+  ticketId: string;
+  message: CommerceMessage;
+  selfUsername?: string;
+  buyerName: string | null;
+  buyerUserId: string | null;
+}): Promise<void> {
+  const { ticketId, message: m, selfUsername, buyerName, buyerUserId } = args;
+  if (!m.messageId) return;
+
+  // Direction: we trust senderUsername vs selfUsername over the API's
+  // inconsistent `messageDirection` field. If selfUsername is missing we
+  // default to INBOUND — better to file an agent reply as inbound than
+  // lose it entirely, and manual correction is trivial.
+  const direction =
+    !!selfUsername && m.senderUsername === selfUsername
+      ? HelpdeskMessageDirection.OUTBOUND
+      : HelpdeskMessageDirection.INBOUND;
+
+  // Source classification: messages from the eBay web UI are indirect
+  // sends (agent typed into ebay.com/mesg, not Help Desk), so we tag
+  // them as EBAY_UI. The existing source classifier is Trading-API
+  // specific and doesn't map cleanly here — hard-code the source on
+  // this path.
+  const source = HelpdeskMessageSource.EBAY_UI;
+
+  const sentAt = m.createdDate ? new Date(m.createdDate) : new Date();
+
+  const fromName =
+    direction === HelpdeskMessageDirection.INBOUND
+      ? buyerName ?? m.senderUsername ?? "Buyer"
+      : "Agent (via eBay)";
+
+  const fromIdentifier =
+    direction === HelpdeskMessageDirection.INBOUND
+      ? buyerUserId ?? m.senderUsername ?? null
+      : null;
+
+  const rawBody = m.messageBody ?? "";
+  const bodyText = m.isHtml ? cleanMessageHtml(rawBody) : rawBody;
+
+  try {
+    await db.helpdeskMessage.create({
+      data: {
+        ticketId,
+        direction,
+        source,
+        // Namespace Commerce Message IDs to avoid colliding with
+        // Trading API messageIDs, which flow through the same
+        // (ticketId, externalId) unique constraint.
+        externalId: `cm:${m.messageId}`,
+        ebayMessageId: m.messageId,
+        fromName,
+        fromIdentifier,
+        subject: null,
+        bodyText,
+        isHtml: !!m.isHtml,
+        rawMedia: [] as Prisma.InputJsonValue,
+        rawData: {
+          commerceMessage: true,
+          conversationId: m.conversationId ?? null,
+          senderUsername: m.senderUsername ?? null,
+          recipientUsername: m.recipientUsername ?? null,
+          readStatus: m.readStatus ?? null,
+          messageDirection: m.messageDirection ?? null,
+        } as Prisma.InputJsonValue,
+        sentAt: Number.isNaN(sentAt.getTime()) ? new Date() : sentAt,
+      },
+    });
+  } catch (err) {
+    // Unique-constraint races are expected (two ticks racing the same
+    // message). Anything else we want to see.
+    if (
+      !(err instanceof Error) ||
+      !err.message.includes("Unique constraint failed")
+    ) {
+      console.error("[helpdesk-sync] commerce-message insert failed", {
+        ticketId,
+        messageId: m.messageId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
   }
 }
 

@@ -1141,6 +1141,12 @@ model HelpdeskTicket {
   lastReopenedAt     DateTime?
   resolvedAt         DateTime?
   resolvedById       String?
+  /// eBay Commerce Message API conversationId, persisted the first time we
+  /// resolve it for a ticket. Lets mirrorReadStateToEbay and the
+  /// Commerce-Message inbound sweep skip the otherPartyUsername lookup on
+  /// every tick. Null when we haven't (or can't) resolved one yet — e.g.
+  /// SYSTEM tickets or tickets whose buyer has no Commerce conversation.
+  ebayConversationId String?
   metadata           Json                 @default("{}")
   createdAt          DateTime             @default(now())
   updatedAt          DateTime             @updatedAt
@@ -1174,6 +1180,7 @@ model HelpdeskTicket {
   @@index([type])
   @@index([systemMessageType])
   @@index([agentFolderId])
+  @@index([ebayConversationId])
   @@map("helpdesk_tickets")
 }
 

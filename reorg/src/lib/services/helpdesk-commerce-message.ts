@@ -444,6 +444,121 @@ export async function bulkUpdateConversationRead(
   };
 }
 
+// ─── Messages within a conversation ──────────────────────────────────────────
+
+export interface CommerceMessage {
+  messageId: string;
+  conversationId?: string;
+  senderUsername?: string;
+  recipientUsername?: string;
+  /** `true` when the message has been marked read on eBay. The web UI
+   *  sets this to `true` when an agent opens the thread. */
+  readStatus?: boolean;
+  /** "INBOUND" (from other party) / "OUTBOUND" (from self) as reported by
+   *  eBay when available. We never rely on it — always re-derive direction
+   *  locally via selfUsernameHint vs senderUsername because the field is
+   *  sometimes missing entirely. */
+  messageDirection?: string;
+  /** ISO 8601 — the moment the message was sent on eBay. */
+  createdDate?: string;
+  messageBody?: string;
+  /** `true` when `messageBody` is already HTML (typical for web-UI
+   *  replies). Otherwise treat as plain text. */
+  isHtml?: boolean;
+}
+
+function parseMessage(raw: Record<string, unknown>): CommerceMessage {
+  const body = str(raw.messageBody) ?? str(raw.body);
+  return {
+    messageId: String(raw.messageId ?? raw.id ?? ""),
+    conversationId: str(raw.conversationId),
+    senderUsername: str(raw.senderUsername),
+    recipientUsername: str(raw.recipientUsername),
+    readStatus: bool(raw.readStatus),
+    messageDirection: str(raw.messageDirection),
+    createdDate: str(raw.createdDate),
+    messageBody: body,
+    // eBay's Commerce Message API returns web-UI replies as pre-rendered
+    // HTML in `messageBody`. The response doesn't include an explicit
+    // content-type flag, so we sniff the body. Detection is cheap and
+    // conservative: any '<' + tag-like char wins.
+    isHtml: typeof body === "string" && /<[a-z!/]/i.test(body),
+  };
+}
+
+/**
+ * List messages inside a single conversation. Results are sorted newest-
+ * first by default. Pass `since` (ISO 8601) to get a bounded tail via the
+ * `modified_after` filter — this is what the inbound-sweep ingest uses so
+ * we only pay for whatever arrived since the last tick.
+ *
+ * The endpoint path shape (`/conversation/{id}/message`) has been stable
+ * across eBay's Commerce Message API releases. If you see 404s across the
+ * board, double-check that the integration re-OAuthed after the
+ * `commerce.message` scope was added to the consent URL.
+ */
+export async function getConversationMessages(
+  integrationId: string,
+  config: EbayConfig,
+  args: {
+    conversationId: string;
+    /** ISO 8601. When set, passes `modified_after={since}` so we only
+     *  receive what changed since the last sync. */
+    since?: string;
+    /** Cap per call. eBay's default is 50; we never need more than the
+     *  page we're looking at because the caller re-runs on the next
+     *  tick when it needs more. */
+    limit?: number;
+    offset?: number;
+  },
+): Promise<{
+  messages: CommerceMessage[];
+  status: number;
+  needsReauth: boolean;
+}> {
+  const accessToken = await getEbayAccessToken(integrationId, config);
+  const params = new URLSearchParams();
+  if (args.since) params.set("modified_after", args.since);
+  if (args.limit != null) params.set("limit", String(args.limit));
+  if (args.offset != null) params.set("offset", String(args.offset));
+  const qs = params.toString();
+  const { status, body } = await callCommerceMessage(
+    integrationId,
+    accessToken,
+    "GET",
+    `/conversation/${encodeURIComponent(args.conversationId)}/message${qs ? `?${qs}` : ""}`,
+    undefined,
+    "CommerceMessage_GetConversationMessages",
+  );
+  const parsed = parseJson(body);
+  if (status === 401 || status === 403) {
+    const { errorId } = extractErrorId(parsed);
+    return {
+      messages: [],
+      status,
+      needsReauth: errorId === 1100 || status === 401,
+    };
+  }
+  if (status < 200 || status >= 300) {
+    return { messages: [], status, needsReauth: false };
+  }
+  const container =
+    parsed && typeof parsed === "object"
+      ? (parsed as Record<string, unknown>)
+      : {};
+  // eBay returns either `messages` (modern shape) or `messageSummaries`
+  // (seen on some older replicas). Accept both.
+  const rawList = Array.isArray(container.messages)
+    ? (container.messages as Array<Record<string, unknown>>)
+    : Array.isArray(container.messageSummaries)
+      ? (container.messageSummaries as Array<Record<string, unknown>>)
+      : [];
+  const messages = rawList
+    .map(parseMessage)
+    .filter((m) => m.messageId.length > 0);
+  return { messages, status, needsReauth: false };
+}
+
 /**
  * Resolve the eBay conversationId for a Help Desk ticket given the buyer's
  * eBay username. Tries FROM_MEMBERS first; returns the best match by

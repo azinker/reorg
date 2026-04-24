@@ -111,6 +111,7 @@ export async function mirrorReadStateToEbay(
       buyerUserId: true,
       buyerName: true,
       ebayItemId: true,
+      ebayConversationId: true,
     },
   });
   if (tickets.length === 0) {
@@ -224,40 +225,69 @@ export async function mirrorReadStateToEbay(
     const selfUsernameHint = getSellerUserId(integration) ?? undefined;
     for (const ticket of integrationTickets) {
       const buyer = ticket.buyerUserId ?? ticket.buyerName;
-      if (!buyer) {
-        // No buyer to look up — legitimate for some edge tickets. Skip
-        // silently; Trading API path may still work off ebayMessageIds.
+      if (!buyer && !ticket.ebayConversationId) {
+        // No buyer to look up AND we haven't cached a conversationId.
+        // Legitimate for some edge tickets — skip silently. Trading API
+        // path may still work off ebayMessageIds.
         continue;
       }
       perRow.commerceMessage.attempted += 1;
       try {
-        const resolved = await resolveConversationIdForBuyer(
-          integrationId,
-          config,
-          buyer,
-          {
-            itemIdHint: ticket.ebayItemId ?? undefined,
-            selfUsernameHint,
-          },
-        );
-        if (resolved.needsReauth) {
-          perRow.commerceMessage.needsReauth = true;
-          perRow.commerceMessage.failed += 1;
-          perRow.commerceMessage.errors.push(
-            `ticket ${ticket.id}: needs re-authorization (commerce.message scope missing)`,
+        let conversationId = ticket.ebayConversationId ?? null;
+        if (!conversationId) {
+          if (!buyer) {
+            perRow.commerceMessage.failed += 1;
+            perRow.commerceMessage.errors.push(
+              `ticket ${ticket.id}: no buyer to resolve and no cached conversationId`,
+            );
+            continue;
+          }
+          const resolved = await resolveConversationIdForBuyer(
+            integrationId,
+            config,
+            buyer,
+            {
+              itemIdHint: ticket.ebayItemId ?? undefined,
+              selfUsernameHint,
+            },
           );
-          // Don't spam — only log once per integration.
-          continue;
-        }
-        if (!resolved.best) {
-          perRow.commerceMessage.failed += 1;
-          perRow.commerceMessage.errors.push(
-            `ticket ${ticket.id}: no conversation found for buyer ${buyer}`,
-          );
-          continue;
+          if (resolved.needsReauth) {
+            perRow.commerceMessage.needsReauth = true;
+            perRow.commerceMessage.failed += 1;
+            perRow.commerceMessage.errors.push(
+              `ticket ${ticket.id}: needs re-authorization (commerce.message scope missing)`,
+            );
+            // Don't spam — only log once per integration.
+            continue;
+          }
+          if (!resolved.best) {
+            perRow.commerceMessage.failed += 1;
+            perRow.commerceMessage.errors.push(
+              `ticket ${ticket.id}: no conversation found for buyer ${buyer}`,
+            );
+            continue;
+          }
+          conversationId = resolved.best.conversationId;
+          // Persist so subsequent mirrors + the new inbound sweep can skip
+          // the lookup entirely (saves ~1 API call per mirrored ticket).
+          try {
+            await db.helpdeskTicket.update({
+              where: { id: ticket.id },
+              data: { ebayConversationId: conversationId },
+            });
+          } catch (err) {
+            console.warn(
+              "[helpdesk.mirrorReadStateToEbay] failed to persist ebayConversationId",
+              {
+                ticketId: ticket.id,
+                conversationId,
+                error: err instanceof Error ? err.message : String(err),
+              },
+            );
+          }
         }
         const result = await updateConversationRead(integrationId, config, {
-          conversationId: resolved.best.conversationId,
+          conversationId,
           conversationType: "FROM_MEMBERS",
           read: isRead,
         });
@@ -268,7 +298,8 @@ export async function mirrorReadStateToEbay(
             integrationLabel,
             ticketId: ticket.id,
             buyer,
-            conversationId: resolved.best.conversationId,
+            conversationId,
+            cached: !!ticket.ebayConversationId,
             read: isRead,
             status: result.status,
             success: result.success,
