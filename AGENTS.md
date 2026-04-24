@@ -186,6 +186,22 @@ Shipping rate table keys use the same format.
 - Secrets are in environment variables; never committed to git
 - `.env.example` documents all required variables without real values
 
+### Database Environments
+
+Two Neon projects — read the hostname, not the filename, to tell them apart:
+
+| Env      | Neon host                                          | Use for                                               |
+|----------|----------------------------------------------------|-------------------------------------------------------|
+| **Prod** | `ep-little-fire-ana4fmmh.c-6.us-east-1.aws.neon.tech` (the one with **"little"** in its name) | All production reads, backfills, and inspections. `reorg/.env.prod` points here. |
+| Staging  | `ep-calm-cell-an2czh87.c-6.us-east-1.aws.neon.tech`    | Local dev only. `reorg/.env` defaults here.           |
+
+**Non-negotiable:** any one-off script, inspect, or backfill that targets
+"the real data the user sees in prod" must set `DATABASE_URL` to the
+`little-fire` pooler URL. Before running, echo the resolved host and
+refuse to proceed if it doesn't contain `little-fire`. See
+`scripts/_inspect-ticket-14-14511.ts` and
+`scripts/_backfill-outbound-attribution.ts` for the pattern.
+
 ---
 
 ## Roles
