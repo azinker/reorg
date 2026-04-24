@@ -582,6 +582,128 @@ export async function getConversationMessages(
   return { messages, status, needsReauth: false };
 }
 
+// ─── Outbound send ───────────────────────────────────────────────────────────
+
+export interface CommerceSendResult {
+  success: boolean;
+  status: number;
+  /** eBay's message id for the newly created message (populated on 2xx). */
+  messageId?: string;
+  /** `true` when eBay returned 401 / errorId 1100 (expired/insufficient scope). */
+  needsReauth: boolean;
+  error?: string;
+  errorId?: number;
+  raw?: string;
+}
+
+export interface SendCommerceMessageArgs {
+  /** Required when replying in an existing conversation. Prefer this
+   *  whenever we know the thread — it guarantees eBay threads the reply
+   *  into the same conversation the buyer is reading. */
+  conversationId?: string;
+  /** Required when starting a new conversation (we have the buyer's
+   *  username but haven't resolved their conversationId yet). eBay will
+   *  either attach to an existing conversation between the two parties
+   *  or create a new one. */
+  otherPartyUsername?: string;
+  /** Message body — plain text. Max 2000 chars (eBay-enforced). */
+  messageText: string;
+  /** Optional LISTING reference. Pass the eBay itemId to thread the
+   *  message to a specific listing; omit for general/non-listing replies. */
+  referenceItemId?: string;
+  /** When true, eBay also emails a copy of the reply to the seller. */
+  emailCopyToSender?: boolean;
+}
+
+/**
+ * Send a message via eBay's Commerce Message API.
+ *
+ * Endpoint: POST https://api.ebay.com/commerce/message/v1/send_message
+ *
+ * This is the modern path for seller → buyer replies. Use it in preference
+ * to the legacy Trading API (AddMemberMessageRTQ / AAQToPartner) because:
+ *   - It works for pre-sale buyers who haven't completed a transaction
+ *     (AAQToPartner rejects those with "The sender or recipient is not the
+ *     partner of the transaction.").
+ *   - It threads cleanly into the same conversation the buyer reads in
+ *     eBay's Messages inbox.
+ *   - It doesn't require the brittle Trading-API `parentMessageID` lookup
+ *     that rejects digest-envelope IDs as "Invalid Parent Message Id."
+ *
+ * Requires the `commerce.message` OAuth scope on the user token.
+ */
+export async function sendCommerceMessage(
+  integrationId: string,
+  config: EbayConfig,
+  args: SendCommerceMessageArgs,
+): Promise<CommerceSendResult> {
+  if (!args.conversationId && !args.otherPartyUsername) {
+    return {
+      success: false,
+      status: 400,
+      needsReauth: false,
+      error: "Either conversationId or otherPartyUsername is required",
+    };
+  }
+  if (!args.messageText || args.messageText.trim().length === 0) {
+    return {
+      success: false,
+      status: 400,
+      needsReauth: false,
+      error: "messageText is required",
+    };
+  }
+
+  const accessToken = await getEbayAccessToken(integrationId, config);
+  const body: Record<string, unknown> = {
+    messageText: args.messageText,
+  };
+  if (args.conversationId) body.conversationId = args.conversationId;
+  if (args.otherPartyUsername) body.otherPartyUsername = args.otherPartyUsername;
+  if (args.referenceItemId) {
+    body.reference = {
+      referenceId: args.referenceItemId,
+      referenceType: "LISTING",
+    };
+  }
+  if (args.emailCopyToSender) body.emailCopyToSender = true;
+
+  const { status, body: responseBody } = await callCommerceMessage(
+    integrationId,
+    accessToken,
+    "POST",
+    "/send_message",
+    body,
+    "CommerceMessage_SendMessage",
+  );
+  const parsed = parseJson(responseBody);
+
+  if (status >= 200 && status < 300) {
+    const container =
+      parsed && typeof parsed === "object"
+        ? (parsed as Record<string, unknown>)
+        : {};
+    const messageId = str(container.messageId);
+    return {
+      success: true,
+      status,
+      messageId,
+      needsReauth: false,
+      raw: responseBody,
+    };
+  }
+
+  const { errorId, errorMessage } = extractErrorId(parsed);
+  return {
+    success: false,
+    status,
+    needsReauth: errorId === 1100 || status === 401,
+    error: errorMessage ?? responseBody.slice(0, 400),
+    errorId,
+    raw: responseBody,
+  };
+}
+
 /**
  * Resolve the eBay conversationId for a Help Desk ticket given the buyer's
  * eBay username. Tries FROM_MEMBERS first; returns the best match by

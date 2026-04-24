@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Help Desk eBay sync service.
  *
  * 2-stage polling strategy (cost-optimized for Neon public network transfer):
@@ -3377,4 +3377,4 @@ async function ingestCommerceMessage(args: {
 }
 
 // Re-export for tests / cron integration.
-export { extractEbayOrderNumber, looksLikeHtmlBody };
+export { extractEbayOrderNumber, looksLikeHtmlBody, ingestCommerceMessage };

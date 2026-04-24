@@ -36,11 +36,11 @@ import {
   helpdeskFlagsSnapshotAsync,
   type HelpdeskFlagsSnapshot,
 } from "@/lib/helpdesk/flags";
+import { buildEbayConfig } from "@/lib/services/helpdesk-ebay";
 import {
-  buildEbayConfig,
-  sendHelpdeskReply,
-  type SendHelpdeskReplyResult,
-} from "@/lib/services/helpdesk-ebay";
+  sendCommerceMessage,
+  resolveConversationIdForBuyer,
+} from "@/lib/services/helpdesk-commerce-message";
 
 const MAX_BATCH = 25;
 
@@ -197,90 +197,138 @@ async function sendEbayReply(
   ) {
     throw new Error(`Reply requires eBay channel, got ${job.ticket.channel}`);
   }
-  if (!job.ticket.ebayItemId || !job.ticket.buyerUserId) {
-    throw new Error("Ticket missing ebayItemId or buyerUserId; cannot send reply");
+  if (!job.ticket.buyerUserId) {
+    throw new Error("Ticket missing buyerUserId; cannot send reply");
   }
 
-  // Outbound send strategy — always use AddMemberMessageAAQToPartner.
+  // Outbound send strategy — use the Commerce Message API.
   //
-  // History: we originally tried to reply via AddMemberMessageRTQ using
-  // the most recent inbound buyer messageID as `parentMessageID`. That
-  // path is broken in practice for two separate reasons:
+  // History of failed attempts (do not resurrect any of these):
+  //   1. AddMemberMessageRTQ with the inbound messageID as parentMessageID
+  //      → eBay returns "Invalid Parent Message Id." because Trading API
+  //      delivers buyer threads as digest envelopes whose messageID is
+  //      not a valid RTQ parent, AND Commerce-Message-origin messages
+  //      live in a different `cm:<id>` namespace Trading can't resolve.
+  //   2. AddMemberMessageAAQToPartner (Trading API, parentless send)
+  //      → works for post-transaction threads but fails with
+  //      "The sender or recipient is not the partner of the transaction."
+  //      on pre-sale inquiries — which is exactly the shape of most
+  //      buyer-question tickets.
   //
-  //   1. The Trading API returns buyer conversations as *digest envelopes*
-  //      (GetMyMessages with DetailLevel=ReturnMessages bundles the entire
-  //      conversation history into one HTML blob). The envelope's
-  //      `messageID` is a digest-level identifier; it is NOT a valid
-  //      `ParentMessageID` for RTQ, and eBay rejects it with
-  //      "Invalid Parent Message Id."
-  //   2. Buyers on modern eBay messaging use the Commerce Message API.
-  //      Their messageIds live in a different namespace (`cm:<id>`) that
-  //      the legacy Trading API doesn't understand either.
-  //
-  // Fallback that actually works: eBay threads conversations by
-  // (ItemID, BuyerID) on their side. AAQToPartner accepts those two and
-  // auto-threads the reply under the buyer's existing conversation in
-  // the Messages inbox — same UX as RTQ, without the brittle parent ID
-  // lookup. This matches what eBay's own guidance has been since CM
-  // launched: RTQ is a legacy endpoint; use AAQToPartner for new sends.
+  // What works for every case (pre-sale + post-sale): the Commerce
+  // Message API `POST /send_message`. It accepts either:
+  //   - `conversationId` (preferred — we've been storing
+  //     `HelpdeskTicket.ebayConversationId` from the inbound sweep), or
+  //   - `otherPartyUsername` (fallback — eBay will find/create the
+  //     conversation for us).
+  // We also pass `reference = { referenceId: <itemId>, referenceType:
+  // LISTING }` so the message is threaded to the specific listing the
+  // buyer asked about.
   const config = buildEbayConfig(job.ticket.integration);
-  // eBay's AAQToPartner hard-caps the subject at 100 chars. Listing titles
-  // are frequently longer than that (the "Re: <full title>" fallback blows
-  // straight past 100). Build the preferred subject, then truncate with an
-  // ellipsis so the send doesn't fail with "Subject is too long."
-  const EBAY_SUBJECT_MAX = 100;
-  const rawSubject =
-    job.ticket.subject ?? `Re: ${job.ticket.ebayItemTitle ?? "your message"}`;
-  const subject =
-    rawSubject.length <= EBAY_SUBJECT_MAX
-      ? rawSubject
-      : `${rawSubject.slice(0, EBAY_SUBJECT_MAX - 1).trimEnd()}…`;
 
-  const send: SendHelpdeskReplyResult = await sendHelpdeskReply(
-    job.ticket.integrationId,
-    config,
-    {
-      itemID: job.ticket.ebayItemId,
-      recipientID: job.ticket.buyerUserId,
-      subject,
-      body: job.bodyText,
-      // Intentionally undefined — see comment above. RTQ is disabled.
-      parentMessageID: undefined,
-    },
-  );
+  // Resolve conversationId on-demand when we don't already have one. This
+  // covers tickets created before we started storing ebayConversationId
+  // or those where the inbound sweep hasn't stamped one yet. Falls back
+  // to `otherPartyUsername` if resolution fails.
+  let conversationId: string | undefined = job.ticket.ebayConversationId ?? undefined;
+  if (!conversationId) {
+    try {
+      const resolved = await resolveConversationIdForBuyer(
+        job.ticket.integrationId,
+        config,
+        job.ticket.buyerUserId,
+        { itemIdHint: job.ticket.ebayItemId ?? undefined },
+      );
+      conversationId = resolved.best?.conversationId;
+      if (conversationId) {
+        await db.helpdeskTicket.update({
+          where: { id: job.ticketId },
+          data: { ebayConversationId: conversationId },
+        }).catch(() => undefined);
+      }
+    } catch {
+      // Non-fatal — we'll fall back to otherPartyUsername on the send call.
+    }
+  }
 
-  if (!send.success) {
+  // Commerce Message API caps messageText at 2000 chars. Truncate with an
+  // ellipsis so we never get silently rejected with errorId 355013.
+  const MAX_MESSAGE_LEN = 2000;
+  const messageText =
+    job.bodyText.length <= MAX_MESSAGE_LEN
+      ? job.bodyText
+      : `${job.bodyText.slice(0, MAX_MESSAGE_LEN - 1).trimEnd()}…`;
+
+  const send = await sendCommerceMessage(job.ticket.integrationId, config, {
+    conversationId,
+    otherPartyUsername: conversationId ? undefined : job.ticket.buyerUserId,
+    messageText,
+    referenceItemId: job.ticket.ebayItemId ?? undefined,
+  });
+
+  // If the CM send failed because we had a stale conversationId (eBay
+  // sometimes renumbers or deletes threads), retry once using the
+  // otherPartyUsername path so we don't lose a reply to a 400.
+  let finalSend = send;
+  if (!send.success && conversationId && !send.needsReauth) {
+    const retry = await sendCommerceMessage(job.ticket.integrationId, config, {
+      otherPartyUsername: job.ticket.buyerUserId,
+      messageText,
+      referenceItemId: job.ticket.ebayItemId ?? undefined,
+    });
+    if (retry.success) finalSend = retry;
+    else finalSend = send; // keep the original error as the user-visible one
+  }
+
+  if (!finalSend.success) {
+    const errDetail = finalSend.error
+      ? `${finalSend.error}${finalSend.errorId ? ` (${finalSend.errorId})` : ""}`
+      : `commerce_message_send_failed (http ${finalSend.status})`;
     await db.helpdeskOutboundJob.update({
       where: { id: job.id },
       data: {
         status: HelpdeskOutboundStatus.FAILED,
-        lastError: send.error?.slice(0, 500) ?? "ebay_send_failed",
+        lastError: errDetail.slice(0, 500),
         attemptCount: { increment: 1 },
       },
     });
     await audit(job, "HELPDESK_OUTBOUND_FAILED", {
-      reason: "ebay_send_failed",
-      ack: send.ack,
-      error: send.error,
+      reason: "commerce_message_send_failed",
+      transport: "ebay_cm",
+      httpStatus: finalSend.status,
+      errorId: finalSend.errorId,
+      error: finalSend.error,
+      needsReauth: finalSend.needsReauth,
     });
     return "failed";
   }
 
   // Persist as a HelpdeskMessage and update ticket bookkeeping.
   const sentAt = new Date();
+  const externalId = finalSend.messageId ?? `outbound:${job.id}`;
   await db.$transaction(async (tx) => {
     await tx.helpdeskMessage.create({
       data: {
         ticketId: job.ticketId,
         direction: HelpdeskMessageDirection.OUTBOUND,
-        source: HelpdeskMessageSource.EBAY,
-        externalId: send.externalId ?? `outbound:${job.id}`,
-        ebayMessageId: send.externalId ?? null,
+        // EBAY_UI because the message originated via Commerce Message API
+        // (the same path buyers use in their web UI). This keeps the read-
+        // time dedup in /api/helpdesk/tickets/[id] consistent: CM-bound
+        // tickets filter out Trading-API duplicates, and outbound sends
+        // slot into the same bucket.
+        source: HelpdeskMessageSource.EBAY_UI,
+        externalId,
+        ebayMessageId: finalSend.messageId ?? null,
         authorUserId: job.authorUserId,
         fromName: "reorG agent",
-        bodyText: job.bodyText,
+        bodyText: messageText,
         sentAt,
-        rawData: { ack: send.ack ?? null, source: "helpdesk_outbound", jobId: job.id },
+        rawData: {
+          transport: "ebay_cm",
+          messageId: finalSend.messageId ?? null,
+          source: "helpdesk_outbound",
+          jobId: job.id,
+        },
       },
     });
 
@@ -308,15 +356,16 @@ async function sendEbayReply(
       data: {
         status: HelpdeskOutboundStatus.SENT,
         sentAt,
-        externalId: send.externalId ?? null,
+        externalId: finalSend.messageId ?? null,
         attemptCount: { increment: 1 },
       },
     });
   });
 
   await audit(job, "HELPDESK_OUTBOUND_SENT", {
-    transport: "ebay_rtq",
-    externalId: send.externalId ?? null,
+    transport: "ebay_cm",
+    externalId: finalSend.messageId ?? null,
+    httpStatus: finalSend.status,
   });
   return "sent";
 }
