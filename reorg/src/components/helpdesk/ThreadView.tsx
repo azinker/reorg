@@ -1022,10 +1022,20 @@ function TimelineItem({
   const isInbound = m.direction === "INBOUND";
   const isAR = m.source === "AUTO_RESPONDER";
   const isEbayUi = m.source === "EBAY_UI";
+  // `m.author` is populated iff a known Help Desk user composed the
+  // message through our composer (outbound worker stamps authorUserId
+  // from the job). If it's present, this was sent through reorG — so
+  // the "Sent directly on eBay" pill must NOT show, and we prefer the
+  // author's real name over the persisted `fromName` (which might still
+  // be a generic label for historical rows).
+  const hasHelpdeskAuthor = !!m.author && !isInbound;
 
   const displayName = isAR
     ? "Auto Responder"
-    : m.fromName ?? m.fromIdentifier ?? (isInbound ? "Buyer" : "Agent");
+    : (hasHelpdeskAuthor ? m.author?.name ?? m.author?.email : null) ??
+      m.fromName ??
+      m.fromIdentifier ??
+      (isInbound ? "Buyer" : "Agent");
 
   // Buyer bubbles use a generated avatar from the first letter of the
   // buyer's name. Agent bubbles use the real <Avatar/> with initials. AR
@@ -1121,8 +1131,11 @@ function TimelineItem({
               via eBay regardless of which interface the buyer used, so the
               pill is meaningless on INBOUND rows — and historically confused
               users who thought it implied the buyer had some other channel.
-              Restrict to outbound only. */}
-          {!isInbound && isEbayUi && (
+              Also suppress when a known Help Desk user authored the reply:
+              our outbound worker stamps authorUserId from the composer, and
+              those sends ARE the "through reorG" case even though they
+              travel over the CM API (source=EBAY_UI) under the hood. */}
+          {!isInbound && isEbayUi && !hasHelpdeskAuthor && (
             <span
               className="inline-flex shrink-0 items-center gap-1 rounded-full border border-amber-500/50 bg-amber-400/20 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-amber-800 shadow-sm dark:border-amber-400/60 dark:bg-amber-400/15 dark:text-amber-200"
               title="This reply was sent directly through eBay's web inbox, not from reorG. The audit trail shows the agent who composed it (when known) but the send did not pass through the reorG composer."

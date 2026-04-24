@@ -7,6 +7,7 @@ import {
 } from "@prisma/client";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
+import { envelopeStubBody } from "@/lib/helpdesk/html-clean";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -258,6 +259,20 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     cmBodyKeys.add(`${m.direction}::${body}`);
   }
 
+  // Body sentinel the Trading-API sync writes into an envelope row AFTER
+  // its sub-messages are extracted and lifted (see
+  // helpdesk-ebay-sync.ts → `envelopeStubBody()`). The envelope carries
+  // no content of its own after stripping — it's just a placeholder — so
+  // we should never show it in the thread. The digestSourceIds rule
+  // below USUALLY hides it, but there's a narrow race: if every sub a
+  // digest would have produced already exists on the ticket (e.g. our
+  // own CM-API outbound row is on the ticket with the same body hash),
+  // the parser skips inserting any subs, and the envelope's
+  // `ebayMessageId` never lands in `digestSourceIds`. The envelope then
+  // leaks through as a ghost row with `[digest envelope – body stripped
+  // to save storage]` text. Filtering on the sentinel catches that
+  // case unconditionally.
+  const STUB_BODY = envelopeStubBody();
   type MessageRow = (typeof ticket.messages)[number];
   const visibleMessages: MessageRow[] = ticket.messages.filter((m) => {
     const raw = m.rawData as Record<string, unknown> | null;
@@ -272,6 +287,9 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       return true;
     }
     if (m.ebayMessageId && digestSourceIds.has(m.ebayMessageId)) {
+      return false;
+    }
+    if (m.bodyText === STUB_BODY) {
       return false;
     }
     // Outbound Trading-API rows written by the Help Desk worker itself

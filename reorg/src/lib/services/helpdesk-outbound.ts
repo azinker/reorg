@@ -305,7 +305,33 @@ async function sendEbayReply(
 
   // Persist as a HelpdeskMessage and update ticket bookkeeping.
   const sentAt = new Date();
-  const externalId = finalSend.messageId ?? `outbound:${job.id}`;
+  // Namespace the externalId with the same `cm:` prefix the inbound
+  // Commerce-Message sweep uses. Two things fall out of this:
+  //   1. The (ticketId, externalId) unique index blocks the sweep from
+  //      inserting a duplicate row for the same message on its next pass
+  //      — previously the sweep stored `cm:<id>` while we stored `<id>`,
+  //      so the constraint never fired and we ended up with two OUTBOUND
+  //      rows for a single send (one author-attributed, one anonymized).
+  //   2. The read-time dedup in /api/helpdesk/tickets/[id] can treat
+  //      this row as the canonical CM copy and hide the Trading-API
+  //      digest echo.
+  const externalId = finalSend.messageId
+    ? `cm:${finalSend.messageId}`
+    : `outbound:${job.id}`;
+  // Stamp the actual agent's name so the thread bubble shows who
+  // replied (e.g. "Adam Zinker") instead of the generic org label. The
+  // ThreadView prefers `author.name` when present, but persisting the
+  // name on the row keeps exports, audit projections, and any later
+  // non-joined reads honest. Fall back to the legacy label for system-
+  // authored sends where `authorUserId` is null.
+  let fromName = "reorG agent";
+  if (job.authorUserId) {
+    const author = await db.user.findUnique({
+      where: { id: job.authorUserId },
+      select: { name: true, email: true },
+    });
+    fromName = author?.name ?? author?.email ?? fromName;
+  }
   await db.$transaction(async (tx) => {
     await tx.helpdeskMessage.create({
       data: {
@@ -315,12 +341,14 @@ async function sendEbayReply(
         // (the same path buyers use in their web UI). This keeps the read-
         // time dedup in /api/helpdesk/tickets/[id] consistent: CM-bound
         // tickets filter out Trading-API duplicates, and outbound sends
-        // slot into the same bucket.
+        // slot into the same bucket. The "Sent directly on eBay" pill is
+        // suppressed for this row in ThreadView because `authorUserId` is
+        // set (i.e. a Help Desk agent composed it through our composer).
         source: HelpdeskMessageSource.EBAY_UI,
         externalId,
         ebayMessageId: finalSend.messageId ?? null,
         authorUserId: job.authorUserId,
-        fromName: "reorG agent",
+        fromName,
         bodyText: messageText,
         sentAt,
         rawData: {
