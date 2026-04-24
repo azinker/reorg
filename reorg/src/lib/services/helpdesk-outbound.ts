@@ -224,8 +224,17 @@ async function sendEbayReply(
   // lookup. This matches what eBay's own guidance has been since CM
   // launched: RTQ is a legacy endpoint; use AAQToPartner for new sends.
   const config = buildEbayConfig(job.ticket.integration);
-  const subject =
+  // eBay's AAQToPartner hard-caps the subject at 100 chars. Listing titles
+  // are frequently longer than that (the "Re: <full title>" fallback blows
+  // straight past 100). Build the preferred subject, then truncate with an
+  // ellipsis so the send doesn't fail with "Subject is too long."
+  const EBAY_SUBJECT_MAX = 100;
+  const rawSubject =
     job.ticket.subject ?? `Re: ${job.ticket.ebayItemTitle ?? "your message"}`;
+  const subject =
+    rawSubject.length <= EBAY_SUBJECT_MAX
+      ? rawSubject
+      : `${rawSubject.slice(0, EBAY_SUBJECT_MAX - 1).trimEnd()}…`;
 
   const send: SendHelpdeskReplyResult = await sendHelpdeskReply(
     job.ticket.integrationId,
