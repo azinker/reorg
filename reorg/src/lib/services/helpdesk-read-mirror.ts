@@ -52,6 +52,7 @@ import {
   resolveConversationIdForBuyer,
   updateConversationRead,
 } from "@/lib/services/helpdesk-commerce-message";
+import { getSellerUserId } from "@/lib/helpdesk/buyer-resolve";
 
 export interface MirrorReadStateResult {
   attempted: number;
@@ -215,10 +216,12 @@ export async function mirrorReadStateToEbay(
     // ── Path 1: Commerce Message API (drives the web UI) ─────────────────
     // Per-ticket conversation lookup. We resolve each ticket's
     // conversationId via `other_party_username=<buyerUserId>` against the
-    // FROM_MEMBERS list, then call update_conversation to flip `read`.
-    // Buyers typically have 1 active conversation — when multiple match,
-    // we prefer the one whose itemId matches our stored ebayItemId, then
-    // fall back to most-recent lastMessageDate.
+    // FROM_MEMBERS list, then call bulk_update_conversation to flip
+    // conversationStatus to READ/UNREAD. Buyers typically have one active
+    // conversation — when multiple match, we prefer the one whose itemId
+    // matches our stored ebayItemId, then fall back to most-recent
+    // lastMessageDate.
+    const selfUsernameHint = getSellerUserId(integration) ?? undefined;
     for (const ticket of integrationTickets) {
       const buyer = ticket.buyerUserId ?? ticket.buyerName;
       if (!buyer) {
@@ -232,7 +235,10 @@ export async function mirrorReadStateToEbay(
           integrationId,
           config,
           buyer,
-          { itemIdHint: ticket.ebayItemId ?? undefined },
+          {
+            itemIdHint: ticket.ebayItemId ?? undefined,
+            selfUsernameHint,
+          },
         );
         if (resolved.needsReauth) {
           perRow.commerceMessage.needsReauth = true;

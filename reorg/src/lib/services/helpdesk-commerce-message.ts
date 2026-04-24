@@ -9,9 +9,27 @@
  *     does NOT drive the eBay web UI "Unread from members" badge.
  *   - The Commerce Message API (REST, /commerce/message/v1) is the one that
  *     backs the ebay.com/mesg web UI. Flipping `read` via
- *     `update_conversation` on this API actually changes what agents see
- *     in the web inbox — which is the behavior we want for the
+ *     `bulk_update_conversation` on this API actually changes what agents
+ *     see in the web inbox — which is the behavior we want for the
  *     Help Desk <-> eBay read-state mirror.
+ *
+ * Gotchas we learned the hard way (April 2026):
+ *   - On high-volume accounts (e.g. TPP with ~170k FROM_MEMBERS
+ *     conversations) the unfiltered `GET /conversation?conversation_type=X`
+ *     5xxs with `getAllMyConversations … exceeded retries limit`. Always
+ *     include either `other_party_username`, `reference_id` +
+ *     `reference_type`, or `sort=-last_modified_date` to route the request
+ *     past the broken aggregator. `conversation_status=UNREAD` does not
+ *     mean "latest message is unread" — it filters on the per-conversation
+ *     status (ACTIVE / ARCHIVE / DELETE), not the read flag.
+ *   - Any `filter=...` clause is silently ignored on TPP. Query params are
+ *     the source of truth.
+ *   - Read/unread state is written via `POST /bulk_update_conversation`
+ *     with
+ *       { conversations: [ { conversationId, conversationType,
+ *                            conversationStatus: "READ" | "UNREAD" } ] }
+ *     The `read: true/false` shape documented in older integration notes
+ *     does not flip the web UI.
  *
  * Scope:
  *   The app must carry `https://api.ebay.com/oauth/api_scope/commerce.message`
@@ -44,25 +62,59 @@ export type CommerceMessageConversationStatus =
   | "READ"
   | "UNREAD";
 
+export interface CommerceMessageLatestMessage {
+  messageId?: string;
+  messageBody?: string;
+  senderUsername?: string;
+  recipientUsername?: string;
+  readStatus?: boolean;
+  createdDate?: string;
+}
+
 export interface CommerceMessageConversation {
   conversationId: string;
   conversationType: CommerceMessageConversationType;
   conversationStatus?: CommerceMessageConversationStatus;
+  /** `true` when every message in the thread is read on eBay. Derived
+   *  from `unreadCount === 0`. */
   read?: boolean;
+  /** The non-self username in the thread. The API doesn't return a single
+   *  "other party" field — we derive it from latestMessage.senderUsername /
+   *  recipientUsername, preferring whichever isn't `selfUsernameHint` when
+   *  the caller passes one. Callers that care about which side sent the
+   *  last message should read `latestMessage` directly. */
   otherPartyUsername?: string;
+  /** ISO timestamp of the most recent activity in the thread. */
   lastMessageDate?: string;
   lastMessageSubject?: string;
   messageCount?: number;
   unreadMessageCount?: number;
+  /** The eBay listing ID this conversation is attached to. Populated when
+   *  `referenceType === "LISTING"`. */
   itemId?: string;
+  /** Raw latest-message block from the API — keep this so callers can
+   *  reason about sender direction / body text without re-fetching. */
+  latestMessage?: CommerceMessageLatestMessage;
 }
 
 export interface CommerceMessageGetConversationsArgs {
   conversationType: CommerceMessageConversationType;
+  /** Filter by per-conversation status. NOTE: this is NOT a read/unread
+   *  filter — use `onlyUnread` / post-filter `unreadMessageCount` for that. */
   conversationStatus?: CommerceMessageConversationStatus;
   otherPartyUsername?: string;
+  /** eBay listing ID. When set, `referenceType` is forced to LISTING. */
+  referenceId?: string;
+  /** Sort string, e.g. `-last_modified_date` (newest first). Required on
+   *  high-volume accounts when no other narrowing param is supplied,
+   *  otherwise eBay 5xxs with `getAllMyConversations: exceeded retries`. */
+  sort?: string;
   limit?: number;
   offset?: number;
+  /** When set, used to derive `otherPartyUsername` on each row: whichever
+   *  of `latestMessage.senderUsername` / `recipientUsername` isn't this
+   *  value wins. Falls back to `senderUsername` when no hint is given. */
+  selfUsernameHint?: string;
 }
 
 export interface CommerceMessageUpdateResult {
@@ -103,7 +155,6 @@ async function callCommerceMessage(
       signal: controller.signal,
     });
     const text = await res.text();
-    // Don't fail-fast on non-2xx; callers inspect status.
     void recordNetworkTransferSample({
       channel: "HELPDESK",
       label: `helpdesk_ebay / ${callLabel}`,
@@ -159,12 +210,78 @@ function extractErrorId(parsed: unknown): {
   return {};
 }
 
+function str(v: unknown): string | undefined {
+  return typeof v === "string" ? v : undefined;
+}
+function num(v: unknown): number | undefined {
+  return typeof v === "number" ? v : undefined;
+}
+function bool(v: unknown): boolean | undefined {
+  return typeof v === "boolean" ? v : undefined;
+}
+
+function parseLatestMessage(raw: unknown): CommerceMessageLatestMessage | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const r = raw as Record<string, unknown>;
+  return {
+    messageId: str(r.messageId),
+    messageBody: str(r.messageBody),
+    senderUsername: str(r.senderUsername),
+    recipientUsername: str(r.recipientUsername),
+    readStatus: bool(r.readStatus),
+    createdDate: str(r.createdDate),
+  };
+}
+
+function deriveOtherParty(
+  latest: CommerceMessageLatestMessage | undefined,
+  selfHint?: string,
+): string | undefined {
+  if (!latest) return undefined;
+  const s = latest.senderUsername;
+  const r = latest.recipientUsername;
+  if (selfHint) {
+    if (s && s !== selfHint) return s;
+    if (r && r !== selfHint) return r;
+  }
+  return s ?? r;
+}
+
+function parseConversation(
+  raw: Record<string, unknown>,
+  fallbackType: CommerceMessageConversationType,
+  selfHint?: string,
+): CommerceMessageConversation {
+  const latest = parseLatestMessage(raw.latestMessage);
+  const referenceType = str(raw.referenceType);
+  const referenceId = str(raw.referenceId);
+  const unreadCount = num(raw.unreadCount);
+  return {
+    conversationId: String(raw.conversationId ?? ""),
+    conversationType: (raw.conversationType ??
+      fallbackType) as CommerceMessageConversationType,
+    conversationStatus: raw.conversationStatus as
+      | CommerceMessageConversationStatus
+      | undefined,
+    read: typeof unreadCount === "number" ? unreadCount === 0 : undefined,
+    otherPartyUsername:
+      str(raw.otherPartyUsername) ?? deriveOtherParty(latest, selfHint),
+    lastMessageDate: latest?.createdDate ?? str(raw.lastMessageDate),
+    lastMessageSubject: str(raw.lastMessageSubject),
+    messageCount: num(raw.messageCount),
+    unreadMessageCount: unreadCount,
+    itemId: referenceType === "LISTING" ? referenceId : str(raw.itemId),
+    latestMessage: latest,
+  };
+}
+
 // ─── Public API ──────────────────────────────────────────────────────────────
 
 /**
- * List conversations matching the given filter. Returns up to `limit` (max 10
- * per eBay's cap) starting at `offset`. Most Help Desk lookups want a specific
- * buyer's conversation, so `otherPartyUsername` is the primary selector.
+ * List conversations matching the given filter. Uses TOP-LEVEL query
+ * params (not `filter=`) because eBay silently ignores the filter clause
+ * on large accounts. At least one of `otherPartyUsername`, `referenceId`,
+ * or `sort` should be supplied or the unfiltered aggregate path will 5xx.
  */
 export async function getConversations(
   integrationId: string,
@@ -172,6 +289,7 @@ export async function getConversations(
   args: CommerceMessageGetConversationsArgs,
 ): Promise<{
   conversations: CommerceMessageConversation[];
+  total?: number;
   status: number;
   needsReauth: boolean;
 }> {
@@ -184,6 +302,11 @@ export async function getConversations(
   if (args.otherPartyUsername) {
     params.set("other_party_username", args.otherPartyUsername);
   }
+  if (args.referenceId) {
+    params.set("reference_id", args.referenceId);
+    params.set("reference_type", "LISTING");
+  }
+  if (args.sort) params.set("sort", args.sort);
   if (args.limit != null) params.set("limit", String(args.limit));
   if (args.offset != null) params.set("offset", String(args.offset));
   const { status, body } = await callCommerceMessage(
@@ -197,7 +320,6 @@ export async function getConversations(
   const parsed = parseJson(body);
 
   if (status === 401 || status === 403) {
-    // 1100 = insufficient scope / consent not granted for this app.
     const { errorId } = extractErrorId(parsed);
     return {
       conversations: [],
@@ -216,40 +338,21 @@ export async function getConversations(
   const rawList = Array.isArray(container.conversations)
     ? (container.conversations as Array<Record<string, unknown>>)
     : [];
-  const conversations: CommerceMessageConversation[] = rawList.map((c) => ({
-    conversationId: String(c.conversationId ?? ""),
-    conversationType: (c.conversationType ??
-      args.conversationType) as CommerceMessageConversationType,
-    conversationStatus: c.conversationStatus as
-      | CommerceMessageConversationStatus
-      | undefined,
-    read: typeof c.read === "boolean" ? (c.read as boolean) : undefined,
-    otherPartyUsername:
-      typeof c.otherPartyUsername === "string"
-        ? c.otherPartyUsername
-        : undefined,
-    lastMessageDate:
-      typeof c.lastMessageDate === "string" ? c.lastMessageDate : undefined,
-    lastMessageSubject:
-      typeof c.lastMessageSubject === "string"
-        ? c.lastMessageSubject
-        : undefined,
-    messageCount:
-      typeof c.messageCount === "number" ? c.messageCount : undefined,
-    unreadMessageCount:
-      typeof c.unreadMessageCount === "number"
-        ? c.unreadMessageCount
-        : undefined,
-    itemId: typeof c.itemId === "string" ? c.itemId : undefined,
-  }));
-  return { conversations, status, needsReauth: false };
+  const conversations = rawList.map((c) =>
+    parseConversation(c, args.conversationType, args.selfUsernameHint),
+  );
+  const total = num(container.total);
+  return { conversations, total, status, needsReauth: false };
 }
 
 /**
- * Flip the `read` flag on a single conversation. Returns `needsReauth=true`
- * when the integration hasn't been re-authorized yet with the
- * commerce.message scope — callers can then skip this path silently and
- * let the Trading API fallback do what it can.
+ * Flip the read/unread flag on a single conversation via
+ * `POST /bulk_update_conversation` with a one-element array.
+ *
+ * We use the bulk endpoint even for singles because the non-bulk
+ * `/update_conversation` shape has been inconsistent across eBay's
+ * environments and the bulk path is what we verified end-to-end against
+ * the live web UI.
  */
 export async function updateConversationRead(
   integrationId: string,
@@ -260,35 +363,25 @@ export async function updateConversationRead(
     read: boolean;
   },
 ): Promise<CommerceMessageUpdateResult> {
-  const accessToken = await getEbayAccessToken(integrationId, config);
-  const { status, body } = await callCommerceMessage(
-    integrationId,
-    accessToken,
-    "POST",
-    `/update_conversation`,
-    {
-      conversationId: args.conversationId,
-      conversationType: args.conversationType,
-      read: args.read,
-    },
-    "CommerceMessage_UpdateConversation",
-  );
-  if (status === 204) {
-    return { success: true, status };
-  }
-  const parsed = parseJson(body);
-  const { errorId, errorMessage } = extractErrorId(parsed);
-  return {
-    success: false,
-    status,
-    errorId,
-    errorMessage: errorMessage ?? body.slice(0, 400),
-    needsReauth: errorId === 1100 || status === 401,
-  };
+  return bulkUpdateConversationRead(integrationId, config, {
+    conversations: [
+      {
+        conversationId: args.conversationId,
+        conversationType: args.conversationType,
+      },
+    ],
+    read: args.read,
+  });
 }
 
 /**
- * Bulk variant. eBay caps this at 10 conversations per call — caller chunks.
+ * Flip read/unread on up to 10 conversations per call (eBay's cap —
+ * callers must chunk). Uses the verified-working payload shape:
+ *   {
+ *     conversations: [
+ *       { conversationId, conversationType, conversationStatus: "READ" | "UNREAD" }
+ *     ]
+ *   }
  */
 export async function bulkUpdateConversationRead(
   integrationId: string,
@@ -303,21 +396,41 @@ export async function bulkUpdateConversationRead(
 ): Promise<CommerceMessageUpdateResult> {
   if (args.conversations.length === 0) return { success: true, status: 204 };
   const accessToken = await getEbayAccessToken(integrationId, config);
+  const payload = {
+    conversations: args.conversations.map((c) => ({
+      conversationId: c.conversationId,
+      conversationType: c.conversationType,
+      conversationStatus: args.read ? "READ" : "UNREAD",
+    })),
+  };
   const { status, body } = await callCommerceMessage(
     integrationId,
     accessToken,
     "POST",
     `/bulk_update_conversation`,
-    {
-      requests: args.conversations.map((c) => ({
-        conversationId: c.conversationId,
-        conversationType: c.conversationType,
-        read: args.read,
-      })),
-    },
+    payload,
     "CommerceMessage_BulkUpdateConversation",
   );
-  if (status === 204 || status === 200) {
+  if (status === 200 || status === 204) {
+    // Even with HTTP 200 eBay can report per-row failures in the response
+    // body. Treat any `updateFailureCount > 0` as a partial failure.
+    const parsed = parseJson(body);
+    if (
+      parsed &&
+      typeof parsed === "object" &&
+      "conversationsMetadata" in parsed
+    ) {
+      const meta = (parsed as Record<string, unknown>)
+        .conversationsMetadata as Record<string, unknown> | undefined;
+      const failures = num(meta?.updateFailureCount);
+      if (failures && failures > 0) {
+        return {
+          success: false,
+          status,
+          errorMessage: `bulk_update_conversation reported ${failures} per-row failure(s): ${body.slice(0, 300)}`,
+        };
+      }
+    }
     return { success: true, status };
   }
   const parsed = parseJson(body);
@@ -344,7 +457,7 @@ export async function resolveConversationIdForBuyer(
   integrationId: string,
   config: EbayConfig,
   buyerUsername: string,
-  opts: { itemIdHint?: string; limit?: number } = {},
+  opts: { itemIdHint?: string; limit?: number; selfUsernameHint?: string } = {},
 ): Promise<{
   best?: CommerceMessageConversation;
   all: CommerceMessageConversation[];
@@ -358,6 +471,7 @@ export async function resolveConversationIdForBuyer(
       conversationType: "FROM_MEMBERS",
       otherPartyUsername: buyerUsername,
       limit: opts.limit ?? 10,
+      selfUsernameHint: opts.selfUsernameHint,
     },
   );
   if (conversations.length === 0) {
@@ -370,7 +484,6 @@ export async function resolveConversationIdForBuyer(
     );
     if (itemMatches.length > 0) candidates = itemMatches;
   }
-  // Most recent wins. Null dates sort last.
   const sorted = [...candidates].sort((a, b) => {
     const ta = a.lastMessageDate ? Date.parse(a.lastMessageDate) : 0;
     const tb = b.lastMessageDate ? Date.parse(b.lastMessageDate) : 0;
