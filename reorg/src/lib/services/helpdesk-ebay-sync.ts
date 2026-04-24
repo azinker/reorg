@@ -183,40 +183,34 @@ export async function runHelpdeskPoll(): Promise<HelpdeskPollResult> {
     );
   }
 
-  // End-of-tick STALE read-state reconciliation, both directions.
+  // End-of-tick read-state reconciliation against the eBay web UI.
   //
-  // reconcileEbayReadState only sees messages inside the 7-day incremental
-  // window. Tickets whose latest inbound message is older than that window
-  // never get their read-state re-checked, so when an agent marks them
-  // read/unread directly on eBay we drift.
+  // eBay runs two disjoint read-state stores: the legacy Trading API
+  // (GetMyMessages / ReviseMyMessages) and the modern Commerce Message
+  // API (/commerce/message/v1, which drives ebay.com/mesg). They can
+  // report different READ/UNREAD values for the same buyer message.
   //
-  // Two mirror sweeps plug the gap:
-  //   - sweepStaleUnreadTickets: local unread → verify vs eBay. Catches
-  //     "agent marked it read on eBay but reorG still thinks unread".
-  //   - sweepStaleReadTickets:   local read   → verify vs eBay. Catches
-  //     "agent marked it unread on eBay but reorG still thinks read".
+  // Agents work in the eBay web UI, so Commerce Message API is the
+  // authoritative source. sweepUnreadConversationsFromWebUi reconciles
+  // Help Desk unread state against that store in both directions
+  // (bumps locally-read→unread when CM says unread; clears locally-
+  // unread→read when CM confirms the full unread set and a ticket's
+  // buyer is not in it).
   //
-  // Both query by specific MessageID (not a time window), so eBay's 7-day
-  // cap doesn't apply — we can verify read state for messages of any age.
-  // Each caps at MAX_STALE_*_PER_TICK tickets so one tick costs at most
-  // ~10 GetMyMessages calls across TPP + TT, well under daily quotas.
+  // The legacy Trading-API-based sweeps (sweepStaleUnreadTickets and
+  // sweepStaleReadTickets) are intentionally NOT called here — they
+  // race with the CM sweep and cause tickets to oscillate between
+  // read/unread each tick. They're retained in this file for
+  // diagnostics and potential reuse on non-buyer (SYSTEM) tickets, but
+  // are no longer part of the normal sync path.
   try {
     const flags = await helpdeskFlagsSnapshotAsync();
     if (flags.effectiveCanSyncReadState) {
-      await sweepStaleUnreadTickets(integrations);
-      await sweepStaleReadTickets(integrations);
-      // Ground-truth reconciliation against the eBay web UI's "Unread from
-      // members" store (Commerce Message API). The two sweeps above work
-      // the legacy Trading API's Read flag, which can disagree with what
-      // agents actually see on ebay.com/mesg for modern buyer Q&A. This
-      // sweep reconciles against the store the web UI actually reads
-      // from, so the Help Desk unread count eventually converges on the
-      // same number agents see in the eBay web inbox.
       await sweepUnreadConversationsFromWebUi(integrations);
     }
   } catch (err) {
     console.error(
-      "[helpdesk-sync] stale read-state sweep failed",
+      "[helpdesk-sync] web-ui read-state sweep failed",
       err instanceof Error ? err.message : err,
     );
   }
@@ -612,21 +606,18 @@ async function pollIntegrationFolder(
   // a message is now read on eBay (one-directional). Going the other way
   // (eBay says unread ΓåÆ reorG marks unread) would constantly fight an agent
   // who already triaged a thread in reorG.
-  const flagsSnapshot = await helpdeskFlagsSnapshotAsync();
-  if (
-    flagsSnapshot.enableEbayReadSync &&
-    folderKey === "inbox" &&
-    existingExternalIds.size > 0
-  ) {
-    try {
-      await reconcileEbayReadState(integration.id, headers);
-    } catch (err) {
-      console.error(
-        "[helpdesk-sync] eBay read-state reconcile failed",
-        err instanceof Error ? err.message : err,
-      );
-    }
-  }
+  //
+  // Intentionally not calling reconcileEbayReadState here: its source
+  // (GetMyMessages headers) reports the legacy Trading API's Read flag,
+  // which disagrees with what agents actually see on ebay.com/mesg for
+  // modern buyer Q&A. End-of-tick sweepUnreadConversationsFromWebUi
+  // (Commerce Message API) is the authoritative reconcile path for
+  // buyer tickets. SYSTEM tickets never sync read state in either
+  // direction, so nothing is lost by skipping the Trading-API path here.
+  //
+  // Flag snapshot still read so downstream flag-dependent code in this
+  // function sees the same snapshot as the rest of the sync tick.
+  await helpdeskFlagsSnapshotAsync();
 
   // Pre-load enabled filters once per folder pull so the per-message engine
   // doesn't hit the DB for each new inbound message.
