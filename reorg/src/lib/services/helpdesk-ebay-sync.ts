@@ -2394,14 +2394,37 @@ const COMMERCE_PAGE_SIZE = 50;
 async function sweepUnreadConversationsFromWebUi(
   integrations: Integration[],
 ): Promise<void> {
-  for (const integration of integrations) {
+  // Run integrations in parallel. The per-integration path is entirely
+  // self-contained (scoped by integrationId in every DB query + API call),
+  // so parallelism is safe and roughly halves wall time on 2-integration
+  // setups — critical for staying under Vercel's gateway timeout.
+  await Promise.all(
+    integrations.map((integration) =>
+      sweepUnreadConversationsForIntegration(integration).catch((err) => {
+        console.error(
+          "[helpdesk-sync] commerce message unread sweep failed for integration",
+          {
+            integrationId: integration.id,
+            integrationLabel: integration.label,
+            error: err instanceof Error ? err.message : String(err),
+          },
+        );
+      }),
+    ),
+  );
+}
+
+async function sweepUnreadConversationsForIntegration(
+  integration: Integration,
+): Promise<void> {
+  {
     if (
       integration.platform !== Platform.TPP_EBAY &&
       integration.platform !== Platform.TT_EBAY
     )
-      continue;
+      return;
     const config = buildEbayConfig(integration);
-    if (!config.appId || !config.refreshToken) continue;
+    if (!config.appId || !config.refreshToken) return;
 
     const selfUsername = getSellerUserId(integration) ?? undefined;
 
@@ -2511,7 +2534,7 @@ async function sweepUnreadConversationsFromWebUi(
       // Short page → eBay's end of data.
       if (conversations.length < COMMERCE_PAGE_SIZE) break;
     }
-    if (needsReauthLogged) continue;
+    if (needsReauthLogged) return;
 
     // ── 2. Bump local unread where eBay reports unread ───────────────────
     let bumpedUnread = 0;
@@ -2782,14 +2805,39 @@ async function sweepCommerceMessageInbound(
   const cutoff = new Date(
     Date.now() - COMMERCE_INGEST_ACTIVITY_DAYS * 24 * 60 * 60 * 1000,
   );
-  for (const integration of integrations) {
+  // Parallelize integrations — keeps the sweep inside Vercel's 60s
+  // gateway timeout budget. Each integration's work is fully scoped
+  // by integrationId in all reads and writes, so no cross-interference.
+  await Promise.all(
+    integrations.map((integration) =>
+      sweepCommerceMessageInboundForIntegration(integration, cutoff).catch(
+        (err) => {
+          console.error(
+            "[helpdesk-sync] commerce message inbound ingest failed for integration",
+            {
+              integrationId: integration.id,
+              integrationLabel: integration.label,
+              error: err instanceof Error ? err.message : String(err),
+            },
+          );
+        },
+      ),
+    ),
+  );
+}
+
+async function sweepCommerceMessageInboundForIntegration(
+  integration: Integration,
+  cutoff: Date,
+): Promise<void> {
+  {
     if (
       integration.platform !== Platform.TPP_EBAY &&
       integration.platform !== Platform.TT_EBAY
     )
-      continue;
+      return;
     const config = buildEbayConfig(integration);
-    if (!config.appId || !config.refreshToken) continue;
+    if (!config.appId || !config.refreshToken) return;
     const selfUsername = getSellerUserId(integration) ?? undefined;
 
     // Select tickets whose conversationId is bound AND has recent
@@ -2823,7 +2871,7 @@ async function sweepCommerceMessageInbound(
       ],
       take: COMMERCE_INGEST_BUDGET,
     });
-    if (tickets.length === 0) continue;
+    if (tickets.length === 0) return;
 
     let needsReauthLogged = false;
     let ticketsHit = 0;
@@ -2958,7 +3006,7 @@ async function sweepCommerceMessageInbound(
         }
       }
     }
-    if (needsReauthLogged) continue;
+    if (needsReauthLogged) return;
 
     console.info("[helpdesk-sync] commerce message inbound ingest finished", {
       integrationId: integration.id,
