@@ -358,22 +358,79 @@ export function TicketTriageBar({
         </span>
       )}
 
-      {/* Right-anchored "in <folder>" status pill — derived from the
-          ticket's own state (not the currently selected sidebar folder)
-          so an agent arriving via deep-link or search still sees where
-          this ticket actually lives. Read-only signal; not a button. */}
-      <CurrentFolderPill ticket={ticket} />
+      {/* Right-anchored "in <folder>" pill — derived from the ticket's
+          own state (not the currently selected sidebar folder) so an
+          agent arriving via deep-link or search still sees where this
+          ticket actually lives. Also acts as the read/unread control:
+          opens a dropdown with Mark as Read / Mark as Unread, defaulted
+          to the current state. Works on any ticket (not just the "To
+          Do · Read" bucket) so an agent can re-flag a Waiting or
+          Archived ticket as unread without leaving the thread. */}
+      <CurrentFolderPill
+        ticket={ticket}
+        disabled={disabled}
+        busy={busy === "markRead"}
+        onMarkRead={(isRead) =>
+          runBatch({ action: "markRead", isRead }, "markRead")
+        }
+      />
     </div>
   );
 }
 
-// ─── Current-folder status pill ─────────────────────────────────────────────
+// ─── Current-folder pill + read/unread dropdown ─────────────────────────────
 
+/**
+ * The "in <folder>" pill doubles as the per-ticket read/unread control.
+ *
+ * Why combine these two things:
+ *   The folder label already encodes read state for the two "To Do"
+ *   sub-buckets ("To Do · Read" / "To Do · Unread"). Splitting a second
+ *   control off would duplicate that signal and eat toolbar real estate,
+ *   so we fold the toggle into the same affordance — the label shows
+ *   where the ticket currently sits, and the dropdown exposes the one
+ *   state flip (read/unread) that can change that.
+ *
+ * Works for any ticket (not just To Do) because read/unread is
+ * independent of folder routing: an agent may want to re-flag a
+ * Waiting, Archived, or Resolved ticket as unread to pull it back onto
+ * their radar even though its folder doesn't change.
+ *
+ * The small dot after the label mirrors the unread indicator shown in
+ * the TicketTable "Latest Update" column — filled brand-coral = unread,
+ * hollow ring = read. Keeps the affordance scannable without opening
+ * the menu.
+ *
+ * Mirrors to eBay automatically: the markRead batch action invokes
+ * mirrorReadStateToEbay under the hood (gated by
+ * effectiveCanSyncReadState + safe mode), so toggling here keeps the
+ * eBay web UI in lockstep.
+ */
 function CurrentFolderPill({
   ticket,
+  disabled,
+  busy,
+  onMarkRead,
 }: {
   ticket: HelpdeskTicketDetail | null;
+  disabled: boolean;
+  busy: boolean;
+  onMarkRead: (isRead: boolean) => void;
 }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function onClick(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    }
+    window.addEventListener("mousedown", onClick);
+    return () => window.removeEventListener("mousedown", onClick);
+  }, [open]);
+
   const folderKey = useMemo(() => {
     if (!ticket) return null;
     return deriveTicketFolder({
@@ -391,25 +448,86 @@ function CurrentFolderPill({
   if (!folderKey || !ticket) return null;
 
   const label = FOLDER_LABELS[folderKey];
-  // Two-level label for To Do sub-buckets so the agent sees the full
-  // hierarchy (To Do · Unread / To Do · Read) without having
-  // to glance at the sidebar.
   const display =
     folderKey === "all_to_do_unread"
       ? "To Do · Unread"
       : folderKey === "all_to_do_awaiting"
         ? "To Do · Read"
         : label;
+  const isUnread = ticket.unreadCount > 0;
 
   return (
-    <span
-      className="ml-auto inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md border border-hairline bg-surface/60 px-2 text-[11px] font-medium text-muted-foreground"
-      title={`This ticket currently lives in the "${display}" folder. The folder is derived from ticket state (snooze, resolved, system, unread, etc.) so it updates automatically as you work.`}
-    >
-      <Inbox className="h-3.5 w-3.5 opacity-70" />
-      <span className="text-muted-foreground/80">in</span>
-      <span className="text-foreground">{display}</span>
-    </span>
+    <div ref={ref} className="relative ml-auto">
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => !disabled && setOpen((v) => !v)}
+        className={cn(
+          "inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md border border-hairline bg-surface/60 px-2 text-[11px] font-medium text-muted-foreground transition-colors hover:border-brand/60 hover:bg-brand/10 hover:text-brand disabled:cursor-not-allowed disabled:opacity-40 cursor-pointer",
+          open && "border-brand/60 bg-brand/15 text-brand",
+        )}
+        title={`This ticket is in "${display}". Click to mark as ${
+          isUnread ? "read" : "unread"
+        }.`}
+      >
+        <Inbox className="h-3.5 w-3.5 opacity-70" />
+        <span className="text-muted-foreground/80">in</span>
+        <span className="text-foreground">{display}</span>
+        <span
+          className={cn(
+            "ml-0.5 h-1.5 w-1.5 rounded-full",
+            isUnread
+              ? "bg-brand"
+              : "border border-muted-foreground/50 bg-transparent",
+          )}
+          aria-hidden
+        />
+        <ChevronDown className="h-3 w-3 opacity-60" />
+      </button>
+      {open && (
+        <div className="absolute right-0 top-full z-30 mt-1 w-44 rounded-md border border-hairline bg-popover p-1 text-popover-foreground shadow-xl">
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => {
+              if (isUnread) onMarkRead(true);
+              setOpen(false);
+            }}
+            className={cn(
+              "flex w-full items-center justify-between rounded-md px-2.5 py-1.5 text-left text-xs text-foreground hover:bg-surface-2 cursor-pointer",
+              !isUnread && "bg-surface-2 font-medium",
+            )}
+          >
+            <span className="inline-flex items-center gap-2">
+              <span
+                className="h-1.5 w-1.5 rounded-full border border-muted-foreground/50"
+                aria-hidden
+              />
+              Mark as Read
+            </span>
+            {!isUnread && <Check className="h-3.5 w-3.5" />}
+          </button>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => {
+              if (!isUnread) onMarkRead(false);
+              setOpen(false);
+            }}
+            className={cn(
+              "flex w-full items-center justify-between rounded-md px-2.5 py-1.5 text-left text-xs text-foreground hover:bg-surface-2 cursor-pointer",
+              isUnread && "bg-surface-2 font-medium",
+            )}
+          >
+            <span className="inline-flex items-center gap-2">
+              <span className="h-1.5 w-1.5 rounded-full bg-brand" aria-hidden />
+              Mark as Unread
+            </span>
+            {isUnread && <Check className="h-3.5 w-3.5" />}
+          </button>
+        </div>
+      )}
+    </div>
   );
 }
 
