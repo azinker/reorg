@@ -1,21 +1,41 @@
 import { NextRequest, NextResponse } from "next/server";
 
-const SCOPES = [
+// Base scopes always requested. These are the scopes the app has been
+// approved for at the eBay Developer Portal level across every
+// environment (keyset), so they never fail the initial consent validation.
+const BASE_SCOPES = [
   "https://api.ebay.com/oauth/api_scope",
   "https://api.ebay.com/oauth/api_scope/sell.inventory",
   "https://api.ebay.com/oauth/api_scope/sell.inventory.readonly",
   "https://api.ebay.com/oauth/api_scope/sell.marketing",
   "https://api.ebay.com/oauth/api_scope/sell.fulfillment",
-  // Needed for the Help Desk read/unread mirror against the modern web UI
-  // "From members" / "Unread from members" store. The legacy Trading API
-  // ReviseMyMessages only flips a separate flag that doesn't always drive
-  // the web UI badge for modern buyer Q&A threads — so we use the Commerce
-  // Message API (updateConversation) to flip what agents actually see on
-  // ebay.com/mesg. Integrations must be re-authorized once for their
-  // refresh tokens to carry this scope; older tokens keep working for every
-  // other call but will 403 against /commerce/message/v1 until re-auth.
-  "https://api.ebay.com/oauth/api_scope/commerce.message",
-].join(" ");
+];
+
+// Optional scopes. Each entry here must be enabled on the application's
+// User Token consent settings in the eBay Developer Portal before it
+// will pass eBay's initial OAuth validation — otherwise the consent
+// screen redirects to auth.ebay.com/.../error?errorId=invalid_request
+// with "Input request parameters are invalid.". Gate each optional
+// scope behind an env flag so we can flip it on once the app keyset has
+// been granted the scope without touching code.
+//
+// commerce.message: drives the modern eBay web UI "Unread from members"
+// badge for buyer Q&A. Without it the Commerce Message API wrappers in
+// helpdesk-commerce-message.ts return needsReauth=true and we fall
+// back to the legacy Trading API ReviseMyMessages path.
+const OPTIONAL_SCOPES: Array<{ scope: string; envFlag: string }> = [
+  {
+    scope: "https://api.ebay.com/oauth/api_scope/commerce.message",
+    envFlag: "EBAY_ENABLE_COMMERCE_MESSAGE_SCOPE",
+  },
+];
+
+function buildScopeList(): string {
+  const extras = OPTIONAL_SCOPES.filter(
+    (entry) => process.env[entry.envFlag] === "true",
+  ).map((entry) => entry.scope);
+  return [...BASE_SCOPES, ...extras].join(" ");
+}
 
 export async function GET(request: NextRequest) {
   const store = request.nextUrl.searchParams.get("store") || "tpp";
@@ -44,7 +64,7 @@ export async function GET(request: NextRequest) {
     client_id: clientId,
     redirect_uri: ruName,
     response_type: "code",
-    scope: SCOPES,
+    scope: buildScopeList(),
     state: store,
   });
 
