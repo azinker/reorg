@@ -2598,14 +2598,22 @@ async function sweepUnreadConversationsFromWebUi(
     // carries unreadCount>0. We want the inbound sweep (step 4) to have
     // the broadest possible working set, so do one batched lookup of
     // tickets whose buyer we scanned but whose ebayConversationId is
-    // still null. A single query covers the full scanned window.
+    // still null.
+    //
+    // IMPORTANT perf note: on the FIRST tick after deploy every ticket has
+    // ebayConversationId=null, so naive per-ticket UPDATE loops blow past
+    // Vercel's 60s gateway timeout. We cap total work per tick
+    // (BOOTSTRAP_BUDGET) and collapse writes with one `updateMany` per
+    // conversationId, which needs ~O(distinct buyers) round-trips
+    // instead of O(tickets).
+    const BOOTSTRAP_BUDGET = 300;
     if (scannedByBuyer.size > 0) {
       const buyerKeys = Array.from(scannedByBuyer.keys());
-      // Chunk the IN() list to keep query sizes bounded on 800-buyer
-      // sweeps. 200 per chunk keeps us well inside Postgres's practical
-      // parameter limits and the resulting queries small.
       const CHUNK = 200;
-      for (let i = 0; i < buyerKeys.length; i += CHUNK) {
+      // ticketId → conversationId, collected across chunks
+      const pendingByConv = new Map<string, string[]>();
+      let pendingTicketCount = 0;
+      scan: for (let i = 0; i < buyerKeys.length; i += CHUNK) {
         const chunk = buyerKeys.slice(i, i + CHUNK);
         const chunkTickets = await db.helpdeskTicket.findMany({
           where: {
@@ -2623,36 +2631,44 @@ async function sweepUnreadConversationsFromWebUi(
               },
             ],
           },
+          // Keep the per-tick budget bounded — any tickets we don't get to
+          // this tick get picked up on the next one since they still have
+          // ebayConversationId=null.
+          take: BOOTSTRAP_BUDGET - pendingTicketCount,
           select: {
             id: true,
             buyerUserId: true,
             buyerName: true,
-            ebayItemId: true,
           },
         });
         for (const ticket of chunkTickets) {
           const key = (ticket.buyerUserId ?? ticket.buyerName ?? "").toLowerCase();
           const conv = scannedByBuyer.get(key);
           if (!conv) continue;
-          // Prefer a conversation whose itemId matches the ticket's
-          // ebayItemId when we have it; otherwise use whatever the
-          // buyer's most-recent row was.
-          try {
-            await db.helpdeskTicket.update({
-              where: { id: ticket.id },
-              data: { ebayConversationId: conv.conversationId },
-            });
-            convoIdsPersisted += 1;
-          } catch (err) {
-            console.warn(
-              "[helpdesk-sync] failed to bootstrap ebayConversationId",
-              {
-                ticketId: ticket.id,
-                conversationId: conv.conversationId,
-                error: err instanceof Error ? err.message : String(err),
-              },
-            );
-          }
+          const bucket = pendingByConv.get(conv.conversationId);
+          if (bucket) bucket.push(ticket.id);
+          else pendingByConv.set(conv.conversationId, [ticket.id]);
+          pendingTicketCount += 1;
+          if (pendingTicketCount >= BOOTSTRAP_BUDGET) break scan;
+        }
+      }
+      for (const [conversationId, ids] of pendingByConv) {
+        if (ids.length === 0) continue;
+        try {
+          const res = await db.helpdeskTicket.updateMany({
+            where: { id: { in: ids } },
+            data: { ebayConversationId: conversationId },
+          });
+          convoIdsPersisted += res.count;
+        } catch (err) {
+          console.warn(
+            "[helpdesk-sync] failed to bootstrap ebayConversationId",
+            {
+              conversationId,
+              ticketCount: ids.length,
+              error: err instanceof Error ? err.message : String(err),
+            },
+          );
         }
       }
     }
@@ -2711,9 +2727,12 @@ async function sweepUnreadConversationsFromWebUi(
 // ─── Commerce Message inbound ingest ────────────────────────────────────────
 
 /** Max tickets we pull messages for per integration per tick. TPP typically
- *  has <10 conversations with new web-UI activity per tick; 40 gives us 4x
- *  headroom and still keeps the sweep inside the per-tick budget. */
-const COMMERCE_INGEST_BUDGET = 40;
+ *  has <10 conversations with new web-UI activity per tick; 15 keeps total
+ *  Commerce Message calls (2 integrations × 15 = 30) comfortably under
+ *  Vercel's 60s gateway timeout when stacked with the legacy sync + unread
+ *  sweep. Tickets we don't get to this tick are re-ordered to the front on
+ *  the next tick (activity-desc), so they still converge. */
+const COMMERCE_INGEST_BUDGET = 15;
 
 /** Activity window — only ingest for tickets whose last buyer or agent
  *  message is within this many days. Mirrors the web UI's "Last 60 days"
