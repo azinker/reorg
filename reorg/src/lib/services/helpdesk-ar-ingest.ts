@@ -255,6 +255,50 @@ export async function recordAutoResponderHelpdeskMessage(
     appliedFilterIds.push(f.id);
   }
 
+  // 5. Hardcoded AR-only archive rule.
+  //
+  // Mirrors the rule in helpdesk-ebay-sync.ts reconcileMessages (Rule 2).
+  // We run it here unconditionally because the sync-side rule only fires
+  // for tickets that have a new message processed in that tick — and AR
+  // direct-sends don't flow through the sync path. Without this, every AR
+  // fire creates a fresh ticket in WAITING with a single AR message and
+  // stays there until a buyer reply bounces it out.
+  //
+  // Guarded by `hasNewerBuyerReply` so we never archive over active work:
+  // if a buyer reply landed between AR send and AR ingest (rare race),
+  // leave the ticket in its routed folder.
+  //
+  // Re-check inbound count against the DB, not just `hasNewerBuyerReply`,
+  // because we may be running as a backfill against a ticket that already
+  // had buyer messages before we wrote this AR (in which case archiving
+  // would be wrong even if `lastBuyerMessageAt` happens to be stale).
+  if (!hasNewerBuyerReply) {
+    const inboundCount = await db.helpdeskMessage.count({
+      where: {
+        ticketId: ticket.id,
+        direction: HelpdeskMessageDirection.INBOUND,
+      },
+    });
+    if (inboundCount === 0) {
+      try {
+        await db.helpdeskTicket.update({
+          where: { id: ticket.id },
+          data: {
+            isArchived: true,
+            archivedAt: new Date(),
+            status: HelpdeskTicketStatus.RESOLVED,
+          },
+        });
+      } catch (err) {
+        console.error(
+          "[helpdesk-ar-ingest] AR-only archive update failed",
+          { ticketId: ticket.id, sendLogId: input.sendLogId },
+          err,
+        );
+      }
+    }
+  }
+
   return {
     ticketId: ticket.id,
     messageId: message.id,

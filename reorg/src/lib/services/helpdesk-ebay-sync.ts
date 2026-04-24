@@ -165,7 +165,69 @@ export async function runHelpdeskPoll(): Promise<HelpdeskPollResult> {
     }
   }
 
+  // End-of-tick AR-only archive sweep.
+  //
+  // Catches tickets the per-message archive rule missed — specifically
+  // tickets created by the direct AR ingest path (helpdesk-ar-ingest.ts)
+  // before the hardcoded archive rule was added there, and any other
+  // edge cases where a ticket has ≥1 AUTO_RESPONDER message and zero
+  // INBOUND messages but is not yet archived. Idempotent: re-running it
+  // on an already-archived ticket is a no-op (filtered by isArchived).
+  try {
+    await sweepArchiveArOnlyTickets();
+  } catch (err) {
+    console.error(
+      "[helpdesk-sync] AR-only archive sweep failed",
+      err instanceof Error ? err.message : err,
+    );
+  }
+
   return { durationMs: Date.now() - startedAt, summaries };
+}
+
+/**
+ * Archive every not-yet-archived, non-SYSTEM, non-spam ticket whose only
+ * outbound activity is auto-responder messages and which has never received
+ * a buyer reply. Runs as a cheap sweep at the end of each poll tick.
+ *
+ * Safety:
+ *   - Excludes SYSTEM tickets (those belong in "From eBay", not Archived).
+ *   - Excludes spam.
+ *   - Requires `messages.some.source = AUTO_RESPONDER` (don't archive
+ *     agent-only outbound threads).
+ *   - Requires `messages.none.direction = INBOUND` (don't archive anything
+ *     with a buyer reply — that's the bounce-out rule).
+ *   - Capped to 500 tickets per sweep to keep the write small; the next
+ *     poll will catch any stragglers.
+ */
+async function sweepArchiveArOnlyTickets(): Promise<void> {
+  const candidates = await db.helpdeskTicket.findMany({
+    where: {
+      isArchived: false,
+      isSpam: false,
+      type: { not: HelpdeskTicketType.SYSTEM },
+      messages: {
+        some: { source: HelpdeskMessageSource.AUTO_RESPONDER },
+        none: { direction: HelpdeskMessageDirection.INBOUND },
+      },
+    },
+    select: { id: true },
+    take: 500,
+  });
+  if (candidates.length === 0) return;
+  const now = new Date();
+  const result = await db.helpdeskTicket.updateMany({
+    where: { id: { in: candidates.map((t) => t.id) } },
+    data: {
+      isArchived: true,
+      archivedAt: now,
+      status: HelpdeskTicketStatus.RESOLVED,
+    },
+  });
+  console.info(
+    "[helpdesk-sync] AR-only archive sweep archived tickets",
+    { archived: result.count, sampled: candidates.length },
+  );
 }
 
 // ΓöÇΓöÇΓöÇ Per-integration / per-folder logic ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
@@ -1541,12 +1603,13 @@ const ORDER_NUMBER_LABEL_RE =
  *   zero out the ticket's `unreadCount`. TO_DO / NEW tickets also get
  *   resolved because "read on eBay" means an agent saw it there.
  *
- * Direction 2 — eBay unread → reorG unread (per user decision `status_to_do`):
+ * Direction 2 — eBay unread → reorG unread (per user decision, updated):
  *   If a message that was read in reorG is flipped back to unread on eBay,
- *   pull the ticket back into the work queue: set `unreadCount=1`, un-archive
- *   it, and bump status back to TO_DO. This keeps Help Desk honest whenever
- *   a seller uses eBay's "mark as unread" to re-queue a message they want to
- *   re-handle. SYSTEM tickets are filtered out at the top of the function.
+ *   ONLY flip `unreadCount=1` on the reorG ticket. Do NOT move folders, do
+ *   NOT un-archive, do NOT change status. Rationale: the ticket is already
+ *   in whatever folder it belongs to (Waiting, Archived, etc.); marking a
+ *   message unread on eBay is purely a read-state signal and should not
+ *   re-route work. Spam tickets are still excluded.
  *
  * Cheap: one ticket-grouping query, one updateMany per direction.
  */
@@ -1637,14 +1700,14 @@ async function reconcileEbayReadState(
     }
   }
 
-  // ── eBay unread → HelpDesk unread (set unreadCount = 1 + bounce to TO_DO
-  // + un-archive).
+  // ── eBay unread → reorG unread (read-state only).
   //
-  // Per user decision `status_to_do`: when eBay flips a message from read
-  // back to unread (usually because the seller used eBay's "mark unread" to
-  // re-queue a conversation they want to revisit), the reorG ticket must
-  // rejoin the work queue. Spam tickets are excluded — marking spam unread
-  // on eBay does not mean we want it back in To Do.
+  // When eBay flips a message from read → unread, we mirror that read-state
+  // by setting `unreadCount = 1` on the ticket. We explicitly do NOT change
+  // folder / archive / status — the ticket is already in the right folder
+  // for its workflow stage (Waiting, Archived, etc.). Marking a message
+  // unread on eBay is a read-state signal, not a work-routing signal.
+  // Spam tickets are excluded.
   const ticketsToMarkUnread: string[] = [];
   for (const m of localMessages) {
     if (!m.ebayMessageId || !unreadOnEbay.has(m.ebayMessageId)) continue;
@@ -1657,15 +1720,10 @@ async function reconcileEbayReadState(
   if (ticketsToMarkUnread.length > 0) {
     await db.helpdeskTicket.updateMany({
       where: { id: { in: ticketsToMarkUnread } },
-      data: {
-        unreadCount: 1,
-        isArchived: false,
-        archivedAt: null,
-        status: HelpdeskTicketStatus.TO_DO,
-      },
+      data: { unreadCount: 1 },
     });
     console.info(
-      "[helpdesk-sync] eBay unread bounced tickets to TO_DO + un-archived",
+      "[helpdesk-sync] eBay unread → reorG unread (read-state only, folder unchanged)",
       { integrationId, ticketIds: ticketsToMarkUnread },
     );
   }
