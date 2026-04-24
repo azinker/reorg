@@ -182,25 +182,32 @@ export async function runHelpdeskPoll(): Promise<HelpdeskPollResult> {
     );
   }
 
-  // End-of-tick STALE unread reconciliation.
+  // End-of-tick STALE read-state reconciliation, both directions.
   //
   // reconcileEbayReadState only sees messages inside the 7-day incremental
   // window. Tickets whose latest inbound message is older than that window
   // never get their read-state re-checked, so when an agent marks them
-  // read/unread directly on eBay we drift: local unreadCount stays stuck.
+  // read/unread directly on eBay we drift.
   //
-  // This sweep queries eBay directly for the latest inbound message on every
-  // ticket where unreadCount > 0 (regardless of age), batched 10 at a time.
-  // Capped at MAX_STALE_UNREAD_PER_TICK per tick so we stay well under
-  // eBay's GetMyMessages daily quota; the next tick picks up the rest.
+  // Two mirror sweeps plug the gap:
+  //   - sweepStaleUnreadTickets: local unread → verify vs eBay. Catches
+  //     "agent marked it read on eBay but reorG still thinks unread".
+  //   - sweepStaleReadTickets:   local read   → verify vs eBay. Catches
+  //     "agent marked it unread on eBay but reorG still thinks read".
+  //
+  // Both query by specific MessageID (not a time window), so eBay's 7-day
+  // cap doesn't apply — we can verify read state for messages of any age.
+  // Each caps at MAX_STALE_*_PER_TICK tickets so one tick costs at most
+  // ~10 GetMyMessages calls across TPP + TT, well under daily quotas.
   try {
     const flags = await helpdeskFlagsSnapshotAsync();
     if (flags.effectiveCanSyncReadState) {
       await sweepStaleUnreadTickets(integrations);
+      await sweepStaleReadTickets(integrations);
     }
   } catch (err) {
     console.error(
-      "[helpdesk-sync] stale unread sweep failed",
+      "[helpdesk-sync] stale read-state sweep failed",
       err instanceof Error ? err.message : err,
     );
   }
@@ -343,6 +350,134 @@ async function sweepStaleUnreadTickets(
 
     console.info(
       "[helpdesk-sync] stale unread sweep checked tickets",
+      {
+        integrationId: integration.id,
+        ticketsProbed: tickets.length,
+        messagesVerified: allBodies.length,
+      },
+    );
+  }
+}
+
+/**
+ * Max stale-READ tickets to verify against eBay per tick. Matches the
+ * unread budget so both sweeps together cost ~10 GetMyMessages calls per
+ * tick across TPP + TT, well under eBay Trading API daily quotas even at
+ * 5-minute cron cadence.
+ */
+const MAX_STALE_READ_PER_TICK = 50;
+
+/**
+ * Mirror of sweepStaleUnreadTickets in the opposite direction. Reconciles
+ * local tickets where `unreadCount = 0` against eBay's current read state,
+ * catching the case where an agent marked a ticket unread directly on eBay
+ * on a thread older than the 7-day incremental window.
+ *
+ * Strategy:
+ *   1. Count eligible tickets (unreadCount=0, non-spam, non-SYSTEM, has an
+ *      INBOUND message with an ebayMessageId).
+ *   2. Pick a RANDOM slice of MAX_STALE_READ_PER_TICK tickets via a
+ *      random skip offset. Random sampling is required because confirm-only
+ *      probes (local read + eBay read = no drift) don't bump updatedAt —
+ *      reconcileEbayReadState only writes on actual state changes — so any
+ *      deterministic ordering would hammer the same 50 tickets every tick
+ *      forever. Random coverage probabilistically reaches every ticket.
+ *   3. For each ticket, grab its latest INBOUND ebayMessageId.
+ *   4. Batch 10 IDs per GetMyMessages call (ReturnMessages detail level —
+ *      returns Read state as part of the body). Message-ID lookup is NOT
+ *      bounded by eBay's 7-day header window.
+ *   5. Feed results into reconcileEbayReadState, which flips local to
+ *      unreadCount=1 for any message where eBay reports Read=false.
+ *
+ * Note: this sweep never pushes state to eBay — it's a pure pull.
+ *
+ * Skips SYSTEM tickets (those belong in "From eBay" and must never sync
+ * read state) and spam. Gated by effectiveCanSyncReadState at the caller.
+ */
+async function sweepStaleReadTickets(
+  integrations: Integration[],
+): Promise<void> {
+  for (const integration of integrations) {
+    const config = buildEbayConfig(integration);
+    if (!config.appId || !config.refreshToken) continue;
+
+    const where = {
+      integrationId: integration.id,
+      unreadCount: 0,
+      isSpam: false,
+      type: { not: HelpdeskTicketType.SYSTEM },
+      // Must have at least one inbound message we can probe — outbound-only
+      // threads have no buyer message on eBay to verify read state against.
+      messages: {
+        some: {
+          direction: HelpdeskMessageDirection.INBOUND,
+          ebayMessageId: { not: null },
+        },
+      },
+    } as const;
+
+    const eligibleCount = await db.helpdeskTicket.count({ where });
+    if (eligibleCount === 0) continue;
+
+    // Random slice across the eligible population. If there are fewer
+    // tickets than the per-tick budget we just grab them all (skip=0).
+    const skip =
+      eligibleCount <= MAX_STALE_READ_PER_TICK
+        ? 0
+        : Math.floor(Math.random() * (eligibleCount - MAX_STALE_READ_PER_TICK));
+
+    const tickets = await db.helpdeskTicket.findMany({
+      where,
+      select: {
+        id: true,
+        messages: {
+          where: {
+            direction: HelpdeskMessageDirection.INBOUND,
+            ebayMessageId: { not: null },
+          },
+          orderBy: { sentAt: "desc" },
+          take: 1,
+          select: { ebayMessageId: true },
+        },
+      },
+      // Deterministic ordering so `skip` is meaningful; `id` (cuid) gives
+      // stable pagination without a second index lookup.
+      orderBy: { id: "asc" },
+      skip,
+      take: MAX_STALE_READ_PER_TICK,
+    });
+
+    const messageIds: string[] = [];
+    for (const t of tickets) {
+      const mid = t.messages[0]?.ebayMessageId;
+      if (mid) messageIds.push(mid);
+    }
+    if (messageIds.length === 0) continue;
+
+    const allBodies: EbayMessageBody[] = [];
+    for (let i = 0; i < messageIds.length; i += 10) {
+      const chunk = messageIds.slice(i, i + 10);
+      try {
+        const bodies = await getMyMessagesBodies(integration.id, config, chunk);
+        allBodies.push(...bodies);
+      } catch (err) {
+        console.warn(
+          "[helpdesk-sync] stale read chunk failed",
+          {
+            integrationId: integration.id,
+            chunkSize: chunk.length,
+            error: err instanceof Error ? err.message : String(err),
+          },
+        );
+      }
+    }
+
+    if (allBodies.length === 0) continue;
+
+    await reconcileEbayReadState(integration.id, allBodies);
+
+    console.info(
+      "[helpdesk-sync] stale read sweep checked tickets",
       {
         integrationId: integration.id,
         ticketsProbed: tickets.length,
