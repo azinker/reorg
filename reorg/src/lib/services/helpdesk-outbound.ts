@@ -32,7 +32,10 @@ import {
   type HelpdeskTicket,
   type Integration,
 } from "@prisma/client";
-import { helpdeskFlags, helpdeskFlagsSnapshotAsync } from "@/lib/helpdesk/flags";
+import {
+  helpdeskFlagsSnapshotAsync,
+  type HelpdeskFlagsSnapshot,
+} from "@/lib/helpdesk/flags";
 import {
   buildEbayConfig,
   sendHelpdeskReply,
@@ -153,11 +156,11 @@ async function sendOne(
   }
 
   if (job.composerMode === HelpdeskComposerMode.REPLY) {
-    return sendEbayReply(job);
+    return sendEbayReply(job, flags);
   }
 
   if (job.composerMode === HelpdeskComposerMode.EXTERNAL) {
-    return sendExternalEmail(job);
+    return sendExternalEmail(job, flags);
   }
 
   return "failed";
@@ -167,8 +170,16 @@ async function sendEbayReply(
   job: HelpdeskOutboundJob & {
     ticket: HelpdeskTicket & { integration: Integration };
   },
+  flags: HelpdeskFlagsSnapshot,
 ): Promise<"sent" | "blocked" | "failed"> {
-  if (!helpdeskFlags.enableEbaySend) {
+  // Honor the DB-backed Settings toggle (helpdesk_ebay_send), not the env
+  // default. The env var ships FALSE for safety; the admin UI flips the DB
+  // row to TRUE when they want the feature live. The caller already pulled
+  // the merged async snapshot, so use it directly — reading
+  // `helpdeskFlags.enableEbaySend` here would ignore the UI toggle and
+  // cancel every job as "ebay_send_disabled" even when the admin has
+  // explicitly enabled sends (which is exactly the bug we just fixed).
+  if (!flags.enableEbaySend) {
     await db.helpdeskOutboundJob.update({
       where: { id: job.id },
       data: {
@@ -311,8 +322,11 @@ async function sendExternalEmail(
   job: HelpdeskOutboundJob & {
     ticket: HelpdeskTicket & { integration: Integration };
   },
+  flags: HelpdeskFlagsSnapshot,
 ): Promise<"sent" | "blocked" | "failed"> {
-  if (!helpdeskFlags.enableResendExternal) {
+  // Same reasoning as `sendEbayReply`: honor the DB Settings toggle, not
+  // the env default. The caller already resolved the merged snapshot.
+  if (!flags.enableResendExternal) {
     await db.helpdeskOutboundJob.update({
       where: { id: job.id },
       data: {
