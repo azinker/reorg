@@ -492,22 +492,38 @@ function parseMessage(raw: Record<string, unknown>): CommerceMessage {
  * `modified_after` filter — this is what the inbound-sweep ingest uses so
  * we only pay for whatever arrived since the last tick.
  *
- * The endpoint path shape (`/conversation/{id}/message`) has been stable
- * across eBay's Commerce Message API releases. If you see 404s across the
- * board, double-check that the integration re-OAuthed after the
- * `commerce.message` scope was added to the consent URL.
+ * URL shape (validated against production, April 2026):
+ *
+ *   GET /conversation/{conversationId}?conversation_type=FROM_MEMBERS
+ *         [&modified_after=...&limit=...&offset=...]
+ *
+ * The dedicated `/conversation/{id}/message` endpoint documented in some
+ * older eBay guides returns 404 on this production tenant. The working
+ * shape is the single-conversation GET with `conversation_type` as a
+ * required query parameter and `fieldgroups=MESSAGE_DETAILS` being
+ * equivalent to omitting fieldgroups (eBay inlines `messages[]` either
+ * way). Response wrapper:
+ *
+ *   { total, limit, offset, conversationStatus, conversationType,
+ *     conversationTitle, messages: [ { messageId, messageBody, ... } ] }
+ *
+ * We still parse `messageSummaries[]` as a fallback for forward
+ * compatibility.
  */
 export async function getConversationMessages(
   integrationId: string,
   config: EbayConfig,
   args: {
     conversationId: string;
+    /** eBay requires `conversation_type` on the single-conversation GET.
+     *  Defaults to FROM_MEMBERS since that's the only type the inbound
+     *  sweep ever ingests (agent↔buyer threads). Pass FROM_EBAY if ever
+     *  needed for system-notification ingestion. */
+    conversationType?: CommerceMessageConversationType;
     /** ISO 8601. When set, passes `modified_after={since}` so we only
      *  receive what changed since the last sync. */
     since?: string;
-    /** Cap per call. eBay's default is 50; we never need more than the
-     *  page we're looking at because the caller re-runs on the next
-     *  tick when it needs more. */
+    /** Cap per call. eBay's default is 25 for this endpoint. */
     limit?: number;
     offset?: number;
   },
@@ -518,15 +534,15 @@ export async function getConversationMessages(
 }> {
   const accessToken = await getEbayAccessToken(integrationId, config);
   const params = new URLSearchParams();
+  params.set("conversation_type", args.conversationType ?? "FROM_MEMBERS");
   if (args.since) params.set("modified_after", args.since);
   if (args.limit != null) params.set("limit", String(args.limit));
   if (args.offset != null) params.set("offset", String(args.offset));
-  const qs = params.toString();
   const { status, body } = await callCommerceMessage(
     integrationId,
     accessToken,
     "GET",
-    `/conversation/${encodeURIComponent(args.conversationId)}/message${qs ? `?${qs}` : ""}`,
+    `/conversation/${encodeURIComponent(args.conversationId)}?${params.toString()}`,
     undefined,
     "CommerceMessage_GetConversationMessages",
   );
@@ -555,6 +571,13 @@ export async function getConversationMessages(
       : [];
   const messages = rawList
     .map(parseMessage)
+    // Per-message payloads on this endpoint omit `conversationId`, so
+    // stamp it back from the request so downstream consumers
+    // (ingestCommerceMessage) don't lose the thread identity.
+    .map((m) => ({
+      ...m,
+      conversationId: m.conversationId ?? args.conversationId,
+    }))
     .filter((m) => m.messageId.length > 0);
   return { messages, status, needsReauth: false };
 }

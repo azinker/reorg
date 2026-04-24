@@ -42,6 +42,7 @@ import {
 import {
   getConversations,
   getConversationMessages,
+  resolveConversationIdForBuyer,
   type CommerceMessage,
 } from "@/lib/services/helpdesk-commerce-message";
 import { applyFilterAction, pickMatchingFilters } from "@/lib/helpdesk/filters";
@@ -2801,6 +2802,24 @@ const COMMERCE_INGEST_BUDGET = 15;
  *  default and keeps the working set bounded. */
 const COMMERCE_INGEST_ACTIVITY_DAYS = 60;
 
+/** Tier-C budget — maximum number of tickets per integration per tick for
+ *  which we'll issue a fresh `resolveConversationIdForBuyer` call.
+ *
+ *  Rationale: Tiers A & B require ebayConversationId to already be bound
+ *  on the ticket, which only happens via the unread-sweep bootstrap or
+ *  mirrorReadStateToEbay. For high-volume accounts like TPP, the
+ *  unread-sweep's scan window (top 800 FROM_MEMBERS by last_modified)
+ *  can't possibly cover the full backlog, so read tickets whose
+ *  conversations weren't recently touched sit forever with a null id and
+ *  miss agent replies sent from the eBay web UI (the symptom: ticket
+ *  09-14501-65972 never caught "Of course processing that for you now.").
+ *
+ *  Tier C closes that gap by resolving on demand. Each resolve is one
+ *  extra API round-trip per ticket, so we cap it aggressively per tick
+ *  (TICK_BUDGET). Once bound, the ticket graduates to Tier A/B and no
+ *  longer hits this path. */
+const COMMERCE_INGEST_RESOLVE_BUDGET = 5;
+
 /**
  * Fetch messages directly from the eBay Commerce Message API for tickets
  * we've already bound to a conversationId, and ingest anything we don't
@@ -2992,6 +3011,82 @@ async function sweepCommerceMessageInboundForIntegration(
       });
       tickets.push(...fill);
     }
+
+    // Tier C — on-demand conversationId resolution for recently-active
+    // tickets that never got bootstrapped by the unread sweep. Capped at
+    // COMMERCE_INGEST_RESOLVE_BUDGET per integration per tick to keep
+    // extra API calls bounded. Tickets that resolve successfully get
+    // persisted and fall through to the ingest loop below; on the next
+    // tick they'll be picked up by Tier A/B like everyone else.
+    if (tickets.length < COMMERCE_INGEST_BUDGET) {
+      const resolveSlot = Math.min(
+        COMMERCE_INGEST_RESOLVE_BUDGET,
+        COMMERCE_INGEST_BUDGET - tickets.length,
+      );
+      const unbound = await db.helpdeskTicket.findMany({
+        where: {
+          integrationId: integration.id,
+          ebayConversationId: null,
+          isSpam: false,
+          type: { not: HelpdeskTicketType.SYSTEM },
+          id: { notIn: tickets.map((t) => t.id) },
+          // Must have enough identity to resolve against eBay.
+          OR: [
+            { buyerUserId: { not: null } },
+            { buyerName: { not: null } },
+          ],
+          // Recent activity — otherwise no reason to suspect an agent
+          // replied on the web UI.
+          AND: [
+            {
+              OR: [
+                { lastBuyerMessageAt: { gte: cutoff } },
+                { lastAgentMessageAt: { gte: cutoff } },
+              ],
+            },
+          ],
+        },
+        select: {
+          id: true,
+          ebayConversationId: true,
+          buyerUserId: true,
+          buyerName: true,
+          lastBuyerMessageAt: true,
+          lastAgentMessageAt: true,
+        },
+        orderBy: [
+          { lastBuyerMessageAt: { sort: "desc", nulls: "last" } },
+          { lastAgentMessageAt: { sort: "desc", nulls: "last" } },
+        ],
+        take: resolveSlot,
+      });
+      for (const ticket of unbound) {
+        const buyer = ticket.buyerUserId ?? ticket.buyerName;
+        if (!buyer) continue;
+        try {
+          const resolved = await resolveConversationIdForBuyer(
+            integration.id,
+            config,
+            buyer,
+          );
+          const convId = resolved?.best?.conversationId;
+          if (!convId) continue;
+          // Persist so subsequent ticks skip this resolve.
+          await db.helpdeskTicket
+            .updateMany({
+              where: { id: ticket.id, ebayConversationId: null },
+              data: { ebayConversationId: convId },
+            })
+            .catch(() => undefined);
+          tickets.push({ ...ticket, ebayConversationId: convId });
+        } catch {
+          // Swallow — don't let one buyer's resolution failure abort
+          // the whole sweep. The ticket will be retried next tick.
+          continue;
+        }
+      }
+    }
+
     if (tickets.length === 0) return;
 
     let needsReauthLogged = false;
