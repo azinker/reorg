@@ -201,35 +201,28 @@ async function sendEbayReply(
     throw new Error("Ticket missing ebayItemId or buyerUserId; cannot send reply");
   }
 
-  // Find the most recent inbound buyer message to use as parent.
+  // Outbound send strategy — always use AddMemberMessageAAQToPartner.
   //
-  // CRITICAL: the Trading API's AddMemberMessageRTQ requires a *Trading
-  // API* messageId as `parentMessageID`. Commerce Message API rows
-  // (source=EBAY_UI, externalId="cm:…") carry Commerce-namespace IDs
-  // that the Trading API rejects with Ack=Failure, which is what caused
-  // agent replies to "send" and then disappear: the job went FAILED
-  // silently once the UI stopped showing SENDING.
+  // History: we originally tried to reply via AddMemberMessageRTQ using
+  // the most recent inbound buyer messageID as `parentMessageID`. That
+  // path is broken in practice for two separate reasons:
   //
-  // Fix: restrict the parent lookup to Trading-origin rows (source=EBAY).
-  // Those cover the digest envelopes and their exploded sub-messages —
-  // both variants carry the digest's Trading messageId, which RTQ will
-  // accept. If a ticket literally has no Trading-origin buyer message
-  // (very new conversations that only arrived via Commerce Message API),
-  // we fall back to AAQToPartner using the item+recipient context — eBay
-  // will thread the reply into the same buyer conversation anyway since
-  // (ItemID, BuyerID) is the canonical thread key on their side.
-  const parent = await db.helpdeskMessage.findFirst({
-    where: {
-      ticketId: job.ticketId,
-      direction: HelpdeskMessageDirection.INBOUND,
-      ebayMessageId: { not: null },
-      source: HelpdeskMessageSource.EBAY,
-    },
-    orderBy: { sentAt: "desc" },
-  });
-
-  const parentMessageID = parent?.ebayMessageId ?? undefined;
-
+  //   1. The Trading API returns buyer conversations as *digest envelopes*
+  //      (GetMyMessages with DetailLevel=ReturnMessages bundles the entire
+  //      conversation history into one HTML blob). The envelope's
+  //      `messageID` is a digest-level identifier; it is NOT a valid
+  //      `ParentMessageID` for RTQ, and eBay rejects it with
+  //      "Invalid Parent Message Id."
+  //   2. Buyers on modern eBay messaging use the Commerce Message API.
+  //      Their messageIds live in a different namespace (`cm:<id>`) that
+  //      the legacy Trading API doesn't understand either.
+  //
+  // Fallback that actually works: eBay threads conversations by
+  // (ItemID, BuyerID) on their side. AAQToPartner accepts those two and
+  // auto-threads the reply under the buyer's existing conversation in
+  // the Messages inbox — same UX as RTQ, without the brittle parent ID
+  // lookup. This matches what eBay's own guidance has been since CM
+  // launched: RTQ is a legacy endpoint; use AAQToPartner for new sends.
   const config = buildEbayConfig(job.ticket.integration);
   const subject =
     job.ticket.subject ?? `Re: ${job.ticket.ebayItemTitle ?? "your message"}`;
@@ -242,7 +235,8 @@ async function sendEbayReply(
       recipientID: job.ticket.buyerUserId,
       subject,
       body: job.bodyText,
-      parentMessageID,
+      // Intentionally undefined — see comment above. RTQ is disabled.
+      parentMessageID: undefined,
     },
   );
 
