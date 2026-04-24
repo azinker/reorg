@@ -2314,26 +2314,21 @@ export async function ingestOrderIntoHelpdesk(
 /**
  * Max conversations to pull per integration per tick via
  * `sort=-last_modified_date`. We client-side filter for unread within
- * this window. eBay's page cap is 10, so this is 20 pages at the default.
+ * this window. eBay's page cap is 200; we use 50 as a conservative
+ * page size that still caps the sweep at ~8 API calls per integration.
  *
  * Tuning guidance:
  *   - TPP typically carries ~40 concurrent unreads against 170k+ total
- *     conversations. The most recent N convs are overwhelmingly the
- *     unread ones, so 200 comfortably covers the whole unread backlog
- *     even under burst conditions.
- *   - TT is ~20 concurrent unreads against a much smaller total; 200 is
- *     well past the unread window there too.
+ *     conversations, but unread convs can be scattered among a long
+ *     tail of recently-touched reads (agent reply threads, archived
+ *     bumps, etc.). 400 covers the active window comfortably.
+ *   - TT is ~20 concurrent unreads against a much smaller total; 400
+ *     is well past the unread window there too.
  *   - Anything bigger converges across subsequent ticks — we prioritize
  *     staying inside the per-tick budget over one-shot completeness.
  */
-const RECENT_CONVERSATIONS_WINDOW = 200;
-const COMMERCE_PAGE_SIZE = 10;
-/**
- * How many consecutive "not unread" conversations we tolerate before
- * declaring the unread window exhausted. Prevents paging the full 200
- * rows when we've already seen everything that could be unread.
- */
-const NON_UNREAD_EARLY_STOP = 40;
+const RECENT_CONVERSATIONS_WINDOW = 400;
+const COMMERCE_PAGE_SIZE = 50;
 
 /**
  * Reconcile Help Desk unread state against the modern eBay web UI's
@@ -2350,23 +2345,23 @@ const NON_UNREAD_EARLY_STOP = 40;
  *
  * Strategy (pull only; never pushes state back to eBay):
  *   1. Page through the Commerce Message API sorted by
- *      `-last_modified_date`. The unfiltered "FROM_MEMBERS" path 5xxs on
- *      high-volume accounts (TPP has 170k+ conversations); sort=... uses
- *      a different backend route that doesn't time out, and the top
- *      results are overwhelmingly the unread ones because "unread" is
- *      what's most recently inbound from buyers.
- *   2. For each row, compute whether it's unread from the buyer's side:
+ *      `-last_modified_date` (up to RECENT_CONVERSATIONS_WINDOW rows).
+ *      The unfiltered "FROM_MEMBERS" path 5xxs on high-volume accounts
+ *      (TPP has 170k+ conversations); sort=... uses a different backend
+ *      route that doesn't time out.
+ *   2. Track every buyer username we scanned this tick (`allSeenBuyers`).
+ *      For each row, compute whether it's unread from the buyer's side:
  *        `unreadMessageCount > 0` AND `latestMessage.readStatus === false`
  *        AND the latest sender isn't us.
- *   3. Early-stop once we've seen NON_UNREAD_EARLY_STOP consecutive
- *      non-unread rows — we've scrolled past the active unread window.
- *   4. For each unread conversation, find the matching local ticket via
- *      otherPartyUsername == buyerUserId (preferring ebayItemId == itemId
- *      when multiple tickets match); bump unreadCount=0→1 if needed.
- *   5. For every non-SYSTEM ticket currently marked unread on this
- *      integration whose buyer is NOT in the unread set we just pulled
- *      AND the sweep completed its window, flip unreadCount→0. This is
- *      the "agent read it on ebay.com/mesg" branch.
+ *   3. For each unread conversation, find the matching local ticket via
+ *      otherPartyUsername == buyerUserId (case-insensitive, with a
+ *      buyerName fallback for legacy tickets), preferring ebayItemId ==
+ *      itemId when multiple tickets match; bump unreadCount=0→1.
+ *   4. Clear local unread ONLY for buyers we actually scanned this tick
+ *      and confirmed aren't in the unread set. Buyers beyond the
+ *      scanned window are left alone — this is critical to avoid the
+ *      "oscillation" bug where a legitimately-unread ticket flips to
+ *      read because its conversation scrolled out of the window.
  *
  * Skips integrations whose token doesn't carry the `commerce.message`
  * scope yet (needsReauth) — the getConversations wrapper returns an
@@ -2396,9 +2391,12 @@ async function sweepUnreadConversationsFromWebUi(
       itemId?: string;
       conversationId: string;
     }> = [];
+    // Every buyer whose conversation we actually scanned this tick. Used
+    // as the authoritative "I saw this buyer" set for the clear-stale
+    // branch — we only clear local unread for buyers we KNOW we saw and
+    // confirmed aren't unread. Buyers beyond the window are left alone.
+    const allSeenBuyersLower = new Set<string>();
     let needsReauthLogged = false;
-    let nonUnreadStreak = 0;
-    let sawCompleteUnreadList = true;
     let totalScanned = 0;
     for (
       let offset = 0;
@@ -2427,12 +2425,14 @@ async function sweepUnreadConversationsFromWebUi(
           );
           needsReauthLogged = true;
         }
-        sawCompleteUnreadList = false;
         break;
       }
       if (conversations.length === 0) break;
       totalScanned += conversations.length;
       for (const c of conversations) {
+        if (c.otherPartyUsername) {
+          allSeenBuyersLower.add(c.otherPartyUsername.toLowerCase());
+        }
         const isUnread =
           (c.unreadMessageCount ?? 0) > 0 &&
           // Defensive: if the latest message is an outbound from us, the
@@ -2443,48 +2443,43 @@ async function sweepUnreadConversationsFromWebUi(
             ? c.latestMessage?.senderUsername !== selfUsername
             : true);
         if (isUnread) {
-          nonUnreadStreak = 0;
           unread.push({
             otherPartyUsername: c.otherPartyUsername,
             lastMessageDate: c.lastMessageDate,
             itemId: c.itemId,
             conversationId: c.conversationId,
           });
-        } else {
-          nonUnreadStreak += 1;
         }
-      }
-      if (nonUnreadStreak >= NON_UNREAD_EARLY_STOP) {
-        // Past the active unread window; stop scanning.
-        break;
       }
       // Short page → eBay's end of data.
       if (conversations.length < COMMERCE_PAGE_SIZE) break;
     }
     if (needsReauthLogged) continue;
-    // If we walked out the full window without tripping the early-stop,
-    // there may still be unread conversations we haven't seen — skip the
-    // "clear stale unread" branch to avoid incorrectly flipping tickets
-    // that are actually unread on eBay.
-    if (
-      totalScanned >= RECENT_CONVERSATIONS_WINDOW &&
-      nonUnreadStreak < NON_UNREAD_EARLY_STOP
-    ) {
-      sawCompleteUnreadList = false;
-    }
 
     // ── 2. Bump local unread where eBay reports unread ───────────────────
     let bumpedUnread = 0;
-    const unreadBuyers = new Set<string>();
+    const unreadBuyersLower = new Set<string>();
     for (const c of unread) {
       if (!c.otherPartyUsername) continue;
-      unreadBuyers.add(c.otherPartyUsername);
+      const buyerLower = c.otherPartyUsername.toLowerCase();
+      unreadBuyersLower.add(buyerLower);
+      // Match by buyerUserId first (preferred), falling back to buyerName
+      // case-insensitively so tickets created before we persisted
+      // buyerUserId cleanly still reconcile.
       const candidates = await db.helpdeskTicket.findMany({
         where: {
           integrationId: integration.id,
-          buyerUserId: c.otherPartyUsername,
           isSpam: false,
           type: { not: HelpdeskTicketType.SYSTEM },
+          OR: [
+            { buyerUserId: { equals: c.otherPartyUsername, mode: "insensitive" } },
+            {
+              AND: [
+                { buyerUserId: null },
+                { buyerName: { equals: c.otherPartyUsername, mode: "insensitive" } },
+              ],
+            },
+          ],
         },
         select: {
           id: true,
@@ -2514,31 +2509,39 @@ async function sweepUnreadConversationsFromWebUi(
       }
     }
 
-    // ── 3. Optionally clear local unread where eBay does not agree ──────
+    // ── 3. Clear local unread ONLY for buyers we confirmed are read ─────
+    // Safety contract: a ticket is cleared back to read only when we
+    // actually scanned the buyer's conversation this tick AND the
+    // conversation is not unread. Buyers beyond the scanned window are
+    // untouched — prevents the "oscillation" bug where local unread
+    // flips to read because the conversation scrolled out of the window.
     let clearedStaleUnread = 0;
-    if (sawCompleteUnreadList) {
-      const locallyUnread = await db.helpdeskTicket.findMany({
-        where: {
-          integrationId: integration.id,
-          unreadCount: { gt: 0 },
-          isSpam: false,
-          type: { not: HelpdeskTicketType.SYSTEM },
-          // Require a known buyerUserId — we can't probabilistically match
-          // tickets without one, so we leave them alone.
-          buyerUserId: { not: null },
-        },
-        select: { id: true, buyerUserId: true },
+    const locallyUnread = await db.helpdeskTicket.findMany({
+      where: {
+        integrationId: integration.id,
+        unreadCount: { gt: 0 },
+        isSpam: false,
+        type: { not: HelpdeskTicketType.SYSTEM },
+      },
+      select: { id: true, buyerUserId: true, buyerName: true },
+    });
+    const idsToClear = locallyUnread
+      .filter((t) => {
+        const buyerKey = (t.buyerUserId ?? t.buyerName)?.toLowerCase();
+        if (!buyerKey) return false;
+        // Only clear if we explicitly saw this buyer's conversation AND
+        // confirmed it's not in the unread set.
+        return (
+          allSeenBuyersLower.has(buyerKey) && !unreadBuyersLower.has(buyerKey)
+        );
+      })
+      .map((t) => t.id);
+    if (idsToClear.length > 0) {
+      const res = await db.helpdeskTicket.updateMany({
+        where: { id: { in: idsToClear } },
+        data: { unreadCount: 0 },
       });
-      const idsToClear = locallyUnread
-        .filter((t) => t.buyerUserId && !unreadBuyers.has(t.buyerUserId))
-        .map((t) => t.id);
-      if (idsToClear.length > 0) {
-        const res = await db.helpdeskTicket.updateMany({
-          where: { id: { in: idsToClear } },
-          data: { unreadCount: 0 },
-        });
-        clearedStaleUnread = res.count;
-      }
+      clearedStaleUnread = res.count;
     }
 
     console.info(
@@ -2548,7 +2551,7 @@ async function sweepUnreadConversationsFromWebUi(
         integrationLabel: integration.label,
         totalScanned,
         ebayUnreadConversations: unread.length,
-        sawCompleteUnreadList,
+        buyersSeen: allSeenBuyersLower.size,
         bumpedUnread,
         clearedStaleUnread,
       },
