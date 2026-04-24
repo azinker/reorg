@@ -3013,16 +3013,18 @@ async function sweepCommerceMessageInboundForIntegration(
     }
 
     // Tier C — on-demand conversationId resolution for recently-active
-    // tickets that never got bootstrapped by the unread sweep. Capped at
-    // COMMERCE_INGEST_RESOLVE_BUDGET per integration per tick to keep
-    // extra API calls bounded. Tickets that resolve successfully get
-    // persisted and fall through to the ingest loop below; on the next
-    // tick they'll be picked up by Tier A/B like everyone else.
-    if (tickets.length < COMMERCE_INGEST_BUDGET) {
-      const resolveSlot = Math.min(
-        COMMERCE_INGEST_RESOLVE_BUDGET,
-        COMMERCE_INGEST_BUDGET - tickets.length,
-      );
+    // tickets that never got bootstrapped by the unread sweep. Has its
+    // OWN budget (COMMERCE_INGEST_RESOLVE_BUDGET, additive on top of the
+    // main ingest budget) so it can't be starved out on high-volume
+    // accounts like TPP where tiers A+B routinely fill the entire
+    // COMMERCE_INGEST_BUDGET.
+    //
+    // Each resolve costs one extra getConversations() call; capped to 5
+    // per integration per tick to bound the overhead. Resolved tickets
+    // are persisted and fall through to the ingest loop; on the next
+    // tick they're picked up by Tier A/B for free.
+    {
+      const resolveSlot = COMMERCE_INGEST_RESOLVE_BUDGET;
       const unbound = await db.helpdeskTicket.findMany({
         where: {
           integrationId: integration.id,
