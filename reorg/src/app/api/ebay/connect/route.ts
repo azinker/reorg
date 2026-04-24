@@ -70,5 +70,44 @@ export async function GET(request: NextRequest) {
 
   const authUrl = `https://auth.ebay.com/oauth2/authorize?${params.toString()}`;
 
+  // Debug mode: append ?debug=1 to see the exact URL + env values being
+  // used instead of redirecting. Auth-gated via the surrounding route
+  // group so only signed-in users can hit it. Remove once OAuth is
+  // confirmed stable again.
+  if (request.nextUrl.searchParams.get("debug") === "1") {
+    const clientIdFingerprint = clientId
+      ? `${clientId.slice(0, 8)}…${clientId.slice(-4)} (len=${clientId.length})`
+      : "(missing)";
+    const ruNameFingerprint = ruName
+      ? `${ruName.slice(0, 20)}${ruName.length > 20 ? "…" : ""} (len=${ruName.length})`
+      : "(missing)";
+    return NextResponse.json(
+      {
+        store,
+        isTt,
+        envVarsUsed: {
+          clientIdSource: isTt
+            ? process.env.EBAY_TT_APP_ID
+              ? "EBAY_TT_APP_ID"
+              : "EBAY_TPP_APP_ID (fallback)"
+            : "EBAY_TPP_APP_ID",
+          ruNameSource: isTt
+            ? process.env.EBAY_TT_RUNAME
+              ? "EBAY_TT_RUNAME"
+              : "EBAY_TPP_RUNAME (fallback)"
+            : "EBAY_TPP_RUNAME",
+          clientId: clientIdFingerprint,
+          ruName: ruNameFingerprint,
+        },
+        scopesRequested: buildScopeList().split(" "),
+        scopeCount: buildScopeList().split(" ").length,
+        commerceMessageEnabled:
+          process.env.EBAY_ENABLE_COMMERCE_MESSAGE_SCOPE === "true",
+        authUrl,
+      },
+      { status: 200 },
+    );
+  }
+
   return NextResponse.redirect(authUrl);
 }
