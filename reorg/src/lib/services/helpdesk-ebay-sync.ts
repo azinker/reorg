@@ -2327,7 +2327,7 @@ export async function ingestOrderIntoHelpdesk(
  *   - Anything bigger converges across subsequent ticks — we prioritize
  *     staying inside the per-tick budget over one-shot completeness.
  */
-const RECENT_CONVERSATIONS_WINDOW = 400;
+const RECENT_CONVERSATIONS_WINDOW = 800;
 const COMMERCE_PAGE_SIZE = 50;
 
 /**
@@ -2433,15 +2433,25 @@ async function sweepUnreadConversationsFromWebUi(
         if (c.otherPartyUsername) {
           allSeenBuyersLower.add(c.otherPartyUsername.toLowerCase());
         }
-        const isUnread =
-          (c.unreadMessageCount ?? 0) > 0 &&
-          // Defensive: if the latest message is an outbound from us, the
-          // conversation isn't unread "from member" even if unreadCount
-          // is >0 (should never happen per eBay's model, but be safe).
-          c.latestMessage?.readStatus === false &&
-          (selfUsername
-            ? c.latestMessage?.senderUsername !== selfUsername
-            : true);
+        // Primary signal: unreadMessageCount. eBay always populates this
+        // on the list response. The previous version additionally required
+        // `latestMessage.readStatus === false` AND `senderUsername !=
+        // selfUsername`, but eBay frequently omits `latestMessage` (or its
+        // `readStatus` field) on older conversations. When that happened
+        // the check collapsed to `undefined === false` → false, and genuine
+        // unread conversations got dropped — the "stragglers" Adam saw on
+        // tickets that were read on Help Desk but unread on eBay.
+        //
+        // New rule: trust unreadCount>0 as authoritative, and use the
+        // sender/readStatus signals only to REJECT (not require). If the
+        // latest message is explicitly from us (outbound), we still skip.
+        const hasUnreadCount = (c.unreadMessageCount ?? 0) > 0;
+        const latestFromSelf =
+          !!selfUsername &&
+          !!c.latestMessage?.senderUsername &&
+          c.latestMessage.senderUsername === selfUsername;
+        const latestExplicitlyRead = c.latestMessage?.readStatus === true;
+        const isUnread = hasUnreadCount && !latestFromSelf && !latestExplicitlyRead;
         if (isUnread) {
           unread.push({
             otherPartyUsername: c.otherPartyUsername,
