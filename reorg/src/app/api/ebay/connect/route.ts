@@ -6,6 +6,15 @@ const SCOPES = [
   "https://api.ebay.com/oauth/api_scope/sell.inventory.readonly",
   "https://api.ebay.com/oauth/api_scope/sell.marketing",
   "https://api.ebay.com/oauth/api_scope/sell.fulfillment",
+  // Needed for the Help Desk read/unread mirror against the modern web UI
+  // "From members" / "Unread from members" store. The legacy Trading API
+  // ReviseMyMessages only flips a separate flag that doesn't always drive
+  // the web UI badge for modern buyer Q&A threads — so we use the Commerce
+  // Message API (updateConversation) to flip what agents actually see on
+  // ebay.com/mesg. Integrations must be re-authorized once for their
+  // refresh tokens to carry this scope; older tokens keep working for every
+  // other call but will 403 against /commerce/message/v1 until re-auth.
+  "https://api.ebay.com/oauth/api_scope/commerce.message",
 ].join(" ");
 
 export async function GET(request: NextRequest) {

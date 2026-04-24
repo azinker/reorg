@@ -39,6 +39,7 @@ import {
   type EbayMessageBody,
   type EbayMessageHeader,
 } from "@/lib/services/helpdesk-ebay";
+import { getConversations } from "@/lib/services/helpdesk-commerce-message";
 import { applyFilterAction, pickMatchingFilters } from "@/lib/helpdesk/filters";
 import { BUYER_CANCELLATION_TAG_NAME } from "@/lib/helpdesk/folders";
 import { helpdeskFlags, helpdeskFlagsSnapshotAsync } from "@/lib/helpdesk/flags";
@@ -204,6 +205,14 @@ export async function runHelpdeskPoll(): Promise<HelpdeskPollResult> {
     if (flags.effectiveCanSyncReadState) {
       await sweepStaleUnreadTickets(integrations);
       await sweepStaleReadTickets(integrations);
+      // Ground-truth reconciliation against the eBay web UI's "Unread from
+      // members" store (Commerce Message API). The two sweeps above work
+      // the legacy Trading API's Read flag, which can disagree with what
+      // agents actually see on ebay.com/mesg for modern buyer Q&A. This
+      // sweep reconciles against the store the web UI actually reads
+      // from, so the Help Desk unread count eventually converges on the
+      // same number agents see in the eBay web inbox.
+      await sweepUnreadConversationsFromWebUi(integrations);
     }
   } catch (err) {
     console.error(
@@ -2309,6 +2318,212 @@ export async function ingestOrderIntoHelpdesk(
   }
 
   return results;
+}
+
+/**
+ * Max UNREAD conversations to pull per integration per tick. eBay's
+ * getConversations endpoint caps at 10 per page; this covers up to 5
+ * pages = 50 conversations. Any unread backlog bigger than that will
+ * converge over subsequent ticks — we prioritize freshness over one-shot
+ * completeness so a single huge buyer-message burst can't blow our
+ * per-tick budget.
+ */
+const MAX_UNREAD_CONVERSATIONS_PER_TICK = 50;
+
+/**
+ * Reconcile Help Desk unread state against the modern eBay web UI's
+ * "Unread from members" list (Commerce Message API /conversation).
+ *
+ * Why this is separate from sweepStaleUnread/Read:
+ *   Those sweeps hit the legacy Trading API GetMyMessages "Read" flag,
+ *   which is a SEPARATE store from the one that drives the web UI. We've
+ *   verified (see scripts/_probe-ebay-read.ts and _probe-ebay-bodies.ts)
+ *   that a message can be Read=true in Trading API yet still show as
+ *   unread on ebay.com/mesg, and vice versa. Relying on just the Trading
+ *   API store is why our unread count drifted to 139 while the web UI
+ *   only showed 61 unread.
+ *
+ * Strategy (pull only; never pushes state back to eBay):
+ *   1. Page through `getConversations?conversation_type=FROM_MEMBERS
+ *      &conversation_status=UNREAD` up to MAX_UNREAD_CONVERSATIONS_PER_TICK.
+ *   2. For each conversation, find the matching local ticket for this
+ *      integration by otherPartyUsername == buyerUserId, preferring a
+ *      ticket whose `ebayItemId` matches and whose lastBuyerMessageAt
+ *      is closest to `lastMessageDate`.
+ *   3. If matched ticket.unreadCount == 0 → bump to 1 ("eBay web UI
+ *      thinks this is unread; so should we").
+ *   4. For every non-SYSTEM ticket currently marked unread on this
+ *      integration whose buyer is NOT in the eBay-unread list AND we
+ *      pulled a "full" page (i.e. got fewer than the cap back, meaning
+ *      we saw everything): flip to unreadCount=0.
+ *
+ * Skips integrations whose token doesn't carry the `commerce.message`
+ * scope yet (needsReauth) — the getConversations wrapper returns an
+ * empty list + the flag, and we log once per integration.
+ *
+ * Gated by effectiveCanSyncReadState at the caller.
+ */
+async function sweepUnreadConversationsFromWebUi(
+  integrations: Integration[],
+): Promise<void> {
+  for (const integration of integrations) {
+    if (
+      integration.platform !== Platform.TPP_EBAY &&
+      integration.platform !== Platform.TT_EBAY
+    )
+      continue;
+    const config = buildEbayConfig(integration);
+    if (!config.appId || !config.refreshToken) continue;
+
+    // ── 1. Page through the unread list ──────────────────────────────────
+    const pageSize = 10;
+    const unread: Array<{
+      otherPartyUsername?: string;
+      lastMessageDate?: string;
+      itemId?: string;
+      conversationId: string;
+    }> = [];
+    let pagedFully = true;
+    let pulled = 0;
+    let needsReauthLogged = false;
+    for (
+      let offset = 0;
+      offset < MAX_UNREAD_CONVERSATIONS_PER_TICK;
+      offset += pageSize
+    ) {
+      const { conversations, needsReauth } = await getConversations(
+        integration.id,
+        config,
+        {
+          conversationType: "FROM_MEMBERS",
+          conversationStatus: "UNREAD",
+          limit: pageSize,
+          offset,
+        },
+      );
+      if (needsReauth) {
+        if (!needsReauthLogged) {
+          console.info(
+            "[helpdesk-sync] commerce.message scope missing — re-authorize integration",
+            {
+              integrationId: integration.id,
+              integrationLabel: integration.label,
+            },
+          );
+          needsReauthLogged = true;
+        }
+        pagedFully = false;
+        break;
+      }
+      if (conversations.length === 0) break;
+      for (const c of conversations) {
+        unread.push({
+          otherPartyUsername: c.otherPartyUsername,
+          lastMessageDate: c.lastMessageDate,
+          itemId: c.itemId,
+          conversationId: c.conversationId,
+        });
+      }
+      pulled += conversations.length;
+      // Got a short page → we've reached the end of the unread list.
+      if (conversations.length < pageSize) break;
+    }
+    if (needsReauthLogged) continue;
+
+    // If we hit the cap, we can't trust "everyone else is read" — there
+    // may be more unread we didn't see. So: only do flip-to-read when
+    // we've pulled the full unread set (pagedFully AND pulled < cap).
+    const sawCompleteUnreadList =
+      pagedFully && pulled < MAX_UNREAD_CONVERSATIONS_PER_TICK;
+
+    // ── 2. Bump local unread where eBay reports unread ───────────────────
+    let bumpedUnread = 0;
+    const unreadBuyers = new Set<string>();
+    for (const c of unread) {
+      if (!c.otherPartyUsername) continue;
+      unreadBuyers.add(c.otherPartyUsername);
+      // Find the best local ticket candidate for this buyer/integration.
+      const candidates = await db.helpdeskTicket.findMany({
+        where: {
+          integrationId: integration.id,
+          buyerUserId: c.otherPartyUsername,
+          isSpam: false,
+          type: { not: HelpdeskTicketType.SYSTEM },
+        },
+        select: {
+          id: true,
+          unreadCount: true,
+          ebayItemId: true,
+          lastBuyerMessageAt: true,
+        },
+      });
+      if (candidates.length === 0) continue;
+      // Prefer item-id match if we have one.
+      let picked = candidates;
+      if (c.itemId) {
+        const itemMatch = candidates.filter((t) => t.ebayItemId === c.itemId);
+        if (itemMatch.length > 0) picked = itemMatch;
+      }
+      // Within the narrowed set, pick the most recent activity.
+      picked.sort((a, b) => {
+        const ta = a.lastBuyerMessageAt?.getTime() ?? 0;
+        const tb = b.lastBuyerMessageAt?.getTime() ?? 0;
+        return tb - ta;
+      });
+      const target = picked[0];
+      if (target && target.unreadCount === 0) {
+        await db.helpdeskTicket.update({
+          where: { id: target.id },
+          data: { unreadCount: 1 },
+        });
+        bumpedUnread += 1;
+      }
+    }
+
+    // ── 3. Optionally clear local unread where eBay does not agree ──────
+    let clearedStaleUnread = 0;
+    if (sawCompleteUnreadList) {
+      // For every non-SYSTEM non-spam locally-unread ticket on this
+      // integration, if the buyer isn't in the unread set we just
+      // pulled, the web UI considers it read — flip us to match.
+      const locallyUnread = await db.helpdeskTicket.findMany({
+        where: {
+          integrationId: integration.id,
+          unreadCount: { gt: 0 },
+          isSpam: false,
+          type: { not: HelpdeskTicketType.SYSTEM },
+          // Require a known buyerUserId — we can't probabilistically match
+          // tickets without one, so we leave them alone.
+          buyerUserId: { not: null },
+        },
+        select: { id: true, buyerUserId: true },
+      });
+      const idsToClear = locallyUnread
+        .filter(
+          (t) => t.buyerUserId && !unreadBuyers.has(t.buyerUserId),
+        )
+        .map((t) => t.id);
+      if (idsToClear.length > 0) {
+        const res = await db.helpdeskTicket.updateMany({
+          where: { id: { in: idsToClear } },
+          data: { unreadCount: 0 },
+        });
+        clearedStaleUnread = res.count;
+      }
+    }
+
+    console.info(
+      "[helpdesk-sync] commerce message unread sweep finished",
+      {
+        integrationId: integration.id,
+        integrationLabel: integration.label,
+        ebayUnreadConversations: unread.length,
+        sawCompleteUnreadList,
+        bumpedUnread,
+        clearedStaleUnread,
+      },
+    );
+  }
 }
 
 // Re-export for tests / cron integration.

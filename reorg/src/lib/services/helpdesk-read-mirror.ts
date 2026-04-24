@@ -1,23 +1,41 @@
 /**
- * Push helpdesk read/unread state back to eBay via ReviseMyMessages.
+ * Push helpdesk read/unread state back to eBay.
+ *
+ * We hit TWO eBay APIs in sequence:
+ *
+ *   1. Commerce Message API (REST, /commerce/message/v1/update_conversation)
+ *      This is what drives the modern eBay web UI ("From members" /
+ *      "Unread from members" badge). It's what agents see when they log
+ *      into ebay.com/mesg. If we don't flip this, the count on the web
+ *      UI stays wrong even though Help Desk shows the ticket as read.
+ *
+ *   2. Trading API (ReviseMyMessages, XML)
+ *      Legacy message-level flag. Kept as a "belt and suspenders"
+ *      fallback so any consumer still driven by the Trading API store
+ *      (older integrations, reporting jobs) sees the same state. This
+ *      was our ORIGINAL mirror target before we discovered it doesn't
+ *      fully drive the web UI for modern buyer Q&A threads.
+ *
+ * Both calls are best-effort per integration — one failing does not
+ * block the other. We return an aggregated result so the caller
+ * (/api/helpdesk/tickets/batch and scripts/helpdesk-diagnose-read-mirror)
+ * can surface partial failures without aborting the overall operation.
  *
  * Why this lives in its own file:
- *   The batch API route (`/api/helpdesk/tickets/batch`) and the CLI
- *   diagnostic (`scripts/helpdesk-diagnose-read-mirror.ts`) both need to
- *   execute the identical mirror path. Duplicating the query + API-call
- *   logic invites drift; keeping it in a shared lib ensures anything the
- *   script reports matches exactly what the UI does in prod.
+ *   The batch API route and the CLI diagnostic both need to execute the
+ *   identical mirror path. Duplicating the logic invites drift; keeping
+ *   it in a shared lib ensures anything the script reports matches
+ *   exactly what the UI does in prod.
  *
  * Safety:
- *   - CALLERS are responsible for gating. This function assumes the caller
- *     already evaluated `helpdeskFlagsSnapshotAsync().effectiveCanSyncReadState`
- *     and decided to proceed. The function itself will still skip SYSTEM
- *     tickets and any message without an `ebayMessageId` because those are
- *     structural preconditions for a successful ReviseMyMessages call.
- *   - Per-integration write locks are NOT checked here because eBay's
- *     read/unread mirror is a "read-state sync", not a marketplace write
- *     that competes with listing pushes. It's gated entirely by the
- *     helpdesk-level flags exposed via `helpdeskFlagsSnapshotAsync`.
+ *   - CALLERS are responsible for gating via
+ *     `helpdeskFlagsSnapshotAsync().effectiveCanSyncReadState`.
+ *   - SYSTEM tickets (FROM_EBAY notifications) are skipped on both paths.
+ *   - Commerce Message calls gracefully no-op (with a `needsReauth=true`
+ *     flag in per-integration row) when the integration hasn't had
+ *     commerce.message scope granted yet. The Trading API fallback
+ *     still fires in that case, so the system degrades gracefully until
+ *     the agent re-authorizes.
  */
 
 import {
@@ -26,7 +44,14 @@ import {
   Platform,
 } from "@prisma/client";
 import { db } from "@/lib/db";
-import { buildEbayConfig, reviseMyMessages } from "@/lib/services/helpdesk-ebay";
+import {
+  buildEbayConfig,
+  reviseMyMessages,
+} from "@/lib/services/helpdesk-ebay";
+import {
+  resolveConversationIdForBuyer,
+  updateConversationRead,
+} from "@/lib/services/helpdesk-commerce-message";
 
 export interface MirrorReadStateResult {
   attempted: number;
@@ -42,6 +67,15 @@ export interface MirrorReadStateResult {
     succeeded: number;
     failed: number;
     errors: string[];
+    // New: Commerce Message API detail so callers can see whether the
+    // modern web UI was actually flipped vs. only the legacy store.
+    commerceMessage?: {
+      attempted: number;
+      succeeded: number;
+      failed: number;
+      needsReauth: boolean;
+      errors: string[];
+    };
   }>;
 }
 
@@ -60,42 +94,82 @@ export async function mirrorReadStateToEbay(
     return { ...out, skippedReason: "noTicketIds" };
   }
 
+  // Fetch the tickets themselves so we can group by integration AND reach
+  // buyerUserId/ebayItemId for the Commerce Message conversation lookup.
+  // SYSTEM tickets (eBay notifications) are excluded on both mirror paths —
+  // they never originate from a buyer conversation and the Commerce Message
+  // API has no FROM_EBAY write surface for third-party apps.
+  const tickets = await db.helpdeskTicket.findMany({
+    where: {
+      id: { in: ticketIds },
+      type: { not: HelpdeskTicketType.SYSTEM },
+    },
+    select: {
+      id: true,
+      integrationId: true,
+      buyerUserId: true,
+      buyerName: true,
+      ebayItemId: true,
+    },
+  });
+  if (tickets.length === 0) {
+    return { ...out, skippedReason: "noEligibleTickets" };
+  }
+
+  // Messages for the Trading API path. Same query as before — eligible
+  // inbound messages with ebayMessageId, from non-SYSTEM tickets.
   const messages = await db.helpdeskMessage.findMany({
     where: {
-      ticketId: { in: ticketIds },
+      ticketId: { in: tickets.map((t) => t.id) },
       direction: HelpdeskMessageDirection.INBOUND,
       ebayMessageId: { not: null },
-      // FROM EBAY (SYSTEM) tickets must NEVER push read/unread state to eBay
-      ticket: { type: { not: HelpdeskTicketType.SYSTEM } },
     },
     select: {
       ebayMessageId: true,
       ticket: { select: { integrationId: true } },
     },
   });
-  console.info("[helpdesk.mirrorReadStateToEbay] eligible messages", {
+  console.info("[helpdesk.mirrorReadStateToEbay] eligible", {
     ticketIds,
     isRead,
+    ticketCount: tickets.length,
     messageCount: messages.length,
   });
-  if (messages.length === 0) {
-    return { ...out, skippedReason: "noEligibleEbayMessages" };
+
+  // Group both sets by integration.
+  const ticketsByIntegration = new Map<
+    string,
+    Array<(typeof tickets)[number]>
+  >();
+  for (const t of tickets) {
+    const list = ticketsByIntegration.get(t.integrationId) ?? [];
+    list.push(t);
+    ticketsByIntegration.set(t.integrationId, list);
   }
 
-  const byIntegration = new Map<string, string[]>();
+  const msgsByIntegration = new Map<string, string[]>();
   for (const m of messages) {
     if (!m.ebayMessageId) continue;
-    const list = byIntegration.get(m.ticket.integrationId) ?? [];
+    const list = msgsByIntegration.get(m.ticket.integrationId) ?? [];
     list.push(m.ebayMessageId);
-    byIntegration.set(m.ticket.integrationId, list);
+    msgsByIntegration.set(m.ticket.integrationId, list);
   }
 
-  for (const [integrationId, msgIds] of byIntegration.entries()) {
+  // Every integrationId that has work to do on either path.
+  const allIntegrationIds = new Set<string>([
+    ...ticketsByIntegration.keys(),
+    ...msgsByIntegration.keys(),
+  ]);
+
+  for (const integrationId of allIntegrationIds) {
     const integration = await db.integration.findUnique({
       where: { id: integrationId },
     });
     const integrationLabel = integration?.label ?? "(unknown integration)";
     const platform = integration?.platform ?? "UNKNOWN";
+    const integrationTickets = ticketsByIntegration.get(integrationId) ?? [];
+    const msgIds = msgsByIntegration.get(integrationId) ?? [];
+
     const perRow = {
       integrationId,
       integrationLabel,
@@ -104,7 +178,15 @@ export async function mirrorReadStateToEbay(
       succeeded: 0,
       failed: 0,
       errors: [] as string[],
+      commerceMessage: {
+        attempted: 0,
+        succeeded: 0,
+        failed: 0,
+        needsReauth: false,
+        errors: [] as string[],
+      },
     };
+
     if (!integration || !integration.enabled) {
       perRow.errors.push(
         integration ? "integration disabled" : "integration not found",
@@ -130,7 +212,97 @@ export async function mirrorReadStateToEbay(
       continue;
     }
 
-    // ReviseMyMessages caps at 10 IDs per call.
+    // ── Path 1: Commerce Message API (drives the web UI) ─────────────────
+    // Per-ticket conversation lookup. We resolve each ticket's
+    // conversationId via `other_party_username=<buyerUserId>` against the
+    // FROM_MEMBERS list, then call update_conversation to flip `read`.
+    // Buyers typically have 1 active conversation — when multiple match,
+    // we prefer the one whose itemId matches our stored ebayItemId, then
+    // fall back to most-recent lastMessageDate.
+    for (const ticket of integrationTickets) {
+      const buyer = ticket.buyerUserId ?? ticket.buyerName;
+      if (!buyer) {
+        // No buyer to look up — legitimate for some edge tickets. Skip
+        // silently; Trading API path may still work off ebayMessageIds.
+        continue;
+      }
+      perRow.commerceMessage.attempted += 1;
+      try {
+        const resolved = await resolveConversationIdForBuyer(
+          integrationId,
+          config,
+          buyer,
+          { itemIdHint: ticket.ebayItemId ?? undefined },
+        );
+        if (resolved.needsReauth) {
+          perRow.commerceMessage.needsReauth = true;
+          perRow.commerceMessage.failed += 1;
+          perRow.commerceMessage.errors.push(
+            `ticket ${ticket.id}: needs re-authorization (commerce.message scope missing)`,
+          );
+          // Don't spam — only log once per integration.
+          continue;
+        }
+        if (!resolved.best) {
+          perRow.commerceMessage.failed += 1;
+          perRow.commerceMessage.errors.push(
+            `ticket ${ticket.id}: no conversation found for buyer ${buyer}`,
+          );
+          continue;
+        }
+        const result = await updateConversationRead(integrationId, config, {
+          conversationId: resolved.best.conversationId,
+          conversationType: "FROM_MEMBERS",
+          read: isRead,
+        });
+        console.info(
+          "[helpdesk.mirrorReadStateToEbay] updateConversationRead",
+          {
+            integrationId,
+            integrationLabel,
+            ticketId: ticket.id,
+            buyer,
+            conversationId: resolved.best.conversationId,
+            read: isRead,
+            status: result.status,
+            success: result.success,
+            errorId: result.errorId,
+          },
+        );
+        if (result.success) {
+          perRow.commerceMessage.succeeded += 1;
+        } else {
+          if (result.needsReauth) perRow.commerceMessage.needsReauth = true;
+          perRow.commerceMessage.failed += 1;
+          perRow.commerceMessage.errors.push(
+            `ticket ${ticket.id}: status ${result.status}${
+              result.errorMessage ? ` - ${result.errorMessage}` : ""
+            }`,
+          );
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(
+          "[helpdesk.mirrorReadStateToEbay] commerceMessage exception",
+          {
+            integrationId,
+            integrationLabel,
+            ticketId: ticket.id,
+            error: msg,
+          },
+        );
+        perRow.commerceMessage.failed += 1;
+        perRow.commerceMessage.errors.push(`ticket ${ticket.id}: ${msg}`);
+      }
+    }
+
+    // ── Path 2: Trading API (belt-and-suspenders for legacy store) ───────
+    // ReviseMyMessages caps at 10 IDs per call. Errors here feed the main
+    // `succeeded/failed/errors` counters so the existing UI surface (the
+    // batch endpoint's response + the diagnose script output) keeps its
+    // existing semantics. The Commerce Message path is reported separately
+    // via `perRow.commerceMessage` so agents can see whether the modern
+    // web UI flip landed.
     for (let i = 0; i < msgIds.length; i += 10) {
       const chunk = msgIds.slice(i, i + 10);
       out.attempted += chunk.length;

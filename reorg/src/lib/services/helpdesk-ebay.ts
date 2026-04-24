@@ -35,7 +35,7 @@ const SITE_ID = "0";
 const COMPAT_LEVEL = "1199";
 const REQUEST_TIMEOUT_MS = 30_000;
 
-interface EbayConfig {
+export interface EbayConfig {
   appId: string;
   certId: string;
   devId: string;
