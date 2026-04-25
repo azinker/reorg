@@ -31,7 +31,6 @@ import {
   X,
   ShieldAlert,
   CheckCircle2,
-  Clock,
   AlertTriangle,
   Paperclip,
   Zap,
@@ -98,7 +97,6 @@ export function Composer({
   const statusMenuRef = useRef<HTMLDivElement | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [pending, setPending] = useState<PendingJob | null>(null);
-  const [secondsLeft, setSecondsLeft] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [lastSentAt, setLastSentAt] = useState<number | null>(null);
   /**
@@ -200,7 +198,6 @@ export function Composer({
   // Countdown for the pending job
   useEffect(() => {
     if (!pending) {
-      setSecondsLeft(0);
       return;
     }
     const tick = () => {
@@ -208,7 +205,6 @@ export function Composer({
         0,
         Math.ceil((pending.scheduledAt - Date.now()) / 1000),
       );
-      setSecondsLeft(left);
       if (left === 0) {
         // Worker should pick it up shortly. Keep the banner visible 3s as
         // confirmation, then clear.
@@ -313,10 +309,9 @@ export function Composer({
           scheduledAt: new Date(json.data.scheduledAt).getTime(),
           willBlockReason: json.data.willBlockReason,
         });
-        // Refetch the ticket detail right away so the thread renders a
-        // "Sending in 5s" bubble immediately. Without this, the bubble
-        // wouldn't appear until the 5s undo window expired and the
-        // existing onSent() inside the countdown effect fired.
+        // Refetch the ticket detail right away so the thread renders the
+        // immediate SENT confirmation while the worker completes the
+        // marketplace send in the background.
         onSent();
       }
     } catch (err) {
@@ -446,12 +441,12 @@ export function Composer({
             {pending.willBlockReason ? (
               <ShieldAlert className="h-3.5 w-3.5" />
             ) : (
-              <Clock className="h-3.5 w-3.5" />
+              <CheckCircle2 className="h-3.5 w-3.5" />
             )}
             <span>
               {pending.willBlockReason
                 ? `Queued but will be blocked by ${pending.willBlockReason.replace(/_/g, " ")}`
-                : `Sending in ${secondsLeft}s…`}
+                : "SENT"}
             </span>
           </div>
           <button

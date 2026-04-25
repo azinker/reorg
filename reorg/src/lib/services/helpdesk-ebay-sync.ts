@@ -44,6 +44,7 @@ import {
   getConversationMessages,
   resolveConversationIdForBuyer,
   type CommerceMessage,
+  type CommerceMessageConversation,
 } from "@/lib/services/helpdesk-commerce-message";
 import { applyFilterAction, pickMatchingFilters } from "@/lib/helpdesk/filters";
 import { BUYER_CANCELLATION_TAG_NAME } from "@/lib/helpdesk/folders";
@@ -2359,6 +2360,9 @@ export async function ingestOrderIntoHelpdesk(
  */
 const RECENT_CONVERSATIONS_WINDOW = 800;
 const COMMERCE_PAGE_SIZE = 50;
+const TARGETED_LISTING_DISCOVERY_BUDGET = 10;
+const TARGETED_LISTING_DISCOVERY_WINDOW_DAYS = 30;
+const TARGETED_LISTING_DISCOVERY_SCAN_WINDOW = 50;
 
 /**
  * Reconcile Help Desk unread state against the modern eBay web UI's
@@ -2831,6 +2835,13 @@ async function sweepUnreadConversationsForIntegration(
       clearedStaleUnread = res.count;
     }
 
+    const targetedDiscovery = await sweepSystemOrderListingConversations({
+      integration,
+      config,
+      selfUsername,
+      signals,
+    });
+
     console.info(
       "[helpdesk-sync] commerce message unread sweep finished",
       {
@@ -2843,10 +2854,562 @@ async function sweepUnreadConversationsForIntegration(
         clearedStaleUnread,
         convoIdsPersisted,
         activitySignals: signals.size,
+        targetedListingCandidates: targetedDiscovery.candidates,
+        targetedListingApiCalls: targetedDiscovery.apiCalls,
+        targetedListingTicketsCreated: targetedDiscovery.ticketsCreated,
+        targetedListingTicketsUpdated: targetedDiscovery.ticketsUpdated,
+        targetedListingMessagesInserted: targetedDiscovery.messagesInserted,
       },
     );
   }
   return signals;
+}
+
+type TargetedListingDiscoveryStats = {
+  candidates: number;
+  apiCalls: number;
+  ticketsCreated: number;
+  ticketsUpdated: number;
+  messagesInserted: number;
+};
+
+type TargetedSystemTicket = {
+  id: string;
+  threadKey: string;
+  buyerUserId: string | null;
+  buyerName: string | null;
+  ebayItemId: string | null;
+  ebayOrderNumber: string | null;
+  subject: string | null;
+};
+
+type TargetedConversationTicket = {
+  id: string;
+  status: HelpdeskTicketStatus;
+  isArchived: boolean;
+  unreadCount: number;
+  ebayConversationId: string | null;
+  buyerUserId: string | null;
+  buyerName: string | null;
+  lastBuyerMessageAt: Date | null;
+  lastAgentMessageAt: Date | null;
+};
+
+function messageDateMs(message: CommerceMessage): number {
+  const ms = message.createdDate ? Date.parse(message.createdDate) : 0;
+  return Number.isFinite(ms) ? ms : 0;
+}
+
+function latestMessage(messages: CommerceMessage[]): CommerceMessage | null {
+  let latest: CommerceMessage | null = null;
+  for (const message of messages) {
+    if (!latest || messageDateMs(message) > messageDateMs(latest)) {
+      latest = message;
+    }
+  }
+  return latest;
+}
+
+function isMessageFromBuyer(
+  message: CommerceMessage,
+  buyerUsername: string,
+): boolean {
+  return message.senderUsername?.toLowerCase() === buyerUsername.toLowerCase();
+}
+
+function isMessageFromSelf(
+  message: CommerceMessage,
+  selfUsername?: string,
+): boolean {
+  return (
+    !!selfUsername &&
+    !!message.senderUsername &&
+    message.senderUsername.toLowerCase() === selfUsername.toLowerCase()
+  );
+}
+
+const TARGETED_DISCOVERY_BAD_BUYER_IDS = new Set([
+  "adam",
+  "hi",
+  "ebay",
+  "theperfectpart",
+  "telitetech",
+]);
+
+function isUsableTargetedBuyerUsername(
+  buyerUsername: string,
+  selfUsername?: string,
+): boolean {
+  const value = buyerUsername.trim();
+  const lower = value.toLowerCase();
+  if (value.length < 3) return false;
+  if (/\s/.test(value)) return false;
+  if (TARGETED_DISCOVERY_BAD_BUYER_IDS.has(lower)) return false;
+  if (selfUsername && lower === selfUsername.toLowerCase()) return false;
+  return true;
+}
+
+async function findListingConversationForBuyer(args: {
+  integrationId: string;
+  config: Parameters<typeof getConversations>[1];
+  buyerUsername: string;
+  itemId: string;
+  selfUsername?: string;
+}): Promise<{
+  conversation: CommerceMessageConversation | null;
+  apiCalls: number;
+  needsReauth: boolean;
+}> {
+  let apiCalls = 0;
+  for (
+    let offset = 0;
+    offset < TARGETED_LISTING_DISCOVERY_SCAN_WINDOW;
+    offset += COMMERCE_PAGE_SIZE
+  ) {
+    apiCalls += 1;
+    const res = await getConversations(args.integrationId, args.config, {
+      conversationType: "FROM_MEMBERS",
+      referenceId: args.itemId,
+      referenceType: "LISTING",
+      limit: COMMERCE_PAGE_SIZE,
+      offset,
+      selfUsernameHint: args.selfUsername,
+    });
+    if (res.needsReauth) {
+      return { conversation: null, apiCalls, needsReauth: true };
+    }
+    const match = res.conversations.find(
+      (c) =>
+        c.otherPartyUsername?.toLowerCase() ===
+        args.buyerUsername.toLowerCase(),
+    );
+    if (match) return { conversation: match, apiCalls, needsReauth: false };
+    if (res.conversations.length < COMMERCE_PAGE_SIZE) break;
+  }
+  return { conversation: null, apiCalls, needsReauth: false };
+}
+
+async function findOrCreateTargetedConversationTicket(args: {
+  integration: Integration;
+  systemTicket: TargetedSystemTicket;
+  conversation: CommerceMessageConversation;
+  latestBuyerAt: Date | null;
+}): Promise<{ ticket: TargetedConversationTicket | null; created: boolean }> {
+  const orderNumber = args.systemTicket.ebayOrderNumber;
+  const buyerUserId =
+    args.conversation.otherPartyUsername ?? args.systemTicket.buyerUserId;
+  if (!orderNumber || !buyerUserId) return { ticket: null, created: false };
+
+  const existing = await db.helpdeskTicket.findFirst({
+    where: {
+      integrationId: args.integration.id,
+      isSpam: false,
+      NOT: [
+        { type: HelpdeskTicketType.SYSTEM },
+        { threadKey: { startsWith: "sys:" } },
+      ],
+      OR: [
+        { ebayConversationId: args.conversation.conversationId },
+        { ebayOrderNumber: orderNumber },
+      ],
+    },
+    select: {
+      id: true,
+      status: true,
+      isArchived: true,
+      unreadCount: true,
+      ebayConversationId: true,
+      buyerUserId: true,
+      buyerName: true,
+      lastBuyerMessageAt: true,
+      lastAgentMessageAt: true,
+    },
+    orderBy: { updatedAt: "desc" },
+  });
+  if (existing) {
+    return { ticket: existing, created: false };
+  }
+
+  const threadKey = `ord:${orderNumber}|buyer:${buyerUserId.toLowerCase()}`;
+  const buyerName = args.systemTicket.buyerName ?? buyerUserId;
+  const subject =
+    args.conversation.lastMessageSubject ?? `Message from ${buyerUserId}`;
+  try {
+    const created = await db.helpdeskTicket.create({
+      data: {
+        integrationId: args.integration.id,
+        channel: args.integration.platform,
+        threadKey,
+        buyerUserId,
+        buyerName,
+        ebayItemId: args.conversation.itemId ?? args.systemTicket.ebayItemId,
+        ebayOrderNumber: orderNumber,
+        ebayConversationId: args.conversation.conversationId,
+        subject,
+        kind: HelpdeskTicketKind.POST_SALES,
+        type: HelpdeskTicketType.QUERY,
+        status: HelpdeskTicketStatus.TO_DO,
+        unreadCount: 1,
+        lastBuyerMessageAt: args.latestBuyerAt,
+        metadata: {
+          commerceDiscovery: {
+            source: "system_order_listing_sweep",
+            systemTicketId: args.systemTicket.id,
+            discoveredAt: new Date().toISOString(),
+          },
+        } as Prisma.InputJsonValue,
+      },
+      select: {
+        id: true,
+        status: true,
+        isArchived: true,
+        unreadCount: true,
+        ebayConversationId: true,
+        buyerUserId: true,
+        buyerName: true,
+        lastBuyerMessageAt: true,
+        lastAgentMessageAt: true,
+      },
+    });
+    return { ticket: created, created: true };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (!msg.includes("Unique constraint")) {
+      console.warn("[helpdesk-sync] targeted conversation create failed", {
+        integrationId: args.integration.id,
+        orderNumber,
+        conversationId: args.conversation.conversationId,
+        error: msg,
+      });
+      return { ticket: null, created: false };
+    }
+    const raced = await db.helpdeskTicket.findUnique({
+      where: {
+        integrationId_threadKey: {
+          integrationId: args.integration.id,
+          threadKey,
+        },
+      },
+      select: {
+        id: true,
+        status: true,
+        isArchived: true,
+        unreadCount: true,
+        ebayConversationId: true,
+        buyerUserId: true,
+        buyerName: true,
+        lastBuyerMessageAt: true,
+        lastAgentMessageAt: true,
+      },
+    });
+    return { ticket: raced, created: false };
+  }
+}
+
+async function hydrateTargetedCommerceConversation(args: {
+  integration: Integration;
+  ticket: TargetedConversationTicket;
+  systemTicket: TargetedSystemTicket;
+  conversation: CommerceMessageConversation;
+  messages: CommerceMessage[];
+  selfUsername?: string;
+}): Promise<{ messagesInserted: number; ticketUpdated: boolean }> {
+  const incomingIds = args.messages
+    .map((m) => m.messageId)
+    .filter((id): id is string => !!id);
+  const existingMessages =
+    incomingIds.length > 0
+      ? await db.helpdeskMessage.findMany({
+          where: {
+            ticketId: args.ticket.id,
+            ebayMessageId: { in: incomingIds },
+          },
+          select: { ebayMessageId: true },
+        })
+      : [];
+  const existingIds = new Set(
+    existingMessages
+      .map((m) => m.ebayMessageId)
+      .filter((id): id is string => !!id),
+  );
+
+  const arRows =
+    incomingIds.length > 0 && args.systemTicket.ebayOrderNumber
+      ? await db.autoResponderSendLog.findMany({
+          where: {
+            integrationId: args.integration.id,
+            orderNumber: args.systemTicket.ebayOrderNumber,
+            eventType: "SENT",
+            OR: [
+              { externalMessageId: { in: incomingIds } },
+              { renderedBody: { not: null } },
+            ],
+          },
+          select: { externalMessageId: true, renderedBody: true },
+        })
+      : [];
+  const autoResponderMessageIds = new Set(
+    arRows
+      .map((row) => row.externalMessageId)
+      .filter((id): id is string => !!id),
+  );
+  const autoResponderBodyHashes = new Set(
+    arRows
+      .map((row) => hashBodyForMatch(row.renderedBody))
+      .filter((hash) => hash.length > 0),
+  );
+
+  let messagesInserted = 0;
+  const novel = [...args.messages]
+    .filter((m) => !existingIds.has(m.messageId))
+    .sort((a, b) => messageDateMs(a) - messageDateMs(b));
+  for (const message of novel) {
+    const sourceOverride =
+      isMessageFromSelf(message, args.selfUsername) &&
+      (autoResponderMessageIds.has(message.messageId) ||
+        autoResponderBodyHashes.has(hashBodyForMatch(message.messageBody)))
+        ? HelpdeskMessageSource.AUTO_RESPONDER
+        : undefined;
+    await ingestCommerceMessage({
+      ticketId: args.ticket.id,
+      message,
+      selfUsername: args.selfUsername,
+      buyerName:
+        args.ticket.buyerName ??
+        args.systemTicket.buyerName ??
+        args.conversation.otherPartyUsername ??
+        args.systemTicket.buyerUserId,
+      buyerUserId:
+        args.ticket.buyerUserId ??
+        args.conversation.otherPartyUsername ??
+        args.systemTicket.buyerUserId,
+      sourceOverride,
+    });
+    messagesInserted += 1;
+  }
+
+  let latestBuyerAt = args.ticket.lastBuyerMessageAt;
+  let latestAgentAt = args.ticket.lastAgentMessageAt;
+  for (const message of args.messages) {
+    const sentAtMs = messageDateMs(message);
+    if (sentAtMs <= 0) continue;
+    const sentAt = new Date(sentAtMs);
+    if (isMessageFromSelf(message, args.selfUsername)) {
+      if (!latestAgentAt || sentAt > latestAgentAt) latestAgentAt = sentAt;
+    } else {
+      if (!latestBuyerAt || sentAt > latestBuyerAt) latestBuyerAt = sentAt;
+    }
+  }
+
+  const newest = latestMessage(args.messages);
+  const latestFromBuyer =
+    !!newest &&
+    !!(
+      args.conversation.otherPartyUsername ?? args.systemTicket.buyerUserId
+    ) &&
+    isMessageFromBuyer(
+      newest,
+      (args.conversation.otherPartyUsername ?? args.systemTicket.buyerUserId)!,
+    );
+
+  const update: Prisma.HelpdeskTicketUpdateInput = {
+    ebayConversationId: args.conversation.conversationId,
+    ebayItemId: args.conversation.itemId ?? args.systemTicket.ebayItemId,
+    ebayOrderNumber: args.systemTicket.ebayOrderNumber,
+    buyerUserId:
+      args.ticket.buyerUserId ??
+      args.conversation.otherPartyUsername ??
+      args.systemTicket.buyerUserId,
+    buyerName:
+      args.ticket.buyerName ??
+      args.systemTicket.buyerName ??
+      args.conversation.otherPartyUsername ??
+      args.systemTicket.buyerUserId,
+  };
+  if (
+    latestBuyerAt &&
+    (!args.ticket.lastBuyerMessageAt || latestBuyerAt > args.ticket.lastBuyerMessageAt)
+  ) {
+    update.lastBuyerMessageAt = latestBuyerAt;
+  }
+  if (
+    latestAgentAt &&
+    (!args.ticket.lastAgentMessageAt || latestAgentAt > args.ticket.lastAgentMessageAt)
+  ) {
+    update.lastAgentMessageAt = latestAgentAt;
+  }
+  if (latestFromBuyer) {
+    update.status = HelpdeskTicketStatus.TO_DO;
+    update.unreadCount = 1;
+    if (args.ticket.isArchived) {
+      update.isArchived = false;
+      update.archivedAt = null;
+    }
+    if (args.ticket.status === HelpdeskTicketStatus.RESOLVED) {
+      update.reopenCount = { increment: 1 };
+      update.lastReopenedAt = new Date();
+    }
+  }
+
+  await db.helpdeskTicket.update({
+    where: { id: args.ticket.id },
+    data: update,
+  });
+
+  return { messagesInserted, ticketUpdated: true };
+}
+
+async function sweepSystemOrderListingConversations(args: {
+  integration: Integration;
+  config: Parameters<typeof getConversations>[1];
+  selfUsername?: string;
+  signals: CommerceActivitySignals;
+}): Promise<TargetedListingDiscoveryStats> {
+  const stats: TargetedListingDiscoveryStats = {
+    candidates: 0,
+    apiCalls: 0,
+    ticketsCreated: 0,
+    ticketsUpdated: 0,
+    messagesInserted: 0,
+  };
+
+  const cutoff = new Date(
+    Date.now() - TARGETED_LISTING_DISCOVERY_WINDOW_DAYS * 24 * 60 * 60 * 1000,
+  );
+  const systemTickets = await db.helpdeskTicket.findMany({
+    where: {
+      integrationId: args.integration.id,
+      isSpam: false,
+      ebayOrderNumber: { not: null },
+      buyerUserId: { not: null },
+      ebayItemId: { not: null },
+      OR: [
+        { type: HelpdeskTicketType.SYSTEM },
+        { threadKey: { startsWith: "sys:" } },
+        { systemMessageType: { not: null } },
+      ],
+      AND: [
+        {
+          OR: [
+            { lastBuyerMessageAt: { gte: cutoff } },
+            { lastAgentMessageAt: { gte: cutoff } },
+            { updatedAt: { gte: cutoff } },
+            { createdAt: { gte: cutoff } },
+          ],
+        },
+      ],
+    },
+    select: {
+      id: true,
+      threadKey: true,
+      buyerUserId: true,
+      buyerName: true,
+      ebayItemId: true,
+      ebayOrderNumber: true,
+      subject: true,
+    },
+    orderBy: [{ updatedAt: "desc" }],
+    take: TARGETED_LISTING_DISCOVERY_BUDGET * 8,
+  });
+
+  const attemptedOrders = new Set<string>();
+  for (const systemTicket of systemTickets) {
+    if (stats.candidates >= TARGETED_LISTING_DISCOVERY_BUDGET) break;
+    if (
+      !systemTicket.buyerUserId ||
+      !systemTicket.ebayItemId ||
+      !systemTicket.ebayOrderNumber
+    ) {
+      continue;
+    }
+    if (
+      !isUsableTargetedBuyerUsername(
+        systemTicket.buyerUserId,
+        args.selfUsername,
+      )
+    ) {
+      continue;
+    }
+    if (attemptedOrders.has(systemTicket.ebayOrderNumber)) continue;
+    attemptedOrders.add(systemTicket.ebayOrderNumber);
+
+    const existingConversation = await db.helpdeskTicket.findFirst({
+      where: {
+        integrationId: args.integration.id,
+        isSpam: false,
+        ebayOrderNumber: systemTicket.ebayOrderNumber,
+        NOT: [
+          { type: HelpdeskTicketType.SYSTEM },
+          { threadKey: { startsWith: "sys:" } },
+        ],
+      },
+      select: { id: true },
+    });
+    if (existingConversation) continue;
+
+    stats.candidates += 1;
+    const found = await findListingConversationForBuyer({
+      integrationId: args.integration.id,
+      config: args.config,
+      buyerUsername: systemTicket.buyerUserId,
+      itemId: systemTicket.ebayItemId,
+      selfUsername: args.selfUsername,
+    });
+    stats.apiCalls += found.apiCalls;
+    if (found.needsReauth) break;
+    if (!found.conversation) continue;
+
+    const messagesResult = await getConversationMessages(
+      args.integration.id,
+      args.config,
+      {
+        conversationId: found.conversation.conversationId,
+        limit: 50,
+      },
+    );
+    stats.apiCalls += 1;
+    if (messagesResult.needsReauth) break;
+    if (messagesResult.status < 200 || messagesResult.status >= 300) continue;
+    if (messagesResult.messages.length === 0) continue;
+
+    const newest = latestMessage(messagesResult.messages);
+    if (!newest || !isMessageFromBuyer(newest, systemTicket.buyerUserId)) {
+      continue;
+    }
+    const latestBuyerAtMs = messageDateMs(newest);
+    const latestBuyerAt =
+      latestBuyerAtMs > 0 ? new Date(latestBuyerAtMs) : null;
+    if (latestBuyerAt && latestBuyerAt < cutoff) continue;
+
+    if (found.conversation.lastMessageDate) {
+      const signalDate = new Date(found.conversation.lastMessageDate);
+      if (!Number.isNaN(signalDate.getTime())) {
+        args.signals.set(found.conversation.conversationId, signalDate);
+      }
+    }
+
+    const { ticket, created } = await findOrCreateTargetedConversationTicket({
+      integration: args.integration,
+      systemTicket,
+      conversation: found.conversation,
+      latestBuyerAt,
+    });
+    if (!ticket) continue;
+    if (created) stats.ticketsCreated += 1;
+
+    const hydrated = await hydrateTargetedCommerceConversation({
+      integration: args.integration,
+      ticket,
+      systemTicket,
+      conversation: found.conversation,
+      messages: messagesResult.messages,
+      selfUsername: args.selfUsername,
+    });
+    stats.messagesInserted += hydrated.messagesInserted;
+    if (!created && hydrated.ticketUpdated) stats.ticketsUpdated += 1;
+  }
+
+  return stats;
 }
 
 // ─── Commerce Message inbound ingest ────────────────────────────────────────
@@ -3311,8 +3874,16 @@ async function ingestCommerceMessage(args: {
   selfUsername?: string;
   buyerName: string | null;
   buyerUserId: string | null;
+  sourceOverride?: HelpdeskMessageSource;
 }): Promise<void> {
-  const { ticketId, message: m, selfUsername, buyerName, buyerUserId } = args;
+  const {
+    ticketId,
+    message: m,
+    selfUsername,
+    buyerName,
+    buyerUserId,
+    sourceOverride,
+  } = args;
   if (!m.messageId) return;
 
   // Direction: we trust senderUsername vs selfUsername over the API's
@@ -3329,14 +3900,16 @@ async function ingestCommerceMessage(args: {
   // them as EBAY_UI. The existing source classifier is Trading-API
   // specific and doesn't map cleanly here — hard-code the source on
   // this path.
-  const source = HelpdeskMessageSource.EBAY_UI;
+  const source = sourceOverride ?? HelpdeskMessageSource.EBAY_UI;
 
   const sentAt = m.createdDate ? new Date(m.createdDate) : new Date();
 
   const fromName =
     direction === HelpdeskMessageDirection.INBOUND
       ? buyerName ?? m.senderUsername ?? "Buyer"
-      : "Agent (via eBay)";
+      : source === HelpdeskMessageSource.AUTO_RESPONDER
+        ? "Auto Responder"
+        : "Agent (via eBay)";
 
   const fromIdentifier =
     direction === HelpdeskMessageDirection.INBOUND

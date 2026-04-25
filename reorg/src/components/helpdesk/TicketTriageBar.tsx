@@ -211,7 +211,7 @@ export function TicketTriageBar({
   // of the message list. The tint is intentionally faint (≤8% alpha) so
   // it never competes with the action buttons themselves.
   return (
-    <div className="flex h-11 shrink-0 items-center gap-1.5 border-b border-hairline bg-gradient-to-r from-brand/[0.06] via-card to-violet-500/[0.05] px-3 sm:px-4">
+    <div className="flex min-h-12 shrink-0 flex-wrap items-center gap-2 border-b border-hairline bg-gradient-to-r from-brand/[0.06] via-card to-violet-500/[0.05] px-3 py-2 sm:px-4">
       <TypeMenu
         value={ticket?.type ?? null}
         disabled={disabled}
@@ -245,6 +245,7 @@ export function TicketTriageBar({
             active={isResolved}
             success={justResolved}
             accent="emerald"
+            label={isResolved ? "Reopen" : "Resolve"}
             onClick={() =>
               runBatch(
                 {
@@ -282,6 +283,7 @@ export function TicketTriageBar({
             active={isArchived}
             success={justArchived}
             accent="violet"
+            label={isArchived ? "Unarchive" : "Archive"}
             onClick={() =>
               runBatch(
                 { action: "archive", isArchived: !isArchived },
@@ -303,6 +305,7 @@ export function TicketTriageBar({
         disabled={disabled}
         active={ticket?.status === "SPAM"}
         accent="red"
+        label={ticket?.status === "SPAM" ? "Not Spam" : "Spam"}
         onClick={() =>
           runBatch(
             { action: "markSpam", isSpam: ticket?.status !== "SPAM" },
@@ -643,6 +646,7 @@ function SnoozeMenu({
         disabled={disabled}
         active={isSnoozed}
         accent="amber"
+        label={isSnoozed ? "Snoozed" : "Snooze"}
         onClick={() => setOpen((v) => !v)}
       >
         <Clock className="h-4 w-4" />
@@ -717,6 +721,7 @@ function MoreMenu({
         disabled={disabled}
         active={open}
         accent="violet"
+        label="More"
         onClick={() => setOpen((v) => !v)}
       >
         <MoreHorizontal className="h-4 w-4" />
@@ -796,22 +801,30 @@ function AssignMenu({
     return () => window.removeEventListener("mousedown", onClick);
   }, [open]);
 
-  const assignedId = ticket?.primaryAssignee?.id ?? null;
+  const assigned = ticket?.primaryAssignee ?? null;
+  const assignedId = assigned?.id ?? null;
+  const assignedName =
+    assigned?.name ?? assigned?.handle ?? assigned?.email ?? "Assigned";
 
   return (
     <div ref={ref} className="relative">
       <IconButton
-        title={assignedId ? "Reassign ticket" : "Assign to user"}
+        title={assignedId ? `Assigned to ${assignedName}. Click to reassign.` : "Assign to user"}
         disabled={disabled}
         active={!!assignedId}
         accent="brand"
+        label={assignedId ? assignedName : "Assign"}
         onClick={() => {
           if (disabled) return;
           onOpen();
           setOpen((v) => !v);
         }}
       >
-        <UserPlus className="h-4 w-4" />
+        {assigned ? (
+          <AgentAvatar name={assignedName} url={assigned.avatarUrl ?? null} />
+        ) : (
+          <UserPlus className="h-4 w-4" />
+        )}
       </IconButton>
       {open && (
         <div className="absolute right-0 top-full z-30 mt-1 w-60 rounded-md border border-hairline bg-popover p-1 text-popover-foreground shadow-xl">
@@ -934,6 +947,10 @@ function MoveToFolderMenu({
     return () => window.removeEventListener("mousedown", onClick);
   }, [open]);
 
+  const currentFolder = currentFolderId
+    ? folders.find((f) => f.id === currentFolderId) ?? null
+    : null;
+
   return (
     <div ref={ref} className="relative">
       <IconButton
@@ -941,6 +958,7 @@ function MoveToFolderMenu({
         disabled={disabled}
         active={!!currentFolderId}
         accent="violet"
+        label={currentFolder?.name ?? "Folder"}
         onClick={() => setOpen((v) => !v)}
       >
         <FolderInput className="h-4 w-4" />
@@ -1051,6 +1069,7 @@ const ACCENT_ACTIVE: Record<IconAccent, string> = {
 
 function IconButton({
   title,
+  label,
   active,
   success,
   disabled,
@@ -1059,6 +1078,7 @@ function IconButton({
   children,
 }: {
   title: string;
+  label?: string;
   active?: boolean;
   /**
    * When true, the button paints a brief green-tinted ring to confirm the
@@ -1087,7 +1107,10 @@ function IconButton({
       title={title}
       aria-label={title}
       className={cn(
-        "inline-flex h-8 w-8 items-center justify-center rounded-md border bg-surface text-muted-foreground transition-colors disabled:cursor-not-allowed disabled:opacity-40 cursor-pointer",
+        "inline-flex h-8 items-center justify-center gap-1.5 rounded-md border bg-surface text-muted-foreground transition-colors disabled:cursor-not-allowed disabled:opacity-40 cursor-pointer",
+        label
+          ? "w-auto min-w-0 px-2.5 text-[12px] font-medium"
+          : "w-8",
         // Resting accent: faint colored border + tinted hover. Becomes the
         // dominant style only when the agent hovers, so the toolbar still
         // looks calm at rest.
@@ -1104,6 +1127,7 @@ function IconButton({
       )}
     >
       {children}
+      {label ? <span className="max-w-[9rem] truncate">{label}</span> : null}
     </button>
   );
 }

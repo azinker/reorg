@@ -53,6 +53,7 @@ const MARKETPLACE_ID = "EBAY_US";
 // ─── Types ───────────────────────────────────────────────────────────────────
 
 export type CommerceMessageConversationType = "FROM_MEMBERS" | "FROM_EBAY";
+export type CommerceMessageReferenceType = "LISTING" | "ORDER";
 export type CommerceMessageConversationStatus =
   | "ACTIVE"
   | "ARCHIVE"
@@ -103,8 +104,10 @@ export interface CommerceMessageGetConversationsArgs {
    *  filter — use `onlyUnread` / post-filter `unreadMessageCount` for that. */
   conversationStatus?: CommerceMessageConversationStatus;
   otherPartyUsername?: string;
-  /** eBay listing ID. When set, `referenceType` is forced to LISTING. */
+  /** eBay listing/order reference ID. Defaults to LISTING for backward
+   *  compatibility with older call sites. */
   referenceId?: string;
+  referenceType?: CommerceMessageReferenceType;
   /** Sort string, e.g. `-last_modified_date` (newest first). Required on
    *  high-volume accounts when no other narrowing param is supplied,
    *  otherwise eBay 5xxs with `getAllMyConversations: exceeded retries`. */
@@ -304,7 +307,7 @@ export async function getConversations(
   }
   if (args.referenceId) {
     params.set("reference_id", args.referenceId);
-    params.set("reference_type", "LISTING");
+    params.set("reference_type", args.referenceType ?? "LISTING");
   }
   if (args.sort) params.set("sort", args.sort);
   if (args.limit != null) params.set("limit", String(args.limit));

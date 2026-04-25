@@ -980,22 +980,13 @@ function TimelineItem({
 
   if (row.kind === "pending") {
     const j = row.data;
-    const scheduled = new Date(j.scheduledAt).getTime();
-    const now = Date.now();
-    const secondsLeft = Math.max(0, Math.round((scheduled - now) / 1000));
     const blocked = !!j.willBlockReason;
     // We render a right-aligned bubble that mimics the agent reply look
     // (purple, dashed border to signal "not yet committed"). When the
     // cron actually delivers the reply, the API stops returning this job
     // in `pendingOutboundJobs` and the next ticket-detail refetch
     // replaces this transient bubble with the permanent HelpdeskMessage.
-    const statusLabel = blocked
-      ? `Send blocked: ${j.willBlockReason}`
-      : j.status === "SENDING"
-        ? "Sending to eBay…"
-        : secondsLeft > 0
-          ? `Sending in ${secondsLeft}s`
-          : "Sending…";
+    const statusLabel = blocked ? `Send blocked: ${j.willBlockReason}` : "SENT";
     return (
       <div className="group/msg flex flex-row-reverse gap-3">
         <div className="shrink-0 pt-0.5">
@@ -1019,7 +1010,7 @@ function TimelineItem({
                 "shrink-0 rounded border px-1.5 py-0 text-[9px] font-semibold uppercase tracking-wider",
                 blocked
                   ? "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300"
-                  : agentAccent.dotBg,
+                  : "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
               )}
             >
               {statusLabel}

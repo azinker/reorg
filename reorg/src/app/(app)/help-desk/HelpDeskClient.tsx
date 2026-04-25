@@ -318,13 +318,16 @@ export default function HelpDeskClient() {
     prevStatusRef.current = current;
     if (!prefs.autoAdvance) return;
     if (!selectedTicket) return;
-    if (previous === "RESOLVED") return;
+    if (previous == null || previous === current) return;
     if (current !== "RESOLVED") return;
     const idx = tickets.findIndex((t) => t.id === selectedTicket.id);
     if (idx < 0) return;
-    const next = tickets.find(
-      (t, i) => i !== idx && t.status !== "RESOLVED" && !t.isArchived,
-    );
+    const isActionable = (t: (typeof tickets)[number]) =>
+      t.status !== "RESOLVED" && !t.isArchived && !t.isSpam;
+    const next =
+      tickets.slice(idx + 1).find(isActionable) ??
+      tickets.slice(0, idx).find(isActionable) ??
+      null;
     selectTicket(next ? next.id : null);
   }, [selectedTicket, tickets, prefs.autoAdvance, selectTicket]);
 

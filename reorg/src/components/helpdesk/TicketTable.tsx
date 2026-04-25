@@ -517,7 +517,7 @@ export function TicketTable({
   }, [columns, showSelection, colWidths]);
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex h-full min-w-0 flex-col overflow-x-auto">
       {/* Top bar: Edit Columns button. */}
       <div className="flex items-center justify-end gap-2 border-b border-hairline bg-card/50 px-3 py-1.5">
         <button
@@ -534,7 +534,7 @@ export function TicketTable({
       {/* Grid header */}
       <div
         className="sticky top-0 z-[2] grid items-center border-b border-hairline bg-card/95 px-2 py-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground backdrop-blur"
-        style={{ gridTemplateColumns: totalGridTemplate }}
+        style={{ gridTemplateColumns: totalGridTemplate, minWidth: "max-content" }}
       >
         {showSelection && (
           <div className="px-2">
@@ -726,7 +726,7 @@ function ColumnHeader({
           e.stopPropagation();
           onResize(parsePxWidth(defaultWidth) ?? 200);
         }}
-        className="absolute right-0 top-1/2 -translate-y-1/2 inline-block h-5 w-1.5 cursor-col-resize rounded-sm bg-transparent transition-colors hover:bg-brand/60"
+        className="absolute right-0 top-1/2 -translate-y-1/2 inline-block h-7 w-2.5 cursor-col-resize rounded-sm border-r border-hairline-strong/60 bg-transparent transition-colors hover:border-brand/80 hover:bg-brand/40"
         title="Drag to resize · double-click to reset"
       />
     </div>
@@ -785,7 +785,7 @@ function TicketRow({
       onMouseEnter={onPrefetch}
       onFocus={onPrefetch}
       onContextMenu={(e) => onContextMenu?.(e, t.id)}
-      style={{ gridTemplateColumns: gridTemplate }}
+      style={{ gridTemplateColumns: gridTemplate, minWidth: "max-content" }}
       className={cn(
         "group grid cursor-pointer items-center border-b border-hairline px-2 py-4 text-[15px] transition-colors",
         isUnread

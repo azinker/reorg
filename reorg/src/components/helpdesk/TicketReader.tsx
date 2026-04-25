@@ -26,6 +26,7 @@ import { ThreadView } from "@/components/helpdesk/ThreadView";
 import { ContextPanel } from "@/components/helpdesk/ContextPanel";
 import { HelpdeskSplit } from "@/components/helpdesk/HelpdeskSplit";
 import { TicketTriageBar } from "@/components/helpdesk/TicketTriageBar";
+import { cn } from "@/lib/utils";
 import {
   useHelpdeskPrefs,
   updateHelpdeskPrefs,
@@ -34,6 +35,24 @@ import type {
   HelpdeskTicketDetail,
   HelpdeskSyncStatus,
 } from "@/hooks/use-helpdesk";
+
+const STORE_BADGE_CLASS: Record<string, string> = {
+  TPP_EBAY:
+    "border-violet-500/40 bg-violet-500/10 text-violet-700 dark:text-violet-300",
+  TT_EBAY:
+    "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
+};
+
+function storeDisplayLabel(ticket: HelpdeskTicketDetail): string {
+  const raw =
+    ticket.integrationLabel ||
+    (ticket.channel === "TPP_EBAY"
+      ? "The Perfect Part"
+      : ticket.channel === "TT_EBAY"
+        ? "Telitetech"
+        : ticket.channel);
+  return raw.replace(/\s*\(eBay\)\s*/i, "").trim() || raw;
+}
 
 interface TicketReaderProps {
   ticket: HelpdeskTicketDetail | null;
@@ -223,26 +242,40 @@ export function TicketReader({
       </div>
 
       {/* Ticket info row (subject / buyer / channel / order #). */}
-      <div className="flex h-12 shrink-0 items-center gap-3 border-b border-hairline bg-card px-3 sm:px-4">
+      <div className="flex min-h-16 shrink-0 items-center gap-3 border-b border-hairline bg-card px-3 py-2 sm:px-4">
         <div className="min-w-0 flex-1">
           {ticket ? (
             <>
-              <h2 className="truncate text-sm font-semibold text-foreground">
+              <h2 className="truncate text-base font-semibold text-foreground">
                 {ticket.subject ?? ticket.ebayItemTitle ?? "(no subject)"}
               </h2>
-              <p className="truncate text-[11px] text-muted-foreground">
-                <span className="font-medium text-foreground">
+              <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+                <span className="truncate text-sm font-semibold text-foreground">
                   {ticket.buyerName ?? ticket.buyerUserId ?? "Unknown buyer"}
                 </span>
-                <span className="px-1.5 text-muted-foreground/60">·</span>
-                {ticket.integrationLabel}
+                <span
+                  className={cn(
+                    "inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border px-2 text-[11px] font-semibold",
+                    STORE_BADGE_CLASS[ticket.channel] ??
+                      "border-hairline bg-surface text-muted-foreground",
+                  )}
+                  title={ticket.integrationLabel}
+                >
+                  <img
+                    src="/logos/ebay.svg"
+                    alt="eBay"
+                    width={26}
+                    height={12}
+                    className="h-3 w-auto shrink-0"
+                  />
+                  {storeDisplayLabel(ticket)}
+                </span>
                 {ticket.ebayOrderNumber && (
-                  <>
-                    <span className="px-1.5 text-muted-foreground/60">·</span>
+                  <span className="truncate text-xs font-medium text-muted-foreground">
                     Order #{ticket.ebayOrderNumber}
-                  </>
+                  </span>
                 )}
-              </p>
+              </div>
             </>
           ) : (
             <p className="text-xs text-muted-foreground">
@@ -289,6 +322,8 @@ export function TicketReader({
         <HelpdeskSplit
           value={prefs.threadWidthPct}
           onCommit={(pct) => updateHelpdeskPrefs({ threadWidthPct: pct })}
+          min={showBack ? 45 : 35}
+          max={showBack ? 90 : 75}
           left={
             <ThreadView
               ticket={ticket}

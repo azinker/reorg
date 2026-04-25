@@ -100,7 +100,7 @@ function readPrefs(): HelpdeskPrefs {
       autoMarkRead: typeof parsed.autoMarkRead === "boolean" ? parsed.autoMarkRead : DEFAULTS.autoMarkRead,
       density: parsed.density === "compact" ? "compact" : "comfortable",
       layout: parsed.layout === "list" ? "list" : "split",
-      threadWidthPct: clampInt(parsed.threadWidthPct, 35, 75, DEFAULTS.threadWidthPct),
+      threadWidthPct: clampInt(parsed.threadWidthPct, 35, 90, DEFAULTS.threadWidthPct),
       inboxWidthPct: clampInt(parsed.inboxWidthPct, 15, 45, DEFAULTS.inboxWidthPct),
       defaultSendStatus:
         parsed.defaultSendStatus === "WAITING" ||
@@ -274,7 +274,7 @@ export function persistDefaultSendStatusToServer(
 
 /** Hook for components that want to read live prefs and react to changes. */
 export function useHelpdeskPrefs(): HelpdeskPrefs {
-  const [prefs, setPrefs] = useState<HelpdeskPrefs>(DEFAULTS);
+  const [prefs, setPrefs] = useState<HelpdeskPrefs>(() => readPrefs());
   useEffect(() => {
     setPrefs(readPrefs());
     void hydrateFromServerOnce();

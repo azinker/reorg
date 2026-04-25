@@ -302,6 +302,7 @@ export function TicketList({
       await onBatchAction(action, Array.from(selected));
       clearSelection();
       setShowAssignMenu(false);
+      setShowMoveMenu(false);
     } finally {
       setBusy(false);
     }
@@ -445,6 +446,179 @@ export function TicketList({
             onClick={() => onStatusFilterChange?.("RESOLVED")}
             label="Resolved"
           />
+          {onBatchAction && selected.size > 0 ? (
+            <>
+              <span className="mx-2 h-5 w-px bg-hairline" aria-hidden />
+              <span className="rounded-md bg-brand-muted px-2 py-1 font-semibold text-brand">
+                {selected.size} selected
+              </span>
+
+              <div className="relative" ref={assignMenuRef}>
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => setShowAssignMenu((v) => !v)}
+                  className="inline-flex h-7 items-center gap-1.5 rounded-md border border-hairline bg-surface px-2 text-foreground transition-colors hover:bg-surface-2 disabled:opacity-50 cursor-pointer"
+                  title="Assign selected tickets"
+                >
+                  <UserPlus className="h-3.5 w-3.5" /> Assign
+                </button>
+                {showAssignMenu ? (
+                  <div className="absolute left-0 top-full z-30 mt-1 max-h-64 w-56 overflow-y-auto rounded-md border border-hairline bg-popover py-1 text-[12px] text-popover-foreground shadow-xl">
+                    {agents.length === 0 ? (
+                      <div className="px-3 py-2 text-muted-foreground">No agents</div>
+                    ) : (
+                      <>
+                        {agents.map((a) => (
+                          <button
+                            key={a.id}
+                            type="button"
+                            disabled={busy}
+                            onClick={() => runAction({ kind: "assign", userId: a.id })}
+                            className="flex w-full items-center gap-2 px-2 py-1.5 text-left text-foreground hover:bg-surface-2 disabled:opacity-50 cursor-pointer"
+                          >
+                            <Avatar user={a} size="xs" />
+                            <span className="truncate">
+                              {a.name ?? a.handle ?? a.email ?? "Agent"}
+                            </span>
+                          </button>
+                        ))}
+                        <div className="my-1 border-t border-hairline" />
+                        <button
+                          type="button"
+                          disabled={busy}
+                          onClick={() => runAction({ kind: "assign", userId: null })}
+                          className="flex w-full items-center gap-2 px-2 py-1.5 text-left text-muted-foreground hover:bg-surface-2 disabled:opacity-50 cursor-pointer"
+                        >
+                          <Avatar user={null} size="xs" unassigned />
+                          Unassign
+                        </button>
+                      </>
+                    )}
+                  </div>
+                ) : null}
+              </div>
+
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => runAction({ kind: "markRead", isRead: true })}
+                className="inline-flex h-7 items-center gap-1.5 rounded-md border border-hairline bg-surface px-2 text-foreground transition-colors hover:bg-surface-2 disabled:opacity-50 cursor-pointer"
+                title="Mark selected as read"
+              >
+                <MailOpen className="h-3.5 w-3.5" /> Read
+              </button>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => runAction({ kind: "markRead", isRead: false })}
+                className="inline-flex h-7 items-center gap-1.5 rounded-md border border-hairline bg-surface px-2 text-foreground transition-colors hover:bg-surface-2 disabled:opacity-50 cursor-pointer"
+                title="Mark selected as unread"
+              >
+                <MailMinus className="h-3.5 w-3.5" /> Unread
+              </button>
+
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => runAction({ kind: "setStatus", status: "TO_DO" })}
+                className="inline-flex h-7 items-center rounded-md border border-amber-500/30 bg-amber-500/10 px-2 font-medium text-amber-700 transition-colors hover:bg-amber-500/15 disabled:opacity-50 dark:text-amber-300 cursor-pointer"
+                title="Move selected to To Do"
+              >
+                To Do
+              </button>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => runAction({ kind: "setStatus", status: "WAITING" })}
+                className="inline-flex h-7 items-center rounded-md border border-violet-500/30 bg-violet-500/10 px-2 font-medium text-violet-700 transition-colors hover:bg-violet-500/15 disabled:opacity-50 dark:text-violet-300 cursor-pointer"
+                title="Move selected to Waiting"
+              >
+                Waiting
+              </button>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => runAction({ kind: "setStatus", status: "RESOLVED" })}
+                className="inline-flex h-7 items-center gap-1.5 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-2 font-medium text-emerald-700 transition-colors hover:bg-emerald-500/15 disabled:opacity-50 dark:text-emerald-300 cursor-pointer"
+                title="Mark selected resolved"
+              >
+                <CheckCircle2 className="h-3.5 w-3.5" /> Resolve
+              </button>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => runAction({ kind: "archive", archived: true })}
+                className="inline-flex h-7 items-center gap-1.5 rounded-md border border-hairline bg-surface px-2 text-foreground transition-colors hover:bg-surface-2 disabled:opacity-50 cursor-pointer"
+                title="Archive selected"
+              >
+                <Archive className="h-3.5 w-3.5" /> Archive
+              </button>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => runAction({ kind: "markSpam", isSpam: true })}
+                className="inline-flex h-7 items-center gap-1.5 rounded-md border border-red-500/30 bg-red-500/10 px-2 text-red-700 transition-colors hover:bg-red-500/15 disabled:opacity-50 dark:text-red-300 cursor-pointer"
+                title="Mark selected spam"
+              >
+                <AlertOctagon className="h-3.5 w-3.5" /> Spam
+              </button>
+
+              {agentFolders.length > 0 ? (
+                <div className="relative" ref={moveMenuRef}>
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => setShowMoveMenu((v) => !v)}
+                    className="inline-flex h-7 items-center gap-1.5 rounded-md border border-hairline bg-surface px-2 text-foreground transition-colors hover:bg-surface-2 disabled:opacity-50 cursor-pointer"
+                    title="Move selected to an agent folder"
+                  >
+                    <Inbox className="h-3.5 w-3.5" /> Folder
+                  </button>
+                  {showMoveMenu ? (
+                    <div className="absolute left-0 top-full z-30 mt-1 max-h-64 w-56 overflow-y-auto rounded-md border border-hairline bg-popover py-1 text-[12px] text-popover-foreground shadow-xl">
+                      {agentFolders.map((af) => (
+                        <button
+                          key={af.id}
+                          type="button"
+                          disabled={busy}
+                          onClick={() =>
+                            runAction({ kind: "moveToFolder", agentFolderId: af.id })
+                          }
+                          className="flex w-full items-center gap-2 px-2 py-1.5 text-left text-foreground hover:bg-surface-2 disabled:opacity-50 cursor-pointer"
+                        >
+                          <span className={cn("h-2.5 w-2.5 rounded-full", `bg-${af.color}-500`)} />
+                          <span className="truncate">{af.name}</span>
+                        </button>
+                      ))}
+                      <div className="my-1 border-t border-hairline" />
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() =>
+                          runAction({ kind: "moveToFolder", agentFolderId: null })
+                        }
+                        className="flex w-full items-center gap-2 px-2 py-1.5 text-left text-muted-foreground hover:bg-surface-2 disabled:opacity-50 cursor-pointer"
+                      >
+                        Remove from folder
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+
+              <button
+                type="button"
+                disabled={busy}
+                onClick={clearSelection}
+                className="inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-muted-foreground transition-colors hover:bg-surface-2 disabled:opacity-50 cursor-pointer"
+                title="Clear selection"
+              >
+                {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <X className="h-3.5 w-3.5" />}
+                Clear
+              </button>
+            </>
+          ) : null}
         </div>
       )}
 
@@ -682,7 +856,7 @@ export function TicketList({
         in the existing layout creates a containing block for `position: fixed`,
         so this is robust across both Split and List layouts.
       */}
-      {onBatchAction && selected.size > 0 ? (
+      {false && onBatchAction && selected.size > 0 ? (
         <div
           className="pointer-events-none fixed inset-x-0 bottom-4 z-40 flex justify-center px-4"
           aria-live="polite"

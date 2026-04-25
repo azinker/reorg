@@ -194,6 +194,18 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     },
   });
 
+  if (!wasArchived && setStatus) {
+    await db.helpdeskTicket.update({
+      where: { id },
+      data: {
+        status: setStatus,
+        ...(setStatus === HelpdeskTicketStatus.RESOLVED
+          ? { resolvedAt: new Date(), resolvedById: session.user.id }
+          : { resolvedAt: null, resolvedById: null }),
+      },
+    });
+  }
+
   await db.auditLog.create({
     data: {
       userId: session.user.id,
@@ -204,6 +216,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         ticketId: id,
         composerMode: parsed.data.composerMode,
         scheduledAt: scheduledAt.toISOString(),
+        optimisticStatus: setStatus,
         willBlockReason,
       },
     },
