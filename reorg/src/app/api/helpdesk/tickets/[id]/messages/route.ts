@@ -191,6 +191,13 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       scheduledAt,
       setStatus,
       status: HelpdeskOutboundStatus.PENDING,
+      metadata: {
+        previousTicketStatus: ticket.status,
+        previousResolvedAt: ticket.resolvedAt?.toISOString() ?? null,
+        previousResolvedById: ticket.resolvedById,
+        previousIsArchived: ticket.isArchived,
+        previousArchivedAt: ticket.archivedAt?.toISOString() ?? null,
+      },
     },
   });
 

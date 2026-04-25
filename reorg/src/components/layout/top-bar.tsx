@@ -5,6 +5,10 @@ import { usePathname } from "next/navigation";
 import { signOut } from "next-auth/react";
 import { useTheme } from "@/components/providers/theme-provider";
 import { useSettings } from "@/lib/use-settings";
+import {
+  updateHelpdeskPrefs,
+  useHelpdeskPrefs,
+} from "@/components/helpdesk/HelpdeskSettingsDialog";
 import { useDashboardConnection } from "@/contexts/dashboard-connection-context";
 import { PlatformIcon } from "@/components/grid/platform-icon";
 import type { Density } from "@/lib/settings-store";
@@ -49,6 +53,7 @@ export function TopBar({ user, onOpenSidebar }: TopBarProps) {
   const pathname = usePathname();
   const { theme, setTheme } = useTheme();
   const { settings, update } = useSettings();
+  const helpdeskPrefs = useHelpdeskPrefs();
   const { connectionInfo } = useDashboardConnection();
   const [mounted, setMounted] = useState(false);
   const [tooltipOpen, setTooltipOpen] = useState(false);
@@ -57,7 +62,12 @@ export function TopBar({ user, onOpenSidebar }: TopBarProps) {
     setMounted(true);
   }, []);
 
-  const density = mounted ? settings.density : "comfortable";
+  const isHelpDesk = pathname.startsWith("/help-desk");
+  const density = mounted
+    ? isHelpDesk
+      ? helpdeskPrefs.density
+      : settings.density
+    : "comfortable";
   const themeValue = mounted ? theme : "system";
 
   const isConnected = connectionInfo?.source === "db";
@@ -172,7 +182,10 @@ export function TopBar({ user, onOpenSidebar }: TopBarProps) {
             {DENSITY_OPTIONS.map(({ value, icon: Icon, label }) => (
               <button
                 key={value}
-                onClick={() => update({ density: value })}
+                onClick={() => {
+                  if (isHelpDesk) updateHelpdeskPrefs({ density: value });
+                  else update({ density: value });
+                }}
                 className={`rounded-sm p-1.5 transition-colors cursor-pointer ${
                   density === value
                     ? "bg-accent text-accent-foreground"

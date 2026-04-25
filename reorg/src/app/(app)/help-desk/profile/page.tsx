@@ -409,6 +409,7 @@ export default function HelpdeskProfilePage() {
             >
               <option value="comfortable">Comfortable</option>
               <option value="compact">Compact</option>
+              <option value="spacious">Spacious</option>
             </select>
           </PrefRow>
           <PrefRow label="Layout" hint="Split shows three panes; List opens tickets in a reader.">

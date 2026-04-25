@@ -52,9 +52,9 @@ const EMPTY_DRAFT: TemplateDraft = {
 };
 
 const SNIPPETS = [
-  { token: "{{buyer_name}}", label: "Buyer name" },
-  { token: "{{buyer_username}}", label: "Buyer username" },
-  { token: "{{first_name}}", label: "First name" },
+  { token: "{{buyer_name}}", label: "Delivery full name" },
+  { token: "{{buyer_username}}", label: "eBay username" },
+  { token: "{{first_name}}", label: "Delivery first name" },
   { token: "{{order_number}}", label: "Order number" },
   { token: "{{item_id}}", label: "Item ID" },
   { token: "{{item_title}}", label: "Item title" },
@@ -345,7 +345,7 @@ export default function HelpdeskTemplatesPage() {
                       placeholder="Damaged item follow-up"
                     />
                   </Field>
-                  <Field label="Shortcut">
+                  <Field label="Shortcut / search alias">
                     <input
                       value={draft.shortcut}
                       onChange={(e) => updateDraft({ shortcut: e.target.value })}
@@ -416,10 +416,11 @@ export default function HelpdeskTemplatesPage() {
                       key={snippet.token}
                       type="button"
                       onClick={() => insertSnippet(snippet.token)}
-                      className="inline-flex rounded-md border border-hairline bg-surface px-2 py-1 text-[11px] text-muted-foreground hover:bg-surface-2 hover:text-foreground cursor-pointer"
+                      className="inline-flex flex-col rounded-md border border-hairline bg-surface px-2 py-1 text-left text-[11px] text-muted-foreground hover:bg-surface-2 hover:text-foreground cursor-pointer"
                       title={snippet.label}
                     >
-                      {snippet.token}
+                      <span className="font-medium text-foreground">{snippet.token}</span>
+                      <span>{snippet.label}</span>
                     </button>
                   ))}
                 </div>

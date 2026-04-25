@@ -181,7 +181,12 @@ export function TicketList({
   const assignMenuRef = useRef<HTMLDivElement | null>(null);
   const contextMenuRef = useRef<HTMLDivElement | null>(null);
   const prefs = useHelpdeskPrefs();
-  const rowPad = prefs.density === "compact" ? "py-1.5" : "py-2.5";
+  const rowPad =
+    prefs.density === "compact"
+      ? "py-1.5"
+      : prefs.density === "spacious"
+        ? "py-4"
+        : "py-2.5";
 
   // Lazy-load the agent roster the first time someone selects a ticket so the
   // assign dropdown can render their avatars + names. Cheap query (≤ 10 rows).

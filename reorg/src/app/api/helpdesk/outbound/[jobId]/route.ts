@@ -8,7 +8,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { HelpdeskOutboundStatus } from "@prisma/client";
+import { HelpdeskOutboundStatus, HelpdeskTicketStatus } from "@prisma/client";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -50,6 +50,42 @@ export async function DELETE(_request: NextRequest, { params }: RouteParams) {
     );
   }
 
+  const metadata =
+    job.metadata && typeof job.metadata === "object" && !Array.isArray(job.metadata)
+      ? (job.metadata as Record<string, unknown>)
+      : {};
+  const previousStatus = metadata.previousTicketStatus;
+  const previousIsArchived = metadata.previousIsArchived === true;
+  const previousArchivedAt =
+    typeof metadata.previousArchivedAt === "string"
+      ? new Date(metadata.previousArchivedAt)
+      : null;
+  const previousResolvedAt =
+    typeof metadata.previousResolvedAt === "string"
+      ? new Date(metadata.previousResolvedAt)
+      : null;
+  const previousResolvedById =
+    typeof metadata.previousResolvedById === "string"
+      ? metadata.previousResolvedById
+      : null;
+
+  if (isHelpdeskTicketStatus(previousStatus) && (job.setStatus || previousIsArchived)) {
+    await db.helpdeskTicket.updateMany({
+      where: {
+        id: job.ticketId,
+        ...(job.setStatus ? { status: job.setStatus } : {}),
+        ...(previousIsArchived ? { isArchived: false } : {}),
+      },
+      data: {
+        status: previousStatus,
+        resolvedAt: previousResolvedAt,
+        resolvedById: previousResolvedById,
+        isArchived: previousIsArchived,
+        archivedAt: previousIsArchived ? previousArchivedAt ?? new Date() : null,
+      },
+    });
+  }
+
   await db.auditLog.create({
     data: {
       userId: session.user.id,
@@ -61,4 +97,11 @@ export async function DELETE(_request: NextRequest, { params }: RouteParams) {
   });
 
   return NextResponse.json({ data: { canceled: true } });
+}
+
+function isHelpdeskTicketStatus(value: unknown): value is HelpdeskTicketStatus {
+  return (
+    typeof value === "string" &&
+    Object.values(HelpdeskTicketStatus).includes(value as HelpdeskTicketStatus)
+  );
 }

@@ -1047,11 +1047,6 @@ function TimelineItem({
     // in `pendingOutboundJobs` and the next ticket-detail refetch
     // replaces this transient bubble with the permanent HelpdeskMessage.
     const statusLabel = blocked ? `Send blocked: ${j.willBlockReason}` : "SENT";
-    const statusHint = blocked
-      ? null
-      : j.status === "SENDING"
-        ? "Delivering to eBay"
-        : "Queued for eBay";
     return (
       <div className="group/msg flex flex-row-reverse gap-3">
         <div className="shrink-0 pt-0.5">
@@ -1080,11 +1075,6 @@ function TimelineItem({
             >
               {statusLabel}
             </span>
-            {statusHint ? (
-              <span className="text-[10px] font-medium text-emerald-700/80 dark:text-emerald-300/80">
-                {statusHint}
-              </span>
-            ) : null}
             <span
               className={cn(
                 "truncate text-[13px] font-semibold",

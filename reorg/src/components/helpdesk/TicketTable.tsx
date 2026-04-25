@@ -43,6 +43,10 @@ import {
 import type { HelpdeskTicketSummary } from "@/hooks/use-helpdesk";
 import { Avatar } from "@/components/ui/avatar";
 import { cn } from "@/lib/utils";
+import {
+  useHelpdeskPrefs,
+  type HelpdeskPrefs,
+} from "@/components/helpdesk/HelpdeskSettingsDialog";
 
 // ─── Column definitions ─────────────────────────────────────────────────────
 
@@ -50,6 +54,7 @@ const KNOWN_COLUMN_KEYS = [
   "channel",
   "customer",
   "type",
+  "location",
   "latestUpdate",
   "owner",
   "timeLeft",
@@ -76,6 +81,7 @@ const COLUMN_DEFS: Record<ColumnKey, ColumnDef> = {
   channel: { key: "channel", label: "Channel", width: "84px", sortable: true },
   customer: { key: "customer", label: "Customer", width: "180px", sortable: true },
   type: { key: "type", label: "Type", width: "140px", sortable: true },
+  location: { key: "location", label: "Location", width: "130px", sortable: true },
   latestUpdate: { key: "latestUpdate", label: "Latest Update", width: undefined, sortable: false },
   owner: { key: "owner", label: "Owner", width: "140px", sortable: true },
   timeLeft: { key: "timeLeft", label: "Time Left", width: "120px", sortable: true },
@@ -291,6 +297,46 @@ function previewLatest(t: HelpdeskTicketSummary): string {
   return t.latestPreview ?? t.subject ?? t.ebayItemTitle ?? "(no subject)";
 }
 
+function ticketLocationLabel(t: HelpdeskTicketSummary): string {
+  if (t.isSpam || t.status === "SPAM") return "Spam";
+  if (t.isArchived || t.status === "ARCHIVED") return "Archived";
+  if (t.type === "SYSTEM" || t.systemMessageType) return "From eBay";
+  if (t.type === "CANCELLATION") return "Cancel Requests";
+  if (t.snoozedUntil && new Date(t.snoozedUntil).getTime() > Date.now()) {
+    return "Snoozed";
+  }
+  if (t.status === "RESOLVED") return "Resolved";
+  if (t.status === "WAITING") return "Waiting";
+  if (t.status === "TO_DO" || t.status === "NEW") {
+    return t.unreadCount > 0 ? "To Do - Unread" : "To Do - Read";
+  }
+  return String(t.status).replace(/_/g, " ");
+}
+
+function ticketLocationClass(label: string): string {
+  switch (label) {
+    case "To Do - Unread":
+      return "border-brand/40 bg-brand-muted text-brand";
+    case "To Do - Read":
+      return "border-violet-500/30 bg-violet-500/10 text-violet-700 dark:text-violet-300";
+    case "Waiting":
+      return "border-sky-500/30 bg-sky-500/10 text-sky-700 dark:text-sky-300";
+    case "Resolved":
+      return "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300";
+    case "From eBay":
+      return "border-blue-500/30 bg-blue-500/10 text-blue-700 dark:text-blue-300";
+    case "Cancel Requests":
+      return "border-rose-500/30 bg-rose-500/10 text-rose-700 dark:text-rose-300";
+    case "Archived":
+    case "Snoozed":
+      return "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300";
+    case "Spam":
+      return "border-red-500/30 bg-red-500/10 text-red-700 dark:text-red-300";
+    default:
+      return "border-hairline bg-surface text-muted-foreground";
+  }
+}
+
 // ─── Sort logic (client-side stable sort over loaded page) ─────────────────
 
 type SortKey = ColumnKey;
@@ -318,6 +364,8 @@ function compareTickets(
       );
     case "type":
       return a.type.localeCompare(b.type);
+    case "location":
+      return ticketLocationLabel(a).localeCompare(ticketLocationLabel(b));
     case "owner":
       return (a.primaryAssignee?.name ?? "zzz").localeCompare(
         b.primaryAssignee?.name ?? "zzz",
@@ -353,6 +401,7 @@ interface PresenceUser {
 }
 
 type PresenceMap = Record<string, PresenceUser[]>;
+type HelpdeskDensity = HelpdeskPrefs["density"];
 
 // ─── Component ─────────────────────────────────────────────────────────────
 
@@ -383,6 +432,7 @@ export function TicketTable({
   allVisibleSelected,
   showSelection,
 }: TicketTableProps) {
+  const prefs = useHelpdeskPrefs();
   // ── Column preferences ────────────────────────────────────────────────────
   const [columns, setColumns] = useState<ColumnKey[]>(DEFAULT_COLUMNS);
   const [editOpen, setEditOpen] = useState(false);
@@ -394,7 +444,16 @@ export function TicketTable({
       .then((j: { data?: { columns?: ColumnKey[] } }) => {
         if (cancelled) return;
         const cols = j.data?.columns;
-        if (cols && cols.length > 0) setColumns(cols);
+        if (cols && cols.length > 0) {
+          const next = cols.filter((c): c is ColumnKey =>
+            KNOWN_COLUMN_KEYS.includes(c as ColumnKey),
+          );
+          if (!next.includes("location")) {
+            const typeIndex = next.indexOf("type");
+            next.splice(typeIndex >= 0 ? typeIndex + 1 : next.length, 0, "location");
+          }
+          setColumns(next);
+        }
       })
       .catch(() => {
         // Defaults already applied — non-fatal.
@@ -597,6 +656,7 @@ export function TicketTable({
               onContextMenu={onContextMenu}
               presenceUsers={presence[t.id] ?? []}
               now={now}
+              density={prefs.density}
             />
           ))
         )}
@@ -755,6 +815,7 @@ interface TicketRowProps {
   onContextMenu?: (e: React.MouseEvent, id: string) => void;
   presenceUsers: PresenceUser[];
   now: number;
+  density: HelpdeskDensity;
 }
 
 function TicketRow({
@@ -770,6 +831,7 @@ function TicketRow({
   onContextMenu,
   presenceUsers,
   now,
+  density,
 }: TicketRowProps) {
   const isUnread = t.unreadCount > 0;
   const tl = useMemo(() => computeTimeLeft(t, now), [t, now]);
@@ -787,7 +849,12 @@ function TicketRow({
       onContextMenu={(e) => onContextMenu?.(e, t.id)}
       style={{ gridTemplateColumns: gridTemplate, minWidth: "max-content" }}
       className={cn(
-        "group grid cursor-pointer items-center border-b border-hairline px-2 py-4 text-[15px] transition-colors",
+        "group grid cursor-pointer items-center border-b border-hairline transition-colors",
+        density === "compact"
+          ? "px-2 py-2 text-[13px]"
+          : density === "spacious"
+            ? "px-3 py-5 text-[15px]"
+            : "px-2 py-3 text-[14px]",
         isUnread
           ? "bg-brand/[0.04] text-foreground"
           : "bg-transparent text-muted-foreground",
@@ -967,6 +1034,23 @@ function Cell({ column, ticket: t, isUnread, timeLeft, otherViewers }: CellProps
               Archived
             </span>
           ) : null}
+        </div>
+      );
+    }
+
+    case "location": {
+      const label = ticketLocationLabel(t);
+      return (
+        <div className="flex items-center px-2">
+          <span
+            className={cn(
+              "inline-flex max-w-full items-center rounded border px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider",
+              ticketLocationClass(label),
+            )}
+            title={label}
+          >
+            <span className="truncate">{label}</span>
+          </span>
         </div>
       );
     }

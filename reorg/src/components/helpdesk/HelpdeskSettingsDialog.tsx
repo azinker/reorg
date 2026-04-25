@@ -8,7 +8,7 @@
  *   - sendDelaySeconds  (1-10, default 5)  — composer countdown before sending
  *   - autoAdvance       (bool)             — after Resolve, jump to next ticket
  *   - autoMarkRead      (bool)             — clear unread on open (server already does)
- *   - density           ("comfortable" | "compact")
+ *   - density           ("compact" | "comfortable" | "spacious")
  *   - layout            ("split" | "list") — split is the classic 4-pane view
  *                                             list is full-width inbox + modal reader
  *   - threadWidthPct    (35-75, default 55) — % of the main area the thread+composer takes
@@ -62,7 +62,7 @@ export interface HelpdeskPrefs {
   sendDelaySeconds: number;
   autoAdvance: boolean;
   autoMarkRead: boolean;
-  density: "comfortable" | "compact";
+  density: "compact" | "comfortable" | "spacious";
   layout: HelpdeskLayout;
   composerSticky: boolean;
   composerHeightPx: number;
@@ -102,7 +102,10 @@ function readPrefs(): HelpdeskPrefs {
       sendDelaySeconds: clampInt(parsed.sendDelaySeconds, 1, 10, DEFAULTS.sendDelaySeconds),
       autoAdvance: typeof parsed.autoAdvance === "boolean" ? parsed.autoAdvance : DEFAULTS.autoAdvance,
       autoMarkRead: typeof parsed.autoMarkRead === "boolean" ? parsed.autoMarkRead : DEFAULTS.autoMarkRead,
-      density: parsed.density === "compact" ? "compact" : "comfortable",
+      density:
+        parsed.density === "compact" || parsed.density === "spacious"
+          ? parsed.density
+          : "comfortable",
       layout: parsed.layout === "list" ? "list" : "split",
       composerSticky:
         typeof parsed.composerSticky === "boolean"
@@ -475,6 +478,7 @@ export function HelpdeskSettingsDialog({ open, onClose }: HelpdeskSettingsDialog
             >
               <option value="comfortable">Comfortable</option>
               <option value="compact">Compact</option>
+              <option value="spacious">Spacious</option>
             </select>
           </Field>
 

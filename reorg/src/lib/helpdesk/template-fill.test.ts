@@ -3,6 +3,7 @@ import test from "node:test";
 import { fillTemplate, findUnfilledPlaceholders } from "@/lib/helpdesk/template-fill";
 
 const ctx = {
+  deliveryName: "Jane Delivery",
   buyerName: "John Smith",
   buyerUserId: "jsmith2024",
   ebayItemId: "12345",
@@ -13,16 +14,31 @@ const ctx = {
 };
 
 test("fillTemplate replaces {{buyer_name}} with buyer name", () => {
-  assert.equal(fillTemplate("Hi {{buyer_name}},", ctx), "Hi John Smith,");
+  assert.equal(fillTemplate("Hi {{buyer_name}},", ctx), "Hi Jane Delivery,");
 });
 
 test("fillTemplate falls back to buyer username when name missing", () => {
-  const out = fillTemplate("Hello {{buyer_name}}!", { ...ctx, buyerName: null });
+  const out = fillTemplate("Hello {{buyer_name}}!", {
+    ...ctx,
+    deliveryName: null,
+    buyerName: null,
+  });
   assert.equal(out, "Hello jsmith2024!");
 });
 
 test("fillTemplate handles {{first_name}}", () => {
-  assert.equal(fillTemplate("Hi {{first_name}}", ctx), "Hi John");
+  assert.equal(fillTemplate("Hi {{first_name}}", ctx), "Hi Jane");
+});
+
+test("fillTemplate first_name does not fall back to buyer username", () => {
+  assert.equal(
+    fillTemplate("Hi {{first_name}}", {
+      ...ctx,
+      deliveryName: null,
+      buyerName: "jsmith2024",
+    }),
+    "Hi {{first_name}}",
+  );
 });
 
 test("fillTemplate is whitespace tolerant inside braces", () => {

@@ -91,6 +91,9 @@ interface PendingJob {
   id: string;
   scheduledAt: number;
   willBlockReason: string | null;
+  bodyText: string;
+  composerMode: ComposerMode;
+  createdAt: string;
 }
 
 export function Composer({
@@ -115,6 +118,7 @@ export function Composer({
   const statusMenuRef = useRef<HTMLDivElement | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [pending, setPending] = useState<PendingJob | null>(null);
+  const [pendingSecondsLeft, setPendingSecondsLeft] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [lastSentAt, setLastSentAt] = useState<number | null>(null);
   /**
@@ -135,7 +139,9 @@ export function Composer({
   const [orderTracking, setOrderTracking] = useState<{
     number: string | null;
     carrier: string | null;
-  }>({ number: null, carrier: null });
+    deliveryName: string | null;
+    buyerName: string | null;
+  }>({ number: null, carrier: null, deliveryName: null, buyerName: null });
 
   const flags = syncStatus?.flags;
   const safeMode = flags?.safeMode ?? true;
@@ -155,7 +161,7 @@ export function Composer({
     setStatusOverridden(false);
     setExpanded(prefs.composerSticky);
     setStatusMenuOpen(false);
-    setOrderTracking({ number: null, carrier: null });
+    setOrderTracking({ number: null, carrier: null, deliveryName: null, buyerName: null });
   }, [ticket.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
@@ -209,12 +215,19 @@ export function Composer({
         );
         if (!res.ok) return;
         const j = (await res.json()) as {
-          data: { trackingNumber: string | null; trackingCarrier: string | null } | null;
+          data: {
+            trackingNumber: string | null;
+            trackingCarrier: string | null;
+            buyerName: string | null;
+            shippingAddress: { name: string | null } | null;
+          } | null;
         };
         if (ac.signal.aborted || !j.data) return;
         setOrderTracking({
           number: j.data.trackingNumber ?? null,
           carrier: j.data.trackingCarrier ?? null,
+          deliveryName: j.data.shippingAddress?.name ?? null,
+          buyerName: j.data.buyerName ?? null,
         });
       } catch {
         // Best-effort: tracking is a nice-to-have for templates, not required.
@@ -254,29 +267,43 @@ export function Composer({
     }
   }, [ticket.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Countdown for the pending job
+  // Countdown for the pending job. The agent-facing message bubble is only
+  // added after the undo window expires; until then the green bar is the
+  // single source of truth and Undo can cancel the outbound job.
   useEffect(() => {
     if (!pending) {
+      setPendingSecondsLeft(0);
       return;
     }
+    let completed = false;
     const tick = () => {
       const left = Math.max(
         0,
         Math.ceil((pending.scheduledAt - Date.now()) / 1000),
       );
+      setPendingSecondsLeft(left);
       if (left === 0) {
-        // Worker should pick it up shortly. Keep the banner visible 3s as
-        // confirmation, then clear.
-        window.setTimeout(() => {
-          setPending((p) => (p?.id === pending.id ? null : p));
-          onSent();
-        }, 1200);
+        if (completed) return;
+        completed = true;
+        setPending((p) => (p?.id === pending.id ? null : p));
+        setLastSentAt(Date.now());
+        onQueuedOutbound?.({
+          id: pending.id,
+          composerMode: pending.composerMode,
+          bodyText: pending.bodyText,
+          status: "PENDING",
+          scheduledAt: new Date(pending.scheduledAt).toISOString(),
+          createdAt: pending.createdAt,
+          willBlockReason: pending.willBlockReason,
+          author: null,
+        });
+        onSent();
       }
     };
     tick();
     const handle = window.setInterval(tick, 250);
     return () => window.clearInterval(handle);
-  }, [pending, onSent]);
+  }, [pending, onQueuedOutbound, onSent]);
 
   // Memoize so all three template-aware children (quick chips,
   // TemplatePicker, QuickActionMenu) share the same context object and
@@ -368,21 +395,10 @@ export function Composer({
           id: json.data.id,
           scheduledAt: new Date(json.data.scheduledAt).getTime(),
           willBlockReason: json.data.willBlockReason,
-        });
-        onQueuedOutbound?.({
-          id: json.data.id,
-          composerMode: mode,
           bodyText: draftBody,
-          status: "PENDING",
-          scheduledAt: json.data.scheduledAt,
+          composerMode: mode,
           createdAt: queuedAt,
-          willBlockReason: json.data.willBlockReason,
-          author: null,
         });
-        // Refetch the ticket detail right away so the thread renders the
-        // immediate SENT confirmation while the worker completes the
-        // marketplace send in the background.
-        onSent();
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -402,8 +418,8 @@ export function Composer({
         throw new Error(j.error ?? `Cancel failed (${res.status})`);
       }
       setPending(null);
-      // restore body so the user can edit and resend
-      // (we cleared it on submit; fetch it back from elsewhere if needed)
+      setPendingSecondsLeft(0);
+      setBody(pending.bodyText);
       // Tell the parent to refetch so the pending bubble vanishes from
       // the thread.
       onSent();
@@ -421,6 +437,37 @@ export function Composer({
         Archived ticket — sending a reply will un-archive it and move it to
         Waiting. Notes leave the archive state alone.
       </span>
+    </div>
+  ) : null;
+
+  const pendingBanner = pending ? (
+    <div
+      className={cn(
+        "flex items-center justify-between gap-3 px-4 py-2 text-xs",
+        pending.willBlockReason
+          ? "bg-amber-500/10 text-amber-700 dark:text-amber-300"
+          : "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
+      )}
+    >
+      <div className="flex min-w-0 items-center gap-2">
+        {pending.willBlockReason ? (
+          <ShieldAlert className="h-3.5 w-3.5 shrink-0" />
+        ) : (
+          <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
+        )}
+        <span className="truncate">
+          {pending.willBlockReason
+            ? `Queued but will be blocked by ${pending.willBlockReason.replace(/_/g, " ")}`
+            : `Sending in ${pendingSecondsLeft}s`}
+        </span>
+      </div>
+      <button
+        type="button"
+        onClick={handleUndo}
+        className="inline-flex h-6 shrink-0 items-center gap-1 rounded-md border border-current/30 px-2 font-medium hover:bg-surface-2 cursor-pointer"
+      >
+        <X className="h-3 w-3" /> Undo
+      </button>
     </div>
   ) : null;
 
@@ -457,6 +504,7 @@ export function Composer({
   return (
     <div className="shrink-0 border-t border-hairline bg-card">
       {archivedBanner}
+      {pendingBanner}
       <div
         role="separator"
         aria-orientation="horizontal"
@@ -534,38 +582,6 @@ export function Composer({
           </button>
         )}
       </div>
-
-      {/* Pending undo banner */}
-      {pending && (
-        <div
-          className={cn(
-            "flex items-center justify-between gap-3 px-4 py-2 text-xs",
-            pending.willBlockReason
-              ? "bg-amber-500/10 text-amber-700 dark:text-amber-300"
-              : "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
-          )}
-        >
-          <div className="flex items-center gap-2">
-            {pending.willBlockReason ? (
-              <ShieldAlert className="h-3.5 w-3.5" />
-            ) : (
-              <CheckCircle2 className="h-3.5 w-3.5" />
-            )}
-            <span>
-              {pending.willBlockReason
-                ? `Queued but will be blocked by ${pending.willBlockReason.replace(/_/g, " ")}`
-                : "SENT · queued for eBay"}
-            </span>
-          </div>
-          <button
-            type="button"
-            onClick={handleUndo}
-            className="inline-flex h-6 items-center gap-1 rounded-md border border-current/30 px-2 font-medium hover:bg-surface-2 cursor-pointer"
-          >
-            <X className="h-3 w-3" /> Undo
-          </button>
-        </div>
-      )}
 
       {/* Just-sent toast */}
       {!pending && lastSentAt && Date.now() - lastSentAt < 4000 && (
@@ -823,14 +839,20 @@ function clampNumber(value: number, min: number, max: number): number {
 
 function ticketToContext(
   ticket: HelpdeskTicketDetail,
-  tracking: { number: string | null; carrier: string | null } = {
+  tracking: {
+    number: string | null;
+    carrier: string | null;
+    deliveryName?: string | null;
+    buyerName?: string | null;
+  } = {
     number: null,
     carrier: null,
   },
 ): TemplateContext {
   return {
-    buyerName: ticket.buyerName,
+    buyerName: tracking.buyerName ?? ticket.buyerName,
     buyerUserId: ticket.buyerUserId,
+    deliveryName: tracking.deliveryName,
     ebayItemId: ticket.ebayItemId,
     ebayItemTitle: ticket.ebayItemTitle,
     ebayOrderNumber: ticket.ebayOrderNumber,

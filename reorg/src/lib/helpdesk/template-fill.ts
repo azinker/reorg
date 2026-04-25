@@ -2,9 +2,9 @@
  * Template placeholder substitution. Runs client-side inside the Composer.
  * Supported placeholders (case-insensitive, double curly braces):
  *
- *   {{buyer_name}}        Friendly name (falls back to userId)
+ *   {{buyer_name}}        Checkout/delivery name (falls back to buyer name/userId)
  *   {{buyer_username}}    Raw eBay user id
- *   {{first_name}}        First word of buyer_name
+ *   {{first_name}}        First word of the checkout/delivery name
  *   {{order_number}}      eBay order number
  *   {{item_id}}           eBay listing id
  *   {{item_title}}        Listing title
@@ -15,6 +15,7 @@
  */
 
 export interface TemplateContext {
+  deliveryName?: string | null;
   buyerName?: string | null;
   buyerUserId?: string | null;
   ebayItemId?: string | null;
@@ -31,11 +32,11 @@ export function fillTemplate(body: string, ctx: TemplateContext): string {
     const k = key.toLowerCase();
     switch (k) {
       case "buyer_name":
-        return ctx.buyerName ?? ctx.buyerUserId ?? match;
+        return bestBuyerName(ctx) ?? ctx.buyerUserId ?? match;
       case "buyer_username":
         return ctx.buyerUserId ?? match;
       case "first_name": {
-        const n = ctx.buyerName ?? ctx.buyerUserId ?? "";
+        const n = bestBuyerName(ctx) ?? "";
         const first = n.split(/\s+/)[0];
         return first || match;
       }
@@ -53,6 +54,19 @@ export function fillTemplate(body: string, ctx: TemplateContext): string {
         return match;
     }
   });
+}
+
+function bestBuyerName(ctx: TemplateContext): string | null {
+  const delivery = cleanHumanName(ctx.deliveryName, ctx.buyerUserId);
+  if (delivery) return delivery;
+  return cleanHumanName(ctx.buyerName, ctx.buyerUserId);
+}
+
+function cleanHumanName(value: string | null | undefined, username?: string | null): string | null {
+  const clean = value?.trim();
+  if (!clean) return null;
+  if (username && clean.toLowerCase() === username.trim().toLowerCase()) return null;
+  return clean;
 }
 
 export function findUnfilledPlaceholders(body: string): string[] {

@@ -328,7 +328,8 @@ export default function HelpDeskClient() {
       tickets.slice(idx + 1).find(isActionable) ??
       tickets.slice(0, idx).find(isActionable) ??
       null;
-    selectTicket(next ? next.id : null);
+    if (!next) return;
+    selectTicket(next.id);
   }, [selectedTicket, tickets, prefs.autoAdvance, selectTicket]);
 
   // ─── Prev/Next ticket navigation (eDesk-style global header arrows) ─────────
