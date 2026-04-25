@@ -37,7 +37,11 @@ import {
   ChevronDown,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import type { HelpdeskTicketDetail, HelpdeskSyncStatus } from "@/hooks/use-helpdesk";
+import type {
+  HelpdeskPendingOutboundJob,
+  HelpdeskTicketDetail,
+  HelpdeskSyncStatus,
+} from "@/hooks/use-helpdesk";
 import { TemplatePicker } from "@/components/helpdesk/TemplatePicker";
 import { QuickActionMenu, QUICK_ACTIONS } from "@/components/helpdesk/QuickActionMenu";
 import { fillTemplate, type TemplateContext } from "@/lib/helpdesk/template-fill";
@@ -67,6 +71,7 @@ interface ComposerProps {
    * tune it from the Settings dialog.
    */
   sendDelaySeconds?: number;
+  onQueuedOutbound?: (job: HelpdeskPendingOutboundJob) => void;
   onSent: () => void;
 }
 
@@ -80,6 +85,7 @@ export function Composer({
   ticket,
   syncStatus,
   sendDelaySeconds: sendDelayOverride,
+  onQueuedOutbound,
   onSent,
 }: ComposerProps) {
   const prefs = useHelpdeskPrefs();
@@ -269,6 +275,7 @@ export function Composer({
 
   async function handleSubmit() {
     if (!canSubmit) return;
+    const draftBody = body.trim();
     setError(null);
     setSubmitting(true);
     try {
@@ -277,7 +284,7 @@ export function Composer({
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           composerMode: mode,
-          bodyText: body.trim(),
+          bodyText: draftBody,
           sendDelaySeconds: mode === "NOTE" ? 0 : sendDelaySeconds,
           setStatus:
             mode === "NOTE" || statusChoice === "NONE" ? undefined : statusChoice,
@@ -304,10 +311,21 @@ export function Composer({
         setLastSentAt(Date.now());
         onSent();
       } else {
+        const queuedAt = new Date().toISOString();
         setPending({
           id: json.data.id,
           scheduledAt: new Date(json.data.scheduledAt).getTime(),
           willBlockReason: json.data.willBlockReason,
+        });
+        onQueuedOutbound?.({
+          id: json.data.id,
+          composerMode: mode,
+          bodyText: draftBody,
+          status: "PENDING",
+          scheduledAt: json.data.scheduledAt,
+          createdAt: queuedAt,
+          willBlockReason: json.data.willBlockReason,
+          author: null,
         });
         // Refetch the ticket detail right away so the thread renders the
         // immediate SENT confirmation while the worker completes the
@@ -715,14 +733,12 @@ function ticketToContext(
 }
 
 function canReply(ticket: HelpdeskTicketDetail): boolean {
-  // Need at least one inbound eBay message with an ebayMessageId so we can RTQ.
-  // Source EBAY (Trading API) is what we can reply to. EBAY_UI may also be
-  // valid since GetMyMessages returns messages sent on eBay's web UI too.
-  return ticket.messages.some(
-    (m) =>
-      m.direction === "INBOUND" &&
-      (m.source === "EBAY" || m.source === "EBAY_UI"),
-  );
+  // Replies now send through the Commerce Message API. That path can target
+  // an existing conversation when we have one, or fall back to the buyer's
+  // eBay username. Do not block RESOLVED tickets just because their original
+  // inbound row came from a legacy/source-mismatched sync path.
+  const ebayChannel = ticket.channel === "TPP_EBAY" || ticket.channel === "TT_EBAY";
+  return ebayChannel && Boolean(ticket.buyerUserId);
 }
 
 function canEmail(

@@ -65,7 +65,11 @@ import {
   Download,
 } from "lucide-react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import type { HelpdeskTicketDetail, HelpdeskSyncStatus } from "@/hooks/use-helpdesk";
+import type {
+  HelpdeskPendingOutboundJob,
+  HelpdeskTicketDetail,
+  HelpdeskSyncStatus,
+} from "@/hooks/use-helpdesk";
 import { Composer } from "@/components/helpdesk/Composer";
 import { Attachments } from "@/components/helpdesk/Attachments";
 import { Avatar } from "@/components/ui/avatar";
@@ -489,6 +493,32 @@ export function ThreadView({
     return () => ac.abort();
   }, [ticketId]);
 
+  const [optimisticOutboundJobs, setOptimisticOutboundJobs] = useState<
+    HelpdeskPendingOutboundJob[]
+  >([]);
+
+  useEffect(() => {
+    setOptimisticOutboundJobs([]);
+  }, [ticketId]);
+
+  const pendingOutboundJobs = useMemo(() => {
+    if (!ticket) return [];
+    const serverJobs = ticket.pendingOutboundJobs ?? [];
+    const serverIds = new Set(serverJobs.map((job) => job.id));
+    const now = Date.now();
+    const optimistic = optimisticOutboundJobs.filter((job) => {
+      if (serverIds.has(job.id)) return false;
+      if (now - new Date(job.createdAt).getTime() > 60_000) return false;
+      const createdMs = new Date(job.createdAt).getTime();
+      return !ticket.messages.some((m) => {
+        if (m.direction !== "OUTBOUND") return false;
+        if (m.bodyText.trim() !== job.bodyText.trim()) return false;
+        return Math.abs(new Date(m.sentAt).getTime() - createdMs) < 5 * 60_000;
+      });
+    });
+    return [...serverJobs, ...optimistic];
+  }, [ticket, optimisticOutboundJobs]);
+
   // Build a single, day-bucketed timeline. Day separators get injected as
   // their own item type so the virtualiser treats them like any other row.
   type TimelineRow =
@@ -545,11 +575,10 @@ export function ThreadView({
     // bubble is replaced by the permanent one. NOTE bubbles (composer
     // mode = NOTE) never go through the outbound queue, so we don't
     // need to worry about double-rendering them here.
-    const pending = ticket.pendingOutboundJobs ?? [];
     const merged: Item[] = [
       ...ticket.messages.map((m) => ({ kind: "message" as const, data: m, at: m.sentAt })),
       ...ticket.notes.map((n) => ({ kind: "note" as const, data: n, at: n.createdAt })),
-      ...pending.map((p) => ({ kind: "pending" as const, data: p, at: p.scheduledAt })),
+      ...pendingOutboundJobs.map((p) => ({ kind: "pending" as const, data: p, at: p.createdAt })),
       ...events.map((e) => ({ kind: "system" as const, data: e, at: e.at })),
     ].sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime());
 
@@ -577,9 +606,15 @@ export function ThreadView({
       out.push({ ...item, key: baseKey } as TimelineRow);
     }
     return out;
-  }, [ticket, events]);
+  }, [ticket, events, pendingOutboundJobs]);
 
   // ── Virtualiser setup ──
+  const useVirtualTimeline = rows.length > 80;
+  const rowsSignature = useMemo(
+    () => rows.map((row) => `${row.key}:${row.at}`).join("|"),
+    [rows],
+  );
+
   const scrollRef = useRef<HTMLDivElement>(null);
   const virtualizer = useVirtualizer({
     count: rows.length,
@@ -599,11 +634,16 @@ export function ThreadView({
   useEffect(() => {
     if (!ticketId || rows.length === 0) return;
     const id = requestAnimationFrame(() => {
-      virtualizer.scrollToIndex(rows.length - 1, { align: "end" });
+      if (useVirtualTimeline) {
+        virtualizer.measure();
+        virtualizer.scrollToIndex(rows.length - 1, { align: "end" });
+      } else if (scrollRef.current) {
+        scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+      }
     });
     return () => cancelAnimationFrame(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ticketId, rows.length]);
+  }, [ticketId, rows.length, rowsSignature, useVirtualTimeline]);
 
   if (loading && !ticket) {
     return (
@@ -621,7 +661,14 @@ export function ThreadView({
     );
   }
 
-  const virtualRows = virtualizer.getVirtualItems();
+  const virtualRows = useVirtualTimeline ? virtualizer.getVirtualItems() : [];
+  const buyerInitial = (
+    ticket.buyerName?.trim() ||
+    ticket.buyerUserId?.trim() ||
+    "?"
+  )
+    .charAt(0)
+    .toUpperCase();
 
   return (
     // `min-h-0` on the outer flex column is mandatory — without it the
@@ -659,7 +706,7 @@ export function ThreadView({
           <p className="text-center text-sm text-muted-foreground">
             {eventsLoading ? "Loading conversation…" : "No messages yet."}
           </p>
-        ) : (
+        ) : useVirtualTimeline ? (
           <div
             className="relative mx-auto w-full max-w-3xl"
             style={{ height: virtualizer.getTotalSize() }}
@@ -676,15 +723,7 @@ export function ThreadView({
                 >
                   <TimelineItem
                     row={row}
-                    buyerInitial={
-                      (
-                        ticket.buyerName?.trim() ||
-                        ticket.buyerUserId?.trim() ||
-                        "?"
-                      )
-                        .charAt(0)
-                        .toUpperCase()
-                    }
+                    buyerInitial={buyerInitial}
                     agentAccent={agentAccent}
                     onImageClick={openLightbox}
                   />
@@ -692,10 +731,31 @@ export function ThreadView({
               );
             })}
           </div>
+        ) : (
+          <div className="mx-auto flex w-full max-w-3xl flex-col gap-3">
+            {rows.map((row) => (
+              <TimelineItem
+                key={row.key}
+                row={row}
+                buyerInitial={buyerInitial}
+                agentAccent={agentAccent}
+                onImageClick={openLightbox}
+              />
+            ))}
+          </div>
         )}
       </div>
 
-      <Composer ticket={ticket} syncStatus={syncStatus} onSent={onSent} />
+      <Composer
+        ticket={ticket}
+        syncStatus={syncStatus}
+        onQueuedOutbound={(job) =>
+          setOptimisticOutboundJobs((prev) =>
+            prev.some((p) => p.id === job.id) ? prev : [...prev, job],
+          )
+        }
+        onSent={onSent}
+      />
 
       {lightbox && (
         <Lightbox
