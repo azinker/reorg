@@ -64,8 +64,8 @@ const STATUS_LABEL: Record<StatusChoice, string> = {
 };
 
 const STATUS_SHORT: Record<StatusChoice, string> = {
-  RESOLVED: "Resolve",
-  WAITING: "Waiting",
+  RESOLVED: "Send + Resolve",
+  WAITING: "Send + Waiting",
   NONE: "Send",
 };
 
@@ -779,7 +779,7 @@ export function Composer({
               onClick={handleSubmit}
               disabled={!canSubmit || modeMeta.disabled}
               className={cn(
-                "inline-flex h-7 items-center gap-1 rounded-l-md border border-r-0 border-brand px-3 text-xs font-semibold transition-colors cursor-pointer",
+                "inline-flex h-9 min-w-[8.75rem] items-center justify-center gap-1.5 rounded-l-md border border-r-0 border-brand px-4 text-sm font-semibold transition-colors cursor-pointer",
                 canSubmit && !modeMeta.disabled
                   ? "bg-brand text-brand-foreground hover:opacity-90"
                   : "border-hairline bg-surface-2 text-muted-foreground",
@@ -787,9 +787,9 @@ export function Composer({
               title={STATUS_LABEL[statusChoice]}
             >
               {submitting ? (
-                <Loader2 className="h-3 w-3 animate-spin" />
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
               ) : (
-                <Send className="h-3 w-3" />
+                <Send className="h-3.5 w-3.5" />
               )}
               {STATUS_SHORT[statusChoice]}
             </button>
@@ -799,13 +799,13 @@ export function Composer({
               disabled={!!pending || modeMeta.disabled}
               aria-label="Choose send action"
               className={cn(
-                "inline-flex h-7 w-6 items-center justify-center rounded-r-md border text-xs cursor-pointer",
+                "inline-flex h-9 w-8 items-center justify-center rounded-r-md border text-xs cursor-pointer",
                 canSubmit && !modeMeta.disabled
                   ? "border-brand bg-brand text-brand-foreground hover:opacity-90"
                   : "border-hairline bg-surface-2 text-muted-foreground",
               )}
             >
-              <ChevronDown className="h-3 w-3" />
+              <ChevronDown className="h-3.5 w-3.5" />
             </button>
             {statusMenuOpen && (
               <div className="absolute bottom-full right-0 z-20 mb-1 min-w-[10rem] rounded-md border border-hairline bg-card p-1 text-xs shadow-md">

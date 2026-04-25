@@ -747,9 +747,10 @@ function ProductInquirySection({
             {listing.title ?? listing.itemId}
           </p>
           {listing.sku ? (
-            <p className="mt-0.5 truncate text-xs text-muted-foreground">
-              SKU {listing.sku}
-            </p>
+            <div className="mt-1 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+              <span className="truncate">SKU {listing.sku}</span>
+              <CopyButton value={listing.sku} title="Copy SKU" />
+            </div>
           ) : null}
           <p className="mt-1 inline-flex items-center gap-1 truncate font-mono text-[11px] text-muted-foreground">
             Item #{listing.itemId}
@@ -1032,9 +1033,10 @@ function OrderInfoSection({
                       {item.title}
                     </p>
                     {item.sku ? (
-                      <p className="mt-0.5 truncate text-xs text-muted-foreground">
-                        SKU {item.sku}
-                      </p>
+                      <div className="mt-1 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+                        <span className="truncate">SKU {item.sku}</span>
+                        <CopyButton value={item.sku} title="Copy SKU" />
+                      </div>
                     ) : null}
                   </div>
                   <div className="shrink-0 text-right text-xs">
@@ -1174,11 +1176,11 @@ function CopyButton({ value, title }: { value: string; title: string }) {
           // clipboard blocked — silent
         }
       }}
-      className="rounded p-0.5 text-muted-foreground transition-colors hover:bg-surface-2 hover:text-foreground cursor-pointer"
+      className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md border border-brand/25 bg-brand-muted/60 text-brand shadow-sm transition-colors hover:border-brand/50 hover:bg-brand-muted hover:text-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/30 cursor-pointer"
       title={title}
     >
       {copied ? (
-        <Check className="h-3 w-3 text-emerald-600 dark:text-emerald-400" />
+        <Check className="h-3 w-3" />
       ) : (
         <Copy className="h-3 w-3" />
       )}

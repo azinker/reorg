@@ -211,7 +211,7 @@ export function TicketTriageBar({
   // of the message list. The tint is intentionally faint (≤8% alpha) so
   // it never competes with the action buttons themselves.
   return (
-    <div className="flex min-h-12 shrink-0 flex-wrap items-center gap-2 border-b border-hairline bg-card/90 px-3 py-2 shadow-[0_1px_0_rgb(255_255_255_/_0.03)] backdrop-blur-sm sm:px-4">
+    <div className="flex min-h-10 shrink-0 flex-wrap items-center gap-1.5 border-b border-hairline bg-card/90 px-3 py-1.5 shadow-[0_1px_0_rgb(255_255_255_/_0.03)] backdrop-blur-sm sm:px-4">
       <TypeMenu
         value={ticket?.type ?? null}
         disabled={disabled}

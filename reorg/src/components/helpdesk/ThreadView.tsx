@@ -63,6 +63,7 @@ import {
   ChevronRight,
   X as XIcon,
   Download,
+  Languages,
 } from "lucide-react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import type {
@@ -391,6 +392,164 @@ function extractInlineImages(
 }
 
 // ─── Component ──────────────────────────────────────────────────────────────
+
+interface TranslationResult {
+  translatedText: string;
+  detectedLanguage: string | null;
+}
+
+const translationCache = new Map<string, TranslationResult | null>();
+
+function plainTextForTranslation(body: string, isHtml: boolean): string {
+  let text = body ?? "";
+  if (isHtml || /<[^>]+>/.test(text)) {
+    const normalized = text
+      .replace(/<br\s*\/?\s*>/gi, "\n")
+      .replace(/<\/(p|div|li|tr|h[1-6])>/gi, "\n");
+    if (typeof document !== "undefined") {
+      const el = document.createElement("div");
+      el.innerHTML = normalized;
+      text = el.textContent ?? "";
+    } else {
+      text = normalized.replace(/<[^>]+>/g, " ");
+    }
+  }
+  return text
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;|&apos;/gi, "'")
+    .split(/\r?\n/)
+    .map((line) => line.replace(/[ \t]+/g, " ").trim())
+    .filter(Boolean)
+    .join("\n")
+    .trim();
+}
+
+function shouldAutoTranslate(text: string): boolean {
+  const compact = text.replace(/\s+/g, " ").trim();
+  if (compact.length < 3) return false;
+  if (/[\u0400-\u04ff\u0590-\u05ff\u0600-\u06ff\u3040-\u30ff\u3400-\u9fff]/.test(compact)) {
+    return true;
+  }
+  if (/[¿¡áéíóúñüàèìòùâêîôûãõç]/i.test(compact)) return true;
+  return /\b(gracias|hola|buenos|buenas|por favor|favor|necesito|quiero|cuando|cu[aá]ndo|donde|d[oó]nde|env[ií]o|paquete|producto|compr[eé]|tengo|puede|usted|porque|por que|c[oó]mo|merci|bonjour|s'il vous plait|obrigado|obrigada|ol[aá]|quando|produto|pacote|envio|danke|bitte|hallo|versand|produkt)\b/i.test(compact);
+}
+
+function normalizedTranslationCompare(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/[^0-9a-z]+/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function MessageTranslationPanel({
+  messageId,
+  sourceText,
+}: {
+  messageId: string;
+  sourceText: string;
+}) {
+  const shouldTranslate = shouldAutoTranslate(sourceText);
+  const [state, setState] = useState<{
+    loading: boolean;
+    result: TranslationResult | null;
+    error: boolean;
+  }>({ loading: false, result: null, error: false });
+
+  useEffect(() => {
+    if (!shouldTranslate) return;
+    const cacheKey = `${messageId}:${sourceText}`;
+    if (translationCache.has(cacheKey)) {
+      setState({
+        loading: false,
+        result: translationCache.get(cacheKey) ?? null,
+        error: false,
+      });
+      return;
+    }
+    const ac = new AbortController();
+    setState({ loading: true, result: null, error: false });
+    void (async () => {
+      try {
+        const res = await fetch("/api/helpdesk/translate", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          credentials: "same-origin",
+          signal: ac.signal,
+          body: JSON.stringify({ text: sourceText, target: "en" }),
+        });
+        if (!res.ok) throw new Error(`translate ${res.status}`);
+        const json = (await res.json()) as { data?: TranslationResult };
+        if (ac.signal.aborted) return;
+        const translatedText = json.data?.translatedText?.trim() ?? "";
+        const detectedLanguage = json.data?.detectedLanguage ?? null;
+        const meaningful =
+          translatedText.length > 0 &&
+          detectedLanguage?.toLowerCase() !== "en" &&
+          normalizedTranslationCompare(translatedText) !==
+            normalizedTranslationCompare(sourceText);
+        const result = meaningful
+          ? { translatedText, detectedLanguage }
+          : null;
+        translationCache.set(cacheKey, result);
+        setState({ loading: false, result, error: false });
+      } catch {
+        if (ac.signal.aborted) return;
+        setState({ loading: false, result: null, error: true });
+      }
+    })();
+    return () => ac.abort();
+  }, [messageId, shouldTranslate, sourceText]);
+
+  if (!shouldTranslate) return null;
+
+  if (state.loading) {
+    return (
+      <div className="mt-2 flex items-center gap-2 rounded-md border border-sky-500/25 bg-sky-500/10 px-2.5 py-2 text-[12px] text-sky-700 dark:text-sky-300">
+        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+        Translating to English...
+      </div>
+    );
+  }
+
+  if (state.error) {
+    const href = `https://translate.google.com/?sl=auto&tl=en&text=${encodeURIComponent(sourceText)}&op=translate`;
+    return (
+      <a
+        href={href}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="mt-2 inline-flex items-center gap-1.5 rounded-md border border-sky-500/25 bg-sky-500/10 px-2.5 py-1.5 text-[12px] font-medium text-sky-700 transition-colors hover:bg-sky-500/15 dark:text-sky-300 cursor-pointer"
+      >
+        <Languages className="h-3.5 w-3.5" />
+        Translate with Google
+      </a>
+    );
+  }
+
+  if (!state.result) return null;
+
+  return (
+    <div className="mt-2 rounded-md border border-sky-500/25 bg-sky-500/10 p-2.5">
+      <div className="mb-1 flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-sky-700 dark:text-sky-300">
+        <Languages className="h-3.5 w-3.5" />
+        Translated to English
+        {state.result.detectedLanguage ? (
+          <span className="font-medium normal-case tracking-normal opacity-70">
+            from {state.result.detectedLanguage.toUpperCase()}
+          </span>
+        ) : null}
+      </div>
+      <p className="whitespace-pre-wrap text-[13px] leading-[1.5] text-foreground">
+        {state.result.translatedText}
+      </p>
+    </div>
+  );
+}
 
 export function ThreadView({
   ticket,
@@ -1292,6 +1451,9 @@ function TimelineItem({
   // inline in HTML rather than via rawMedia) still get surfaced through
   // the clickable lightbox strip below.
   const inlineImages = extractInlineImages(m.rawMedia, m.bodyText);
+  const translationText = isInbound
+    ? plainTextForTranslation(m.bodyText, m.isHtml)
+    : "";
 
   // Right-aligned (agent / AR) vs left-aligned (buyer). We swap the row
   // direction with `flex-row-reverse` so the avatar always sits on the
@@ -1389,6 +1551,13 @@ function TimelineItem({
             forceHtml={m.isHtml}
             stripImages={inlineImages.length > 0}
           />
+
+          {isInbound && translationText ? (
+            <MessageTranslationPanel
+              messageId={m.id}
+              sourceText={translationText}
+            />
+          ) : null}
 
           {inlineImages.length > 0 && (
             <div className="mt-2 flex flex-wrap gap-2">

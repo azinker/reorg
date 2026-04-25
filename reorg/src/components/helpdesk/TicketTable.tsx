@@ -230,12 +230,12 @@ function CopyInlineButton({
     <button
       type="button"
       onClick={onClick}
-      className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground/70 transition-colors hover:bg-surface-2 hover:text-foreground cursor-pointer"
+      className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md border border-brand/25 bg-brand-muted/60 text-brand shadow-sm transition-colors hover:border-brand/50 hover:bg-brand-muted hover:text-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/30 cursor-pointer"
       title={copied ? "Copied!" : (label ?? `Copy ${value}`)}
       aria-label={label ?? `Copy ${value}`}
     >
       {copied ? (
-        <Check className="h-3 w-3 text-emerald-500" />
+        <Check className="h-3 w-3" />
       ) : (
         <Copy className="h-3 w-3" />
       )}

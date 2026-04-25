@@ -333,6 +333,13 @@ export default function HelpDeskClient() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const lastSelectedListIndexRef = useRef<number>(-1);
+  useEffect(() => {
+    if (!selectedTicketId) return;
+    const idx = tickets.findIndex((t) => t.id === selectedTicketId);
+    if (idx >= 0) lastSelectedListIndexRef.current = idx;
+  }, [selectedTicketId, tickets]);
+
   // Auto-advance: when the selected ticket transitions to RESOLVED (e.g. user
   // sent a "Send + mark Resolved"), jump to the next visible ticket. We track
   // the previous status with a ref so the effect only fires on a real change.
@@ -346,12 +353,14 @@ export default function HelpDeskClient() {
     if (previous == null || previous === current) return;
     if (current !== "RESOLVED") return;
     const idx = tickets.findIndex((t) => t.id === selectedTicket.id);
-    if (idx < 0) return;
+    const anchorIdx = idx >= 0 ? idx : lastSelectedListIndexRef.current;
+    if (anchorIdx < 0) return;
     const isActionable = (t: (typeof tickets)[number]) =>
       t.status !== "RESOLVED" && !t.isArchived && !t.isSpam;
+    const startIdx = idx >= 0 ? idx + 1 : Math.min(anchorIdx, tickets.length);
     const next =
-      tickets.slice(idx + 1).find(isActionable) ??
-      tickets.slice(0, idx).find(isActionable) ??
+      tickets.slice(startIdx).find(isActionable) ??
+      tickets.slice(0, startIdx).find(isActionable) ??
       null;
     if (!next) return;
     selectTicket(next.id);
@@ -367,11 +376,19 @@ export default function HelpDeskClient() {
     if (!selectedTicketId) return -1;
     return tickets.findIndex((t) => t.id === selectedTicketId);
   }, [tickets, selectedTicketId]);
+  const navIndex =
+    selectedIndex >= 0
+      ? selectedIndex
+      : selectedTicketId
+        ? lastSelectedListIndexRef.current
+        : -1;
+  const prevNavIndex = selectedIndex >= 0 ? selectedIndex - 1 : navIndex - 1;
+  const nextNavIndex = selectedIndex >= 0 ? selectedIndex + 1 : navIndex;
   const prevTicketId =
-    selectedIndex > 0 ? tickets[selectedIndex - 1]?.id ?? null : null;
+    prevNavIndex >= 0 ? tickets[prevNavIndex]?.id ?? null : null;
   const nextTicketId =
-    selectedIndex >= 0 && selectedIndex < tickets.length - 1
-      ? tickets[selectedIndex + 1]?.id ?? null
+    nextNavIndex >= 0 && nextNavIndex < tickets.length
+      ? tickets[nextNavIndex]?.id ?? null
       : null;
   const goPrev = prevTicketId
     ? () => selectTicket(prevTicketId)

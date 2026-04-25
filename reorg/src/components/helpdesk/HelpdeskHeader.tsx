@@ -198,7 +198,7 @@ export function HelpdeskHeader({
     ) ?? false;
 
   return (
-    <div className="flex items-center justify-between border-b border-hairline bg-card/95 px-5 py-3 shadow-[0_1px_0_rgb(255_255_255_/_0.03)] backdrop-blur-sm">
+    <div className="flex items-center justify-between border-b border-hairline bg-card/95 px-4 py-2 shadow-[0_1px_0_rgb(255_255_255_/_0.03)] backdrop-blur-sm sm:px-5">
       <div className="flex items-center gap-2">
         <LifeBuoy className="h-5 w-5 text-brand" />
         <h1 className="text-lg font-semibold text-foreground">Help Desk</h1>
@@ -286,7 +286,7 @@ export function HelpdeskHeader({
               if (!ticketOpen) commitNow(searchLocal);
             }}
             placeholder="Search by buyer username or eBay Order ID"
-            className="h-10 w-full rounded-md border border-hairline bg-surface pl-9 pr-9 text-sm text-foreground shadow-sm placeholder:text-muted-foreground transition-colors focus:border-brand/40 focus:outline-none focus:ring-2 focus:ring-brand/20"
+            className="h-9 w-full rounded-md border border-hairline bg-surface pl-9 pr-9 text-sm text-foreground shadow-sm placeholder:text-muted-foreground transition-colors focus:border-brand/40 focus:outline-none focus:ring-2 focus:ring-brand/20"
             aria-label="Search inbox by buyer username or eBay Order ID"
           />
           {searchLocal.length > 0 && (

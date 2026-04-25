@@ -204,7 +204,7 @@ export function TicketReader({
        * so the controls were bumped from h-7 / 11px / 3.5w icons up to
        * h-9 / 13px / 4w icons. Header bar height grows to h-12 to match.
        */}
-      <div className="flex h-12 shrink-0 items-center gap-2 border-b border-hairline bg-card/95 px-3 shadow-[0_1px_0_rgb(255_255_255_/_0.03)] backdrop-blur-sm sm:px-4">
+      <div className="flex min-h-14 shrink-0 items-center gap-2 border-b border-hairline bg-card/95 px-3 py-2 shadow-[0_1px_0_rgb(255_255_255_/_0.03)] backdrop-blur-sm sm:px-4">
         {showBack && onBack && (
           <button
             type="button"
@@ -239,10 +239,76 @@ export function TicketReader({
             <ChevronRight className="h-4 w-4" />
           </button>
         </div>
+        <div className="mx-1 hidden h-8 w-px shrink-0 bg-hairline sm:block" aria-hidden />
+        <div className="min-w-0 flex-1">
+          {ticket ? (
+            <>
+              <h2 className="truncate text-sm font-semibold leading-5 text-foreground sm:text-[15px]">
+                {ticket.subject ?? ticket.ebayItemTitle ?? "(no subject)"}
+              </h2>
+              <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted-foreground">
+                <span className="truncate font-semibold text-foreground">
+                  {ticket.buyerName ?? ticket.buyerUserId ?? "Unknown buyer"}
+                </span>
+                <span
+                  className={cn(
+                    "inline-flex h-5 shrink-0 items-center gap-1.5 rounded-md border px-1.5 text-[10px] font-semibold",
+                    STORE_BADGE_CLASS[ticket.channel] ??
+                      "border-hairline bg-surface text-muted-foreground",
+                  )}
+                  title={ticket.integrationLabel}
+                >
+                  <img
+                    src="/logos/ebay.svg"
+                    alt="eBay"
+                    width={24}
+                    height={11}
+                    className="h-2.5 w-auto shrink-0"
+                  />
+                  {storeDisplayLabel(ticket)}
+                </span>
+                {ticket.ebayOrderNumber && (
+                  <span className="truncate font-medium">
+                    Order #{ticket.ebayOrderNumber}
+                  </span>
+                )}
+              </div>
+            </>
+          ) : (
+            <p className="text-xs text-muted-foreground">
+              {loading ? "Loading conversation..." : "No ticket selected."}
+            </p>
+          )}
+        </div>
+        <div className="hidden shrink-0 items-center gap-1.5 sm:flex">
+          {ticket?.ebayOrderNumber && (
+            <a
+              href={`https://www.ebay.com/mesh/ord/details?orderid=${ticket.ebayOrderNumber}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex h-7 items-center gap-1 rounded-md border border-brand/30 bg-surface px-2 text-[11px] text-muted-foreground shadow-sm transition-colors hover:border-brand/60 hover:bg-brand/10 hover:text-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/30 cursor-pointer"
+              title="Open this message thread on eBay in a new tab"
+            >
+              <ExternalLink className="h-3 w-3" /> View message
+            </a>
+          )}
+
+          {ticket?.ebayItemId && (
+            <a
+              href={`https://www.ebay.com/itm/${ticket.ebayItemId}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex h-7 items-center gap-1 rounded-md border border-hairline bg-surface px-2 text-[11px] text-muted-foreground shadow-sm transition-colors hover:border-brand/35 hover:bg-surface-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/30 cursor-pointer"
+              title="Open this item on eBay in a new tab"
+            >
+              <ExternalLink className="h-3 w-3" /> View item
+            </a>
+          )}
+        </div>
       </div>
 
       {/* Ticket info row (subject / buyer / channel / order #). */}
-      <div className="flex min-h-16 shrink-0 items-center gap-3 border-b border-hairline bg-card/90 px-3 py-3 sm:px-4">
+      <div className="hidden">
         <div className="min-w-0 flex-1">
           {ticket ? (
             <>
