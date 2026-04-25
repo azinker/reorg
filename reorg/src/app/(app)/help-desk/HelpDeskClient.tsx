@@ -2,7 +2,12 @@
 
 import { startTransition, useCallback, useEffect, useRef, useState, useMemo } from "react";
 import { useSearchParams } from "next/navigation";
-import { useHelpdesk, type HelpdeskFolderKey } from "@/hooks/use-helpdesk";
+import {
+  useHelpdesk,
+  type HelpdeskFolderKey,
+  type HelpdeskTicketDetail,
+  type HelpdeskTicketSummary,
+} from "@/hooks/use-helpdesk";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { HelpdeskHeader } from "@/components/helpdesk/HelpdeskHeader";
 import { FolderSidebar, type AgentFolderData } from "@/components/helpdesk/FolderSidebar";
@@ -297,6 +302,26 @@ export default function HelpDeskClient() {
     [syncStatus?.flags.safeMode],
   );
 
+  const sidebarCounts = useMemo(() => {
+    if (!agent?.id) return counts;
+
+    const visibleMine = new Set<string>();
+    for (const ticket of tickets) {
+      if (isActiveTicketAssignedToAgent(ticket, agent.id)) {
+        visibleMine.add(ticket.id);
+      }
+    }
+    if (selectedTicket && isActiveTicketAssignedToAgent(selectedTicket, agent.id)) {
+      visibleMine.add(selectedTicket.id);
+    }
+
+    if (visibleMine.size === 0) return counts;
+    return {
+      ...counts,
+      my_tickets: Math.max(counts.my_tickets ?? 0, visibleMine.size),
+    };
+  }, [agent?.id, counts, selectedTicket, tickets]);
+
   // Apply deep-link selection once the hook has loaded its setter.
   useEffect(() => {
     const id = initialTicketIdRef.current;
@@ -450,7 +475,7 @@ export default function HelpDeskClient() {
       <div className="flex flex-1 overflow-hidden">
         <FolderSidebar
           active={folder}
-          counts={counts}
+          counts={sidebarCounts}
           onChange={(f) => {
             handleSystemFolderChange(f);
             selectTicket(null);
@@ -628,4 +653,32 @@ export default function HelpDeskClient() {
       </div>
     </div>
   );
+}
+
+type CountCandidateTicket = HelpdeskTicketSummary | HelpdeskTicketDetail;
+
+function isActiveTicketAssignedToAgent(
+  ticket: CountCandidateTicket,
+  agentId: string,
+): boolean {
+  if (ticket.primaryAssignee?.id !== agentId && !hasAdditionalAssignee(ticket, agentId)) {
+    return false;
+  }
+  if (ticket.isArchived || ticket.isSpam) return false;
+  if (ticket.type === "SYSTEM") return false;
+  if (ticket.status !== "NEW" && ticket.status !== "TO_DO" && ticket.status !== "WAITING") {
+    return false;
+  }
+  if (ticket.snoozedUntil && new Date(ticket.snoozedUntil).getTime() > Date.now()) {
+    return false;
+  }
+  return !ticket.tags.some((tag) => tag.name === "Buyer Request Cancellation");
+}
+
+function hasAdditionalAssignee(
+  ticket: CountCandidateTicket,
+  agentId: string,
+): boolean {
+  if (!("additionalAssignees" in ticket)) return false;
+  return ticket.additionalAssignees.some((assignee) => assignee.user.id === agentId);
 }
