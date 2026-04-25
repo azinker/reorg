@@ -19,22 +19,25 @@ const createSchema = z.object({
   name: z.string().trim().min(1).max(120),
   bodyText: z.string().trim().min(1).max(10_000),
   isShared: z.boolean().default(true),
+  isActive: z.boolean().default(true),
   shortcut: z.string().trim().max(32).nullable().optional(),
   language: z.enum(["en", "es"]).nullable().optional(),
   description: z.string().trim().max(280).nullable().optional(),
 });
 
-export async function GET(_request: NextRequest) {
+export async function GET(request: NextRequest) {
   const session = await auth();
   if (!session?.user?.id) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+  const includeInactive =
+    request.nextUrl.searchParams.get("includeInactive") === "1";
   const items = await db.helpdeskTemplate.findMany({
     where: {
-      isActive: true,
+      ...(includeInactive ? {} : { isActive: true }),
       OR: [{ isShared: true }, { ownerUserId: session.user.id }],
     },
-    orderBy: [{ isShared: "desc" }, { sortOrder: "asc" }, { name: "asc" }],
+    orderBy: [{ name: "asc" }, { sortOrder: "asc" }],
   });
   return NextResponse.json({
     data: items.map((t) => ({
@@ -47,6 +50,7 @@ export async function GET(_request: NextRequest) {
       language: t.language,
       description: t.description,
       sortOrder: t.sortOrder,
+      isActive: t.isActive,
       isMine: t.ownerUserId === session.user.id,
       createdAt: t.createdAt,
       updatedAt: t.updatedAt,
@@ -72,6 +76,7 @@ export async function POST(request: NextRequest) {
       name: parsed.data.name,
       bodyText: parsed.data.bodyText,
       isShared: parsed.data.isShared,
+      isActive: parsed.data.isActive,
       shortcut: parsed.data.shortcut ?? null,
       language: parsed.data.language ?? null,
       description: parsed.data.description ?? null,

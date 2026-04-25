@@ -53,30 +53,41 @@ export function TemplatePicker({ ctx, onPick, disabled }: TemplatePickerProps) {
     return () => window.removeEventListener("mousedown", onClick);
   }, [open]);
 
-  // Lazy-load on first open
+  // Refresh on every open so newly created shared templates are available
+  // without a full Help Desk reload.
   useEffect(() => {
-    if (!open || items.length > 0) return;
+    if (!open) return;
+    const ac = new AbortController();
     setLoading(true);
-    fetch("/api/helpdesk/templates", { cache: "no-store" })
+    setError(null);
+    fetch("/api/helpdesk/templates", { cache: "no-store", signal: ac.signal })
       .then((r) => {
         if (!r.ok) throw new Error(`Templates ${r.status}`);
         return r.json() as Promise<{ data: TemplateRow[] }>;
       })
-      .then((j) => setItems(j.data ?? []))
-      .catch((e: unknown) =>
-        setError(e instanceof Error ? e.message : String(e)),
+      .then((j) =>
+        setItems(
+          (j.data ?? []).slice().sort((a, b) =>
+            a.name.localeCompare(b.name, undefined, { sensitivity: "base" }),
+          ),
+        ),
       )
+      .catch((e: unknown) => {
+        if (e instanceof DOMException && e.name === "AbortError") return;
+        setError(e instanceof Error ? e.message : String(e));
+      })
       .finally(() => setLoading(false));
-  }, [open, items.length]);
+    return () => ac.abort();
+  }, [open]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return items;
-    return items.filter(
-      (t) =>
-        t.name.toLowerCase().includes(q) ||
-        (t.shortcut?.toLowerCase().includes(q) ?? false) ||
-        t.bodyText.toLowerCase().includes(q),
+    return items.filter((t) =>
+      fuzzyMatch(
+        [t.name, t.shortcut, t.description, t.bodyText].filter(Boolean).join(" "),
+        q,
+      ),
     );
   }, [items, search]);
 
@@ -175,4 +186,15 @@ export function TemplatePicker({ ctx, onPick, disabled }: TemplatePickerProps) {
       )}
     </div>
   );
+}
+
+function fuzzyMatch(value: string, query: string): boolean {
+  const haystack = value.toLowerCase();
+  let index = 0;
+  for (const char of query.toLowerCase()) {
+    index = haystack.indexOf(char, index);
+    if (index === -1) return false;
+    index += 1;
+  }
+  return true;
 }

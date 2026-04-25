@@ -64,6 +64,8 @@ export interface HelpdeskPrefs {
   autoMarkRead: boolean;
   density: "comfortable" | "compact";
   layout: HelpdeskLayout;
+  composerSticky: boolean;
+  composerHeightPx: number;
   threadWidthPct: number;
   inboxWidthPct: number;
   defaultSendStatus: HelpdeskDefaultSendStatus;
@@ -76,6 +78,8 @@ const DEFAULTS: HelpdeskPrefs = {
   autoMarkRead: true,
   density: "comfortable",
   layout: "split",
+  composerSticky: false,
+  composerHeightPx: 150,
   threadWidthPct: 55,
   inboxWidthPct: 26,
   // v2 spec: replying to a buyer typically means "this is handled" —
@@ -100,6 +104,16 @@ function readPrefs(): HelpdeskPrefs {
       autoMarkRead: typeof parsed.autoMarkRead === "boolean" ? parsed.autoMarkRead : DEFAULTS.autoMarkRead,
       density: parsed.density === "compact" ? "compact" : "comfortable",
       layout: parsed.layout === "list" ? "list" : "split",
+      composerSticky:
+        typeof parsed.composerSticky === "boolean"
+          ? parsed.composerSticky
+          : DEFAULTS.composerSticky,
+      composerHeightPx: clampInt(
+        parsed.composerHeightPx,
+        96,
+        360,
+        DEFAULTS.composerHeightPx,
+      ),
       threadWidthPct: clampInt(parsed.threadWidthPct, 35, 90, DEFAULTS.threadWidthPct),
       inboxWidthPct: clampInt(parsed.inboxWidthPct, 15, 45, DEFAULTS.inboxWidthPct),
       defaultSendStatus:
@@ -147,6 +161,8 @@ function writePrefs(p: HelpdeskPrefs, previous?: HelpdeskPrefs) {
     prev.autoMarkRead !== p.autoMarkRead ||
     prev.density !== p.density ||
     prev.layout !== p.layout ||
+    prev.composerSticky !== p.composerSticky ||
+    prev.composerHeightPx !== p.composerHeightPx ||
     prev.threadWidthPct !== p.threadWidthPct ||
     prev.inboxWidthPct !== p.inboxWidthPct ||
     prev.defaultSendStatus !== p.defaultSendStatus ||
@@ -404,6 +420,36 @@ export function HelpdeskSettingsDialog({ open, onClose }: HelpdeskSettingsDialog
               checked={prefs.autoAdvance}
               onChange={(v) => update("autoAdvance", v)}
             />
+          </Field>
+
+          <Field
+            label="Sticky composer"
+            description="Keep the composer expanded when switching tickets."
+          >
+            <Toggle
+              checked={prefs.composerSticky}
+              onChange={(v) => update("composerSticky", v)}
+            />
+          </Field>
+
+          <Field
+            label="Composer height"
+            description="Default message box height. You can also drag the composer handle."
+          >
+            <div className="flex items-center gap-2">
+              <input
+                type="range"
+                min={96}
+                max={360}
+                step={12}
+                value={prefs.composerHeightPx}
+                onChange={(e) => update("composerHeightPx", Number(e.target.value))}
+                className="w-28 cursor-pointer accent-brand"
+              />
+              <span className="w-12 text-right text-foreground">
+                {prefs.composerHeightPx}px
+              </span>
+            </div>
           </Field>
 
           <Field

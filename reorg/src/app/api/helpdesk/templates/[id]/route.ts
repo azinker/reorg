@@ -1,6 +1,6 @@
 /**
- * PATCH/DELETE a single template. Authors can edit their own; only Admins can
- * touch shared templates.
+ * PATCH/DELETE a single template. Shared templates are team-owned; any
+ * signed-in agent can maintain them from the Help Desk Templates page.
  */
 
 import { NextResponse, type NextRequest } from "next/server";
@@ -32,7 +32,7 @@ async function loadAndCheck(id: string, session: { user: { id: string; role: str
   const tpl = await db.helpdeskTemplate.findUnique({ where: { id } });
   if (!tpl) return { tpl: null, allowed: false };
   const isAdmin = session.user.role === "ADMIN";
-  if (tpl.isShared && !isAdmin) return { tpl, allowed: false };
+  if (tpl.isShared) return { tpl, allowed: true };
   if (!tpl.isShared && tpl.ownerUserId !== session.user.id && !isAdmin)
     return { tpl, allowed: false };
   return { tpl, allowed: true };

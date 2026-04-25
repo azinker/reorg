@@ -466,6 +466,7 @@ export default function HelpDeskClient() {
           onAgentFolderCreate={handleAgentFolderCreate}
           onAgentFolderDelete={handleAgentFolderDelete}
           onAgentFolderRename={handleAgentFolderRename}
+          agent={agent}
         />
 
         {prefs.layout === "list" ? (

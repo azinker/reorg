@@ -363,6 +363,34 @@ export default function HelpdeskProfilePage() {
             />
           </PrefRow>
           <PrefRow
+            label="Sticky composer"
+            hint="Keep the composer expanded when switching tickets."
+          >
+            <PrefToggle
+              checked={prefs.composerSticky}
+              onChange={(v) => patchPrefs("composerSticky", v)}
+            />
+          </PrefRow>
+          <PrefRow
+            label="Composer height"
+            hint="Default message box height. You can also drag the composer handle."
+          >
+            <div className="flex items-center gap-2">
+              <input
+                type="range"
+                min={96}
+                max={360}
+                step={12}
+                value={prefs.composerHeightPx}
+                onChange={(e) => patchPrefs("composerHeightPx", Number(e.target.value))}
+                className="w-40 cursor-pointer accent-brand"
+              />
+              <span className="w-12 text-right text-sm text-foreground">
+                {prefs.composerHeightPx}px
+              </span>
+            </div>
+          </PrefRow>
+          <PrefRow
             label="Auto-mark read"
             hint="Clear the unread badge as soon as you open a ticket."
           >

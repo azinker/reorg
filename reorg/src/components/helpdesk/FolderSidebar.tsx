@@ -42,7 +42,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { cn } from "@/lib/utils";
 import {
-  User,
   ListChecks,
   Sparkles,
   PauseCircle,
@@ -63,11 +62,13 @@ import {
   Inbox,
   FolderPlus,
   Folder,
+  FileText,
   Pencil,
   Trash2,
   X,
 } from "lucide-react";
 import type { HelpdeskFolderKey } from "@/hooks/use-helpdesk";
+import { Avatar, type AvatarUser } from "@/components/ui/avatar";
 
 export interface AgentFolderData {
   id: string;
@@ -123,7 +124,7 @@ const PRIMARY: FolderRow[] = [
   {
     key: "my_tickets",
     label: "My Tickets",
-    icon: User,
+    icon: UserCircle2,
     tooltip:
       "Tickets where YOU are the assigned owner. You picked these up or they were assigned to you specifically — your queue.",
     iconAccent: "text-violet-500",
@@ -150,6 +151,13 @@ const ALL_PARENT: FolderRow = {
 // links), but we no longer render it as its own row — duplicate counts
 // would just confuse the agent.
 const ALL_CHILDREN: FolderRow[] = [
+  {
+    key: "pre_sales",
+    label: "Pre-sales",
+    tooltip:
+      "Buyer questions before a purchase. Higher priority because fast replies often convert.",
+    child: true,
+  },
   {
     key: "all_to_do",
     label: "To Do",
@@ -322,6 +330,7 @@ interface FolderSidebarProps {
   onAgentFolderCreate: (name: string, color: string) => Promise<void>;
   onAgentFolderDelete: (folderId: string) => Promise<void>;
   onAgentFolderRename: (folderId: string, name: string) => Promise<void>;
+  agent?: AvatarUser | null;
 }
 
 export function FolderSidebar({
@@ -337,6 +346,7 @@ export function FolderSidebar({
   onAgentFolderCreate,
   onAgentFolderDelete,
   onAgentFolderRename,
+  agent = null,
 }: FolderSidebarProps) {
   const [tagsOpen, setTagsOpen] = useState(true);
   const [agentFoldersOpen, setAgentFoldersOpen] = useState(true);
@@ -413,13 +423,14 @@ export function FolderSidebar({
       >
         {/* Section A: primary folders */}
         <ul className="space-y-0.5">
-          {PRIMARY.map((f) => (
+          {PRIMARY.filter((f) => f.key !== "pre_sales").map((f) => (
             <FolderItem
               key={f.key}
               row={f}
               active={active === f.key && !activeAgentFolderId}
               count={counts[f.key] ?? 0}
               onSelect={onChange}
+              agent={agent}
             />
           ))}
         </ul>
@@ -517,6 +528,14 @@ export function FolderSidebar({
           <span>Filters</span>
         </Link>
         <Link
+          href="/help-desk/templates"
+          className="flex items-center gap-2 rounded-md px-2 py-1.5 text-foreground transition-colors hover:bg-surface-2"
+          title="Manage shared reply templates."
+        >
+          <FileText className="h-3.5 w-3.5 shrink-0 text-sky-500" />
+          <span>Templates</span>
+        </Link>
+        <Link
           href="/help-desk/profile"
           className="flex items-center gap-2 rounded-md px-2 py-1.5 text-foreground transition-colors hover:bg-surface-2"
           title="Your agent profile — name, handle, avatar, signature."
@@ -546,10 +565,12 @@ interface FolderItemProps {
   active: boolean;
   count: number;
   onSelect: (key: HelpdeskFolderKey) => void;
+  agent?: AvatarUser | null;
 }
 
-function FolderItem({ row, active, count, onSelect }: FolderItemProps) {
+function FolderItem({ row, active, count, onSelect, agent }: FolderItemProps) {
   const Icon = row.icon;
+  const showAgentAvatar = row.key === "my_tickets" && agent;
   // Indented children (New / To Do / Waiting under All Tickets) render in
   // eDesk's plain-text style: no icon, lighter weight, and a right-aligned
   // count rendered as plain text rather than a pill. Parent / top-level
@@ -579,7 +600,9 @@ function FolderItem({ row, active, count, onSelect }: FolderItemProps) {
             : "text-foreground hover:bg-surface-2",
         )}
       >
-        {Icon ? (
+        {showAgentAvatar ? (
+          <Avatar user={agent} size="xs" />
+        ) : Icon ? (
           <Icon
             className={cn(
               "h-3.5 w-3.5 shrink-0",

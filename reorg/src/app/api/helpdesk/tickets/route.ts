@@ -7,7 +7,7 @@ import {
   type HelpdeskFolderKey,
 } from "@/lib/helpdesk/folders";
 import { resolveHelpdeskSearch } from "@/lib/helpdesk/search";
-import { Platform, type Prisma } from "@prisma/client";
+import { HelpdeskOutboundStatus, Platform, type Prisma } from "@prisma/client";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -163,9 +163,15 @@ export async function GET(request: NextRequest) {
   // `<div id="UserInputtedText...">` block; the exploded sub-messages don't).
   // Done as a single batched query keyed off the page's ticket ids so the
   // inbox stays one-roundtrip even at limit=50.
-  const previewByTicket = new Map<string, string>();
+  const previewByTicket = new Map<string, { preview: string; at: Date }>();
   if (page.length > 0) {
     const ticketIds = page.map((t) => t.id);
+    function setLatestPreview(ticketId: string, preview: string, at: Date) {
+      if (!preview) return;
+      const existing = previewByTicket.get(ticketId);
+      if (existing && existing.at.getTime() >= at.getTime()) return;
+      previewByTicket.set(ticketId, { preview, at });
+    }
     // "Latest update" should only ever surface a real buyer or agent
     // message — never an eBay system notification (Return approved,
     // Case closed, etc.) and never the raw digest envelope / stripped
@@ -184,13 +190,42 @@ export async function GET(request: NextRequest) {
         ],
       },
       orderBy: { sentAt: "desc" },
-      select: { ticketId: true, bodyText: true, isHtml: true },
+      select: { ticketId: true, bodyText: true, isHtml: true, sentAt: true },
     });
     for (const m of recent) {
-      if (previewByTicket.has(m.ticketId)) continue;
-      previewByTicket.set(
+      setLatestPreview(
         m.ticketId,
         summarizeBody(m.bodyText, m.isHtml),
+        m.sentAt,
+      );
+    }
+
+    // Show agent replies immediately after Send, even before the outbound
+    // worker/sync cycle has materialized them as HelpdeskMessage rows.
+    const outbound = await db.helpdeskOutboundJob.findMany({
+      where: {
+        ticketId: { in: ticketIds },
+        status: {
+          in: [
+            HelpdeskOutboundStatus.PENDING,
+            HelpdeskOutboundStatus.SENDING,
+            HelpdeskOutboundStatus.SENT,
+          ],
+        },
+      },
+      orderBy: [{ sentAt: "desc" }, { createdAt: "desc" }],
+      select: {
+        ticketId: true,
+        bodyText: true,
+        sentAt: true,
+        createdAt: true,
+      },
+    });
+    for (const job of outbound) {
+      setLatestPreview(
+        job.ticketId,
+        summarizeBody(job.bodyText, false),
+        job.sentAt ?? job.createdAt,
       );
     }
   }
@@ -208,7 +243,7 @@ export async function GET(request: NextRequest) {
       ebayItemTitle: t.ebayItemTitle,
       ebayOrderNumber: t.ebayOrderNumber,
       subject: t.subject,
-      latestPreview: previewByTicket.get(t.id) ?? null,
+      latestPreview: previewByTicket.get(t.id)?.preview ?? null,
       kind: t.kind,
       type: t.type,
       typeOverridden: t.typeOverridden,

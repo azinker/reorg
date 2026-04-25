@@ -35,6 +35,10 @@ import {
   Paperclip,
   Zap,
   ChevronDown,
+  GripHorizontal,
+  Pin,
+  PinOff,
+  Clock3,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type {
@@ -45,7 +49,10 @@ import type {
 import { TemplatePicker } from "@/components/helpdesk/TemplatePicker";
 import { QuickActionMenu, QUICK_ACTIONS } from "@/components/helpdesk/QuickActionMenu";
 import { fillTemplate, type TemplateContext } from "@/lib/helpdesk/template-fill";
-import { useHelpdeskPrefs } from "@/components/helpdesk/HelpdeskSettingsDialog";
+import {
+  updateHelpdeskPrefs,
+  useHelpdeskPrefs,
+} from "@/components/helpdesk/HelpdeskSettingsDialog";
 
 type ComposerMode = "REPLY" | "NOTE" | "EXTERNAL";
 type StatusChoice = "WAITING" | "RESOLVED" | "NONE";
@@ -61,6 +68,11 @@ const STATUS_SHORT: Record<StatusChoice, string> = {
   WAITING: "Waiting",
   NONE: "Send",
 };
+
+const COMPOSER_HEIGHT_MIN = 96;
+const COMPOSER_HEIGHT_MAX = 360;
+const SEND_DELAY_MIN = 1;
+const SEND_DELAY_MAX = 10;
 
 interface ComposerProps {
   ticket: HelpdeskTicketDetail;
@@ -112,6 +124,7 @@ export function Composer({
    * automatically when the user starts typing or when they explicitly click.
    */
   const [expanded, setExpanded] = useState(false);
+  const [composerHeight, setComposerHeight] = useState(prefs.composerHeightPx);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
   // Tracking number for this ticket's related order. Populated lazily from
@@ -127,6 +140,12 @@ export function Composer({
   const flags = syncStatus?.flags;
   const safeMode = flags?.safeMode ?? true;
 
+  function updateSendDelaySeconds(value: number) {
+    updateHelpdeskPrefs({
+      sendDelaySeconds: clampNumber(value, SEND_DELAY_MIN, SEND_DELAY_MAX),
+    });
+  }
+
   // Reset state when ticket changes
   useEffect(() => {
     setBody("");
@@ -134,10 +153,44 @@ export function Composer({
     setPending(null);
     setStatusChoice(prefs.defaultSendStatus);
     setStatusOverridden(false);
-    setExpanded(false);
+    setExpanded(prefs.composerSticky);
     setStatusMenuOpen(false);
     setOrderTracking({ number: null, carrier: null });
   }, [ticket.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    setComposerHeight(prefs.composerHeightPx);
+  }, [prefs.composerHeightPx]);
+
+  useEffect(() => {
+    if (prefs.composerSticky) setExpanded(true);
+  }, [prefs.composerSticky]);
+
+  function startComposerResize(e: React.MouseEvent<HTMLDivElement>) {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    const startY = e.clientY;
+    const startHeight = composerHeight;
+    let latest = startHeight;
+    document.body.style.cursor = "row-resize";
+    document.body.style.userSelect = "none";
+    function onMove(ev: MouseEvent) {
+      latest = Math.max(
+        COMPOSER_HEIGHT_MIN,
+        Math.min(COMPOSER_HEIGHT_MAX, Math.round(startHeight + startY - ev.clientY)),
+      );
+      setComposerHeight(latest);
+    }
+    function onUp() {
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+      updateHelpdeskPrefs({ composerHeightPx: latest });
+    }
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  }
 
   // Lazily pull the tracking number from the order-context endpoint so the
   // {{trackingNumber}} template token resolves correctly. We only fetch when
@@ -375,7 +428,7 @@ export function Composer({
   // Collapsed pill (eDesk-style). Click to expand into the full composer.
   // Renders at the bottom of the thread pane and replaces all the chrome
   // until the agent commits to typing.
-  if (!expanded && !pending && body.trim().length === 0) {
+  if (!prefs.composerSticky && !expanded && !pending && body.trim().length === 0) {
     const placeholder =
       mode === "NOTE"
         ? "Add a private note…"
@@ -405,6 +458,15 @@ export function Composer({
   return (
     <div className="shrink-0 border-t border-hairline bg-card">
       {archivedBanner}
+      <div
+        role="separator"
+        aria-orientation="horizontal"
+        title="Drag to resize composer"
+        onMouseDown={startComposerResize}
+        className="flex h-2 cursor-row-resize items-center justify-center border-b border-hairline bg-card/70 text-muted-foreground transition-colors hover:bg-surface-2 hover:text-foreground"
+      >
+        <GripHorizontal className="h-3 w-3" />
+      </div>
       {/* Mode tabs */}
       <div className="flex items-center gap-1 border-b border-hairline px-3 py-1.5 text-xs">
         <ModeTab
@@ -430,10 +492,39 @@ export function Composer({
         >
           External
         </ModeTab>
-        <span className="ml-auto text-[10px] text-muted-foreground">
+        <button
+          type="button"
+          onClick={() => updateHelpdeskPrefs({ composerSticky: !prefs.composerSticky })}
+          className={cn(
+            "ml-auto inline-flex h-6 items-center gap-1 rounded-md border px-2 text-[10px] font-medium transition-colors cursor-pointer",
+            prefs.composerSticky
+              ? "border-brand/40 bg-brand-muted text-brand"
+              : "border-hairline bg-surface text-muted-foreground hover:bg-surface-2 hover:text-foreground",
+          )}
+          title={prefs.composerSticky ? "Composer stays open between tickets" : "Keep composer open between tickets"}
+          aria-pressed={prefs.composerSticky}
+        >
+          {prefs.composerSticky ? <Pin className="h-3 w-3" /> : <PinOff className="h-3 w-3" />}
+          Sticky
+        </button>
+        <button
+          type="button"
+          onClick={() => updateHelpdeskPrefs({ autoAdvance: !prefs.autoAdvance })}
+          className={cn(
+            "inline-flex h-6 items-center rounded-md border px-2 text-[10px] font-medium transition-colors cursor-pointer",
+            prefs.autoAdvance
+              ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+              : "border-hairline bg-surface text-muted-foreground hover:bg-surface-2 hover:text-foreground",
+          )}
+          title="After Send + Resolve, jump to the next ticket"
+          aria-pressed={prefs.autoAdvance}
+        >
+          Auto-advance {prefs.autoAdvance ? "On" : "Off"}
+        </button>
+        <span className="text-[10px] text-muted-foreground">
           Plain text only · Markdown is not rendered
         </span>
-        {body.trim().length === 0 && !pending && (
+        {body.trim().length === 0 && !pending && !prefs.composerSticky && (
           <button
             type="button"
             onClick={() => setExpanded(false)}
@@ -553,12 +644,13 @@ export function Composer({
               : "External email body (plain text)…"
         }
         rows={5}
+        style={{ height: composerHeight }}
         disabled={modeMeta.disabled || !!pending}
         className="block w-full resize-none border-0 bg-transparent px-4 py-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-0 disabled:opacity-50"
       />
 
       {/* Footer: template picker + status selector + send button */}
-      <div className="flex items-center gap-2 border-t border-hairline px-3 py-2 text-xs">
+      <div className="flex flex-wrap items-center gap-2 border-t border-hairline px-3 py-2 text-xs">
         {mode !== "NOTE" && (
           <>
             <TemplatePicker
@@ -597,6 +689,21 @@ export function Composer({
                 Attach
               </button>
             )}
+            <label className="inline-flex h-7 items-center gap-1 rounded-md border border-hairline bg-surface px-2 text-[11px] text-muted-foreground">
+              <Clock3 className="h-3.5 w-3.5" />
+              Delay
+              <input
+                type="number"
+                min={SEND_DELAY_MIN}
+                max={SEND_DELAY_MAX}
+                value={sendDelaySeconds}
+                onChange={(e) => updateSendDelaySeconds(Number(e.target.value))}
+                disabled={sendDelayOverride != null || !!pending}
+                className="h-5 w-9 rounded border border-hairline bg-card px-1 text-center text-[11px] text-foreground outline-none focus:border-brand/50 disabled:opacity-50"
+                aria-label="Send delay seconds"
+              />
+              <span>s</span>
+            </label>
           </>
         )}
         <span className="ml-auto text-[10px] text-muted-foreground">
@@ -604,7 +711,7 @@ export function Composer({
           {mode !== "NOTE" && (
             <>
               {" · "}
-              {sendDelaySeconds}s send delay
+              queues for {sendDelaySeconds}s
             </>
           )}
           {" · ⌘/Ctrl+Enter to send"}
@@ -708,6 +815,11 @@ export function Composer({
       </div>
     </div>
   );
+}
+
+function clampNumber(value: number, min: number, max: number): number {
+  if (!Number.isFinite(value)) return min;
+  return Math.max(min, Math.min(max, Math.round(value)));
 }
 
 function ticketToContext(
