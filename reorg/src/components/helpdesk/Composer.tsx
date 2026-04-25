@@ -69,7 +69,7 @@ const STATUS_SHORT: Record<StatusChoice, string> = {
   NONE: "Send",
 };
 
-const COMPOSER_HEIGHT_MIN = 96;
+const COMPOSER_HEIGHT_MIN = 72;
 const COMPOSER_HEIGHT_MAX = 360;
 const SEND_DELAY_MIN = 0;
 const SEND_DELAY_MAX = 10;
@@ -321,6 +321,10 @@ export function Composer({
   );
 
   const ticketIsArchived = ticket.isArchived;
+  const effectiveComposerHeight =
+    body.trim().length === 0 && !pending
+      ? Math.min(composerHeight, 76)
+      : composerHeight;
 
   // Archived tickets can still be replied to — the server will un-archive
   // the ticket on send (per user decision `unarchive_waiting`). We surface
@@ -524,7 +528,7 @@ export function Composer({
         <GripHorizontal className="h-3 w-3" />
       </div>
       {/* Mode tabs */}
-      <div className="flex flex-wrap items-center gap-1.5 border-b border-hairline bg-card/60 px-3 py-2 text-xs">
+      <div className="flex flex-wrap items-center gap-1.5 border-b border-hairline bg-card/60 px-3 py-1.5 text-xs">
         <div className="inline-flex rounded-md border border-hairline bg-surface p-0.5">
           <ModeTab
             active={mode === "REPLY"}
@@ -631,7 +635,7 @@ export function Composer({
         hides them — internal notes don't have a tracking number to share.
       */}
       {mode !== "NOTE" && !pending && !modeMeta.disabled && (
-        <div className="flex flex-wrap items-center gap-1.5 border-b border-hairline bg-surface/40 px-4 py-2">
+        <div className="flex flex-wrap items-center gap-1.5 border-b border-hairline bg-surface/40 px-4 py-1.5">
           {QUICK_ACTIONS.slice(0, 3).map((a) => (
             <button
               key={a.id}
@@ -670,13 +674,13 @@ export function Composer({
               : "External email body (plain text)…"
         }
         rows={5}
-        style={{ height: composerHeight }}
+        style={{ height: effectiveComposerHeight }}
         disabled={modeMeta.disabled || !!pending}
-        className="block w-full resize-none border-0 bg-transparent px-4 py-3 text-sm leading-6 text-foreground placeholder:text-muted-foreground transition-colors focus:bg-background/20 focus:outline-none focus:ring-0 disabled:opacity-50"
+        className="block w-full resize-none border-0 bg-transparent px-4 py-2 text-sm leading-6 text-foreground placeholder:text-muted-foreground transition-colors focus:bg-background/20 focus:outline-none focus:ring-0 disabled:opacity-50"
       />
 
       {/* Footer: template picker + status selector + send button */}
-      <div className="flex flex-wrap items-center gap-2 border-t border-hairline bg-card/80 px-3 py-2 text-xs">
+      <div className="flex flex-wrap items-center gap-2 border-t border-hairline bg-card/80 px-3 py-1.5 text-xs">
         {mode !== "NOTE" && (
           <>
             <TemplatePicker
@@ -779,7 +783,7 @@ export function Composer({
               onClick={handleSubmit}
               disabled={!canSubmit || modeMeta.disabled}
               className={cn(
-                "inline-flex h-9 min-w-[8.75rem] items-center justify-center gap-1.5 rounded-l-md border border-r-0 border-brand px-4 text-sm font-semibold transition-colors cursor-pointer",
+                "inline-flex h-9 min-w-[12rem] items-center justify-center gap-1.5 rounded-l-md border border-r-0 border-brand px-5 text-sm font-semibold transition-colors cursor-pointer",
                 canSubmit && !modeMeta.disabled
                   ? "bg-brand text-brand-foreground hover:opacity-90"
                   : "border-hairline bg-surface-2 text-muted-foreground",
@@ -799,7 +803,7 @@ export function Composer({
               disabled={!!pending || modeMeta.disabled}
               aria-label="Choose send action"
               className={cn(
-                "inline-flex h-9 w-8 items-center justify-center rounded-r-md border text-xs cursor-pointer",
+                "inline-flex h-9 w-9 items-center justify-center rounded-r-md border text-xs cursor-pointer",
                 canSubmit && !modeMeta.disabled
                   ? "border-brand bg-brand text-brand-foreground hover:opacity-90"
                   : "border-hairline bg-surface-2 text-muted-foreground",

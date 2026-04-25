@@ -204,7 +204,7 @@ export function TicketReader({
        * so the controls were bumped from h-7 / 11px / 3.5w icons up to
        * h-9 / 13px / 4w icons. Header bar height grows to h-12 to match.
        */}
-      <div className="flex min-h-14 shrink-0 items-center gap-2 border-b border-hairline bg-card/95 px-3 py-2 shadow-[0_1px_0_rgb(255_255_255_/_0.03)] backdrop-blur-sm sm:px-4">
+      <div className="flex min-h-12 shrink-0 items-center gap-2 border-b border-hairline bg-card/95 px-3 py-1.5 shadow-[0_1px_0_rgb(255_255_255_/_0.03)] backdrop-blur-sm sm:px-4">
         {showBack && onBack && (
           <button
             type="button"
@@ -240,7 +240,7 @@ export function TicketReader({
           </button>
         </div>
         <div className="mx-1 hidden h-8 w-px shrink-0 bg-hairline sm:block" aria-hidden />
-        <div className="min-w-0 flex-1">
+        <div className="min-w-[14rem] flex-1">
           {ticket ? (
             <>
               <h2 className="truncate text-sm font-semibold leading-5 text-foreground sm:text-[15px]">
@@ -280,6 +280,13 @@ export function TicketReader({
             </p>
           )}
         </div>
+        <TicketTriageBar
+          ticket={ticket}
+          onMutated={onSent}
+          agentFolders={agentFolders}
+          embedded
+          className="hidden xl:flex"
+        />
         <div className="hidden shrink-0 items-center gap-1.5 sm:flex">
           {ticket?.ebayOrderNumber && (
             <a
@@ -381,7 +388,12 @@ export function TicketReader({
        * when no ticket is selected (controls disable themselves) so the
        * layout doesn't reflow on selection change.
        */}
-      <TicketTriageBar ticket={ticket} onMutated={onSent} agentFolders={agentFolders} />
+      <TicketTriageBar
+        ticket={ticket}
+        onMutated={onSent}
+        agentFolders={agentFolders}
+        className="xl:hidden"
+      />
 
       {/* Thread + Context split */}
       <div className="flex flex-1 overflow-hidden">

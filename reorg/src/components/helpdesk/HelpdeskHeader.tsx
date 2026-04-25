@@ -198,10 +198,15 @@ export function HelpdeskHeader({
     ) ?? false;
 
   return (
-    <div className="flex items-center justify-between border-b border-hairline bg-card/95 px-4 py-2 shadow-[0_1px_0_rgb(255_255_255_/_0.03)] backdrop-blur-sm sm:px-5">
+    <div
+      className={cn(
+        "flex items-center justify-between border-b border-hairline bg-card/95 px-4 shadow-[0_1px_0_rgb(255_255_255_/_0.03)] backdrop-blur-sm sm:px-5",
+        ticketOpen ? "py-1.5" : "py-2",
+      )}
+    >
       <div className="flex items-center gap-2">
-        <LifeBuoy className="h-5 w-5 text-brand" />
-        <h1 className="text-lg font-semibold text-foreground">Help Desk</h1>
+        <LifeBuoy className={cn("text-brand", ticketOpen ? "h-4 w-4" : "h-5 w-5")} />
+        <h1 className={cn("font-semibold text-foreground", ticketOpen ? "text-base" : "text-lg")}>Help Desk</h1>
         {safeMode ? (
           <span
             className="inline-flex items-center gap-1 rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider text-amber-700 dark:text-amber-300"
@@ -286,7 +291,10 @@ export function HelpdeskHeader({
               if (!ticketOpen) commitNow(searchLocal);
             }}
             placeholder="Search by buyer username or eBay Order ID"
-            className="h-9 w-full rounded-md border border-hairline bg-surface pl-9 pr-9 text-sm text-foreground shadow-sm placeholder:text-muted-foreground transition-colors focus:border-brand/40 focus:outline-none focus:ring-2 focus:ring-brand/20"
+            className={cn(
+              "w-full rounded-md border border-hairline bg-surface pl-9 pr-9 text-sm text-foreground shadow-sm placeholder:text-muted-foreground transition-colors focus:border-brand/40 focus:outline-none focus:ring-2 focus:ring-brand/20",
+              ticketOpen ? "h-8" : "h-9",
+            )}
             aria-label="Search inbox by buyer username or eBay Order ID"
           />
           {searchLocal.length > 0 && (

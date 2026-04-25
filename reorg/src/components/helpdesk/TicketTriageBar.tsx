@@ -106,12 +106,16 @@ interface TicketTriageBarProps {
   ticket: HelpdeskTicketDetail | null;
   onMutated: () => void;
   agentFolders?: AgentFolderOption[];
+  embedded?: boolean;
+  className?: string;
 }
 
 export function TicketTriageBar({
   ticket,
   onMutated,
   agentFolders = [],
+  embedded = false,
+  className,
 }: TicketTriageBarProps) {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -211,7 +215,14 @@ export function TicketTriageBar({
   // of the message list. The tint is intentionally faint (≤8% alpha) so
   // it never competes with the action buttons themselves.
   return (
-    <div className="flex min-h-10 shrink-0 flex-wrap items-center gap-1.5 border-b border-hairline bg-card/90 px-3 py-1.5 shadow-[0_1px_0_rgb(255_255_255_/_0.03)] backdrop-blur-sm sm:px-4">
+    <div
+      className={cn(
+        embedded
+          ? "flex min-w-0 shrink-0 flex-wrap items-center gap-1.5"
+          : "flex min-h-10 shrink-0 flex-wrap items-center gap-1.5 border-b border-hairline bg-card/90 px-3 py-1.5 shadow-[0_1px_0_rgb(255_255_255_/_0.03)] backdrop-blur-sm sm:px-4",
+        className,
+      )}
+    >
       <TypeMenu
         value={ticket?.type ?? null}
         disabled={disabled}
@@ -380,6 +391,7 @@ export function TicketTriageBar({
         ticket={ticket}
         disabled={disabled}
         busy={busy === "markRead"}
+        pushRight={!embedded}
         onMarkRead={(isRead) =>
           runBatch({ action: "markRead", isRead }, "markRead")
         }
@@ -420,11 +432,13 @@ function CurrentFolderPill({
   ticket,
   disabled,
   busy,
+  pushRight = true,
   onMarkRead,
 }: {
   ticket: HelpdeskTicketDetail | null;
   disabled: boolean;
   busy: boolean;
+  pushRight?: boolean;
   onMarkRead: (isRead: boolean) => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -467,7 +481,7 @@ function CurrentFolderPill({
   const isUnread = ticket.unreadCount > 0;
 
   return (
-    <div ref={ref} className="relative ml-auto">
+    <div ref={ref} className={cn("relative", pushRight && "ml-auto")}>
       <button
         type="button"
         disabled={disabled}
