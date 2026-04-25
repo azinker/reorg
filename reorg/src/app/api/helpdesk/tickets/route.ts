@@ -166,13 +166,21 @@ export async function GET(request: NextRequest) {
   const previewByTicket = new Map<string, string>();
   if (page.length > 0) {
     const ticketIds = page.map((t) => t.id);
+    // "Latest update" should only ever surface a real buyer or agent
+    // message — never an eBay system notification (Return approved,
+    // Case closed, etc.) and never the raw digest envelope / stripped
+    // stub. We identify system messages by sender: the Trading API
+    // stamps system mail with `sender=eBay`, which we persist into
+    // `fromName`/`fromIdentifier` on the message row.
     const recent = await db.helpdeskMessage.findMany({
       where: {
         ticketId: { in: ticketIds },
         deletedAt: null,
-        NOT: [
-          { bodyText: { contains: "UserInputtedText" } },
-          { bodyText: { startsWith: "[digest envelope" } },
+        AND: [
+          { NOT: { bodyText: { contains: "UserInputtedText" } } },
+          { NOT: { bodyText: { startsWith: "[digest envelope" } } },
+          { NOT: { fromName: { equals: "eBay", mode: "insensitive" } } },
+          { NOT: { fromIdentifier: { equals: "eBay", mode: "insensitive" } } },
         ],
       },
       orderBy: { sentAt: "desc" },

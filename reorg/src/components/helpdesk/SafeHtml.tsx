@@ -28,6 +28,7 @@
  */
 
 import DOMPurify from "isomorphic-dompurify";
+import type React from "react";
 import { useEffect, useMemo, useState } from "react";
 
 interface SafeHtmlProps {
@@ -259,6 +260,56 @@ function stripEbayPlainText(input: string): string {
   }
 
   return kept.join("\n\n").replace(/\n{3,}/g, "\n\n").trim();
+}
+
+/**
+ * Auto-linkify URLs inside a plain-text block. The plain-text branch
+ * below renders through a single `<p>` with `whitespace-pre-wrap`, so
+ * any raw URL a buyer or agent typed ("https://example.com/tracking…")
+ * otherwise sits there as unclickable text. We split on a URL regex and
+ * wrap each match in an `<a target="_blank" rel=…>`, preserving the
+ * surrounding whitespace. Matches eBay / tracking / news URLs plus bare
+ * `www.` domains (which we upgrade to `https://` in the href only).
+ *
+ * Trailing punctuation like `.` `,` `)` `]` is trimmed off the matched
+ * URL and pushed back onto the following text segment so `…visit
+ * example.com.` doesn't link the period. This mirrors what every
+ * popular linkify library does — kept inline because we don't need a
+ * 20KB dependency for one regex.
+ */
+const URL_RE =
+  /\b((?:https?:\/\/|www\.)[^\s<>)\]]+[^\s<>)\]\.,;:!?'"])/gi;
+
+function renderLinkifiedText(text: string): React.ReactNode {
+  const nodes: React.ReactNode[] = [];
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+  URL_RE.lastIndex = 0;
+  let key = 0;
+  while ((match = URL_RE.exec(text)) !== null) {
+    const url = match[1];
+    const start = match.index;
+    if (start > lastIndex) {
+      nodes.push(text.slice(lastIndex, start));
+    }
+    const href = url.startsWith("http") ? url : `https://${url}`;
+    nodes.push(
+      <a
+        key={`lnk-${key++}`}
+        href={href}
+        target="_blank"
+        rel="noopener noreferrer nofollow"
+        className="text-brand underline underline-offset-2 hover:opacity-80"
+      >
+        {url}
+      </a>,
+    );
+    lastIndex = start + url.length;
+  }
+  if (lastIndex < text.length) {
+    nodes.push(text.slice(lastIndex));
+  }
+  return nodes.length === 0 ? text : nodes;
 }
 
 /** Decide whether a body should be treated as HTML, after entity-decoding. */
@@ -874,7 +925,9 @@ export function SafeHtml({
     return (
       <div className={className}>
         <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground/90">
-          {cleaned || (
+          {cleaned ? (
+            renderLinkifiedText(cleaned)
+          ) : (
             <span className="italic text-muted-foreground">
               (empty message body)
             </span>

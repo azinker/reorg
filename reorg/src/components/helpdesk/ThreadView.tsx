@@ -253,6 +253,62 @@ interface InlineImage {
  * Anything else (non-eBay CDN, no size token) returns the input
  * unchanged so we don't break other media providers.
  */
+/**
+ * Classify an eBay-sent system notification from its subject + body into
+ * a one-line human label, and pull out the return case ID when present
+ * so the thread pill can deep-link to eBay's Return Details page. Kept
+ * purely string-based so it's cheap to run inside the render loop; the
+ * canonical classification lives in `lib/helpdesk/from-ebay-detect.ts`
+ * but we don't ship that to the client.
+ */
+function summarizeEbaySystemMessage(
+  subject: string | null,
+  bodyText: string,
+): { label: string; returnId: string | null } {
+  const subjectText = subject ?? "";
+  const bodyHead = (bodyText ?? "").replace(/<[^>]+>/g, " ").slice(0, 600);
+  const haystack = `${subjectText}\n${bodyHead}`;
+
+  // Return case IDs appear as "Return 5318077560:" in the subject. The
+  // same value also shows up in the body as "case ID 5318077560" or
+  // embedded in eBay return URLs. Subject is most reliable.
+  const returnIdMatch =
+    /Return\s+(\d{6,})/i.exec(subjectText) ??
+    /\/mesh\/returns\/(\d{6,})/i.exec(bodyText ?? "") ??
+    /return\s+case[^\d]*?(\d{6,})/i.exec(bodyHead);
+  const returnId = returnIdMatch ? returnIdMatch[1] : null;
+
+  let label: string;
+  if (/buyer\s+opened\s+a\s+return|new\s+return\s+request|return\s+request/i.test(haystack)) {
+    label = "Buyer opened a return case";
+  } else if (/return\s+approved|you\s+accepted\s+(a|the)\s+return/i.test(haystack)) {
+    label = "Return approved";
+  } else if (/return\s+closed/i.test(haystack)) {
+    label = "Return closed";
+  } else if (/item\s+not\s+received|inr\s+claim/i.test(haystack)) {
+    label = "Buyer opened an Item Not Received claim";
+  } else if (/refund\s+issued/i.test(haystack)) {
+    label = "Refund issued";
+  } else if (/buyer\s+wants?\s+to\s+cancel|cancellation\s+request/i.test(haystack)) {
+    label = "Buyer requested cancellation";
+  } else if (/order\s+(was|has\s+been)\s+cancel(l?)ed|you\s+successfully\s+cancel/i.test(haystack)) {
+    label = "Order canceled";
+  } else if (/case\s+(is\s+now\s+)?closed|is\s+now\s+closed/i.test(haystack)) {
+    label = "Case closed";
+  } else if (/case\s+is\s+on\s+hold/i.test(haystack)) {
+    label = "Case on hold";
+  } else if (/item\s+delivered/i.test(haystack)) {
+    label = "Item delivered";
+  } else if (/feedback\s+removal/i.test(haystack)) {
+    label = "Feedback removal update";
+  } else if (subjectText.trim()) {
+    label = subjectText.trim().slice(0, 80);
+  } else {
+    label = "System notification";
+  }
+  return { label, returnId };
+}
+
 function upgradeEbayImageUrl(url: string): string {
   if (!url || !url.includes("ebayimg.com")) return url;
   // Modern s-l{N} → s-l1600
@@ -1022,6 +1078,59 @@ function TimelineItem({
   const isInbound = m.direction === "INBOUND";
   const isAR = m.source === "AUTO_RESPONDER";
   const isEbayUi = m.source === "EBAY_UI";
+
+  // eBay system notifications (Return approved, Case closed, Refund
+  // issued, etc.) arrive as INBOUND rows whose sender is literally
+  // "eBay" (stamped by the Trading API). Agents do not need to read
+  // the full marketing-styled email body we stored — they just need a
+  // compact timeline marker with a deep-link. Render those rows as a
+  // centered "internal note"-style pill instead of a giant bubble.
+  const isEbaySystem =
+    isInbound &&
+    m.source === "EBAY" &&
+    (/^ebay$/i.test(m.fromName ?? "") ||
+      /^ebay$/i.test(m.fromIdentifier ?? ""));
+
+  if (isEbaySystem) {
+    const info = summarizeEbaySystemMessage(m.subject, m.bodyText);
+    return (
+      <div className="flex justify-center py-1">
+        <div className="inline-flex max-w-[80%] items-center gap-2 rounded-full border border-hairline bg-surface px-3 py-1.5 text-[12px] text-muted-foreground">
+          <svg
+            viewBox="0 0 24 24"
+            aria-hidden="true"
+            className="h-3.5 w-3.5 shrink-0 text-muted-foreground/70"
+            fill="currentColor"
+          >
+            <path d="M12 2 1 6v6c0 5.5 3.8 10.7 11 12 7.2-1.3 11-6.5 11-12V6l-11-4z" />
+          </svg>
+          <span className="font-medium text-foreground/80">
+            From eBay:
+          </span>
+          <span>{info.label}</span>
+          {info.returnId && (
+            <>
+              <span className="opacity-50">·</span>
+              <a
+                href={`https://www.ebay.com/mesh/returns/${info.returnId}/details`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="font-mono text-brand underline-offset-2 hover:underline"
+              >
+                Return #{info.returnId}
+              </a>
+            </>
+          )}
+          <span
+            className="tabular-nums opacity-70"
+            title={formatRelativeTime(m.sentAt)}
+          >
+            · {formatDateTime(m.sentAt)}
+          </span>
+        </div>
+      </div>
+    );
+  }
   // `m.author` is populated iff a known Help Desk user composed the
   // message through our composer (outbound worker stamps authorUserId
   // from the job). If it's present, this was sent through reorG — so

@@ -94,6 +94,7 @@ const TYPE_BADGE_LABEL: Record<string, string> = {
   REFUND: "Refund",
   SHIPPING_QUERY: "Shipping",
   CANCELLATION: "Cancel",
+  SYSTEM: "System",
   OTHER: "Other",
 };
 
@@ -106,6 +107,7 @@ const TYPE_BADGE_COLOR: Record<string, string> = {
   REFUND: "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
   SHIPPING_QUERY: "border-indigo-500/30 bg-indigo-500/10 text-indigo-700 dark:text-indigo-300",
   CANCELLATION: "border-zinc-500/30 bg-zinc-500/10 text-zinc-700 dark:text-zinc-300",
+  SYSTEM: "border-hairline text-muted-foreground",
   OTHER: "border-hairline text-muted-foreground",
 };
 
