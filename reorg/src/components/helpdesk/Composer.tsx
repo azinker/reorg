@@ -269,7 +269,6 @@ export function Composer({
         // confirmation, then clear.
         window.setTimeout(() => {
           setPending((p) => (p?.id === pending.id ? null : p));
-          setLastSentAt(Date.now());
           onSent();
         }, 1200);
       }
@@ -555,7 +554,7 @@ export function Composer({
             <span>
               {pending.willBlockReason
                 ? `Queued but will be blocked by ${pending.willBlockReason.replace(/_/g, " ")}`
-                : "SENT"}
+                : "SENT · queued for eBay"}
             </span>
           </div>
           <button
