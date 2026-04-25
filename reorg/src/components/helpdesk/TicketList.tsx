@@ -347,13 +347,13 @@ export function TicketList({
         !flush && "border-r border-hairline",
       )}
     >
-      <div className="border-b border-hairline p-2">
+      <div className="border-b border-hairline bg-card/70 p-2 backdrop-blur-sm">
         <div className="relative flex items-center gap-2">
           {onBatchAction && tickets.length > 0 ? (
             <button
               type="button"
               onClick={toggleAllVisible}
-              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-hairline bg-surface text-muted-foreground transition-colors hover:bg-surface-2 hover:text-foreground cursor-pointer"
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-hairline bg-surface text-muted-foreground shadow-sm transition-colors hover:border-brand/40 hover:bg-surface-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/30 cursor-pointer"
               title={allVisibleSelected ? "Clear selection" : "Select all visible"}
               aria-label={allVisibleSelected ? "Clear selection" : "Select all visible"}
             >
@@ -371,7 +371,7 @@ export function TicketList({
             and the empty state can read the query, but no input lives here.
           */}
           {search.trim().length > 0 ? (
-            <div className="flex flex-1 items-center justify-between gap-2 rounded-md border border-brand/30 bg-brand/10 px-2 py-1 text-[11px] text-foreground">
+            <div className="flex flex-1 items-center justify-between gap-2 rounded-md border border-brand/30 bg-brand/10 px-2 py-1 text-[11px] text-foreground shadow-sm">
               <span className="truncate">
                 Filtering by{" "}
                 <span className="font-semibold">&ldquo;{search}&rdquo;</span>
@@ -387,7 +387,8 @@ export function TicketList({
             </div>
           ) : (
             <div className="flex-1 text-[11px] text-muted-foreground">
-              {tickets.length} {tickets.length === 1 ? "ticket" : "tickets"}
+              <span className="font-semibold text-foreground">{tickets.length}</span>{" "}
+              {tickets.length === 1 ? "ticket" : "tickets"}
             </div>
           )}
           {/*
@@ -408,7 +409,7 @@ export function TicketList({
         layout keeps the existing search-only header to preserve density.
       */}
       {tableMode && (
-        <div className="flex flex-wrap items-center gap-1.5 border-b border-hairline bg-card/40 px-3 py-2 text-[11px]">
+        <div className="flex flex-wrap items-center gap-1.5 border-b border-hairline bg-surface/45 px-3 py-2 text-[11px]">
           <span className="text-muted-foreground">Marketplace</span>
           <FilterChip
             active={channelFilter === "ALL"}
@@ -641,16 +642,14 @@ export function TicketList({
           spinner entirely on remount, but keep it for a true cold start.
         */}
         {visibleTickets.length === 0 && loading ? (
-          <div className="flex h-full items-center justify-center">
-            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-          </div>
+          <TicketListSkeleton />
         ) : visibleTickets.length === 0 ? (
-          <div className="flex h-full flex-col items-center justify-center gap-2 px-6 text-center">
-            <p className="text-sm font-medium text-foreground">No tickets</p>
-            <p className="text-xs text-muted-foreground">
+          <>
+            <EmptyTicketListState search={search} />
+            {/*
               When buyers send eBay messages, they'll appear here within 5–15 minutes.
-            </p>
-          </div>
+            */}
+          </>
         ) : tableMode ? (
           // ── eDESK-STYLE 10-COLUMN GRID ───────────────────────────────────────
           // Replaces the old 8-column <table> with a self-contained component
@@ -680,7 +679,7 @@ export function TicketList({
                 <li
                   key={t.id}
                   className={cn(
-                    "relative",
+                    "relative transition-[background-color,opacity] duration-150 ease-out motion-reduce:transition-none",
                     // ── READ-STATE ────────────────────────────────────────────────
                     // Unread rows get a left accent stripe + tinted background so
                     // the at-a-glance distinction from read rows is unmistakable.
@@ -689,6 +688,7 @@ export function TicketList({
                     isUnread
                       ? "bg-brand/[0.04] before:absolute before:inset-y-0 before:left-0 before:w-[3px] before:bg-brand"
                       : "bg-transparent opacity-90",
+                    isActive && "opacity-100",
                   )}
                   onContextMenu={(e) => openContextMenu(e, t.id)}
                 >
@@ -708,12 +708,12 @@ export function TicketList({
                     onMouseEnter={() => onPrefetch?.(t.id)}
                     onFocus={() => onPrefetch?.(t.id)}
                     className={cn(
-                      "flex w-full flex-col gap-1 pr-3 text-left transition-colors cursor-pointer",
+                      "flex w-full flex-col gap-1 pr-3 text-left transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand/35",
                       rowPad,
                       onBatchAction ? "pl-7" : "pl-3",
                       isActive
-                        ? "bg-brand-muted"
-                        : "hover:bg-surface-2",
+                        ? "bg-brand-muted shadow-[inset_0_1px_0_rgb(255_255_255_/_0.04)]"
+                        : "hover:bg-surface-2/80",
                     )}
                   >
                     <div className="flex items-center gap-2">
@@ -760,13 +760,13 @@ export function TicketList({
                     <div className="flex items-center gap-1.5 text-[10px]">
                       <span
                         className={cn(
-                          "rounded border px-1.5 py-0.5 font-semibold uppercase tracking-wider",
+                          "rounded border px-1.5 py-0.5 font-semibold uppercase",
                           STATUS_COLOR[t.status] ?? "border-hairline text-muted-foreground",
                         )}
                       >
                         {t.status.replace("_", " ")}
                       </span>
-                      <span className="rounded bg-surface-2 px-1.5 py-0.5 font-medium text-muted-foreground">
+                      <span className="rounded border border-hairline bg-surface-2 px-1.5 py-0.5 font-medium text-muted-foreground">
                         {CHANNEL_BADGE[t.channel] ?? t.channel}
                       </span>
                       {t.kind === "PRE_SALES" && (
@@ -1114,6 +1114,51 @@ export function TicketList({
             </div>
           );
         })()}
+    </div>
+  );
+}
+
+function TicketListSkeleton() {
+  return (
+    <div className="space-y-0 border-t border-transparent p-3" aria-label="Loading tickets">
+      {Array.from({ length: 8 }).map((_, i) => (
+        <div
+          key={i}
+          className="rounded-md border border-hairline bg-card/60 p-3"
+        >
+          <div className="flex items-center gap-2">
+            <span className="h-2 w-2 rounded-full bg-foreground/10" />
+            <span className="h-3 w-28 animate-pulse rounded bg-foreground/10" />
+            <span className="ml-auto h-2.5 w-10 animate-pulse rounded bg-foreground/10" />
+          </div>
+          <div className="mt-3 h-3 w-4/5 animate-pulse rounded bg-foreground/10" />
+          <div className="mt-3 flex gap-1.5">
+            <span className="h-5 w-14 animate-pulse rounded bg-foreground/10" />
+            <span className="h-5 w-10 animate-pulse rounded bg-foreground/10" />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function EmptyTicketListState({ search }: { search: string }) {
+  const hasSearch = search.trim().length > 0;
+  return (
+    <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
+      <div className="flex h-12 w-12 items-center justify-center rounded-md border border-hairline bg-surface">
+        <Inbox className="h-5 w-5 text-muted-foreground" />
+      </div>
+      <div>
+        <p className="text-sm font-medium text-foreground">
+          {hasSearch ? "No matching tickets" : "No tickets"}
+        </p>
+        <p className="mt-1 max-w-xs text-xs text-muted-foreground">
+          {hasSearch
+            ? "Try a buyer username, eBay order ID, or a different folder."
+            : "Buyer messages will appear here after the next Help Desk sync."}
+        </p>
+      </div>
     </div>
   );
 }

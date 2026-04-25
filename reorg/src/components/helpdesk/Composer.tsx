@@ -491,7 +491,7 @@ export function Composer({
           ? "Reply…"
           : "Send external email…";
     return (
-      <div className="shrink-0 border-t border-hairline bg-card">
+      <div className="shrink-0 border-t border-hairline bg-card/95 shadow-[0_-8px_24px_rgb(0_0_0_/_0.10)]">
         {archivedBanner}
         <div className="px-4 py-3">
           <button
@@ -500,7 +500,7 @@ export function Composer({
               setExpanded(true);
               window.setTimeout(() => textareaRef.current?.focus(), 0);
             }}
-            className="block w-full cursor-text rounded-md border border-hairline bg-surface px-3 py-2 text-left text-sm text-muted-foreground transition-colors hover:bg-surface-2 hover:text-foreground"
+            className="block w-full cursor-text rounded-md border border-hairline bg-surface px-3 py-2 text-left text-sm text-muted-foreground shadow-sm transition-colors hover:border-brand/35 hover:bg-surface-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/30"
             title="Click to compose a reply"
           >
             {placeholder}
@@ -511,7 +511,7 @@ export function Composer({
   }
 
   return (
-    <div className="shrink-0 border-t border-hairline bg-card">
+    <div className="shrink-0 border-t border-hairline bg-card/95 shadow-[0_-8px_24px_rgb(0_0_0_/_0.10)]">
       {archivedBanner}
       {pendingBanner}
       <div
@@ -519,35 +519,37 @@ export function Composer({
         aria-orientation="horizontal"
         title="Drag to resize composer"
         onMouseDown={startComposerResize}
-        className="flex h-2 cursor-row-resize items-center justify-center border-b border-hairline bg-card/70 text-muted-foreground transition-colors hover:bg-surface-2 hover:text-foreground"
+        className="flex h-2 cursor-row-resize items-center justify-center border-b border-hairline bg-card/80 text-muted-foreground transition-colors hover:bg-surface-2 hover:text-foreground"
       >
         <GripHorizontal className="h-3 w-3" />
       </div>
       {/* Mode tabs */}
-      <div className="flex items-center gap-1 border-b border-hairline px-3 py-1.5 text-xs">
-        <ModeTab
-          active={mode === "REPLY"}
-          disabled={!canReply(ticket)}
-          onClick={() => setMode("REPLY")}
-          icon={<MessageSquareText className="h-3 w-3" />}
-        >
-          Reply
-        </ModeTab>
-        <ModeTab
-          active={mode === "NOTE"}
-          onClick={() => setMode("NOTE")}
-          icon={<StickyNote className="h-3 w-3" />}
-        >
-          Note
-        </ModeTab>
-        <ModeTab
-          active={mode === "EXTERNAL"}
-          disabled={!canEmail(ticket, flags?.enableResendExternal ?? false)}
-          onClick={() => setMode("EXTERNAL")}
-          icon={<Mail className="h-3 w-3" />}
-        >
-          External
-        </ModeTab>
+      <div className="flex flex-wrap items-center gap-1.5 border-b border-hairline bg-card/60 px-3 py-2 text-xs">
+        <div className="inline-flex rounded-md border border-hairline bg-surface p-0.5">
+          <ModeTab
+            active={mode === "REPLY"}
+            disabled={!canReply(ticket)}
+            onClick={() => setMode("REPLY")}
+            icon={<MessageSquareText className="h-3 w-3" />}
+          >
+            Reply
+          </ModeTab>
+          <ModeTab
+            active={mode === "NOTE"}
+            onClick={() => setMode("NOTE")}
+            icon={<StickyNote className="h-3 w-3" />}
+          >
+            Note
+          </ModeTab>
+          <ModeTab
+            active={mode === "EXTERNAL"}
+            disabled={!canEmail(ticket, flags?.enableResendExternal ?? false)}
+            onClick={() => setMode("EXTERNAL")}
+            icon={<Mail className="h-3 w-3" />}
+          >
+            External
+          </ModeTab>
+        </div>
         <button
           type="button"
           onClick={() => updateHelpdeskPrefs({ composerSticky: !prefs.composerSticky })}
@@ -577,7 +579,7 @@ export function Composer({
         >
           Auto-advance {prefs.autoAdvance ? "On" : "Off"}
         </button>
-        <span className="text-[10px] text-muted-foreground">
+        <span className="hidden text-[10px] text-muted-foreground lg:inline">
           Plain text only · Markdown is not rendered
         </span>
         {body.trim().length === 0 && !pending && !prefs.composerSticky && (
@@ -594,7 +596,7 @@ export function Composer({
 
       {/* Just-sent toast */}
       {!pending && lastSentAt && Date.now() - lastSentAt < 4000 && (
-        <div className="flex items-center gap-2 bg-emerald-500/10 px-4 py-1.5 text-[11px] text-emerald-700 dark:text-emerald-300">
+        <div className="flex items-center gap-2 border-b border-emerald-500/20 bg-emerald-500/10 px-4 py-1.5 text-[11px] text-emerald-700 dark:text-emerald-300">
           <CheckCircle2 className="h-3 w-3" /> Sent.
         </div>
       )}
@@ -639,7 +641,7 @@ export function Composer({
                 setBody((prev) => (prev.trim() ? `${prev}\n\n${filled}` : filled));
                 window.setTimeout(() => textareaRef.current?.focus(), 0);
               }}
-              className="inline-flex h-6 items-center gap-1 rounded-full border border-hairline bg-card px-2.5 text-[11px] text-muted-foreground hover:bg-surface-2 hover:text-foreground cursor-pointer"
+              className="inline-flex h-6 items-center gap-1 rounded-full border border-hairline bg-card px-2.5 text-[11px] text-muted-foreground shadow-sm transition-colors hover:border-brand/35 hover:bg-surface-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/30 cursor-pointer"
               title={a.label}
             >
               <Zap className="h-3 w-3" />
@@ -670,11 +672,11 @@ export function Composer({
         rows={5}
         style={{ height: composerHeight }}
         disabled={modeMeta.disabled || !!pending}
-        className="block w-full resize-none border-0 bg-transparent px-4 py-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-0 disabled:opacity-50"
+        className="block w-full resize-none border-0 bg-transparent px-4 py-3 text-sm leading-6 text-foreground placeholder:text-muted-foreground transition-colors focus:bg-background/20 focus:outline-none focus:ring-0 disabled:opacity-50"
       />
 
       {/* Footer: template picker + status selector + send button */}
-      <div className="flex flex-wrap items-center gap-2 border-t border-hairline px-3 py-2 text-xs">
+      <div className="flex flex-wrap items-center gap-2 border-t border-hairline bg-card/80 px-3 py-2 text-xs">
         {mode !== "NOTE" && (
           <>
             <TemplatePicker

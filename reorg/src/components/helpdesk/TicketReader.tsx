@@ -204,19 +204,19 @@ export function TicketReader({
        * so the controls were bumped from h-7 / 11px / 3.5w icons up to
        * h-9 / 13px / 4w icons. Header bar height grows to h-12 to match.
        */}
-      <div className="flex h-12 shrink-0 items-center gap-2 border-b border-hairline bg-card px-3 sm:px-4">
+      <div className="flex h-12 shrink-0 items-center gap-2 border-b border-hairline bg-card/95 px-3 shadow-[0_1px_0_rgb(255_255_255_/_0.03)] backdrop-blur-sm sm:px-4">
         {showBack && onBack && (
           <button
             type="button"
             onClick={onBack}
-            className="inline-flex h-9 items-center gap-1.5 rounded-md border border-hairline bg-surface px-3 text-[13px] font-medium text-muted-foreground transition-colors hover:bg-surface-2 hover:text-foreground cursor-pointer"
+            className="inline-flex h-9 items-center gap-1.5 rounded-md border border-hairline bg-surface px-3 text-[13px] font-medium text-muted-foreground shadow-sm transition-colors hover:border-brand/35 hover:bg-surface-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/30 cursor-pointer"
             title="Back to inbox (Esc)"
           >
             <ArrowLeft className="h-4 w-4" />
             Back
           </button>
         )}
-        <div className="inline-flex h-9 items-center rounded-md border border-hairline bg-surface">
+        <div className="inline-flex h-9 items-center rounded-md border border-hairline bg-surface shadow-sm">
           <button
             type="button"
             onClick={onPrev}
@@ -242,11 +242,11 @@ export function TicketReader({
       </div>
 
       {/* Ticket info row (subject / buyer / channel / order #). */}
-      <div className="flex min-h-16 shrink-0 items-center gap-3 border-b border-hairline bg-card px-3 py-2 sm:px-4">
+      <div className="flex min-h-16 shrink-0 items-center gap-3 border-b border-hairline bg-card/90 px-3 py-3 sm:px-4">
         <div className="min-w-0 flex-1">
           {ticket ? (
             <>
-              <h2 className="truncate text-base font-semibold text-foreground">
+              <h2 className="truncate text-[17px] font-semibold text-foreground">
                 {ticket.subject ?? ticket.ebayItemTitle ?? "(no subject)"}
               </h2>
               <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
@@ -289,7 +289,7 @@ export function TicketReader({
             href={`https://www.ebay.com/mesh/ord/details?orderid=${ticket.ebayOrderNumber}`}
             target="_blank"
             rel="noopener noreferrer"
-            className="hidden h-8 items-center gap-1 rounded-md border border-brand/30 bg-surface px-2.5 text-[11px] text-muted-foreground transition-colors hover:border-brand/60 hover:bg-brand/10 hover:text-brand cursor-pointer sm:inline-flex"
+            className="hidden h-8 items-center gap-1 rounded-md border border-brand/30 bg-surface px-2.5 text-[11px] text-muted-foreground shadow-sm transition-colors hover:border-brand/60 hover:bg-brand/10 hover:text-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/30 cursor-pointer sm:inline-flex"
             title="Open this message thread on eBay in a new tab"
           >
             <ExternalLink className="h-3 w-3" /> View message
@@ -301,7 +301,7 @@ export function TicketReader({
             href={`https://www.ebay.com/itm/${ticket.ebayItemId}`}
             target="_blank"
             rel="noopener noreferrer"
-            className="hidden h-8 items-center gap-1 rounded-md border border-hairline bg-surface px-2.5 text-[11px] text-muted-foreground transition-colors hover:bg-surface-2 hover:text-foreground cursor-pointer sm:inline-flex"
+            className="hidden h-8 items-center gap-1 rounded-md border border-hairline bg-surface px-2.5 text-[11px] text-muted-foreground shadow-sm transition-colors hover:border-brand/35 hover:bg-surface-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/30 cursor-pointer sm:inline-flex"
             title="Open this item on eBay in a new tab"
           >
             <ExternalLink className="h-3 w-3" /> View item

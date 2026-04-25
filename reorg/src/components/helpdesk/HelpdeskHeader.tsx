@@ -198,7 +198,7 @@ export function HelpdeskHeader({
     ) ?? false;
 
   return (
-    <div className="flex items-center justify-between border-b border-hairline bg-card px-5 py-3">
+    <div className="flex items-center justify-between border-b border-hairline bg-card/95 px-5 py-3 shadow-[0_1px_0_rgb(255_255_255_/_0.03)] backdrop-blur-sm">
       <div className="flex items-center gap-2">
         <LifeBuoy className="h-5 w-5 text-brand" />
         <h1 className="text-lg font-semibold text-foreground">Help Desk</h1>
@@ -286,7 +286,7 @@ export function HelpdeskHeader({
               if (!ticketOpen) commitNow(searchLocal);
             }}
             placeholder="Search by buyer username or eBay Order ID"
-            className="h-10 w-full rounded-md border border-hairline bg-surface pl-9 pr-9 text-sm text-foreground placeholder:text-muted-foreground focus:border-brand/40 focus:outline-none focus:ring-2 focus:ring-brand/20"
+            className="h-10 w-full rounded-md border border-hairline bg-surface pl-9 pr-9 text-sm text-foreground shadow-sm placeholder:text-muted-foreground transition-colors focus:border-brand/40 focus:outline-none focus:ring-2 focus:ring-brand/20"
             aria-label="Search inbox by buyer username or eBay Order ID"
           />
           {searchLocal.length > 0 && (
@@ -341,7 +341,7 @@ export function HelpdeskHeader({
         </div>
         <Link
           href="/help-desk/dashboard"
-          className="inline-flex h-7 items-center gap-1 rounded-md border border-hairline bg-surface px-2 font-medium text-foreground transition-colors hover:bg-surface-2 cursor-pointer"
+          className="inline-flex h-7 items-center gap-1 rounded-md border border-hairline bg-surface px-2 font-medium text-foreground shadow-sm transition-colors hover:border-brand/35 hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/30 cursor-pointer"
         >
           <BarChart3 className="h-3.5 w-3.5" />
           Dashboard
@@ -350,7 +350,7 @@ export function HelpdeskHeader({
           type="button"
           onClick={onManualSync}
           disabled={manualSyncing}
-          className="inline-flex h-7 items-center gap-1 rounded-md border border-hairline bg-surface px-2 font-medium text-foreground transition-colors hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"
+          className="inline-flex h-7 items-center gap-1 rounded-md border border-hairline bg-surface px-2 font-medium text-foreground shadow-sm transition-colors hover:border-brand/35 hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/30 disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"
         >
           {manualSyncing ? (
             <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -362,7 +362,7 @@ export function HelpdeskHeader({
         <button
           type="button"
           onClick={() => setSettingsOpen(true)}
-          className="inline-flex h-7 items-center gap-1 rounded-md border border-hairline bg-surface px-2 font-medium text-foreground transition-colors hover:bg-surface-2 cursor-pointer"
+          className="inline-flex h-7 items-center gap-1 rounded-md border border-hairline bg-surface px-2 font-medium text-foreground shadow-sm transition-colors hover:border-brand/35 hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/30 cursor-pointer"
           aria-label="Help Desk preferences"
           title="Preferences"
         >
@@ -371,7 +371,7 @@ export function HelpdeskHeader({
         {agent && (
           <Link
             href="/help-desk/profile"
-            className="ml-1 flex items-center gap-2 rounded-md border border-hairline bg-surface px-1.5 py-0.5 text-foreground transition-colors hover:bg-surface-2 cursor-pointer"
+            className="ml-1 flex items-center gap-2 rounded-md border border-hairline bg-surface px-1.5 py-0.5 text-foreground shadow-sm transition-colors hover:border-brand/35 hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/30 cursor-pointer"
             title={
               agent.impersonating
                 ? `Acting as ${agent.name ?? agent.email ?? "user"} (impersonating). Click to view profile.`

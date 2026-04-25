@@ -162,12 +162,20 @@ export function ContextPanel({
     return (
       <div
         className={cn(
-          "flex items-center justify-center bg-card px-4 text-center text-sm text-muted-foreground",
+          "flex flex-col items-center justify-center gap-3 bg-card px-4 text-center text-sm text-muted-foreground",
           containerWidth,
           dividerCls,
         )}
       >
-        Select a ticket to see context.
+        <div className="flex h-12 w-12 items-center justify-center rounded-md border border-hairline bg-surface">
+          <UserIcon className="h-5 w-5 opacity-70" />
+        </div>
+        <div>
+          <p className="font-medium text-foreground">No ticket selected</p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Buyer, order, and related ticket details will show here.
+          </p>
+        </div>
       </div>
     );
   }
@@ -220,11 +228,11 @@ function ContextPanelInner({ ticket, containerWidth, dividerCls }: InnerProps) {
     // past the parent height. Without min-h-0 a child with overflow-y-auto in
     // a column flex layout will overflow the panel and the agent can't reach
     // "Other Tickets from this Buyer" at the bottom (split-mode bug repro).
-    <div className={cn("flex h-full min-h-0 flex-col bg-card", containerWidth, dividerCls)}>
+    <div className={cn("flex h-full min-h-0 flex-col bg-card/95", containerWidth, dividerCls)}>
       <div
         role="tablist"
         aria-label="Ticket context tabs"
-        className="flex shrink-0 items-stretch border-b border-hairline bg-card text-xs"
+        className="flex shrink-0 items-stretch border-b border-hairline bg-card/90 text-xs backdrop-blur-sm"
       >
         <ContextTabButton
           active={tab === "details"}
@@ -275,8 +283,8 @@ function ContextTabButton({ active, onClick, label }: ContextTabButtonProps) {
       className={cn(
         "flex-1 border-b-2 px-3 py-2.5 font-medium transition-colors cursor-pointer",
         active
-          ? "border-brand text-foreground"
-          : "border-transparent text-muted-foreground hover:text-foreground",
+          ? "border-brand bg-surface/50 text-foreground"
+          : "border-transparent text-muted-foreground hover:bg-surface/40 hover:text-foreground",
       )}
     >
       {label}
@@ -518,7 +526,7 @@ function CustomerCard({
   })();
 
   return (
-    <section className="border-b border-hairline px-4 py-4">
+    <section className="border-b border-hairline bg-card/60 px-4 py-4">
       <div className="mb-3 flex items-center gap-2">
         <UserIcon className="h-3.5 w-3.5 text-brand" />
         <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
@@ -581,7 +589,7 @@ function CustomerCard({
        * between the buyer identity block and the channel/total block. */}
       <div className="my-3 border-t border-hairline" />
 
-      <dl className="space-y-3 text-sm">
+      <dl className="space-y-3 rounded-md border border-hairline bg-surface/35 p-3 text-sm">
         <Row label="Channel">
           <div className="flex items-center justify-end gap-1.5">
             <span className="inline-flex items-center gap-1 rounded bg-surface-2 px-1 py-px text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">
@@ -720,7 +728,7 @@ function ProductInquirySection({
         href={ebayUrl}
         target="_blank"
         rel="noopener noreferrer"
-        className="flex items-start gap-2 rounded-md border border-hairline bg-surface p-2 transition-colors hover:bg-surface-2"
+        className="flex items-start gap-2 rounded-md border border-hairline bg-surface p-2 shadow-sm transition-colors hover:border-brand/30 hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/30"
       >
         {listing.imageUrl ? (
           /* eslint-disable-next-line @next/next/no-img-element */
@@ -790,7 +798,7 @@ function OrderInfoSection({
   const trackingCarrier = ctx?.trackingCarrier ?? "USPS";
 
   return (
-    <section className="border-b border-hairline">
+    <section className="border-b border-hairline bg-card/40">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
@@ -869,7 +877,7 @@ function OrderInfoSection({
           {/* Body rows — every field gets its own block separated by a hairline
            * divider, so the eye doesn't have to count whitespace to find the
            * next field. This is the layout from the user's screenshot. */}
-          <div className="divide-y divide-hairline rounded-md border border-hairline">
+          <div className="divide-y divide-hairline rounded-md border border-hairline bg-surface/25 shadow-sm">
             {/* Ordered + Shipped on a single row, side-by-side, mirrors eDesk. */}
             <div className="grid grid-cols-2 gap-2 px-3 py-2.5 text-sm">
               <div>
@@ -1005,7 +1013,7 @@ function OrderInfoSection({
                   href={`https://www.ebay.com/itm/${item.itemId}`}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="flex items-start gap-2 rounded-md border border-hairline bg-surface p-2 transition-colors hover:bg-surface-2"
+                  className="flex items-start gap-2 rounded-md border border-hairline bg-surface p-2 shadow-sm transition-colors hover:border-brand/30 hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/30"
                 >
                   {item.pictureUrl ? (
                     /* eslint-disable-next-line @next/next/no-img-element */
@@ -1114,7 +1122,7 @@ function RelatedSection({
             <li key={t.id}>
               <Link
                 href={`/help-desk?ticket=${t.id}`}
-                className="block rounded-md border border-hairline bg-surface px-2.5 py-2 transition-colors hover:bg-surface-2"
+                className="block rounded-md border border-hairline bg-surface px-2.5 py-2 shadow-sm transition-colors hover:border-brand/30 hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/30"
               >
                 <p className="line-clamp-1 text-sm text-foreground">
                   {t.subject ?? t.ebayItemTitle ?? "Untitled"}

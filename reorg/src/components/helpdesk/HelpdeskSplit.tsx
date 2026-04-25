@@ -263,7 +263,7 @@ export function HelpdeskSplit({
         onLostPointerCapture={onLostPointerCapture}
         onKeyDown={onKeyDown}
         className={cn(
-          "group relative z-10 flex w-1.5 shrink-0 cursor-col-resize touch-none items-center justify-center bg-hairline transition-colors hover:bg-brand/40 focus-visible:bg-brand/40 focus-visible:outline-none",
+          "group relative z-10 flex w-2 shrink-0 cursor-col-resize touch-none items-center justify-center bg-hairline/80 transition-colors hover:bg-brand/40 focus-visible:bg-brand/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/30",
           dragging && "bg-brand/60",
         )}
         title="Drag to resize"

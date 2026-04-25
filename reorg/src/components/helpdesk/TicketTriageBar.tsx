@@ -211,7 +211,7 @@ export function TicketTriageBar({
   // of the message list. The tint is intentionally faint (≤8% alpha) so
   // it never competes with the action buttons themselves.
   return (
-    <div className="flex min-h-12 shrink-0 flex-wrap items-center gap-2 border-b border-hairline bg-gradient-to-r from-brand/[0.06] via-card to-violet-500/[0.05] px-3 py-2 sm:px-4">
+    <div className="flex min-h-12 shrink-0 flex-wrap items-center gap-2 border-b border-hairline bg-card/90 px-3 py-2 shadow-[0_1px_0_rgb(255_255_255_/_0.03)] backdrop-blur-sm sm:px-4">
       <TypeMenu
         value={ticket?.type ?? null}
         disabled={disabled}
@@ -579,7 +579,7 @@ function TypeMenu({
           // primary identity classifier for the ticket so we paint it in
           // the reorG brand color (coral). Same hover/active rhythm as
           // the IconButton accent system below for visual consistency.
-          "inline-flex h-8 items-center gap-1.5 rounded-md border border-brand/30 bg-surface px-2.5 text-xs font-medium text-foreground transition-colors hover:border-brand/60 hover:bg-brand/10 hover:text-brand disabled:cursor-not-allowed disabled:opacity-40 cursor-pointer",
+          "inline-flex h-8 items-center gap-1.5 rounded-md border border-brand/30 bg-surface px-2.5 text-xs font-medium text-foreground shadow-sm transition-colors hover:border-brand/60 hover:bg-brand/10 hover:text-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/30 disabled:cursor-not-allowed disabled:opacity-40 cursor-pointer",
           open && "border-brand/60 bg-brand/15 text-brand",
         )}
         title="Change ticket type"
@@ -1107,7 +1107,7 @@ function IconButton({
       title={title}
       aria-label={title}
       className={cn(
-        "inline-flex h-8 items-center justify-center gap-1.5 rounded-md border bg-surface text-muted-foreground transition-colors disabled:cursor-not-allowed disabled:opacity-40 cursor-pointer",
+        "inline-flex h-8 items-center justify-center gap-1.5 rounded-md border bg-surface text-muted-foreground shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/30 disabled:cursor-not-allowed disabled:opacity-40 cursor-pointer",
         label
           ? "w-auto min-w-0 px-2.5 text-[12px] font-medium"
           : "w-8",

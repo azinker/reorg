@@ -98,7 +98,7 @@ export function QuickActionMenu({
         onClick={() => setOpen((v) => !v)}
         disabled={disabled}
         className={cn(
-          "inline-flex h-7 items-center gap-1 rounded-md border border-hairline bg-surface px-2 text-xs text-foreground hover:bg-surface-2 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer",
+          "inline-flex h-7 items-center gap-1 rounded-md border border-hairline bg-surface px-2 text-xs text-foreground shadow-sm transition-colors hover:border-brand/35 hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/30 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer",
           open && "bg-surface-2",
         )}
       >
@@ -107,7 +107,7 @@ export function QuickActionMenu({
         <ChevronDown className="h-3 w-3 opacity-60" />
       </button>
       {open && (
-        <div className="absolute bottom-full left-0 z-30 mb-1 w-64 rounded-md border border-hairline bg-popover p-2 text-popover-foreground shadow-xl">
+        <div className="absolute bottom-full left-0 z-30 mb-1 w-64 rounded-md border border-hairline bg-popover p-2 text-popover-foreground shadow-2xl shadow-black/30">
           <div className="grid grid-cols-2 gap-1">
             {QUICK_ACTIONS.map((a) => (
               <button
@@ -117,7 +117,7 @@ export function QuickActionMenu({
                   onPick(fillTemplate(a.body, ctx));
                   setOpen(false);
                 }}
-                className="rounded-md border border-transparent bg-transparent px-2 py-1.5 text-left text-xs text-foreground transition-colors hover:bg-surface-2 cursor-pointer"
+                className="rounded-md border border-transparent bg-transparent px-2 py-1.5 text-left text-xs text-foreground transition-colors hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/30 cursor-pointer"
               >
                 {a.label}
               </button>

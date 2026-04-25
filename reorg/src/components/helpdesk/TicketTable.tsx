@@ -576,13 +576,17 @@ export function TicketTable({
   }, [columns, showSelection, colWidths]);
 
   return (
-    <div className="flex h-full min-w-0 flex-col overflow-x-auto">
+    <div className="flex h-full min-w-0 flex-col overflow-x-auto bg-background">
       {/* Top bar: Edit Columns button. */}
-      <div className="flex items-center justify-end gap-2 border-b border-hairline bg-card/50 px-3 py-1.5">
+      <div className="flex items-center justify-between gap-2 border-b border-hairline bg-card/70 px-3 py-2 backdrop-blur-sm">
+        <div className="min-w-0 text-[11px] text-muted-foreground">
+          <span className="font-medium text-foreground">{visibleTickets.length}</span>{" "}
+          {visibleTickets.length === 1 ? "ticket" : "tickets"} in this view
+        </div>
         <button
           type="button"
           onClick={() => setEditOpen(true)}
-          className="inline-flex h-7 items-center gap-1.5 rounded-md border border-hairline bg-surface px-2 text-xs text-muted-foreground transition-colors hover:bg-surface-2 hover:text-foreground cursor-pointer"
+          className="inline-flex h-7 items-center gap-1.5 rounded-md border border-hairline bg-surface px-2 text-xs text-muted-foreground shadow-sm transition-colors hover:border-brand/40 hover:bg-surface-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/30 cursor-pointer"
           title="Reorder, show, or hide inbox columns"
         >
           <Settings2 className="h-3.5 w-3.5" />
@@ -592,7 +596,7 @@ export function TicketTable({
 
       {/* Grid header */}
       <div
-        className="sticky top-0 z-[2] grid items-center border-b border-hairline bg-card/95 px-2 py-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground backdrop-blur"
+        className="sticky top-0 z-[2] grid items-center border-b border-hairline bg-card/95 px-2 py-3 text-[11px] font-semibold uppercase text-muted-foreground backdrop-blur"
         style={{ gridTemplateColumns: totalGridTemplate, minWidth: "100%" }}
       >
         {showSelection && (
@@ -636,9 +640,16 @@ export function TicketTable({
       {/* Body */}
       <div className="flex-1 overflow-y-auto">
         {visibleTickets.length === 0 ? (
-          <div className="flex h-full flex-col items-center justify-center gap-2 px-6 text-center text-muted-foreground">
-            <Inbox className="h-6 w-6 opacity-60" />
-            <p className="text-sm">No tickets in view.</p>
+          <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center text-muted-foreground">
+            <div className="flex h-12 w-12 items-center justify-center rounded-md border border-hairline bg-surface">
+              <Inbox className="h-5 w-5 opacity-70" />
+            </div>
+            <div>
+              <p className="text-sm font-medium text-foreground">No tickets in view</p>
+              <p className="mt-1 max-w-xs text-xs text-muted-foreground">
+                Try a different folder, marketplace, or status filter.
+              </p>
+            </div>
           </div>
         ) : (
           visibleTickets.map((t) => (
@@ -849,17 +860,18 @@ function TicketRow({
       onContextMenu={(e) => onContextMenu?.(e, t.id)}
       style={{ gridTemplateColumns: gridTemplate, minWidth: "100%" }}
       className={cn(
-        "group grid cursor-pointer items-center border-b border-hairline transition-colors",
+        "group relative grid cursor-pointer items-center border-b border-l-2 border-hairline transition-[background-color,border-color,box-shadow] duration-150 ease-out focus-within:ring-1 focus-within:ring-brand/40 motion-reduce:transition-none",
         density === "compact"
           ? "px-2 py-2 text-[13px]"
           : density === "spacious"
             ? "px-3 py-5 text-[15px]"
             : "px-2 py-3 text-[14px]",
         isUnread
-          ? "bg-brand/[0.04] text-foreground"
-          : "bg-transparent text-muted-foreground",
-        isActive && "!bg-brand-muted",
-        "hover:bg-surface-2",
+          ? "border-l-brand bg-brand/[0.045] text-foreground"
+          : "border-l-transparent bg-transparent text-muted-foreground",
+        selected && "bg-surface-2/70",
+        isActive && "!border-l-brand !bg-brand-muted shadow-[inset_0_1px_0_rgb(255_255_255_/_0.04)]",
+        "hover:bg-surface-2/80",
       )}
     >
       {showSelection && (
@@ -932,7 +944,7 @@ function Cell({ column, ticket: t, isUnread, timeLeft, otherViewers }: CellProps
         <div className="flex items-center gap-2 px-2">
           <span
             className={cn(
-              "inline-flex items-center gap-1.5 rounded border px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider",
+              "inline-flex items-center gap-1.5 rounded border px-2 py-0.5 text-[11px] font-semibold uppercase shadow-sm",
               pillCls,
             )}
             title={isEbay ? `${label} · eBay` : label}
@@ -1020,7 +1032,7 @@ function Cell({ column, ticket: t, isUnread, timeLeft, otherViewers }: CellProps
         <div className="flex items-center gap-1 px-2">
           <span
             className={cn(
-              "inline-flex items-center rounded border px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider",
+              "inline-flex items-center rounded border px-2 py-0.5 text-[11px] font-semibold uppercase shadow-sm",
               cls,
             )}
           >
@@ -1044,7 +1056,7 @@ function Cell({ column, ticket: t, isUnread, timeLeft, otherViewers }: CellProps
         <div className="flex items-center px-2">
           <span
             className={cn(
-              "inline-flex max-w-full items-center rounded border px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider",
+              "inline-flex max-w-full items-center rounded border px-2 py-0.5 text-[11px] font-semibold uppercase shadow-sm",
               ticketLocationClass(label),
             )}
             title={label}
@@ -1059,7 +1071,7 @@ function Cell({ column, ticket: t, isUnread, timeLeft, otherViewers }: CellProps
       const text = previewLatest(t);
       return (
         <div className="min-w-0 px-2">
-          <div className="flex min-w-0 items-center gap-2">
+          <div className="flex min-w-0 items-center gap-2 rounded-md px-1 py-0.5">
             {isUnread ? (
               // Purple unread indicator. Matches the WAITING chip palette
               // already established in TicketList so unread state reads as
@@ -1078,8 +1090,8 @@ function Cell({ column, ticket: t, isUnread, timeLeft, otherViewers }: CellProps
             {isUnread ? <span className="sr-only">Unread message.</span> : null}
             <p
               className={cn(
-                "min-w-0 flex-1 truncate",
-                isUnread ? "text-foreground" : "text-muted-foreground",
+                "min-w-0 flex-1 truncate leading-5",
+                isUnread ? "font-medium text-foreground" : "text-muted-foreground",
               )}
               title={text}
             >

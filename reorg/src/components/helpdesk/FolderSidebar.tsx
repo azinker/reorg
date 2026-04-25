@@ -375,15 +375,15 @@ export function FolderSidebar({
   }
 
   return (
-    <div className="flex h-full w-56 shrink-0 flex-col border-r border-hairline bg-card">
-      <div className="border-b border-hairline px-4 py-3">
+    <div className="flex h-full w-56 shrink-0 flex-col border-r border-hairline bg-card/95">
+      <div className="border-b border-hairline bg-card/80 px-4 py-3">
         <h2 className="text-sm font-semibold text-foreground">Help Desk</h2>
         <p className="mt-0.5 text-[11px] text-muted-foreground">
           eBay member messages
         </p>
       </div>
 
-      <div className="border-b border-hairline px-3 py-2">
+      <div className="border-b border-hairline bg-surface/25 px-3 py-2">
         <div className="mb-1.5 flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-muted-foreground">
           <Tags className="h-3 w-3" /> Channel
         </div>
@@ -404,7 +404,7 @@ export function FolderSidebar({
                 type="button"
                 onClick={() => onChannelChange(ch)}
                 className={cn(
-                  "rounded-md border px-1.5 py-1 font-medium transition-colors cursor-pointer",
+                  "rounded-md border px-1.5 py-1 font-medium shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/30 cursor-pointer",
                   channelFilter === ch
                     ? activeCls
                     : "border-hairline bg-surface text-muted-foreground hover:bg-surface-2 hover:text-foreground",
@@ -518,10 +518,10 @@ export function FolderSidebar({
         </div>
       </nav>
 
-      <div className="mt-auto border-t border-hairline p-2 text-sm">
+      <div className="mt-auto border-t border-hairline bg-card/80 p-2 text-sm">
         <Link
           href="/help-desk/filters"
-          className="flex items-center gap-2 rounded-md px-2 py-1.5 text-foreground transition-colors hover:bg-surface-2"
+          className="flex items-center gap-2 rounded-md px-2 py-1.5 text-foreground transition-colors hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/30"
           title="Manage inbox rules — auto-archive, auto-tag, etc."
         >
           <FilterIcon className="h-3.5 w-3.5 shrink-0 text-violet-500" />
@@ -529,7 +529,7 @@ export function FolderSidebar({
         </Link>
         <Link
           href="/help-desk/templates"
-          className="flex items-center gap-2 rounded-md px-2 py-1.5 text-foreground transition-colors hover:bg-surface-2"
+          className="flex items-center gap-2 rounded-md px-2 py-1.5 text-foreground transition-colors hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/30"
           title="Manage shared reply templates."
         >
           <FileText className="h-3.5 w-3.5 shrink-0 text-sky-500" />
@@ -537,7 +537,7 @@ export function FolderSidebar({
         </Link>
         <Link
           href="/help-desk/profile"
-          className="flex items-center gap-2 rounded-md px-2 py-1.5 text-foreground transition-colors hover:bg-surface-2"
+          className="flex items-center gap-2 rounded-md px-2 py-1.5 text-foreground transition-colors hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/30"
           title="Your agent profile — name, handle, avatar, signature."
         >
           <UserCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-500" />
@@ -546,7 +546,7 @@ export function FolderSidebar({
         {isAdmin ? (
           <Link
             href="/help-desk/global-settings"
-            className="flex items-center gap-2 rounded-md px-2 py-1.5 text-foreground transition-colors hover:bg-surface-2"
+            className="flex items-center gap-2 rounded-md px-2 py-1.5 text-foreground transition-colors hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/30"
             title="Admin only — Safe Mode, sync schedule, write locks, retro auto-resolve."
           >
             <ShieldCheck className="h-3.5 w-3.5 shrink-0 text-brand" />
@@ -588,7 +588,7 @@ function FolderItem({ row, active, count, onSelect, agent }: FolderItemProps) {
         onClick={() => onSelect(row.key)}
         title={row.tooltip}
         className={cn(
-          "flex w-full items-center gap-2 rounded-md py-1.5 text-left text-sm transition-colors cursor-pointer",
+          "flex w-full items-center gap-2 rounded-md py-1.5 text-left text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/30 cursor-pointer",
           isPlainChild ? "pl-8 pr-2 font-normal" : "px-2 font-medium",
           row.child && Icon ? "pl-7 pr-2" : "",
           // Grandchild rows (Unread / Read under To Do) nest one
@@ -596,7 +596,7 @@ function FolderItem({ row, active, count, onSelect, agent }: FolderItemProps) {
           // at a glance without relying on vertical tree glyphs.
           row.grandchild ? "pl-12 pr-2 text-[12px]" : "",
           active
-            ? "bg-brand-muted text-brand"
+            ? "bg-brand-muted text-brand shadow-[inset_2px_0_0_var(--color-brand)]"
             : "text-foreground hover:bg-surface-2",
         )}
       >
@@ -632,7 +632,7 @@ function FolderItem({ row, active, count, onSelect, agent }: FolderItemProps) {
                 "rounded-full px-1.5 py-0.5 text-[10px] font-semibold",
                 active
                   ? "bg-brand/20 text-brand"
-                  : "bg-surface-2 text-muted-foreground",
+                  : "bg-surface-2 text-muted-foreground group-hover/folder:bg-surface",
               )}
             >
               {count}

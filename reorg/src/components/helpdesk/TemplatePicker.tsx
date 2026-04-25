@@ -104,7 +104,7 @@ export function TemplatePicker({ ctx, onPick, disabled }: TemplatePickerProps) {
         onClick={() => setOpen((v) => !v)}
         disabled={disabled}
         className={cn(
-          "inline-flex h-7 items-center gap-1 rounded-md border border-hairline bg-surface px-2 text-xs text-foreground hover:bg-surface-2 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer",
+          "inline-flex h-7 items-center gap-1 rounded-md border border-hairline bg-surface px-2 text-xs text-foreground shadow-sm transition-colors hover:border-brand/35 hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/30 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer",
           open && "bg-surface-2",
         )}
       >
@@ -114,7 +114,7 @@ export function TemplatePicker({ ctx, onPick, disabled }: TemplatePickerProps) {
       </button>
 
       {open && (
-        <div className="absolute bottom-full left-0 z-30 mb-1 w-80 rounded-md border border-hairline bg-popover text-popover-foreground shadow-xl">
+        <div className="absolute bottom-full left-0 z-30 mb-1 w-80 overflow-hidden rounded-md border border-hairline bg-popover text-popover-foreground shadow-2xl shadow-black/30">
           <div className="flex items-center gap-2 border-b border-hairline px-2 py-1.5">
             <Search className="h-3 w-3 text-muted-foreground" />
             <input
@@ -148,7 +148,7 @@ export function TemplatePicker({ ctx, onPick, disabled }: TemplatePickerProps) {
                   key={t.id}
                   type="button"
                   onClick={() => pickTemplate(t)}
-                  className="flex w-full items-start gap-2 px-3 py-2 text-left transition-colors hover:bg-surface-2 cursor-pointer"
+                  className="flex w-full items-start gap-2 px-3 py-2 text-left transition-colors hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand/30 cursor-pointer"
                 >
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">

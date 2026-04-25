@@ -646,17 +646,20 @@ export function ThreadView({
   }, [ticketId, rows.length, rowsSignature, useVirtualTimeline]);
 
   if (loading && !ticket) {
-    return (
-      <div className="flex flex-1 items-center justify-center">
-        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-      </div>
-    );
+    return <ThreadSkeleton />;
   }
   if (!ticket) {
     return (
-      <div className="flex flex-1 flex-col items-center justify-center gap-2 px-8 text-center text-muted-foreground">
-        <MessageSquareText className="h-10 w-10 opacity-30" />
-        <p className="text-sm">Select a ticket to view the conversation.</p>
+      <div className="flex flex-1 flex-col items-center justify-center gap-3 px-8 text-center text-muted-foreground">
+        <div className="flex h-14 w-14 items-center justify-center rounded-md border border-hairline bg-surface">
+          <MessageSquareText className="h-6 w-6 opacity-60" />
+        </div>
+        <div>
+          <p className="text-sm font-medium text-foreground">Select a ticket</p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            The buyer conversation and reply composer will open here.
+          </p>
+        </div>
       </div>
     );
   }
@@ -700,12 +703,10 @@ export function ThreadView({
 
       <div
         ref={scrollRef}
-        className="min-h-0 flex-1 overflow-y-auto bg-background px-4 py-4 sm:px-6"
+        className="min-h-0 flex-1 scroll-smooth overflow-y-auto bg-background px-4 py-5 sm:px-6"
       >
         {rows.length === 0 ? (
-          <p className="text-center text-sm text-muted-foreground">
-            {eventsLoading ? "Loading conversation…" : "No messages yet."}
-          </p>
+          <ThreadEmptyState eventsLoading={eventsLoading} />
         ) : useVirtualTimeline ? (
           <div
             className="relative mx-auto w-full max-w-3xl"
@@ -718,7 +719,7 @@ export function ThreadView({
                   key={vr.key}
                   data-index={vr.index}
                   ref={virtualizer.measureElement}
-                  className="absolute left-0 top-0 w-full pb-3"
+                  className="absolute left-0 top-0 w-full pb-4"
                   style={{ transform: `translateY(${vr.start}px)` }}
                 >
                   <TimelineItem
@@ -732,7 +733,7 @@ export function ThreadView({
             })}
           </div>
         ) : (
-          <div className="mx-auto flex w-full max-w-3xl flex-col gap-3">
+          <div className="mx-auto flex w-full max-w-3xl flex-col gap-4">
             {rows.map((row) => (
               <TimelineItem
                 key={row.key}
@@ -772,6 +773,56 @@ export function ThreadView({
 }
 
 // ─── Lightbox ───────────────────────────────────────────────────────────────
+
+function ThreadSkeleton() {
+  return (
+    <div className="flex min-h-0 flex-1 flex-col bg-background">
+      <div className="flex-1 space-y-5 px-6 py-6">
+        {Array.from({ length: 5 }).map((_, i) => {
+          const outbound = i % 2 === 1;
+          return (
+            <div
+              key={i}
+              className={cn("flex gap-3", outbound && "flex-row-reverse")}
+            >
+              <span className="h-8 w-8 shrink-0 animate-pulse rounded-full bg-foreground/10" />
+              <div
+                className={cn(
+                  "space-y-2 rounded-md border border-hairline bg-card p-3",
+                  outbound ? "w-3/5" : "w-2/3",
+                )}
+              >
+                <div className="h-3 w-28 animate-pulse rounded bg-foreground/10" />
+                <div className="h-3 w-full animate-pulse rounded bg-foreground/10" />
+                <div className="h-3 w-3/4 animate-pulse rounded bg-foreground/10" />
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      <div className="border-t border-hairline bg-card p-3">
+        <div className="h-10 animate-pulse rounded-md bg-foreground/10" />
+      </div>
+    </div>
+  );
+}
+
+function ThreadEmptyState({ eventsLoading }: { eventsLoading: boolean }) {
+  return (
+    <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
+      <div className="flex h-12 w-12 items-center justify-center rounded-md border border-hairline bg-surface">
+        {eventsLoading ? (
+          <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+        ) : (
+          <MessageSquareText className="h-5 w-5 text-muted-foreground" />
+        )}
+      </div>
+      <p className="text-sm text-muted-foreground">
+        {eventsLoading ? "Loading conversation..." : "No messages yet."}
+      </p>
+    </div>
+  );
+}
 
 interface LightboxProps {
   images: InlineImage[];
@@ -1003,9 +1054,9 @@ function TimelineItem({
 }: TimelineItemProps) {
   if (row.kind === "day") {
     return (
-      <div className="my-2 flex items-center justify-center gap-3">
+      <div className="my-3 flex items-center justify-center gap-3">
         <span className="h-px flex-1 max-w-[28%] bg-hairline" />
-        <span className="rounded-full bg-surface px-3 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+        <span className="rounded-full border border-hairline bg-surface px-3 py-0.5 text-[10px] font-semibold uppercase text-muted-foreground shadow-sm">
           {row.label}
         </span>
         <span className="h-px flex-1 max-w-[28%] bg-hairline" />
@@ -1021,7 +1072,7 @@ function TimelineItem({
         <span className="h-px flex-1 max-w-[18%] bg-hairline" />
         <span
           className={cn(
-            "inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-[11px]",
+            "inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-[11px] shadow-sm",
             classForEventKind(ev.kind),
           )}
           title={formatRelativeTime(ev.at)}
@@ -1048,7 +1099,7 @@ function TimelineItem({
     // replaces this transient bubble with the permanent HelpdeskMessage.
     const statusLabel = blocked ? `Send blocked: ${j.willBlockReason}` : "SENT";
     return (
-      <div className="group/msg flex flex-row-reverse gap-3">
+      <div className="group/msg flex flex-row-reverse gap-3 py-0.5">
         <div className="shrink-0 pt-0.5">
           {j.author ? (
             <Avatar user={j.author} size="sm" />
@@ -1086,7 +1137,7 @@ function TimelineItem({
           </div>
           <div
             className={cn(
-              "rounded-md border border-dashed px-3 py-2 text-[13px] leading-[1.5] opacity-90",
+              "rounded-md border border-dashed px-3 py-2 text-[13px] leading-[1.5] opacity-90 shadow-sm",
               blocked
                 ? "border-amber-500/50 bg-amber-50 text-foreground dark:bg-amber-950/20"
                 : agentAccent.bubble,
@@ -1103,7 +1154,7 @@ function TimelineItem({
     const n = row.data;
     return (
       <div
-        className="rounded-md border border-amber-400/40 bg-amber-100 px-3 py-2 shadow-[1px_2px_0_rgba(0,0,0,0.04)] dark:bg-amber-950/30"
+        className="rounded-md border border-amber-400/40 bg-amber-100 px-3 py-2 shadow-sm dark:bg-amber-950/30"
         // Slight tilt + paper-edge shadow give the note that "post-it"
         // affordance the user asked for. Kept very subtle so it doesn't
         // feel cartoonish in the rest of a clean dashboard.
@@ -1252,13 +1303,13 @@ function TimelineItem({
   // change with agent settings). AR bubble shares the agent accent but
   // dashed to convey "not a human reply".
   const bubbleClass = isInbound
-    ? "border-hairline bg-card text-foreground"
+    ? "border-hairline bg-card/95 text-foreground"
     : isAR
       ? cn(agentAccent.bubble, "border-dashed opacity-90")
       : agentAccent.bubble;
 
   return (
-    <div className={cn("group/msg flex gap-3", sideClass)}>
+    <div className={cn("group/msg flex gap-3 py-0.5", sideClass)}>
       <div className="shrink-0 pt-0.5">{renderAvatar()}</div>
       <div className="min-w-0 max-w-[80%] flex-1">
         <div
@@ -1324,7 +1375,7 @@ function TimelineItem({
         </div>
         <div
           className={cn(
-            "rounded-md border px-3 py-2 text-[13px] leading-[1.5]",
+            "rounded-md border px-3 py-2 text-[13px] leading-[1.5] shadow-sm",
             bubbleClass,
           )}
         >
