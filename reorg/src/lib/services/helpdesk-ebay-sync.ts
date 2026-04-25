@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Help Desk eBay sync service.
  *
  * 2-stage polling strategy (cost-optimized for Neon public network transfer):
@@ -2608,7 +2608,69 @@ async function sweepUnreadConversationsForIntegration(
           ebayConversationId: true,
         },
       });
-      if (candidates.length === 0) continue;
+      if (candidates.length === 0) {
+        // Tier D — Conversation Discovery.
+        //
+        // We found an unread buyer conversation on eBay but have no
+        // helpdesk ticket for it. Historically this could happen because:
+        //   - The order's only local ticket is a SYSTEM notification
+        //     (e.g. "return case opened"), which we intentionally exclude
+        //     from the candidate set — SYSTEM tickets are for eBay
+        //     bookkeeping, not for buyer conversation.
+        //   - The conversation predates our first Trading-API sweep but
+        //     the buyer just replied on it.
+        //   - The Trading API inbox dropped the message (batching windows,
+        //     API flakiness) but the Commerce Message API still shows it.
+        //
+        // Without this branch the buyer's message would be invisible
+        // forever. Create a minimal ticket bound to the conversation ID,
+        // seed lastBuyerMessageAt so Tier B of the inbound sweep picks
+        // it up on the NEXT tick, and let ingestCommerceMessage hydrate
+        // the actual message body.
+        //
+        // threadKey is namespaced `conv:<id>` so it can't collide with
+        // Trading-API-derived tickets (`ord:…`, `itm:…`, `sub:…`) — if
+        // a Trading sweep later creates its own ticket for the same
+        // conversation they'll be separate rows; the read-time dedup in
+        // /api/helpdesk/tickets/[id] already handles any message overlap.
+        const lastMsgDate = c.lastMessageDate ? new Date(c.lastMessageDate) : null;
+        const bootstrapLastBuyerAt =
+          lastMsgDate && !Number.isNaN(lastMsgDate.getTime()) ? lastMsgDate : null;
+        try {
+          await db.helpdeskTicket.create({
+            data: {
+              integrationId: integration.id,
+              channel: integration.platform,
+              threadKey: `conv:${c.conversationId}`,
+              buyerUserId: c.otherPartyUsername,
+              buyerName: c.otherPartyUsername,
+              ebayItemId: c.itemId ?? null,
+              ebayConversationId: c.conversationId,
+              type: HelpdeskTicketType.QUERY,
+              kind: HelpdeskTicketKind.POST_SALES,
+              status: HelpdeskTicketStatus.TO_DO,
+              unreadCount: 1,
+              lastBuyerMessageAt: bootstrapLastBuyerAt,
+            },
+          });
+        } catch (err) {
+          // Two ticks could race the same conversationId, so a unique-
+          // constraint failure just means the other tick won — fine.
+          const msg = err instanceof Error ? err.message : String(err);
+          if (!msg.includes("Unique constraint")) {
+            console.warn(
+              "[helpdesk-sync] conversation-discovery create failed",
+              {
+                integrationId: integration.id,
+                conversationId: c.conversationId,
+                buyer: c.otherPartyUsername,
+                error: msg,
+              },
+            );
+          }
+        }
+        continue;
+      }
       let picked = candidates;
       if (c.itemId) {
         const itemMatch = candidates.filter((t) => t.ebayItemId === c.itemId);

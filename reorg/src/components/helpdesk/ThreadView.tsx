@@ -101,6 +101,7 @@ type SystemEventKind =
   | "cancel"
   | "refund"
   | "read"
+  | "folder"
   | "order_received"
   | "order_shipped";
 
@@ -192,6 +193,7 @@ const SYSTEM_ICON: Record<SystemEventKind, typeof Eye> = {
   cancel: XCircle,
   refund: DollarSign,
   read: InboxIcon,
+  folder: FilterIcon,
   order_received: ShoppingCart,
   order_shipped: Truck,
 };

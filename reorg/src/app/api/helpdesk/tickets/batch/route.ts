@@ -385,6 +385,13 @@ function perTicketActionFor(
           snoozedUntil: action.snoozedUntil,
         } satisfies Prisma.InputJsonValue,
       };
+    case "moveToFolder":
+      return {
+        action: "HELPDESK_TICKET_FOLDER_CHANGED",
+        details: {
+          agentFolderId: action.agentFolderId,
+        } satisfies Prisma.InputJsonValue,
+      };
     default:
       return null;
   }

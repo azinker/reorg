@@ -69,6 +69,13 @@ const TYPE_ORDER: HelpdeskTicketType[] = [
   "REFUND",
   "SHIPPING_QUERY",
   "CANCELLATION",
+  // SYSTEM was previously omitted here because the type is set automatically
+  // by ingest for eBay system notifications (return opened, payout sent, …)
+  // and we didn't want agents to hand-pick it. But if an agent accidentally
+  // picks another type on a SYSTEM ticket to test something, they need a
+  // way to put it back — so we expose it. Ingest still sets it automatically
+  // for inbound; this dropdown just lets an agent correct a miscategorised row.
+  "SYSTEM",
   "OTHER",
 ];
 

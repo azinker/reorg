@@ -68,6 +68,9 @@ type SystemEventKind =
   | "cancel"
   | "refund"
   | "read"
+  // Agent-folder moves — distinct from assign so the pill styling
+  // can read as a routing action rather than a person-assignment.
+  | "folder"
   // Synthesized from eBay order context (not from AuditLog).
   | "order_received"
   | "order_shipped";
@@ -93,6 +96,7 @@ type AuditDetails = Record<string, unknown> & {
   filterName?: unknown;
   caseType?: unknown;
   snoozedUntil?: unknown;
+  agentFolderId?: unknown;
 };
 
 function formatHumanStatus(status: unknown): string {
@@ -143,6 +147,7 @@ function formatSystemEvent(
   details: AuditDetails,
   actorName: string | null,
   resolveAssigneeName: (userId: string) => string | null,
+  resolveFolderName: (folderId: string) => string | null,
 ): FormattedEvent | null {
   const who = actorName ?? "System";
 
@@ -258,6 +263,23 @@ function formatSystemEvent(
             ? `${who} marked as read`
             : `${who} marked as unread`,
       };
+    case "HELPDESK_TICKET_FOLDER_CHANGED": {
+      const rawId = details.agentFolderId;
+      if (rawId === null) {
+        return { kind: "folder", text: `${who} removed from folder` };
+      }
+      if (typeof rawId !== "string") {
+        return { kind: "folder", text: `${who} moved the ticket to a folder` };
+      }
+      const folderName = resolveFolderName(rawId);
+      if (folderName) {
+        return {
+          kind: "folder",
+          text: `${who} moved to ${folderName}`,
+        };
+      }
+      return { kind: "folder", text: `${who} moved the ticket to a folder` };
+    }
     case "HELPDESK_FILTER_RUN":
       return {
         kind: "filter",
@@ -372,6 +394,28 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
     }
   }
 
+  // Resolve any agent-folder ids referenced by FOLDER_CHANGED rows so the
+  // timeline can render "Adam moved to Follow-up" instead of a raw id.
+  // Same one-shot pattern as the assignee lookup above — never N+1.
+  const folderIds = new Set<string>();
+  for (const row of auditRows) {
+    if (row.action !== "HELPDESK_TICKET_FOLDER_CHANGED") continue;
+    const details = (row.details ?? {}) as AuditDetails;
+    if (typeof details.agentFolderId === "string") {
+      folderIds.add(details.agentFolderId);
+    }
+  }
+  const folderNameById = new Map<string, string>();
+  if (folderIds.size > 0) {
+    const folders = await db.helpdeskAgentFolder.findMany({
+      where: { id: { in: Array.from(folderIds) } },
+      select: { id: true, name: true },
+    });
+    for (const f of folders) {
+      if (f.name) folderNameById.set(f.id, f.name);
+    }
+  }
+
   const events = auditRows
     .map((row) => {
       const actor = row.user
@@ -382,6 +426,7 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
         (row.details ?? {}) as AuditDetails,
         actor,
         (id) => assigneeNameById.get(id) ?? null,
+        (id) => folderNameById.get(id) ?? null,
       );
       if (!formatted) return null;
       return {
