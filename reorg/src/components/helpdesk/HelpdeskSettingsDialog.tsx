@@ -345,6 +345,16 @@ export function HelpdeskSettingsDialog({ open, onClose }: HelpdeskSettingsDialog
 
   useEffect(() => {
     if (!open) return;
+    const onChange = (e: Event) => {
+      const detail = (e as CustomEvent).detail as HelpdeskPrefs | undefined;
+      setPrefs(detail ?? readPrefs());
+    };
+    window.addEventListener("helpdesk:prefs-changed", onChange);
+    return () => window.removeEventListener("helpdesk:prefs-changed", onChange);
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
     };

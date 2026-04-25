@@ -105,6 +105,7 @@ export function Composer({
 }: ComposerProps) {
   const prefs = useHelpdeskPrefs();
   const sendDelaySeconds = sendDelayOverride ?? prefs.sendDelaySeconds;
+  const sendDelaySecondsRef = useRef(sendDelaySeconds);
   const [mode, setMode] = useState<ComposerMode>("REPLY");
   const [body, setBody] = useState("");
   // Per-agent default lives in prefs (server-synced via /api/helpdesk/me/prefs).
@@ -146,9 +147,15 @@ export function Composer({
   const flags = syncStatus?.flags;
   const safeMode = flags?.safeMode ?? true;
 
+  useEffect(() => {
+    sendDelaySecondsRef.current = sendDelaySeconds;
+  }, [sendDelaySeconds]);
+
   function updateSendDelaySeconds(value: number) {
+    const next = clampNumber(value, SEND_DELAY_MIN, SEND_DELAY_MAX);
+    sendDelaySecondsRef.current = next;
     updateHelpdeskPrefs({
-      sendDelaySeconds: clampNumber(value, SEND_DELAY_MIN, SEND_DELAY_MAX),
+      sendDelaySeconds: next,
     });
   }
 
@@ -355,6 +362,8 @@ export function Composer({
   async function handleSubmit() {
     if (!canSubmit) return;
     const draftBody = body.trim();
+    const effectiveSendDelaySeconds =
+      mode === "NOTE" ? 0 : sendDelaySecondsRef.current;
     setError(null);
     setSubmitting(true);
     try {
@@ -364,7 +373,7 @@ export function Composer({
         body: JSON.stringify({
           composerMode: mode,
           bodyText: draftBody,
-          sendDelaySeconds: mode === "NOTE" ? 0 : sendDelaySeconds,
+          sendDelaySeconds: effectiveSendDelaySeconds,
           setStatus:
             mode === "NOTE" || statusChoice === "NONE" ? undefined : statusChoice,
         }),
@@ -393,7 +402,7 @@ export function Composer({
         const queuedAt = new Date().toISOString();
         setPending({
           id: json.data.id,
-          scheduledAt: new Date(json.data.scheduledAt).getTime(),
+          scheduledAt: Date.now() + effectiveSendDelaySeconds * 1000,
           willBlockReason: json.data.willBlockReason,
           bodyText: draftBody,
           composerMode: mode,

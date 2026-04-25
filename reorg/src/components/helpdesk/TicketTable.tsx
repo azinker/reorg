@@ -82,7 +82,7 @@ const COLUMN_DEFS: Record<ColumnKey, ColumnDef> = {
   customer: { key: "customer", label: "Customer", width: "180px", sortable: true },
   type: { key: "type", label: "Type", width: "140px", sortable: true },
   location: { key: "location", label: "Location", width: "130px", sortable: true },
-  latestUpdate: { key: "latestUpdate", label: "Latest Update", width: undefined, sortable: false },
+  latestUpdate: { key: "latestUpdate", label: "Latest Update", width: "minmax(280px, 1fr)", sortable: false },
   owner: { key: "owner", label: "Owner", width: "140px", sortable: true },
   timeLeft: { key: "timeLeft", label: "Time Left", width: "120px", sortable: true },
   created: { key: "created", label: "Created", width: "100px", sortable: true, align: "right" },
@@ -593,7 +593,7 @@ export function TicketTable({
       {/* Grid header */}
       <div
         className="sticky top-0 z-[2] grid items-center border-b border-hairline bg-card/95 px-2 py-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground backdrop-blur"
-        style={{ gridTemplateColumns: totalGridTemplate, minWidth: "max-content" }}
+        style={{ gridTemplateColumns: totalGridTemplate, minWidth: "100%" }}
       >
         {showSelection && (
           <div className="px-2">
@@ -847,7 +847,7 @@ function TicketRow({
       onMouseEnter={onPrefetch}
       onFocus={onPrefetch}
       onContextMenu={(e) => onContextMenu?.(e, t.id)}
-      style={{ gridTemplateColumns: gridTemplate, minWidth: "max-content" }}
+      style={{ gridTemplateColumns: gridTemplate, minWidth: "100%" }}
       className={cn(
         "group grid cursor-pointer items-center border-b border-hairline transition-colors",
         density === "compact"
@@ -1092,7 +1092,7 @@ function Cell({ column, ticket: t, isUnread, timeLeft, otherViewers }: CellProps
 
     case "owner":
       return (
-        <div className="px-2">
+        <div className="min-w-0 px-2">
           {t.primaryAssignee ? (
             <div className="flex min-w-0 items-center gap-2">
               <Avatar user={t.primaryAssignee} size="sm" />
@@ -1103,7 +1103,12 @@ function Cell({ column, ticket: t, isUnread, timeLeft, otherViewers }: CellProps
               </span>
             </div>
           ) : (
-            <span className="text-sm text-muted-foreground/60">Unassigned</span>
+            <div className="flex min-w-0 items-center gap-2">
+              <Avatar user={null} size="sm" unassigned />
+              <span className="truncate text-sm text-muted-foreground/70">
+                Unassigned
+              </span>
+            </div>
           )}
         </div>
       );
