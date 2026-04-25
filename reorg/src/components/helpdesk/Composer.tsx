@@ -71,7 +71,7 @@ const STATUS_SHORT: Record<StatusChoice, string> = {
 
 const COMPOSER_HEIGHT_MIN = 96;
 const COMPOSER_HEIGHT_MAX = 360;
-const SEND_DELAY_MIN = 1;
+const SEND_DELAY_MIN = 0;
 const SEND_DELAY_MAX = 10;
 
 interface ComposerProps {
@@ -735,7 +735,9 @@ export function Composer({
           {mode !== "NOTE" && (
             <>
               {" · "}
-              queues for {sendDelaySeconds}s
+              {sendDelaySeconds === 0
+                ? "sends immediately"
+                : `queues for ${sendDelaySeconds}s`}
             </>
           )}
           {" · ⌘/Ctrl+Enter to send"}

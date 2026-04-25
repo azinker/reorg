@@ -337,12 +337,12 @@ export default function HelpdeskProfilePage() {
         <div className="space-y-4">
           <PrefRow
             label="Send delay"
-            hint="Seconds the composer waits before sending. Click Undo to cancel."
+            hint="Seconds the composer waits before sending. Use 0 to send immediately."
           >
             <div className="flex items-center gap-2">
               <input
                 type="range"
-                min={1}
+                min={0}
                 max={10}
                 value={prefs.sendDelaySeconds}
                 onChange={(e) => patchPrefs("sendDelaySeconds", Number(e.target.value))}

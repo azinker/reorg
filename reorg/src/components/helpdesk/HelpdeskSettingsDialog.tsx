@@ -5,7 +5,7 @@
  * we don't need a server-side User table change for this small surface.
  *
  * Settings:
- *   - sendDelaySeconds  (1-10, default 5)  — composer countdown before sending
+ *   - sendDelaySeconds  (0-10, default 5)  — composer countdown before sending
  *   - autoAdvance       (bool)             — after Resolve, jump to next ticket
  *   - autoMarkRead      (bool)             — clear unread on open (server already does)
  *   - density           ("compact" | "comfortable" | "spacious")
@@ -99,7 +99,7 @@ function readPrefs(): HelpdeskPrefs {
     if (!raw) return DEFAULTS;
     const parsed = JSON.parse(raw) as Partial<HelpdeskPrefs>;
     return {
-      sendDelaySeconds: clampInt(parsed.sendDelaySeconds, 1, 10, DEFAULTS.sendDelaySeconds),
+      sendDelaySeconds: clampInt(parsed.sendDelaySeconds, 0, 10, DEFAULTS.sendDelaySeconds),
       autoAdvance: typeof parsed.autoAdvance === "boolean" ? parsed.autoAdvance : DEFAULTS.autoAdvance,
       autoMarkRead: typeof parsed.autoMarkRead === "boolean" ? parsed.autoMarkRead : DEFAULTS.autoMarkRead,
       density:
@@ -408,12 +408,12 @@ export function HelpdeskSettingsDialog({ open, onClose }: HelpdeskSettingsDialog
         <div className="space-y-4 text-sm">
           <Field
             label="Send delay"
-            description="Seconds the composer waits before actually sending. Click Undo to cancel."
+            description="Seconds the composer waits before actually sending. Use 0 to send immediately."
           >
             <div className="flex items-center gap-2">
               <input
                 type="range"
-                min={1}
+                min={0}
                 max={10}
                 value={prefs.sendDelaySeconds}
                 onChange={(e) => update("sendDelaySeconds", Number(e.target.value))}
