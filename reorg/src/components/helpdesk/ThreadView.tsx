@@ -116,6 +116,7 @@ interface SystemEvent {
   action: string;
   kind: SystemEventKind;
   text: string;
+  shortText?: string | null;
   href?: string | null;
   externalId?: string | null;
   actor: {
@@ -1015,6 +1016,7 @@ function TimelineStoryStrip({ events }: { events: SystemEvent[] }) {
         <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden">
           {visible.map((event) => {
             const EventIcon = SYSTEM_ICON[event.kind] ?? CircleDashed;
+            const label = event.shortText ?? event.text;
             if (event.href) {
               return (
                 <a
@@ -1029,7 +1031,7 @@ function TimelineStoryStrip({ events }: { events: SystemEvent[] }) {
                   title={`${event.text} - ${formatDateTime(event.at)}`}
                 >
                   <EventIcon className="h-3 w-3 shrink-0" />
-                  <span className="truncate">{event.text}</span>
+                  <span className="truncate">{label}</span>
                 </a>
               );
             }
@@ -1040,10 +1042,10 @@ function TimelineStoryStrip({ events }: { events: SystemEvent[] }) {
                   "inline-flex max-w-[12rem] shrink-0 items-center gap-1 rounded-full border px-2 py-0.5",
                   classForEventKind(event.kind),
                 )}
-                title={`${event.text} · ${formatDateTime(event.at)}`}
+                title={`${event.text} - ${formatDateTime(event.at)}`}
               >
                 <EventIcon className="h-3 w-3 shrink-0" />
-                <span className="truncate">{event.text}</span>
+                <span className="truncate">{label}</span>
               </span>
             );
           })}
@@ -1372,7 +1374,7 @@ function TimelineItem({
         >
           <Icon className="h-3 w-3" />
           <span className="font-medium">{ev.text}</span>
-          <span className="opacity-60">·</span>
+          <span className="opacity-60">-</span>
           <span className="tabular-nums opacity-80">
             {formatDateTime(ev.at)}
           </span>
@@ -1519,7 +1521,7 @@ function TimelineItem({
           <span>{info.label}</span>
           {info.returnId && (
             <>
-              <span className="opacity-50">·</span>
+              <span className="opacity-50">-</span>
               <a
                 href={`https://www.ebay.com/mesh/returns/${info.returnId}/details`}
                 target="_blank"
@@ -1534,7 +1536,7 @@ function TimelineItem({
             className="tabular-nums opacity-70"
             title={formatRelativeTime(m.sentAt)}
           >
-            · {formatDateTime(m.sentAt)}
+            - {formatDateTime(m.sentAt)}
           </span>
         </div>
       </div>

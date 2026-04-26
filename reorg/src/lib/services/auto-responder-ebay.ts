@@ -92,6 +92,12 @@ export interface RenderContext {
   storeName: string;
 }
 
+export interface EbayOrderTracking {
+  number: string;
+  carrier: string | null;
+  shippedTime: string | null;
+}
+
 export function deriveFirstName(fullName: string | null | undefined): string {
   if (!fullName?.trim()) return "";
   const parts = fullName.trim().split(/\s+/);
@@ -264,43 +270,54 @@ export function parseXmlSimple(xml: string): Record<string, unknown> {
  * shipped via CompleteSale (which is most of TPP's volume ΓÇö eDesk picks it
  * up via the same broader walk).
  */
-export function extractTrackingFromOrder(
+function readXmlText(value: unknown): string | null {
+  if (typeof value === "string" && value.trim()) return value.trim();
+  if (value && typeof value === "object") {
+    const inner = (value as Record<string, unknown>)["#text"];
+    if (typeof inner === "string" && inner.trim()) return inner.trim();
+  }
+  return null;
+}
+
+export function extractTrackingNumbersFromOrder(
   order: Record<string, unknown>,
-): { number: string | null; carrier: string | null } {
-  const pickFromDetails = (
+): EbayOrderTracking[] {
+  const out: EbayOrderTracking[] = [];
+  const seen = new Set<string>();
+  const orderShippedTime = readXmlText(order.ShippedTime);
+
+  const addFromDetails = (
     raw: unknown,
-  ): { number: string | null; carrier: string | null } => {
-    if (!raw) return { number: null, carrier: null };
+    fallbackShippedTime: string | null,
+  ): void => {
+    if (!raw) return;
     const arr = Array.isArray(raw) ? raw : [raw];
     for (const td of arr as Array<Record<string, unknown>>) {
-      const rawNum = td.ShipmentTrackingNumber;
-      let num: string | null = null;
-      if (typeof rawNum === "string" && rawNum.trim()) {
-        num = rawNum.trim();
-      } else if (rawNum && typeof rawNum === "object") {
-        const inner = (rawNum as Record<string, unknown>)["#text"];
-        if (typeof inner === "string" && inner.trim()) num = inner.trim();
-      }
-      const carrier = td.ShippingCarrierUsed
-        ? String(td.ShippingCarrierUsed)
-        : null;
-      if (num) return { number: num, carrier };
+      const num = readXmlText(td.ShipmentTrackingNumber);
+      if (!num) continue;
+      const carrier = readXmlText(td.ShippingCarrierUsed);
+      const shippedTime =
+        readXmlText(td.ShippedTime) ??
+        readXmlText(td.CreatedTime) ??
+        readXmlText(td.EventTime) ??
+        fallbackShippedTime;
+      const key = `${carrier ?? ""}|${num}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({ number: num, carrier, shippedTime });
     }
-    return { number: null, carrier: null };
   };
 
   // 1. Order-level ShippingDetails
   const sd = order.ShippingDetails as Record<string, unknown> | undefined;
   if (sd) {
-    const t = pickFromDetails(sd.ShipmentTrackingDetails);
-    if (t.number) return t;
+    addFromDetails(sd.ShipmentTrackingDetails, orderShippedTime);
   }
 
   // 2. Order-level ShippingServiceSelected (eBay shipping label path)
   const sss = order.ShippingServiceSelected as Record<string, unknown> | undefined;
   if (sss) {
-    const t = pickFromDetails(sss.ShipmentTrackingDetails);
-    if (t.number) return t;
+    addFromDetails(sss.ShipmentTrackingDetails, orderShippedTime);
   }
 
   // 3 + 4 + 5. Transaction-level
@@ -308,23 +325,32 @@ export function extractTrackingFromOrder(
   const rawTx = ta?.Transaction;
   const transactions = Array.isArray(rawTx) ? rawTx : rawTx ? [rawTx] : [];
   for (const tx of transactions as Array<Record<string, unknown>>) {
+    const txShippedTime = readXmlText(tx.ShippedTime) ?? orderShippedTime;
     const shipment = tx.Shipment as Record<string, unknown> | undefined;
     if (shipment) {
-      const t = pickFromDetails(shipment.ShipmentTrackingDetails);
-      if (t.number) return t;
+      addFromDetails(
+        shipment.ShipmentTrackingDetails,
+        readXmlText(shipment.ShippedTime) ?? txShippedTime,
+      );
     }
     const txSd = tx.ShippingDetails as Record<string, unknown> | undefined;
     if (txSd) {
-      const t = pickFromDetails(txSd.ShipmentTrackingDetails);
-      if (t.number) return t;
+      addFromDetails(txSd.ShipmentTrackingDetails, txShippedTime);
     }
     const txSss = tx.ShippingServiceSelected as Record<string, unknown> | undefined;
     if (txSss) {
-      const t = pickFromDetails(txSss.ShipmentTrackingDetails);
-      if (t.number) return t;
+      addFromDetails(txSss.ShipmentTrackingDetails, txShippedTime);
     }
   }
 
+  return out;
+}
+
+export function extractTrackingFromOrder(
+  order: Record<string, unknown>,
+): { number: string | null; carrier: string | null } {
+  const first = extractTrackingNumbersFromOrder(order)[0];
+  if (first) return { number: first.number, carrier: first.carrier };
   return { number: null, carrier: null };
 }
 
@@ -559,6 +585,8 @@ export interface EbayOrderContext {
   /** First tracking number found, plus carrier when eBay sent one. */
   trackingNumber: string | null;
   trackingCarrier: string | null;
+  /** Every tracking number eBay returns for the order. */
+  trackingNumbers: EbayOrderTracking[];
   /** Total in cents (subtotal + shipping + tax). */
   totalCents: number | null;
   /**
@@ -677,7 +705,8 @@ export async function fetchEbayOrderContext(
   // transaction shipment, transaction shipping details). See
   // `extractTrackingFromOrder` for the precedence rationale.
   const shippingDetails = order.ShippingDetails as Record<string, unknown> | undefined;
-  const tracking = extractTrackingFromOrder(order);
+  const trackingNumbers = extractTrackingNumbersFromOrder(order);
+  const tracking = trackingNumbers[0] ?? { number: null, carrier: null };
   const trackingNumber = tracking.number;
   const trackingCarrier = tracking.carrier;
   // Shipping service ΓÇö try both the order-level summary and the transaction.
@@ -763,6 +792,7 @@ export async function fetchEbayOrderContext(
     shippingService,
     trackingNumber,
     trackingCarrier,
+    trackingNumbers,
     totalCents,
     shippingCents,
     currency,

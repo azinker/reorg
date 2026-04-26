@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   extractDeliveryDates,
   extractTrackingFromOrder,
+  extractTrackingNumbersFromOrder,
   parseXmlSimple,
 } from "@/lib/services/auto-responder-ebay";
 
@@ -98,6 +99,50 @@ test("extractTrackingFromOrder finds the carrier and number on Transaction.Shipp
   const result = extractTrackingFromOrder(order);
   assert.equal(result.carrier, "USPS");
   assert.equal(result.number, "9401903308746074150623");
+});
+
+test("extractTrackingNumbersFromOrder returns every tracking number with upload date fallback", () => {
+  const xml = `<?xml version="1.0"?>
+<GetOrdersResponse xmlns="urn:ebay:apis:eBLBaseComponents">
+  <OrderArray>
+    <Order>
+      <OrderID>21-14438-90782</OrderID>
+      <ShippedTime>2026-04-16T13:54:57.000Z</ShippedTime>
+      <TransactionArray>
+        <Transaction>
+          <Shipment>
+            <ShipmentTrackingDetails>
+              <ShippingCarrierUsed>USPS</ShippingCarrierUsed>
+              <ShipmentTrackingNumber>9401903308742461287149</ShipmentTrackingNumber>
+            </ShipmentTrackingDetails>
+            <ShipmentTrackingDetails>
+              <ShippingCarrierUsed>USPS</ShippingCarrierUsed>
+              <ShipmentTrackingNumber>9235990374019711425326</ShipmentTrackingNumber>
+            </ShipmentTrackingDetails>
+          </Shipment>
+        </Transaction>
+      </TransactionArray>
+    </Order>
+  </OrderArray>
+</GetOrdersResponse>`;
+  const parsed = parseXmlSimple(xml);
+  const order = (
+    (parsed.GetOrdersResponse as Record<string, unknown>)
+      .OrderArray as Record<string, unknown>
+  ).Order as Record<string, unknown>[];
+  const result = extractTrackingNumbersFromOrder(order[0]);
+  assert.deepEqual(result, [
+    {
+      carrier: "USPS",
+      number: "9401903308742461287149",
+      shippedTime: "2026-04-16T13:54:57.000Z",
+    },
+    {
+      carrier: "USPS",
+      number: "9235990374019711425326",
+      shippedTime: "2026-04-16T13:54:57.000Z",
+    },
+  ]);
 });
 
 test("extractTrackingFromOrder returns nulls when no tracking is present", () => {

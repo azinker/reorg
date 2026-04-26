@@ -122,6 +122,11 @@ interface OrderContextAddress {
   countryName: string | null;
   phone: string | null;
 }
+interface OrderContextTracking {
+  number: string;
+  carrier: string | null;
+  shippedTime: string | null;
+}
 interface OrderContext {
   orderId: string;
   salesRecordNumber: string | null;
@@ -138,6 +143,7 @@ interface OrderContext {
   shippingService: string | null;
   trackingNumber: string | null;
   trackingCarrier: string | null;
+  trackingNumbers?: OrderContextTracking[];
   totalCents: number | null;
   /** Shipping fee in cents; null = free shipping or unavailable. */
   shippingCents: number | null;
@@ -821,9 +827,8 @@ function OrderInfoSection({
    *   - Sales Record Number rendered inline in parentheses when available.
    *   - Every field gets its own row separated by a hairline so the agent
    *     can scan visually instead of parsing whitespace.
-   *   - Tracking number renders "USPS 9401…" as one inline link to the
-   *     carrier's tracking page; carriers other than USPS/UPS/FedEx fall
-   *     back to a Google search.
+   *   - Tracking numbers render as copyable rows so replacement shipments
+   *     uploaded directly on eBay are visible without opening the order.
    *   - Delivery address is a clickable Google Maps link (multi-line so the
    *     full address is visible without truncation).
    *   - Products list mirrors eDesk's compact stack: thumbnail + title + SKU
@@ -841,6 +846,18 @@ function OrderInfoSection({
   // to MFN; the SDK doesn't expose Amazon-style FBA so this is informational.
   const fulfillmentBadge = "MFN";
   const trackingCarrier = ctx?.trackingCarrier ?? "USPS";
+  const trackingEntries: OrderContextTracking[] =
+    ctx?.trackingNumbers && ctx.trackingNumbers.length > 0
+      ? ctx.trackingNumbers
+      : ctx?.trackingNumber
+        ? [
+            {
+              number: ctx.trackingNumber,
+              carrier: ctx.trackingCarrier,
+              shippedTime: ctx.shippedTime,
+            },
+          ]
+        : [];
 
   return (
     <section className="border-b border-hairline bg-card/40">
@@ -949,21 +966,32 @@ function OrderInfoSection({
               <p className="mb-0.5 text-[11px] uppercase tracking-wider text-muted-foreground">
                 Tracking No.
               </p>
-              {ctx?.trackingNumber ? (
-                <a
-                  href={trackingUrl(trackingCarrier, ctx.trackingNumber)}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 break-all text-brand hover:underline"
-                  title={`Track ${ctx.trackingNumber} on ${trackingCarrier}`}
-                >
-                  <Truck className="h-3 w-3 shrink-0" />
-                  <span className="font-medium">{trackingCarrier}</span>
-                  <span className="font-mono text-foreground">
-                    {ctx.trackingNumber}
-                  </span>
-                  <ExternalLink className="h-3 w-3 shrink-0 opacity-70" />
-                </a>
+              {trackingEntries.length > 0 ? (
+                <div className="space-y-1.5">
+                  {trackingEntries.map((entry) => {
+                    const carrier = entry.carrier ?? trackingCarrier;
+                    return (
+                      <div
+                        key={`${carrier}-${entry.number}`}
+                        className="flex flex-wrap items-center gap-1.5 text-foreground"
+                      >
+                        <Truck className="h-3 w-3 shrink-0 text-brand" />
+                        <span className="font-medium">{carrier}</span>
+                        <span className="font-mono break-all">
+                          {entry.number}
+                        </span>
+                        <span className="text-muted-foreground">-</span>
+                        <span className="tabular-nums text-muted-foreground">
+                          {formatNumericDate(entry.shippedTime ?? ctx?.shippedTime)}
+                        </span>
+                        <CopyButton
+                          value={entry.number}
+                          title={`Copy tracking ${entry.number}`}
+                        />
+                      </div>
+                    );
+                  })}
+                </div>
               ) : (
                 <span className="text-muted-foreground">
                   {ctx?.shippedTime
@@ -1267,6 +1295,19 @@ function formatLongDate(value: string | null | undefined): string {
   }
 }
 
+function formatNumericDate(value: string | null | undefined): string {
+  if (!value) return "—";
+  try {
+    return new Date(value).toLocaleDateString(undefined, {
+      month: "numeric",
+      day: "numeric",
+      year: "2-digit",
+    });
+  } catch {
+    return "—";
+  }
+}
+
 function formatEstimatedDelivery(min: string | null | undefined, max: string | null | undefined): string {
   // eDesk shows the EDD as a "weekday, day month" range like
   // "Sun, 12 Apr – Tue, 14 Apr", which is much easier to scan than
@@ -1308,21 +1349,6 @@ function shortService(service: string): string {
   if (/ground|advantage|economy|standard|home.?delivery|first.?class|media/i.test(cleaned))
     return "STANDARD";
   return cleaned.toUpperCase().slice(0, 12);
-}
-
-function trackingUrl(carrier: string, trackingNumber: string): string {
-  const c = carrier.toUpperCase();
-  if (c.includes("USPS")) {
-    return `https://tools.usps.com/go/TrackConfirmAction?tLabels=${encodeURIComponent(trackingNumber)}`;
-  }
-  if (c.includes("UPS")) {
-    return `https://www.ups.com/track?tracknum=${encodeURIComponent(trackingNumber)}`;
-  }
-  if (c.includes("FEDEX")) {
-    return `https://www.fedex.com/fedextrack/?trknbr=${encodeURIComponent(trackingNumber)}`;
-  }
-  // Fallback: Google search the tracking number with the carrier name.
-  return `https://www.google.com/search?q=${encodeURIComponent(`${carrier} ${trackingNumber}`)}`;
 }
 
 /**

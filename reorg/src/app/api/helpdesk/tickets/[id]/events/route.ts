@@ -84,6 +84,7 @@ type SystemEventKind =
 interface FormattedEvent {
   kind: SystemEventKind;
   text: string;
+  shortText?: string | null;
 }
 
 interface TimelineEvent {
@@ -92,6 +93,7 @@ interface TimelineEvent {
   action: string;
   kind: SystemEventKind;
   text: string;
+  shortText?: string | null;
   href?: string | null;
   externalId?: string | null;
   actor: {
@@ -331,7 +333,7 @@ function systemTicketTimelineText(args: {
   systemMessageType: string | null;
   subject: string | null;
   bodyText: string | null;
-}): { text: string; action: string } {
+}): { text: string; action: string; shortText?: string | null } {
   const subject = args.subject?.trim() || null;
   const body = args.bodyText?.trim() || "";
   const detected =
@@ -351,52 +353,125 @@ function systemTicketTimelineText(args: {
     case SYSTEM_MESSAGE_TYPES.ITEM_NOT_RECEIVED:
       return {
         action: "EBAY_ITEM_NOT_RECEIVED_CASE",
-        text: "Buyer opened an item-not-received case on eBay",
+        text: "Buyer Opened Item Not Received Claim on eBay",
+        shortText: "Buyer Opened INR Case",
       };
     case SYSTEM_MESSAGE_TYPES.CASE_OPENED:
-      return { action: "EBAY_CASE_OPENED", text: "Buyer opened a case on eBay" };
+      return {
+        action: "EBAY_CASE_OPENED",
+        text: "Buyer Opened Case on eBay",
+        shortText: "Buyer Opened Case",
+      };
     case SYSTEM_MESSAGE_TYPES.CASE_ON_HOLD:
-      return { action: "EBAY_CASE_ON_HOLD", text: "eBay placed the case on hold" };
+      return {
+        action: "EBAY_CASE_ON_HOLD",
+        text: "eBay Placed Case On Hold",
+        shortText: "Case On Hold",
+      };
     case SYSTEM_MESSAGE_TYPES.CASE_CLOSED:
       return {
         action: "EBAY_CASE_CLOSED",
         text:
           haystack.includes("buyer") && haystack.includes("closed")
-            ? "Buyer closed the case on eBay"
-            : "eBay closed the case",
+            ? "Buyer Closed Case on eBay"
+            : "eBay Closed Case",
+        shortText:
+          haystack.includes("buyer") && haystack.includes("closed")
+            ? "Buyer Closed Case"
+            : "Case Closed",
       };
     case SYSTEM_MESSAGE_TYPES.RETURN_REQUEST:
       return {
         action: "EBAY_RETURN_OPENED",
-        text: "Buyer opened a return request on eBay",
+        text: "Buyer Opened Return Case on eBay",
+        shortText: "Buyer Opened Return",
       };
     case SYSTEM_MESSAGE_TYPES.RETURN_APPROVED:
-      return { action: "EBAY_RETURN_APPROVED", text: "Return approved on eBay" };
+      return {
+        action: "EBAY_RETURN_APPROVED",
+        text: "Return Approved on eBay",
+        shortText: "Return Approved",
+      };
     case SYSTEM_MESSAGE_TYPES.RETURN_CLOSED:
-      return { action: "EBAY_RETURN_CLOSED", text: "Return closed on eBay" };
+      return {
+        action: "EBAY_RETURN_CLOSED",
+        text: "Return Closed on eBay",
+        shortText: "Return Closed",
+      };
     case SYSTEM_MESSAGE_TYPES.CANCELLATION_REQUEST:
       return {
         action: "EBAY_CANCEL_REQUESTED",
-        text: "Buyer requested cancellation on eBay",
+        text: "Buyer Requested Cancellation on eBay",
+        shortText: "Cancel Requested",
       };
     case SYSTEM_MESSAGE_TYPES.CANCELLATION_CONFIRMED:
       return {
         action: "EBAY_CANCEL_CONFIRMED",
-        text: "Order cancellation confirmed on eBay",
+        text: "Order Cancellation Confirmed on eBay",
+        shortText: "Cancel Confirmed",
       };
     case SYSTEM_MESSAGE_TYPES.REFUND_ISSUED:
-      return { action: "EBAY_REFUND_ISSUED", text: "Refund issued on eBay" };
+      return {
+        action: "EBAY_REFUND_ISSUED",
+        text: "Refund Issued on eBay",
+        shortText: "Refund Issued",
+      };
     case SYSTEM_MESSAGE_TYPES.REFUND_REQUESTED:
-      return { action: "EBAY_REFUND_REQUESTED", text: "Refund requested on eBay" };
+      return {
+        action: "EBAY_REFUND_REQUESTED",
+        text: "Refund Requested on eBay",
+        shortText: "Refund Requested",
+      };
     case SYSTEM_MESSAGE_TYPES.ITEM_DELIVERED:
-      return { action: "EBAY_ITEM_DELIVERED", text: "eBay marked the item delivered" };
+      return {
+        action: "EBAY_ITEM_DELIVERED",
+        text: "eBay Marked Item Delivered",
+        shortText: "Item Delivered",
+      };
     case SYSTEM_MESSAGE_TYPES.BUYER_SHIPPED:
-      return { action: "EBAY_BUYER_SHIPPED", text: "Buyer shipped the item back" };
+      return {
+        action: "EBAY_BUYER_SHIPPED",
+        text: "Buyer Shipped Item Back",
+        shortText: "Buyer Shipped Item",
+      };
     default:
       return {
         action: "EBAY_SYSTEM_NOTIFICATION",
         text: `eBay notification: ${label}`,
       };
+  }
+}
+
+function compactTimelineLabel(action: string, text: string): string {
+  switch (action) {
+    case "EBAY_ITEM_NOT_RECEIVED_CASE":
+      return "Buyer Opened INR Case";
+    case "EBAY_CASE_OPENED":
+      return /return/i.test(text) ? "Buyer Opened Return" : "Buyer Opened Case";
+    case "EBAY_CASE_ON_HOLD":
+      return "Case On Hold";
+    case "EBAY_CASE_CLOSED":
+      return /buyer/i.test(text) ? "Buyer Closed Case" : "Case Closed";
+    case "EBAY_RETURN_OPENED":
+      return "Buyer Opened Return";
+    case "EBAY_RETURN_APPROVED":
+      return "Return Approved";
+    case "EBAY_RETURN_CLOSED":
+      return "Return Closed";
+    case "EBAY_CANCEL_REQUESTED":
+      return "Cancel Requested";
+    case "EBAY_CANCEL_CONFIRMED":
+      return "Cancel Confirmed";
+    case "EBAY_REFUND_ISSUED":
+      return "Refund Issued";
+    case "EBAY_REFUND_REQUESTED":
+      return "Refund Requested";
+    case "EBAY_ITEM_DELIVERED":
+      return "Item Delivered";
+    case "EBAY_BUYER_SHIPPED":
+      return "Buyer Shipped Item";
+    default:
+      return text;
   }
 }
 
@@ -471,7 +546,8 @@ function extractEbayRequestContext(args: {
 }): {
   caseId: string | null;
   href: string | null;
-  kindLabel: string;
+  longCaseLabel: string;
+  shortCaseLabel: string;
   openedAt: string | null;
   isDeliveredUpdate: boolean;
   isClosed: boolean;
@@ -482,6 +558,8 @@ function extractEbayRequestContext(args: {
   const haystack = `${subject} ${plain}`;
   const caseId =
     /ViewRequest\?id=(\d{6,})/i.exec(args.bodyText ?? "")?.[1] ??
+    /\/mesh\/returns\/(\d{6,})/i.exec(args.bodyText ?? "")?.[1] ??
+    /Return\s+(\d{6,})/i.exec(subject)?.[1] ??
     /Request\s+#\s*:?\s*(\d{6,})/i.exec(haystack)?.[1] ??
     /Request\s+#(\d{6,})/i.exec(haystack)?.[1] ??
     /Case\s+ID\s*:?\s*(\d{6,})/i.exec(haystack)?.[1] ??
@@ -497,6 +575,12 @@ function extractEbayRequestContext(args: {
     /ItemNotReceived/i.test(args.bodyText ?? "") ||
     /item\s+not\s+received|not\s+received\s+request|hasn'?t\s+arrived/i.test(haystack) ||
     /buyer'?s\s+item\s+arrived|shipping\s+status\s+shows.*delivered/i.test(haystack);
+  const isReturn =
+    !isInr &&
+    (/\/mesh\/returns\//i.test(args.bodyText ?? "") ||
+      /return\s+(case|request)|buyer\s+opened\s+a\s+return|new\s+return\s+request/i.test(
+        haystack,
+      ));
   const isDeliveredUpdate =
     /buyer'?s\s+item\s+arrived|shipping\s+status\s+shows.*delivered|item\s+has\s+arrived/i.test(
       haystack,
@@ -512,7 +596,12 @@ function extractEbayRequestContext(args: {
   return {
     caseId,
     href,
-    kindLabel: isInr ? "item-not-received case" : "case",
+    longCaseLabel: isInr
+      ? "Item Not Received Claim"
+      : isReturn
+        ? "Return Case"
+        : "Case",
+    shortCaseLabel: isInr ? "INR Case" : isReturn ? "Return Case" : "Case",
     openedAt: parseEbayDateOnly(openedDate),
     isDeliveredUpdate,
     isClosed,
@@ -541,7 +630,8 @@ function systemTicketTimelineEvents(args: {
       type: "system",
       action: "EBAY_CASE_OPENED",
       kind: "case",
-      text: `Buyer opened ${ctx.kindLabel} #${ctx.caseId} on eBay`,
+      text: `Buyer Opened ${ctx.longCaseLabel} #${ctx.caseId} on eBay`,
+      shortText: `Buyer Opened ${ctx.shortCaseLabel}`,
       href: ctx.href,
       externalId: ctx.caseId,
       actor: null,
@@ -555,7 +645,8 @@ function systemTicketTimelineEvents(args: {
       type: "system",
       action: "EBAY_ITEM_DELIVERED",
       kind: "case",
-      text: `eBay marked item delivered for ${ctx.kindLabel} #${ctx.caseId}`,
+      text: `eBay Marked Item Delivered For ${ctx.longCaseLabel} #${ctx.caseId} on eBay`,
+      shortText: `${ctx.shortCaseLabel} Shows Delivered`,
       href: ctx.href,
       externalId: ctx.caseId,
       actor: null,
@@ -570,8 +661,11 @@ function systemTicketTimelineEvents(args: {
       action: "EBAY_CASE_CLOSED",
       kind: "case",
       text: `${
-        ctx.closedByBuyer ? "Buyer closed" : "eBay closed"
-      } ${ctx.kindLabel} #${ctx.caseId} on eBay`,
+        ctx.closedByBuyer ? "Buyer Closed" : "eBay Closed"
+      } ${ctx.longCaseLabel} #${ctx.caseId} on eBay`,
+      shortText: `${ctx.closedByBuyer ? "Buyer Closed" : "eBay Closed"} ${
+        ctx.shortCaseLabel
+      }`,
       href: ctx.href,
       externalId: ctx.caseId,
       actor: null,
@@ -593,6 +687,7 @@ function systemTicketTimelineEvents(args: {
       action: formatted.action,
       kind: "case",
       text: formatted.text,
+      shortText: formatted.shortText ?? compactTimelineLabel(formatted.action, formatted.text),
       actor: null,
       at: args.at,
     },
@@ -756,6 +851,7 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
         action: row.action,
         kind: formatted.kind,
         text: formatted.text,
+        shortText: formatted.shortText ?? null,
         actor: row.user
           ? {
               id: row.user.id,
@@ -796,6 +892,7 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
             action: "EBAY_ORDER_RECEIVED",
             kind: "order_received",
             text: "Order received",
+            shortText: "Order Received",
             actor: null,
             at: ctx.createdTime,
           });
@@ -810,6 +907,7 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
               ctx.trackingCarrier && ctx.trackingNumber
                 ? `Order shipped via ${ctx.trackingCarrier}`
                 : "Order shipped",
+            shortText: "Order Shipped",
             actor: null,
             at: ctx.shippedTime,
           });
@@ -982,20 +1080,31 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
       // agent doesn't have to translate eBay's acronyms in their head.
       const kindLabel =
         c.kind === "RETURN"
-          ? "return case"
+          ? "Return Case"
           : c.kind === "NOT_AS_DESCRIBED"
-            ? "INAD claim"
+            ? "INAD Claim"
             : c.kind === "ITEM_NOT_RECEIVED"
-              ? "item-not-received case"
+              ? "Item Not Received Claim"
               : c.kind === "CHARGEBACK"
-                ? "chargeback case"
-                : "case";
+                ? "Chargeback Case"
+                : "Case";
+      const shortCaseLabel =
+        c.kind === "RETURN"
+          ? "Return Case"
+          : c.kind === "NOT_AS_DESCRIBED"
+            ? "INAD Claim"
+            : c.kind === "ITEM_NOT_RECEIVED"
+              ? "INR Case"
+              : c.kind === "CHARGEBACK"
+                ? "Chargeback"
+                : "Case";
       events.push({
         id: `case-opened-${c.id}`,
         type: "system" as const,
         action: "EBAY_CASE_OPENED",
         kind: "case" as const,
-        text: `Buyer opened ${kindLabel} #${c.externalId} on eBay`,
+        text: `Buyer Opened ${kindLabel} #${c.externalId} on eBay`,
+        shortText: `Buyer Opened ${shortCaseLabel}`,
         href: c.manageUrl,
         externalId: c.externalId,
         actor: null,
@@ -1017,7 +1126,8 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
           type: "system" as const,
           action: "EBAY_CASE_CLOSED",
           kind: "case" as const,
-          text: `eBay closed ${kindLabel} #${c.externalId}${closeQualifier}`,
+          text: `eBay Closed ${kindLabel} #${c.externalId}${closeQualifier}`,
+          shortText: `${shortCaseLabel} Closed`,
           href: c.manageUrl,
           externalId: c.externalId,
           actor: null,
@@ -1043,6 +1153,12 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
         action: "EBAY_FEEDBACK_LEFT",
         kind: "feedback" as const,
         text: `Buyer left ${ratingLabel}${stars}${f.comment ? `: "${f.comment.slice(0, 120)}"` : ""}`,
+        shortText:
+          f.kind === "POSITIVE"
+            ? "Positive Feedback"
+            : f.kind === "NEGATIVE"
+              ? "Negative Feedback"
+              : "Neutral Feedback",
         actor: null,
         at: f.leftAt,
       });
@@ -1055,6 +1171,7 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
         action: "EBAY_CANCEL_REQUESTED",
         kind: "cancel" as const,
         text: `Buyer requested cancellation${cn.reason ? ` — ${cn.reason.toLowerCase()}` : ""}`,
+        shortText: "Cancel Requested",
         actor: null,
         at: cn.requestedAt,
       });
@@ -1080,6 +1197,7 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
           action: "EBAY_CANCEL_RESOLVED",
           kind: "cancel" as const,
           text: `Cancellation ${decided}`,
+          shortText: `Cancel ${decided}`,
           actor: null,
           at: cn.resolvedAt,
         });
