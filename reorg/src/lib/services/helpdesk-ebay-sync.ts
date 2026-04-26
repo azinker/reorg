@@ -3920,6 +3920,43 @@ async function ingestCommerceMessage(args: {
   const bodyText = m.isHtml ? cleanMessageHtml(rawBody) : rawBody;
 
   const finalSentAt = Number.isNaN(sentAt.getTime()) ? new Date() : sentAt;
+
+  // If an auto-responder send was already mirrored directly into Help Desk,
+  // do not add the same outbound again when Commerce Message later echoes it.
+  // Promote any existing sent-copy row we find so the thread keeps one visible
+  // AR bubble with the right source label.
+  if (
+    direction === HelpdeskMessageDirection.OUTBOUND &&
+    source === HelpdeskMessageSource.AUTO_RESPONDER
+  ) {
+    const targetHash = hashBodyForMatch(bodyText);
+    const windowMs = 10 * 60 * 1000;
+    const candidates = await db.helpdeskMessage.findMany({
+      where: {
+        ticketId,
+        direction: HelpdeskMessageDirection.OUTBOUND,
+        deletedAt: null,
+        sentAt: {
+          gte: new Date(finalSentAt.getTime() - windowMs),
+          lte: new Date(finalSentAt.getTime() + windowMs),
+        },
+      },
+      select: { id: true, bodyText: true, source: true },
+    });
+    const existing = candidates.find(
+      (candidate) => hashBodyForMatch(candidate.bodyText) === targetHash,
+    );
+    if (existing) {
+      if (existing.source !== HelpdeskMessageSource.AUTO_RESPONDER) {
+        await db.helpdeskMessage.update({
+          where: { id: existing.id },
+          data: { source: HelpdeskMessageSource.AUTO_RESPONDER },
+        });
+      }
+      return;
+    }
+  }
+
   try {
     await db.helpdeskMessage.create({
       data: {

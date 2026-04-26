@@ -42,6 +42,7 @@ import {
 } from "@prisma/client";
 
 import { db } from "@/lib/db";
+import { hashBodyForMatch } from "@/lib/helpdesk/ebay-digest-parser";
 import { applyFilterAction, pickMatchingFilters } from "@/lib/helpdesk/filters";
 
 export interface RecordArSendInput {
@@ -175,33 +176,74 @@ export async function recordAutoResponderHelpdeskMessage(
     });
   }
 
-  // 3. Insert the AR HelpdeskMessage. eBay didn't give us a MessageID,
-  //    so we synthesize a stable externalId from the send log row id —
-  //    this is what makes step 1 above work on re-runs.
-  const message = await db.helpdeskMessage.create({
-    data: {
-      ticketId: ticket.id,
-      direction: HelpdeskMessageDirection.OUTBOUND,
-      source: HelpdeskMessageSource.AUTO_RESPONDER,
-      externalId,
-      ebayMessageId: null, // eBay doesn't return one for AAQToPartner
-      authorUserId: null,
-      fromName: input.integration.label
-        ? `${input.integration.label} Auto Responder`
-        : "Auto Responder",
-      fromIdentifier: null,
-      subject: input.subject,
-      bodyText: input.body,
-      isHtml: false,
-      sentAt: input.sentAt,
-      rawData: {
-        source: "auto_responder",
-        sendLogId: input.sendLogId,
-        orderNumber: input.orderNumber,
-        itemId: input.itemId,
-      } satisfies Prisma.InputJsonValue,
-    },
+  // 3. Insert or adopt the AR HelpdeskMessage. eBay didn't give us a
+  //    MessageID, so live sends usually synthesize a stable externalId from
+  //    the send log row id. Historical backfills may find the same outbound
+  //    already synced from eBay; when that happens, promote it instead of
+  //    creating a duplicate visible bubble.
+  const reusable = await findReusableAutoResponderMessage({
+    ticketId: ticket.id,
+    body: input.body,
+    sentAt: input.sentAt,
   });
+  const message = reusable
+    ? await db.helpdeskMessage.update({
+        where: { id: reusable.id },
+        data: {
+          source: HelpdeskMessageSource.AUTO_RESPONDER,
+          subject: reusable.subject || input.subject,
+          fromName:
+            reusable.fromName ??
+            (input.integration.label
+              ? `${input.integration.label} Auto Responder`
+              : "Auto Responder"),
+          rawData: mergeMessageRawData(reusable.rawData, {
+            source: "auto_responder",
+            sendLogId: input.sendLogId,
+            syntheticExternalId: externalId,
+            orderNumber: input.orderNumber,
+            itemId: input.itemId,
+          }),
+        },
+        select: {
+          id: true,
+          subject: true,
+          bodyText: true,
+          fromName: true,
+          fromIdentifier: true,
+        },
+      })
+    : await db.helpdeskMessage.create({
+        data: {
+          ticketId: ticket.id,
+          direction: HelpdeskMessageDirection.OUTBOUND,
+          source: HelpdeskMessageSource.AUTO_RESPONDER,
+          externalId,
+          ebayMessageId: null, // eBay doesn't return one for AAQToPartner
+          authorUserId: null,
+          fromName: input.integration.label
+            ? `${input.integration.label} Auto Responder`
+            : "Auto Responder",
+          fromIdentifier: null,
+          subject: input.subject,
+          bodyText: input.body,
+          isHtml: false,
+          sentAt: input.sentAt,
+          rawData: {
+            source: "auto_responder",
+            sendLogId: input.sendLogId,
+            orderNumber: input.orderNumber,
+            itemId: input.itemId,
+          } satisfies Prisma.InputJsonValue,
+        },
+        select: {
+          id: true,
+          subject: true,
+          bodyText: true,
+          fromName: true,
+          fromIdentifier: true,
+        },
+      });
 
   // 4. Run enabled Helpdesk filters against the new message — that's
   //    what archives the AR per the user's "Auto Responder Initial
@@ -303,7 +345,61 @@ export async function recordAutoResponderHelpdeskMessage(
     ticketId: ticket.id,
     messageId: message.id,
     ticketCreated,
-    alreadyExisted: false,
+    alreadyExisted: !!reusable,
     appliedFilterIds,
   };
+}
+
+async function findReusableAutoResponderMessage(input: {
+  ticketId: string;
+  body: string;
+  sentAt: Date;
+}) {
+  const targetHash = hashBodyForMatch(input.body);
+  if (!targetHash) return null;
+
+  const windowMs = 10 * 60 * 1000;
+  const candidates = await db.helpdeskMessage.findMany({
+    where: {
+      ticketId: input.ticketId,
+      direction: HelpdeskMessageDirection.OUTBOUND,
+      deletedAt: null,
+      sentAt: {
+        gte: new Date(input.sentAt.getTime() - windowMs),
+        lte: new Date(input.sentAt.getTime() + windowMs),
+      },
+    },
+    select: {
+      id: true,
+      subject: true,
+      bodyText: true,
+      fromName: true,
+      rawData: true,
+      sentAt: true,
+    },
+  });
+
+  return (
+    candidates
+      .filter((m) => hashBodyForMatch(m.bodyText) === targetHash)
+      .sort(
+        (a, b) =>
+          Math.abs(a.sentAt.getTime() - input.sentAt.getTime()) -
+          Math.abs(b.sentAt.getTime() - input.sentAt.getTime()),
+      )[0] ?? null
+  );
+}
+
+function mergeMessageRawData(
+  existing: Prisma.JsonValue,
+  patch: Record<string, Prisma.JsonValue>,
+): Prisma.InputJsonValue {
+  const base =
+    existing && typeof existing === "object" && !Array.isArray(existing)
+      ? (existing as Record<string, Prisma.JsonValue>)
+      : {};
+  return {
+    ...base,
+    ...patch,
+  } satisfies Prisma.InputJsonValue;
 }

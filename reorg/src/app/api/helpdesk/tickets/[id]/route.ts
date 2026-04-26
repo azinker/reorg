@@ -275,6 +275,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
   const STUB_BODY = envelopeStubBody();
   type MessageRow = (typeof ticket.messages)[number];
   const visibleMessages: MessageRow[] = ticket.messages.filter((m) => {
+    if (m.deletedAt) return false;
     const raw = m.rawData as Record<string, unknown> | null;
     const isExplodedSub =
       raw && typeof raw["digestSource"] === "string";
