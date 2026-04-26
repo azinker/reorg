@@ -755,7 +755,7 @@ export function TicketList({
                           : "text-muted-foreground/80",
                       )}
                     >
-                      {t.subject ?? t.ebayItemTitle ?? "(no subject)"}
+                      {t.latestPreview ?? t.subject ?? t.ebayItemTitle ?? "(no subject)"}
                     </p>
                     <div className="flex items-center gap-1.5 text-[10px]">
                       <span

@@ -132,6 +132,7 @@ const SUBJECT_PATTERNS: Array<{ pattern: RegExp; type: SystemMessageType }> = [
 
   // INR
   { pattern: /(item\s+not\s+received|opened\s+an?\s+item\s+not\s+received|inr\s+claim)/i, type: SYSTEM_MESSAGE_TYPES.ITEM_NOT_RECEIVED },
+  { pattern: /(item\s+hasn'?t\s+arrived|item\s+has\s+not\s+arrived|not\s+received\s+request)/i, type: SYSTEM_MESSAGE_TYPES.ITEM_NOT_RECEIVED },
 
   // Shipping bookkeeping
   { pattern: /item\s+delivered/i, type: SYSTEM_MESSAGE_TYPES.ITEM_DELIVERED },
@@ -144,6 +145,8 @@ const SUBJECT_PATTERNS: Array<{ pattern: RegExp; type: SystemMessageType }> = [
   { pattern: /issue\s+refund/i, type: SYSTEM_MESSAGE_TYPES.REFUND_REQUESTED },
 
   // Cases
+  { pattern: /case\s*#?\s*\d+\s*:\s*buyer\s+contacted\s+customer\s+service/i, type: SYSTEM_MESSAGE_TYPES.CASE_OPENED },
+  { pattern: /buyer\s+contacted\s+customer\s+service/i, type: SYSTEM_MESSAGE_TYPES.CASE_OPENED },
   { pattern: /your\s+case\s+is\s+on\s+hold/i, type: SYSTEM_MESSAGE_TYPES.CASE_ON_HOLD },
   { pattern: /(this\s+)?case\s+(is\s+now\s+)?(has\s+been\s+)?closed/i, type: SYSTEM_MESSAGE_TYPES.CASE_CLOSED },
   { pattern: /\bis\s+now\s+closed\b/i, type: SYSTEM_MESSAGE_TYPES.CASE_CLOSED },

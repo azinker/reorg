@@ -25,9 +25,15 @@
  */
 
 import { NextResponse, type NextRequest } from "next/server";
-import { Prisma } from "@prisma/client";
+import { HelpdeskTicketType, Prisma } from "@prisma/client";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
+import {
+  detectFromEbay,
+  SYSTEM_MESSAGE_TYPE_LABELS,
+  SYSTEM_MESSAGE_TYPES,
+  type SystemMessageType,
+} from "@/lib/helpdesk/from-ebay-detect";
 import { buildEbayConfig } from "@/lib/services/auto-responder-ebay";
 import { getOrderContextCached } from "@/lib/services/helpdesk-order-context-cache";
 
@@ -78,6 +84,22 @@ type SystemEventKind =
 interface FormattedEvent {
   kind: SystemEventKind;
   text: string;
+}
+
+interface TimelineEvent {
+  id: string;
+  type: "system";
+  action: string;
+  kind: SystemEventKind;
+  text: string;
+  actor: {
+    id: string;
+    name: string | null;
+    email: string | null;
+    handle: string | null;
+    avatarUrl: string | null;
+  } | null;
+  at: Date | string;
 }
 
 type AuditDetails = Record<string, unknown> & {
@@ -299,6 +321,97 @@ function formatSystemEvent(
   }
 }
 
+function isKnownSystemMessageType(value: string | null): value is SystemMessageType {
+  return value != null && value in SYSTEM_MESSAGE_TYPE_LABELS;
+}
+
+function systemTicketTimelineText(args: {
+  systemMessageType: string | null;
+  subject: string | null;
+  bodyText: string | null;
+}): { text: string; action: string } {
+  const subject = args.subject?.trim() || null;
+  const body = args.bodyText?.trim() || "";
+  const detected =
+    !args.systemMessageType ||
+    args.systemMessageType === SYSTEM_MESSAGE_TYPES.OTHER_EBAY_NOTIFICATION
+      ? detectFromEbay({ sender: "eBay", subject, bodyText: body })
+      : null;
+  const type = detected?.isFromEbay
+    ? detected.systemMessageType
+    : args.systemMessageType;
+  const haystack = `${subject ?? ""} ${body}`.toLowerCase();
+  const label = isKnownSystemMessageType(type)
+    ? SYSTEM_MESSAGE_TYPE_LABELS[type]
+    : subject ?? "eBay notification";
+
+  switch (type) {
+    case SYSTEM_MESSAGE_TYPES.ITEM_NOT_RECEIVED:
+      return {
+        action: "EBAY_ITEM_NOT_RECEIVED_CASE",
+        text: "Buyer opened an item-not-received case on eBay",
+      };
+    case SYSTEM_MESSAGE_TYPES.CASE_OPENED:
+      return { action: "EBAY_CASE_OPENED", text: "Buyer opened a case on eBay" };
+    case SYSTEM_MESSAGE_TYPES.CASE_ON_HOLD:
+      return { action: "EBAY_CASE_ON_HOLD", text: "eBay placed the case on hold" };
+    case SYSTEM_MESSAGE_TYPES.CASE_CLOSED:
+      return {
+        action: "EBAY_CASE_CLOSED",
+        text:
+          haystack.includes("buyer") && haystack.includes("closed")
+            ? "Buyer closed the case on eBay"
+            : "eBay closed the case",
+      };
+    case SYSTEM_MESSAGE_TYPES.RETURN_REQUEST:
+      return {
+        action: "EBAY_RETURN_OPENED",
+        text: "Buyer opened a return request on eBay",
+      };
+    case SYSTEM_MESSAGE_TYPES.RETURN_APPROVED:
+      return { action: "EBAY_RETURN_APPROVED", text: "Return approved on eBay" };
+    case SYSTEM_MESSAGE_TYPES.RETURN_CLOSED:
+      return { action: "EBAY_RETURN_CLOSED", text: "Return closed on eBay" };
+    case SYSTEM_MESSAGE_TYPES.CANCELLATION_REQUEST:
+      return {
+        action: "EBAY_CANCEL_REQUESTED",
+        text: "Buyer requested cancellation on eBay",
+      };
+    case SYSTEM_MESSAGE_TYPES.CANCELLATION_CONFIRMED:
+      return {
+        action: "EBAY_CANCEL_CONFIRMED",
+        text: "Order cancellation confirmed on eBay",
+      };
+    case SYSTEM_MESSAGE_TYPES.REFUND_ISSUED:
+      return { action: "EBAY_REFUND_ISSUED", text: "Refund issued on eBay" };
+    case SYSTEM_MESSAGE_TYPES.REFUND_REQUESTED:
+      return { action: "EBAY_REFUND_REQUESTED", text: "Refund requested on eBay" };
+    case SYSTEM_MESSAGE_TYPES.ITEM_DELIVERED:
+      return { action: "EBAY_ITEM_DELIVERED", text: "eBay marked the item delivered" };
+    case SYSTEM_MESSAGE_TYPES.BUYER_SHIPPED:
+      return { action: "EBAY_BUYER_SHIPPED", text: "Buyer shipped the item back" };
+    default:
+      return {
+        action: "EBAY_SYSTEM_NOTIFICATION",
+        text: `eBay notification: ${label}`,
+      };
+  }
+}
+
+function dedupeTimelineEvents(events: TimelineEvent[]): TimelineEvent[] {
+  const seen = new Set<string>();
+  const out: TimelineEvent[] = [];
+  for (const event of events) {
+    const atMs = new Date(event.at).getTime();
+    const minute = Number.isFinite(atMs) ? Math.floor(atMs / 60_000) : 0;
+    const key = `${event.kind}|${event.action}|${event.text}|${minute}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(event);
+  }
+  return out;
+}
+
 export async function GET(_request: NextRequest, { params }: RouteParams) {
   const session = await auth();
   if (!session?.user?.id) {
@@ -317,6 +430,8 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
       createdAt: true,
       channel: true,
       ebayOrderNumber: true,
+      ebayItemId: true,
+      buyerUserId: true,
       integration: {
         select: { id: true, platform: true, config: true },
       },
@@ -416,7 +531,7 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
     }
   }
 
-  const events = auditRows
+  const events: TimelineEvent[] = auditRows
     .map((row) => {
       const actor = row.user
         ? row.user.name ?? row.user.handle ?? row.user.email ?? null
@@ -500,6 +615,83 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
   }
 
   // ─── Synthesised events from eBay action mirrors ────────────────────────────
+  const relatedTicketPredicates: Prisma.HelpdeskTicketWhereInput[] = [];
+  if (exists.ebayOrderNumber) {
+    relatedTicketPredicates.push({ ebayOrderNumber: exists.ebayOrderNumber });
+  } else if (exists.buyerUserId && exists.ebayItemId) {
+    relatedTicketPredicates.push({
+      buyerUserId: {
+        equals: exists.buyerUserId,
+        mode: Prisma.QueryMode.insensitive,
+      },
+      ebayItemId: exists.ebayItemId,
+    });
+  }
+
+  const relatedSystemTickets =
+    relatedTicketPredicates.length > 0 && exists.integration
+      ? await db.helpdeskTicket.findMany({
+          where: {
+            id: { not: id },
+            integrationId: exists.integration.id,
+            AND: [
+              { OR: relatedTicketPredicates },
+              {
+                OR: [
+                  { type: HelpdeskTicketType.SYSTEM },
+                  { threadKey: { startsWith: "sys:" } },
+                  { systemMessageType: { not: null } },
+                ],
+              },
+            ],
+          },
+          select: {
+            id: true,
+            subject: true,
+            systemMessageType: true,
+            createdAt: true,
+            lastBuyerMessageAt: true,
+            lastAgentMessageAt: true,
+            messages: {
+              where: { deletedAt: null },
+              orderBy: { sentAt: "asc" },
+              take: 1,
+              select: {
+                subject: true,
+                bodyText: true,
+                sentAt: true,
+              },
+            },
+          },
+          orderBy: [{ createdAt: "asc" }],
+          take: 25,
+        })
+      : [];
+
+  const relatedTicketIds = [id, ...relatedSystemTickets.map((t) => t.id)];
+
+  for (const ticket of relatedSystemTickets) {
+    const firstMessage = ticket.messages[0] ?? null;
+    const formatted = systemTicketTimelineText({
+      systemMessageType: ticket.systemMessageType,
+      subject: firstMessage?.subject ?? ticket.subject,
+      bodyText: firstMessage?.bodyText ?? null,
+    });
+    events.push({
+      id: `related-system-${ticket.id}`,
+      type: "system" as const,
+      action: formatted.action,
+      kind: "case" as const,
+      text: formatted.text,
+      actor: null,
+      at:
+        firstMessage?.sentAt ??
+        ticket.lastBuyerMessageAt ??
+        ticket.lastAgentMessageAt ??
+        ticket.createdAt,
+    });
+  }
+
   // HelpdeskCase / HelpdeskFeedback / HelpdeskCancellation are populated by
   // the eBay action workers (Returns, Feedback, Cancellation APIs). They're
   // NOT audit rows because the actor is the buyer/eBay, not a reorG user.
@@ -511,19 +703,56 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
   // negligible. Failure of any one of these is non-fatal: the timeline
   // degrades to whatever rendered, never breaks the whole reader.
   try {
+    const orderMirrorFilter =
+      exists.integration && exists.ebayOrderNumber
+        ? {
+            integrationId: exists.integration.id,
+            ebayOrderNumber: exists.ebayOrderNumber,
+          }
+        : null;
+    const buyerMirrorFilter =
+      exists.integration && !exists.ebayOrderNumber && exists.buyerUserId
+        ? {
+            integrationId: exists.integration.id,
+            buyerUserId: {
+              equals: exists.buyerUserId,
+              mode: Prisma.QueryMode.insensitive,
+            },
+          }
+        : null;
+    const caseMirrorOr: Prisma.HelpdeskCaseWhereInput[] = [
+      { ticketId: { in: relatedTicketIds } },
+    ];
+    const feedbackMirrorOr: Prisma.HelpdeskFeedbackWhereInput[] = [
+      { ticketId: { in: relatedTicketIds } },
+    ];
+    const cancellationMirrorOr: Prisma.HelpdeskCancellationWhereInput[] = [
+      { ticketId: { in: relatedTicketIds } },
+    ];
+    if (orderMirrorFilter) {
+      caseMirrorOr.push(orderMirrorFilter);
+      feedbackMirrorOr.push(orderMirrorFilter);
+      cancellationMirrorOr.push(orderMirrorFilter);
+    }
+    if (buyerMirrorFilter) {
+      caseMirrorOr.push(buyerMirrorFilter);
+      feedbackMirrorOr.push(buyerMirrorFilter);
+      cancellationMirrorOr.push(buyerMirrorFilter);
+    }
+
     const [cases, feedback, cancellations] = await Promise.all([
       db.helpdeskCase.findMany({
-        where: { ticketId: id },
+        where: { OR: caseMirrorOr },
         orderBy: { openedAt: "asc" },
         take: 50,
       }),
       db.helpdeskFeedback.findMany({
-        where: { ticketId: id },
+        where: { OR: feedbackMirrorOr },
         orderBy: { leftAt: "asc" },
         take: 50,
       }),
       db.helpdeskCancellation.findMany({
-        where: { ticketId: id },
+        where: { OR: cancellationMirrorOr },
         orderBy: { requestedAt: "asc" },
         take: 50,
       }),
@@ -641,9 +870,10 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
   }
 
   // Re-sort with all synthesised events folded in.
-  events.sort(
+  const dedupedEvents = dedupeTimelineEvents(events);
+  dedupedEvents.sort(
     (a, b) => new Date(a.at).getTime() - new Date(b.at).getTime(),
   );
 
-  return NextResponse.json({ data: events });
+  return NextResponse.json({ data: dedupedEvents });
 }
