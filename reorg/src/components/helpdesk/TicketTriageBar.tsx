@@ -218,8 +218,8 @@ export function TicketTriageBar({
     <div
       className={cn(
         embedded
-          ? "flex min-w-0 shrink-0 flex-wrap items-center gap-1.5"
-          : "flex min-h-10 shrink-0 flex-wrap items-center gap-1.5 border-b border-hairline bg-card/90 px-3 py-1.5 shadow-[0_1px_0_rgb(255_255_255_/_0.03)] backdrop-blur-sm sm:px-4",
+          ? "relative z-[90] flex min-w-0 shrink-0 flex-wrap items-center gap-1.5 overflow-visible"
+          : "relative z-[90] flex min-h-10 shrink-0 flex-wrap items-center gap-1.5 overflow-visible border-b border-hairline bg-card/90 px-3 py-1.5 shadow-[0_1px_0_rgb(255_255_255_/_0.03)] backdrop-blur-sm sm:px-4",
         className,
       )}
     >
@@ -509,7 +509,7 @@ function CurrentFolderPill({
         <ChevronDown className="h-3 w-3 opacity-60" />
       </button>
       {open && (
-        <div className="absolute right-0 top-full z-30 mt-1 w-44 rounded-md border border-hairline bg-popover p-1 text-popover-foreground shadow-xl">
+        <div className="absolute right-0 top-full z-[120] mt-1 w-44 rounded-md border border-hairline bg-popover p-1 text-popover-foreground shadow-xl">
           <button
             type="button"
             disabled={busy}
@@ -602,7 +602,7 @@ function TypeMenu({
         <ChevronDown className="h-3 w-3 opacity-60" />
       </button>
       {open && (
-        <div className="absolute left-0 top-full z-30 mt-1 w-56 rounded-md border border-hairline bg-popover p-1 text-popover-foreground shadow-xl">
+        <div className="absolute left-0 top-full z-[120] mt-1 w-56 rounded-md border border-hairline bg-popover p-1 text-popover-foreground shadow-xl">
           {TYPE_ORDER.map((t) => (
             <button
               key={t}
@@ -666,7 +666,7 @@ function SnoozeMenu({
         <Clock className="h-4 w-4" />
       </IconButton>
       {open && (
-        <div className="absolute left-0 top-full z-30 mt-1 w-52 rounded-md border border-hairline bg-popover p-1 text-popover-foreground shadow-xl">
+        <div className="absolute left-0 top-full z-[120] mt-1 w-52 rounded-md border border-hairline bg-popover p-1 text-popover-foreground shadow-xl">
           {SNOOZE_PRESETS.map((p) => (
             <button
               key={p.id}
@@ -741,7 +741,7 @@ function MoreMenu({
         <MoreHorizontal className="h-4 w-4" />
       </IconButton>
       {open && (
-        <div className="absolute left-0 top-full z-30 mt-1 w-44 rounded-md border border-hairline bg-popover p-1 text-popover-foreground shadow-xl">
+        <div className="absolute left-0 top-full z-[120] mt-1 w-44 rounded-md border border-hairline bg-popover p-1 text-popover-foreground shadow-xl">
           <button
             type="button"
             onClick={() => {
@@ -841,7 +841,7 @@ function AssignMenu({
         )}
       </IconButton>
       {open && (
-        <div className="absolute right-0 top-full z-30 mt-1 w-60 rounded-md border border-hairline bg-popover p-1 text-popover-foreground shadow-xl">
+        <div className="absolute right-0 top-full z-[120] mt-1 w-60 rounded-md border border-hairline bg-popover p-1 text-popover-foreground shadow-xl">
           {agentsLoading && (
             <div className="flex items-center gap-2 px-2.5 py-2 text-xs text-muted-foreground">
               <Loader2 className="h-3 w-3 animate-spin" />
@@ -978,7 +978,7 @@ function MoveToFolderMenu({
         <FolderInput className="h-4 w-4" />
       </IconButton>
       {open && (
-        <div className="absolute right-0 top-full z-30 mt-1 w-52 rounded-md border border-hairline bg-popover p-1 text-popover-foreground shadow-xl">
+        <div className="absolute right-0 top-full z-[120] mt-1 w-52 rounded-md border border-hairline bg-popover p-1 text-popover-foreground shadow-xl">
           {folders.length === 0 && (
             <div className="px-2.5 py-2 text-xs text-muted-foreground">
               No agent folders yet.

@@ -204,7 +204,7 @@ export function TicketReader({
        * so the controls were bumped from h-7 / 11px / 3.5w icons up to
        * h-9 / 13px / 4w icons. Header bar height grows to h-12 to match.
        */}
-      <div className="flex min-h-12 shrink-0 items-center gap-2 border-b border-hairline bg-card/95 px-3 py-1.5 shadow-[0_1px_0_rgb(255_255_255_/_0.03)] backdrop-blur-sm sm:px-4">
+      <div className="relative z-[80] flex min-h-12 shrink-0 items-center gap-2 overflow-visible border-b border-hairline bg-card/95 px-3 py-1.5 shadow-[0_1px_0_rgb(255_255_255_/_0.03)] backdrop-blur-sm sm:px-4">
         {showBack && onBack && (
           <button
             type="button"
@@ -396,7 +396,7 @@ export function TicketReader({
       />
 
       {/* Thread + Context split */}
-      <div className="flex flex-1 overflow-hidden">
+      <div className="relative z-0 flex flex-1 overflow-hidden">
         <HelpdeskSplit
           value={prefs.threadWidthPct}
           onCommit={(pct) => updateHelpdeskPrefs({ threadWidthPct: pct })}
