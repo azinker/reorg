@@ -116,14 +116,14 @@ export function TemplatePicker({ ctx, onPick, disabled }: TemplatePickerProps) {
       {open && (
         <div className="absolute bottom-full left-0 z-30 mb-1 w-80 overflow-hidden rounded-md border border-hairline bg-popover text-popover-foreground shadow-2xl shadow-black/30">
           <div className="flex items-center gap-2 border-b border-hairline px-2 py-1.5">
-            <Search className="h-3 w-3 text-muted-foreground" />
+            <Search className="h-3 w-3 text-foreground/55" />
             <input
               type="text"
               autoFocus
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Search templates…"
-              className="flex-1 bg-transparent text-xs text-foreground placeholder:text-muted-foreground focus:outline-none"
+              className="flex-1 bg-transparent text-xs text-foreground placeholder:text-foreground/55 focus:outline-none"
             />
           </div>
           <div className="max-h-72 overflow-y-auto py-1">
@@ -165,17 +165,17 @@ export function TemplatePicker({ ctx, onPick, disabled }: TemplatePickerProps) {
                         </span>
                       )}
                       {t.language && (
-                        <span className="rounded bg-surface-2 px-1 text-[9px] uppercase tracking-wider text-muted-foreground">
+                        <span className="rounded bg-surface-2 px-1 text-[9px] uppercase tracking-wider text-foreground/60">
                           {t.language}
                         </span>
                       )}
                     </div>
-                    <p className="mt-0.5 line-clamp-2 text-[11px] text-muted-foreground">
+                    <p className="mt-0.5 line-clamp-2 text-[11px] text-foreground/65">
                       {t.bodyText.slice(0, 120)}
                     </p>
                   </div>
                   {t.shortcut && (
-                    <code className="shrink-0 rounded bg-surface-2 px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                    <code className="shrink-0 rounded bg-surface-2 px-1.5 py-0.5 text-[10px] text-foreground/60">
                       {t.shortcut}
                     </code>
                   )}

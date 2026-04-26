@@ -244,7 +244,7 @@ export function HelpdeskHeader({
       */}
       <div className="mx-6 hidden max-w-2xl flex-1 md:block">
         <div className="relative mx-auto">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-foreground/55" />
           <input
             // type="text" (NOT "search") — `type=search` triggers the browser's
             // built-in clear (×) button, which collided with our custom one
@@ -292,7 +292,7 @@ export function HelpdeskHeader({
             }}
             placeholder="Search by buyer username or eBay Order ID"
             className={cn(
-              "w-full rounded-md border border-hairline bg-surface pl-9 pr-9 text-sm text-foreground shadow-sm placeholder:text-muted-foreground transition-colors focus:border-brand/40 focus:outline-none focus:ring-2 focus:ring-brand/20",
+              "w-full rounded-md border border-hairline bg-surface pl-9 pr-9 text-sm text-foreground shadow-sm placeholder:text-foreground/55 transition-colors focus:border-brand/40 focus:outline-none focus:ring-2 focus:ring-brand/20",
               ticketOpen ? "h-8" : "h-9",
             )}
             aria-label="Search inbox by buyer username or eBay Order ID"

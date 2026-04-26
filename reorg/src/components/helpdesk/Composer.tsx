@@ -70,7 +70,7 @@ const STATUS_SHORT: Record<StatusChoice, string> = {
 };
 
 const COMPOSER_HEIGHT_MIN = 72;
-const COMPOSER_HEIGHT_MAX = 360;
+const COMPOSER_HEIGHT_MAX = 460;
 const SEND_DELAY_MIN = 0;
 const SEND_DELAY_MAX = 10;
 
@@ -179,15 +179,15 @@ export function Composer({
     if (prefs.composerSticky) setExpanded(true);
   }, [prefs.composerSticky]);
 
-  function startComposerResize(e: React.MouseEvent<HTMLDivElement>) {
-    if (e.button !== 0) return;
+  function startComposerResize(e: React.PointerEvent<HTMLDivElement>) {
+    if (e.pointerType === "mouse" && e.button !== 0) return;
     e.preventDefault();
     const startY = e.clientY;
     const startHeight = composerHeight;
     let latest = startHeight;
     document.body.style.cursor = "row-resize";
     document.body.style.userSelect = "none";
-    function onMove(ev: MouseEvent) {
+    function onMove(ev: PointerEvent) {
       latest = Math.max(
         COMPOSER_HEIGHT_MIN,
         Math.min(COMPOSER_HEIGHT_MAX, Math.round(startHeight + startY - ev.clientY)),
@@ -197,12 +197,24 @@ export function Composer({
     function onUp() {
       document.body.style.cursor = "";
       document.body.style.userSelect = "";
-      window.removeEventListener("mousemove", onMove);
-      window.removeEventListener("mouseup", onUp);
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
       updateHelpdeskPrefs({ composerHeightPx: latest });
     }
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", onUp);
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
+  }
+
+  function nudgeComposerHeight(delta: number) {
+    const next = clampNumber(
+      composerHeight + delta,
+      COMPOSER_HEIGHT_MIN,
+      COMPOSER_HEIGHT_MAX,
+    );
+    setComposerHeight(next);
+    updateHelpdeskPrefs({ composerHeightPx: next });
   }
 
   // Lazily pull the tracking number from the order-context endpoint so the
@@ -321,10 +333,6 @@ export function Composer({
   );
 
   const ticketIsArchived = ticket.isArchived;
-  const effectiveComposerHeight =
-    body.trim().length === 0 && !pending
-      ? Math.min(composerHeight, 76)
-      : composerHeight;
 
   // Archived tickets can still be replied to — the server will un-archive
   // the ticket on send (per user decision `unarchive_waiting`). We surface
@@ -504,7 +512,7 @@ export function Composer({
               setExpanded(true);
               window.setTimeout(() => textareaRef.current?.focus(), 0);
             }}
-            className="block w-full cursor-text rounded-md border border-hairline bg-surface px-3 py-2 text-left text-sm text-muted-foreground shadow-sm transition-colors hover:border-brand/35 hover:bg-surface-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/30"
+            className="block w-full cursor-text rounded-md border border-hairline-strong/70 bg-surface px-3 py-2 text-left text-sm text-foreground/70 shadow-sm transition-colors hover:border-brand/35 hover:bg-surface-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/30"
             title="Click to compose a reply"
           >
             {placeholder}
@@ -521,9 +529,23 @@ export function Composer({
       <div
         role="separator"
         aria-orientation="horizontal"
+        aria-label="Resize composer"
+        aria-valuemin={COMPOSER_HEIGHT_MIN}
+        aria-valuemax={COMPOSER_HEIGHT_MAX}
+        aria-valuenow={composerHeight}
+        tabIndex={0}
         title="Drag to resize composer"
-        onMouseDown={startComposerResize}
-        className="flex h-2 cursor-row-resize items-center justify-center border-b border-hairline bg-card/80 text-muted-foreground transition-colors hover:bg-surface-2 hover:text-foreground"
+        onPointerDown={startComposerResize}
+        onKeyDown={(e) => {
+          if (e.key === "ArrowUp") {
+            e.preventDefault();
+            nudgeComposerHeight(24);
+          } else if (e.key === "ArrowDown") {
+            e.preventDefault();
+            nudgeComposerHeight(-24);
+          }
+        }}
+        className="flex h-3 cursor-row-resize items-center justify-center border-b border-hairline-strong/70 bg-surface/70 text-foreground/55 transition-colors hover:bg-brand/10 hover:text-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/30"
       >
         <GripHorizontal className="h-3 w-3" />
       </div>
@@ -561,7 +583,7 @@ export function Composer({
             "ml-auto inline-flex h-6 items-center gap-1 rounded-md border px-2 text-[10px] font-medium transition-colors cursor-pointer",
             prefs.composerSticky
               ? "border-brand/40 bg-brand-muted text-brand"
-              : "border-hairline bg-surface text-muted-foreground hover:bg-surface-2 hover:text-foreground",
+              : "border-hairline-strong/70 bg-surface text-foreground/70 hover:bg-surface-2 hover:text-foreground",
           )}
           title={prefs.composerSticky ? "Composer stays open between tickets" : "Keep composer open between tickets"}
           aria-pressed={prefs.composerSticky}
@@ -576,21 +598,21 @@ export function Composer({
             "inline-flex h-6 items-center rounded-md border px-2 text-[10px] font-medium transition-colors cursor-pointer",
             prefs.autoAdvance
               ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
-              : "border-hairline bg-surface text-muted-foreground hover:bg-surface-2 hover:text-foreground",
+              : "border-hairline-strong/70 bg-surface text-foreground/70 hover:bg-surface-2 hover:text-foreground",
           )}
           title="After Send + Resolve, jump to the next ticket"
           aria-pressed={prefs.autoAdvance}
         >
           Auto-advance {prefs.autoAdvance ? "On" : "Off"}
         </button>
-        <span className="hidden text-[10px] text-muted-foreground lg:inline">
+        <span className="hidden text-[10px] text-foreground/60 lg:inline">
           Plain text only · Markdown is not rendered
         </span>
         {body.trim().length === 0 && !pending && !prefs.composerSticky && (
           <button
             type="button"
             onClick={() => setExpanded(false)}
-            className="ml-2 inline-flex h-6 items-center gap-1 rounded-md border border-hairline bg-surface px-2 text-[10px] text-muted-foreground hover:bg-surface-2 hover:text-foreground cursor-pointer"
+            className="ml-2 inline-flex h-6 items-center gap-1 rounded-md border border-hairline-strong/70 bg-surface px-2 text-[10px] text-foreground/70 hover:bg-surface-2 hover:text-foreground cursor-pointer"
             title="Hide composer"
           >
             <X className="h-3 w-3" />
@@ -623,7 +645,7 @@ export function Composer({
       )}
 
       {modeMeta.disabled && modeMeta.disabledReason && (
-        <div className="bg-surface px-4 py-1.5 text-[11px] text-muted-foreground">
+        <div className="bg-surface px-4 py-1.5 text-[11px] text-foreground/65">
           {modeMeta.disabledReason}
         </div>
       )}
@@ -645,10 +667,10 @@ export function Composer({
                 setBody((prev) => (prev.trim() ? `${prev}\n\n${filled}` : filled));
                 window.setTimeout(() => textareaRef.current?.focus(), 0);
               }}
-              className="inline-flex h-6 items-center gap-1 rounded-full border border-hairline bg-card px-2.5 text-[11px] text-muted-foreground shadow-sm transition-colors hover:border-brand/35 hover:bg-surface-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/30 cursor-pointer"
+              className="inline-flex h-6 items-center gap-1 rounded-full border border-hairline-strong/70 bg-surface px-2.5 text-[11px] font-medium text-foreground/80 shadow-sm transition-colors hover:border-brand/45 hover:bg-surface-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/30 cursor-pointer"
               title={a.label}
             >
-              <Zap className="h-3 w-3" />
+              <Zap className="h-3 w-3 text-brand/80" />
               {a.label}
             </button>
           ))}
@@ -674,9 +696,9 @@ export function Composer({
               : "External email body (plain text)…"
         }
         rows={5}
-        style={{ height: effectiveComposerHeight }}
+        style={{ height: composerHeight }}
         disabled={modeMeta.disabled || !!pending}
-        className="block w-full resize-none border-0 bg-transparent px-4 py-2 text-sm leading-6 text-foreground placeholder:text-muted-foreground transition-colors focus:bg-background/20 focus:outline-none focus:ring-0 disabled:opacity-50"
+        className="block w-full resize-none border-0 bg-transparent px-4 py-2 text-sm leading-6 text-foreground placeholder:text-foreground/55 transition-colors focus:bg-background/20 focus:outline-none focus:ring-0 disabled:opacity-50"
       />
 
       {/* Footer: template picker + status selector + send button */}
@@ -719,7 +741,7 @@ export function Composer({
                 Attach
               </button>
             )}
-            <label className="inline-flex h-7 items-center gap-1 rounded-md border border-hairline bg-surface px-2 text-[11px] text-muted-foreground">
+            <label className="inline-flex h-7 items-center gap-1 rounded-md border border-hairline-strong/70 bg-surface px-2 text-[11px] text-foreground/70">
               <Clock3 className="h-3.5 w-3.5" />
               Delay
               <input
@@ -736,7 +758,7 @@ export function Composer({
             </label>
           </>
         )}
-        <span className="ml-auto text-[10px] text-muted-foreground">
+        <span className="ml-auto text-[10px] text-foreground/60">
           {modeMeta.icon} {modeMeta.label}
           {mode !== "NOTE" && (
             <>
@@ -921,8 +943,8 @@ function ModeTab({
         "inline-flex items-center gap-1 rounded-md px-2 py-1 font-medium transition-colors cursor-pointer",
         active
           ? "bg-surface-2 text-foreground"
-          : "text-muted-foreground hover:text-foreground hover:bg-surface-2",
-        disabled && "opacity-40 cursor-not-allowed hover:bg-transparent",
+          : "text-foreground/70 hover:text-foreground hover:bg-surface-2",
+        disabled && "opacity-45 cursor-not-allowed hover:bg-transparent",
       )}
     >
       {icon}
