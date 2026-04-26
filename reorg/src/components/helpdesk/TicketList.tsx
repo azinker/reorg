@@ -126,6 +126,13 @@ const CHANNEL_BADGE: Record<string, string> = {
   TT_EBAY: "TT",
 };
 
+const CHANNEL_BADGE_CLS: Record<string, string> = {
+  TPP_EBAY:
+    "border-violet-500/50 bg-violet-500/15 text-violet-700 dark:text-violet-200",
+  TT_EBAY:
+    "border-emerald-500/50 bg-emerald-500/15 text-emerald-700 dark:text-emerald-200",
+};
+
 function relTime(date: string | null): string {
   if (!date) return "—";
   const ms = Date.now() - new Date(date).getTime();
@@ -745,7 +752,7 @@ export function TicketList({
                           "truncate text-sm",
                           isUnread
                             ? "font-bold text-foreground"
-                            : "font-normal text-muted-foreground",
+                            : "font-semibold text-foreground/85",
                         )}
                       >
                         {t.buyerName ?? t.buyerUserId ?? "Unknown buyer"}
@@ -766,7 +773,7 @@ export function TicketList({
                         "line-clamp-1 text-xs",
                         isUnread
                           ? "font-medium text-foreground"
-                          : "text-muted-foreground/80",
+                          : "font-medium text-foreground/70",
                       )}
                     >
                       {t.latestPreview ?? t.subject ?? t.ebayItemTitle ?? "(no subject)"}
@@ -780,7 +787,28 @@ export function TicketList({
                       >
                         {t.status.replace("_", " ")}
                       </span>
-                      <span className="rounded border border-hairline bg-surface-2 px-1.5 py-0.5 font-medium text-muted-foreground">
+                      <span
+                        className={cn(
+                          "inline-flex items-center gap-1 rounded border px-1.5 py-0.5 font-semibold uppercase shadow-sm",
+                          CHANNEL_BADGE_CLS[t.channel] ??
+                            "border-hairline bg-surface-2 text-foreground/80",
+                        )}
+                        title={
+                          t.channel === "TPP_EBAY" || t.channel === "TT_EBAY"
+                            ? `${CHANNEL_BADGE[t.channel] ?? t.channel} - eBay`
+                            : (CHANNEL_BADGE[t.channel] ?? t.channel)
+                        }
+                      >
+                        {(t.channel === "TPP_EBAY" || t.channel === "TT_EBAY") && (
+                          <img
+                            src="/logos/ebay.svg"
+                            alt=""
+                            width={14}
+                            height={14}
+                            className="h-3 w-3 shrink-0"
+                            aria-hidden="true"
+                          />
+                        )}
                         {CHANNEL_BADGE[t.channel] ?? t.channel}
                       </span>
                       {t.kind === "PRE_SALES" && (
