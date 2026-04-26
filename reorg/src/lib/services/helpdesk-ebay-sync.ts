@@ -45,6 +45,7 @@ import {
   resolveConversationIdForBuyer,
   type CommerceMessage,
   type CommerceMessageConversation,
+  type CommerceMessageMedia,
 } from "@/lib/services/helpdesk-commerce-message";
 import { applyFilterAction, pickMatchingFilters } from "@/lib/helpdesk/filters";
 import { BUYER_CANCELLATION_TAG_NAME } from "@/lib/helpdesk/folders";
@@ -2910,6 +2911,91 @@ function latestMessage(messages: CommerceMessage[]): CommerceMessage | null {
   return latest;
 }
 
+type ExistingCommerceMessageRow = {
+  id: string;
+  ebayMessageId: string | null;
+  rawMedia: Prisma.JsonValue;
+};
+
+function commerceMediaForDb(message: CommerceMessage): CommerceMessageMedia[] {
+  return (message.media ?? []).filter((media) => media.url.trim().length > 0);
+}
+
+function rawMediaUrlSet(rawMedia: Prisma.JsonValue): Set<string> {
+  const urls = new Set<string>();
+  if (!Array.isArray(rawMedia)) return urls;
+  for (const item of rawMedia) {
+    if (typeof item === "string") {
+      urls.add(item.replace(/&amp;/gi, "&"));
+      continue;
+    }
+    if (!item || typeof item !== "object" || Array.isArray(item)) continue;
+    const obj = item as Record<string, unknown>;
+    const rawUrl =
+      typeof obj.url === "string"
+        ? obj.url
+        : typeof obj.URL === "string"
+          ? obj.URL
+          : typeof obj.MediaURL === "string"
+            ? obj.MediaURL
+            : typeof obj.mediaUrl === "string"
+              ? obj.mediaUrl
+              : typeof obj.mediaURL === "string"
+                ? obj.mediaURL
+                : typeof obj.href === "string"
+                  ? obj.href
+                  : typeof obj.downloadUrl === "string"
+                    ? obj.downloadUrl
+                    : null;
+    if (rawUrl) urls.add(rawUrl.replace(/&amp;/gi, "&"));
+  }
+  return urls;
+}
+
+async function refreshExistingCommerceMessageMedia(args: {
+  existingMessages: ExistingCommerceMessageRow[];
+  messages: CommerceMessage[];
+}): Promise<number> {
+  const byMessageId = new Map(
+    args.existingMessages
+      .filter((row) => row.ebayMessageId)
+      .map((row) => [row.ebayMessageId!, row]),
+  );
+  let updated = 0;
+  for (const message of args.messages) {
+    const media = commerceMediaForDb(message);
+    if (media.length === 0) continue;
+    const existing = byMessageId.get(message.messageId);
+    if (!existing) continue;
+
+    const existingUrls = rawMediaUrlSet(existing.rawMedia);
+    const missing = media.filter((item) => !existingUrls.has(item.url));
+    if (missing.length === 0) continue;
+
+    const existingArray = Array.isArray(existing.rawMedia)
+      ? (existing.rawMedia as Prisma.JsonArray)
+      : [];
+    const nextMedia = [
+      ...existingArray,
+      ...missing.map((item) => item as unknown as Prisma.JsonValue),
+    ] as Prisma.JsonValue;
+
+    try {
+      await db.helpdeskMessage.update({
+        where: { id: existing.id },
+        data: { rawMedia: nextMedia as Prisma.InputJsonValue },
+      });
+      updated += 1;
+    } catch (err) {
+      console.warn("[helpdesk-sync] failed to refresh commerce message media", {
+        messageId: message.messageId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+  return updated;
+}
+
 function isMessageFromBuyer(
   message: CommerceMessage,
   buyerUsername: string,
@@ -3124,9 +3210,13 @@ async function hydrateTargetedCommerceConversation(args: {
             ticketId: args.ticket.id,
             ebayMessageId: { in: incomingIds },
           },
-          select: { ebayMessageId: true },
+          select: { id: true, ebayMessageId: true, rawMedia: true },
         })
       : [];
+  await refreshExistingCommerceMessageMedia({
+    existingMessages,
+    messages: args.messages,
+  });
   const existingIds = new Set(
     existingMessages
       .map((m) => m.ebayMessageId)
@@ -3426,6 +3516,14 @@ const COMMERCE_INGEST_BUDGET = 15;
  *  message is within this many days. Mirrors the web UI's "Last 60 days"
  *  default and keeps the working set bounded. */
 const COMMERCE_INGEST_ACTIVITY_DAYS = 60;
+
+/**
+ * Re-read a recent tail of each Commerce Message conversation, not just
+ * the last five minutes. eBay can attach buyer photos to messages we
+ * already ingested as text-only; this window lets normal sync repair
+ * those existing rows without a one-off data backfill.
+ */
+const COMMERCE_MESSAGE_MEDIA_REPAIR_WINDOW_MS = 36 * 60 * 60 * 1000;
 
 /** Tier-C budget — maximum number of tickets per integration per tick for
  *  which we'll issue a fresh `resolveConversationIdForBuyer` call.
@@ -3735,7 +3833,9 @@ async function sweepCommerceMessageInboundForIntegration(
       );
       const since =
         lastKnownMs > 0
-          ? new Date(lastKnownMs - 5 * 60 * 1000).toISOString()
+          ? new Date(
+              lastKnownMs - COMMERCE_MESSAGE_MEDIA_REPAIR_WINDOW_MS,
+            ).toISOString()
           : undefined;
 
       apiCalls += 1;
@@ -3776,7 +3876,11 @@ async function sweepCommerceMessageInboundForIntegration(
           ticketId: ticket.id,
           ebayMessageId: { in: incomingIds },
         },
-        select: { ebayMessageId: true },
+        select: { id: true, ebayMessageId: true, rawMedia: true },
+      });
+      await refreshExistingCommerceMessageMedia({
+        existingMessages: existing,
+        messages,
       });
       const existingIds = new Set(
         existing.map((e) => e.ebayMessageId).filter((v): v is string => !!v),
@@ -3918,6 +4022,7 @@ async function ingestCommerceMessage(args: {
 
   const rawBody = m.messageBody ?? "";
   const bodyText = m.isHtml ? cleanMessageHtml(rawBody) : rawBody;
+  const rawMedia = commerceMediaForDb(m);
 
   const finalSentAt = Number.isNaN(sentAt.getTime()) ? new Date() : sentAt;
 
@@ -3973,7 +4078,7 @@ async function ingestCommerceMessage(args: {
         subject: null,
         bodyText,
         isHtml: !!m.isHtml,
-        rawMedia: [] as Prisma.InputJsonValue,
+        rawMedia: rawMedia as unknown as Prisma.InputJsonValue,
         rawData: {
           commerceMessage: true,
           conversationId: m.conversationId ?? null,
@@ -3981,6 +4086,7 @@ async function ingestCommerceMessage(args: {
           recipientUsername: m.recipientUsername ?? null,
           readStatus: m.readStatus ?? null,
           messageDirection: m.messageDirection ?? null,
+          mediaCount: rawMedia.length,
         } as Prisma.InputJsonValue,
         sentAt: finalSentAt,
       },

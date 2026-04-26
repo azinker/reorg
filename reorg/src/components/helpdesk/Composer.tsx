@@ -121,7 +121,11 @@ export function Composer({
   const [pending, setPending] = useState<PendingJob | null>(null);
   const [pendingSecondsLeft, setPendingSecondsLeft] = useState(0);
   const [error, setError] = useState<string | null>(null);
-  const [lastSentAt, setLastSentAt] = useState<number | null>(null);
+  const [composerNotice, setComposerNotice] = useState<{
+    at: number;
+    text: string;
+    tone: "success" | "info";
+  } | null>(null);
   /**
    * eDesk-style behaviour: the composer collapses to a single-line "Reply…"
    * pill until an agent clicks it. Keeps the conversation pane breathing
@@ -164,6 +168,7 @@ export function Composer({
     setBody("");
     setError(null);
     setPending(null);
+    setComposerNotice(null);
     setStatusChoice(prefs.defaultSendStatus);
     setStatusOverridden(false);
     setExpanded(prefs.composerSticky);
@@ -305,7 +310,11 @@ export function Composer({
         if (completed) return;
         completed = true;
         setPending((p) => (p?.id === pending.id ? null : p));
-        setLastSentAt(Date.now());
+        setComposerNotice({
+          at: Date.now(),
+          text: "Queued for delivery.",
+          tone: "info",
+        });
         onQueuedOutbound?.({
           id: pending.id,
           composerMode: pending.composerMode,
@@ -371,16 +380,31 @@ export function Composer({
     };
   }, [mode, ticket, flags?.enableResendExternal]);
 
-  const recoverableOutbound = useMemo(
-    () =>
-      (ticket.pendingOutboundJobs ?? [])
+  const recoverableOutbound = useMemo(() => {
+    const jobs = ticket.pendingOutboundJobs ?? [];
+    const failed =
+      jobs
         .filter((job) => job.status === "FAILED" || job.status === "CANCELED")
         .sort(
           (a, b) =>
             new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
-        )[0] ?? null,
-    [ticket.pendingOutboundJobs],
-  );
+        )[0] ?? null;
+    if (!failed) return null;
+
+    const failedAt = new Date(failed.createdAt).getTime();
+    const newerActiveJob = jobs.some((job) => {
+      if (job.id === failed.id) return false;
+      if (job.status !== "PENDING" && job.status !== "SENDING") return false;
+      return new Date(job.createdAt).getTime() > failedAt;
+    });
+    if (newerActiveJob) return null;
+
+    const newerConfirmedOutbound = ticket.messages.some((message) => {
+      if (message.direction !== "OUTBOUND") return false;
+      return new Date(message.sentAt).getTime() > failedAt;
+    });
+    return newerConfirmedOutbound ? null : failed;
+  }, [ticket.messages, ticket.pendingOutboundJobs]);
 
   function restoreRecoverableOutbound(job: HelpdeskPendingOutboundJob) {
     setMode(job.composerMode === "NOTE" ? "REPLY" : job.composerMode);
@@ -427,7 +451,11 @@ export function Composer({
       };
       setBody("");
       if (json.data.kind === "note") {
-        setLastSentAt(Date.now());
+        setComposerNotice({
+          at: Date.now(),
+          text: "Note saved.",
+          tone: "success",
+        });
         onSent();
       } else {
         const queuedAt = new Date().toISOString();
@@ -666,10 +694,17 @@ export function Composer({
         )}
       </div>
 
-      {/* Just-sent toast */}
-      {!pending && lastSentAt && Date.now() - lastSentAt < 4000 && (
-        <div className="flex items-center gap-2 border-b border-emerald-500/20 bg-emerald-500/10 px-4 py-1.5 text-[11px] text-emerald-700 dark:text-emerald-300">
-          <CheckCircle2 className="h-3 w-3" /> Sent.
+      {/* Composer status toast */}
+      {!pending && composerNotice && Date.now() - composerNotice.at < 4000 && (
+        <div
+          className={cn(
+            "flex items-center gap-2 border-b px-4 py-1.5 text-[11px]",
+            composerNotice.tone === "success"
+              ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+              : "border-sky-500/20 bg-sky-500/10 text-sky-700 dark:text-sky-300",
+          )}
+        >
+          <CheckCircle2 className="h-3 w-3" /> {composerNotice.text}
         </div>
       )}
 

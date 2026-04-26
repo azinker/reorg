@@ -7,7 +7,10 @@ import {
 } from "@prisma/client";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { envelopeStubBody } from "@/lib/helpdesk/html-clean";
+import {
+  envelopeStubBody,
+  extractEnvelopePreviewImages,
+} from "@/lib/helpdesk/html-clean";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -132,32 +135,6 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
   // URLs and stash them on the LIVE sub-message's rawMedia for the
   // response. The thread's `extractInlineImages` will then render them
   // in the live sub's bubble exactly where the buyer sent them.
-  function extractPreviewImages(html: string): Array<{
-    url: string;
-    mimeType: string;
-  }> {
-    const out: Array<{ url: string; mimeType: string }> = [];
-    if (!html) return out;
-    // Each attachment renders as
-    //   <td id="previewImageCont0" …><a …><span …><img id="previewimage0"
-    //     src="https://i.ebayimg.com/…/$_0.JPG?…"></span></a></td>
-    // We grab just the src and de-dupe on URL.
-    const re =
-      /<td[^>]*id="previewImageCont\d+"[\s\S]*?<img[^>]*src="(https:\/\/i\.ebayimg\.com\/[^"]+)"/gi;
-    const seen = new Set<string>();
-    let mt: RegExpExecArray | null;
-    while ((mt = re.exec(html)) !== null) {
-      const url = mt[1];
-      if (!seen.has(url)) {
-        seen.add(url);
-        // eBay only attaches JPG/PNG raster previews. Use a generic
-        // image/* mime so extractInlineImages picks them up.
-        out.push({ url, mimeType: "image/jpeg" });
-      }
-    }
-    return out;
-  }
-
   const digestSourceIds = new Set<string>();
   // envelope.ebayMessageId → array of buyer-uploaded image attachments
   const envelopeImages = new Map<
@@ -192,7 +169,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       raw && typeof raw["digestSource"] === "string";
     if (isExplodedSub) continue;
     if (m.ebayMessageId && digestSourceIds.has(m.ebayMessageId)) {
-      const imgs = extractPreviewImages(m.bodyText ?? "");
+      const imgs = extractEnvelopePreviewImages(m.bodyText ?? "");
       if (imgs.length > 0) {
         envelopeImages.set(m.ebayMessageId, imgs);
       }

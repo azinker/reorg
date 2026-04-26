@@ -68,19 +68,47 @@ export function extractEnvelopePreviewImages(
   const out: Array<{ url: string; mimeType: string }> = [];
   if (!html) return out;
 
-  const re =
-    /id\s*=\s*["']previewimage\d*["'][^>]*src\s*=\s*["'](https:\/\/i\.ebayimg\.com\/[^"']+)["']/gi;
   const seen = new Set<string>();
-  let match: RegExpExecArray | null;
-  while ((match = re.exec(html)) !== null) {
-    const url = match[1]!;
-    if (seen.has(url)) continue;
-    seen.add(url);
-    const ext = url.split(".").pop()?.split("?")[0]?.toLowerCase() ?? "jpg";
+  const push = (url: string) => {
+    const normalized = url.replace(/&amp;/gi, "&");
+    if (seen.has(normalized)) return;
+    seen.add(normalized);
+    const ext =
+      normalized.split(".").pop()?.split("?")[0]?.toLowerCase() ?? "jpg";
     const mimeType =
       ext === "png" ? "image/png" : ext === "gif" ? "image/gif" : "image/jpeg";
-    out.push({ url, mimeType });
+    out.push({ url: normalized, mimeType });
+  };
+
+  // Newer eBay digest envelopes wrap buyer uploads in a previewImageCont
+  // table cell. Capture only URLs inside those blocks so product thumbnails
+  // elsewhere in the envelope do not become fake buyer attachments.
+  const blockRe =
+    /<td\b[^>]*id\s*=\s*["']previewImageCont\d*["'][^>]*>[\s\S]*?<\/td>/gi;
+  let block: RegExpExecArray | null;
+  while ((block = blockRe.exec(html)) !== null) {
+    const imgRe =
+      /<img\b[^>]*src\s*=\s*["'](https?:\/\/i\.ebayimg\.com\/[^"']+)["'][^>]*>/gi;
+    let img: RegExpExecArray | null;
+    while ((img = imgRe.exec(block[0])) !== null) {
+      push(img[1]!);
+    }
   }
+
+  // Some historical envelopes lost the wrapping td attributes during
+  // cleaning but kept the preview image id on the <img> itself. Support
+  // both attribute orders.
+  const previewImgRe = /<img\b[^>]*>/gi;
+  let imgTag: RegExpExecArray | null;
+  while ((imgTag = previewImgRe.exec(html)) !== null) {
+    const tag = imgTag[0];
+    if (!/id\s*=\s*["']previewimage\d*["']/i.test(tag)) continue;
+    const src = /src\s*=\s*["'](https?:\/\/i\.ebayimg\.com\/[^"']+)["']/i.exec(
+      tag,
+    )?.[1];
+    if (src) push(src);
+  }
+
   return out;
 }
 

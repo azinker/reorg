@@ -64,6 +64,7 @@ import {
   X as XIcon,
   Download,
   Languages,
+  RefreshCw,
 } from "lucide-react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import type {
@@ -666,10 +667,54 @@ export function ThreadView({
   const [optimisticOutboundJobs, setOptimisticOutboundJobs] = useState<
     HelpdeskPendingOutboundJob[]
   >([]);
+  const [retryingJobIds, setRetryingJobIds] = useState<Set<string>>(
+    () => new Set(),
+  );
 
   useEffect(() => {
     setOptimisticOutboundJobs([]);
+    setRetryingJobIds(new Set());
   }, [ticketId]);
+
+  const retryOutboundJob = useCallback(
+    async (jobId: string) => {
+      setRetryingJobIds((prev) => {
+        const next = new Set(prev);
+        next.add(jobId);
+        return next;
+      });
+      try {
+        const res = await fetch(`/api/helpdesk/outbound/${jobId}`, {
+          method: "POST",
+          credentials: "same-origin",
+        });
+        if (!res.ok) {
+          const payload = (await res.json().catch(() => ({}))) as {
+            error?: unknown;
+          };
+          throw new Error(
+            typeof payload.error === "string"
+              ? payload.error
+              : `Retry failed (${res.status})`,
+          );
+        }
+        setOptimisticOutboundJobs((prev) =>
+          prev.filter((job) => job.id !== jobId),
+        );
+        onSent();
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.warn("Failed to retry outbound job", err);
+      } finally {
+        setRetryingJobIds((prev) => {
+          const next = new Set(prev);
+          next.delete(jobId);
+          return next;
+        });
+      }
+    },
+    [onSent],
+  );
 
   const pendingOutboundJobs = useMemo(() => {
     if (!ticket) return [];
@@ -901,6 +946,8 @@ export function ThreadView({
                     buyerInitial={buyerInitial}
                     agentAccent={agentAccent}
                     onImageClick={openLightbox}
+                    onRetryOutbound={retryOutboundJob}
+                    retryingJobIds={retryingJobIds}
                   />
                 </div>
               );
@@ -915,6 +962,8 @@ export function ThreadView({
                 buyerInitial={buyerInitial}
                 agentAccent={agentAccent}
                 onImageClick={openLightbox}
+                onRetryOutbound={retryOutboundJob}
+                retryingJobIds={retryingJobIds}
               />
             ))}
           </div>
@@ -1278,6 +1327,8 @@ interface TimelineItemProps {
    * it, but message rows always pass it through.
    */
   onImageClick?: (images: InlineImage[], index: number) => void;
+  onRetryOutbound?: (jobId: string) => void;
+  retryingJobIds?: Set<string>;
 }
 
 function pendingJobMeta(job: HelpdeskPendingOutboundJob) {
@@ -1310,9 +1361,9 @@ function pendingJobMeta(job: HelpdeskPendingOutboundJob) {
     };
   }
   return {
-    label: "SENT",
-    detail: "Queued for delivery.",
-    tone: "green" as const,
+    label: "Queued",
+    detail: "Queued for the outbound worker; not confirmed on eBay yet.",
+    tone: "blue" as const,
   };
 }
 
@@ -1321,6 +1372,8 @@ function TimelineItem({
   buyerInitial,
   agentAccent,
   onImageClick,
+  onRetryOutbound,
+  retryingJobIds,
 }: TimelineItemProps) {
   if (row.kind === "day") {
     return (
@@ -1388,6 +1441,8 @@ function TimelineItem({
     const j = row.data;
     const meta = pendingJobMeta(j);
     const blocked = meta.tone === "amber" || meta.tone === "red";
+    const retrying = retryingJobIds?.has(j.id) ?? false;
+    const canRetry = j.status === "FAILED" && Boolean(onRetryOutbound);
     // We render a right-aligned bubble that mimics the agent reply look
     // (purple, dashed border to signal "not yet committed"). When the
     // cron actually delivers the reply, the API stops returning this job
@@ -1426,6 +1481,20 @@ function TimelineItem({
             >
               {meta.label}
             </span>
+            {canRetry ? (
+              <button
+                type="button"
+                onClick={() => onRetryOutbound?.(j.id)}
+                disabled={retrying}
+                className="inline-flex h-5 shrink-0 items-center gap-1 rounded border border-red-500/35 bg-red-500/10 px-1.5 text-[10px] font-semibold text-red-700 transition-colors hover:bg-red-500/15 disabled:cursor-wait disabled:opacity-60 dark:text-red-300 cursor-pointer"
+                title="Retry this failed reply through the normal outbound worker"
+              >
+                <RefreshCw
+                  className={cn("h-3 w-3", retrying && "animate-spin")}
+                />
+                Retry
+              </button>
+            ) : null}
             <span
               className={cn(
                 "truncate text-[13px] font-semibold",

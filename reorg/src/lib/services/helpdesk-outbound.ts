@@ -274,7 +274,13 @@ async function sendEbayReply(
   // sometimes renumbers or deletes threads), retry once using the
   // otherPartyUsername path so we don't lose a reply to a 400.
   let finalSend = send;
-  if (!send.success && conversationId && !send.needsReauth) {
+  if (
+    !send.success &&
+    conversationId &&
+    !send.needsReauth &&
+    send.status >= 400 &&
+    send.status < 500
+  ) {
     const retry = await sendCommerceMessage(job.ticket.integrationId, config, {
       otherPartyUsername: job.ticket.buyerUserId,
       messageText,

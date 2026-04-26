@@ -49,6 +49,7 @@ import { EbayConfig, getEbayAccessToken } from "@/lib/services/helpdesk-ebay";
 const BASE = "https://api.ebay.com/commerce/message/v1";
 const REQUEST_TIMEOUT_MS = 20_000;
 const MARKETPLACE_ID = "EBAY_US";
+const READ_RETRY_DELAYS_MS = [400, 1200];
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -141,34 +142,81 @@ async function callCommerceMessage(
   body?: unknown,
   callLabel = "CommerceMessage",
 ): Promise<{ status: number; body: string }> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   const url = `${BASE}${path}`;
-  const requestBytes = body ? Buffer.byteLength(JSON.stringify(body)) : 0;
-  try {
-    const res = await fetch(url, {
-      method,
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        "X-EBAY-C-MARKETPLACE-ID": MARKETPLACE_ID,
-        Accept: "application/json",
-        ...(body ? { "Content-Type": "application/json" } : {}),
-      },
-      body: body ? JSON.stringify(body) : undefined,
-      signal: controller.signal,
-    });
-    const text = await res.text();
-    void recordNetworkTransferSample({
-      channel: "HELPDESK",
-      label: `helpdesk_ebay / ${callLabel}`,
-      bytesEstimate: requestBytes + Buffer.byteLength(text),
-      integrationId,
-      metadata: { feature: "helpdesk", callName: callLabel },
-    });
-    return { status: res.status, body: text };
-  } finally {
-    clearTimeout(timer);
+  const requestBody = body ? JSON.stringify(body) : undefined;
+  const requestBytes = requestBody ? Buffer.byteLength(requestBody) : 0;
+  const maxAttempts = method === "GET" ? READ_RETRY_DELAYS_MS.length + 1 : 1;
+  let lastError: unknown = null;
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    try {
+      const res = await fetch(url, {
+        method,
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "X-EBAY-C-MARKETPLACE-ID": MARKETPLACE_ID,
+          Accept: "application/json",
+          ...(body ? { "Content-Type": "application/json" } : {}),
+        },
+        body: requestBody,
+        signal: controller.signal,
+      });
+      const text = await res.text();
+      void recordNetworkTransferSample({
+        channel: "HELPDESK",
+        label: `helpdesk_ebay / ${callLabel}`,
+        bytesEstimate: requestBytes + Buffer.byteLength(text),
+        integrationId,
+        metadata: {
+          feature: "helpdesk",
+          callName: callLabel,
+          attempt: attempt + 1,
+        },
+      });
+      if (
+        method === "GET" &&
+        attempt < maxAttempts - 1 &&
+        shouldRetryReadStatus(res.status)
+      ) {
+        await sleep(READ_RETRY_DELAYS_MS[attempt] ?? 0);
+        continue;
+      }
+      return { status: res.status, body: text };
+    } catch (err) {
+      lastError = err;
+      if (method === "GET" && attempt < maxAttempts - 1) {
+        await sleep(READ_RETRY_DELAYS_MS[attempt] ?? 0);
+        continue;
+      }
+      throw new Error(
+        `${callLabel} network failed: ${formatNetworkError(err)}`,
+      );
+    } finally {
+      clearTimeout(timer);
+    }
   }
+
+  throw new Error(
+    `${callLabel} network failed: ${formatNetworkError(lastError)}`,
+  );
+}
+
+function shouldRetryReadStatus(status: number) {
+  return status === 408 || status === 429 || status >= 500;
+}
+
+function sleep(ms: number) {
+  return new Promise<void>((resolve) => setTimeout(resolve, ms));
+}
+
+function formatNetworkError(err: unknown) {
+  if (err instanceof DOMException && err.name === "AbortError") {
+    return `request timed out after ${REQUEST_TIMEOUT_MS / 1000}s`;
+  }
+  if (err instanceof Error) return err.message;
+  return String(err);
 }
 
 function parseJson(body: string): unknown {
@@ -468,6 +516,139 @@ export interface CommerceMessage {
   /** `true` when `messageBody` is already HTML (typical for web-UI
    *  replies). Otherwise treat as plain text. */
   isHtml?: boolean;
+  /** Buyer-uploaded message media, usually images from eBay Messages. */
+  media?: CommerceMessageMedia[];
+}
+
+export interface CommerceMessageMedia {
+  url: string;
+  mimeType?: string;
+  thumbnailUrl?: string;
+  name?: string;
+}
+
+const MEDIA_CONTAINER_KEYS = new Set([
+  "messagemedia",
+  "media",
+  "medialist",
+  "mediaitems",
+  "attachments",
+  "attachment",
+  "files",
+  "file",
+  "images",
+  "image",
+]);
+
+function normalizeMediaUrl(url: string | undefined): string | null {
+  if (!url) return null;
+  const decoded = url.replace(/&amp;/gi, "&").trim();
+  try {
+    const parsed = new URL(decoded);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null;
+    return decoded;
+  } catch {
+    return null;
+  }
+}
+
+function inferMimeType(url: string, declared?: string): string | undefined {
+  const clean = declared?.trim();
+  if (clean) {
+    const normalized = clean.toLowerCase();
+    if (normalized === "image" || normalized === "photo" || normalized === "picture") {
+      return "image/jpeg";
+    }
+    if (normalized.startsWith("image/")) return normalized;
+    if (normalized.includes("jpeg")) return "image/jpeg";
+    if (normalized.includes("png")) return "image/png";
+    if (normalized.includes("webp")) return "image/webp";
+    if (normalized.includes("gif")) return "image/gif";
+    return clean;
+  }
+  const path = new URL(url).pathname.toLowerCase();
+  if (/\.(jpe?g|jpg)$/.test(path)) return "image/jpeg";
+  if (/\.png$/.test(path)) return "image/png";
+  if (/\.webp$/.test(path)) return "image/webp";
+  if (/\.gif$/.test(path)) return "image/gif";
+  if (url.includes("i.ebayimg.com")) return "image/jpeg";
+  return undefined;
+}
+
+/**
+ * Pull buyer-uploaded media URLs from eBay Commerce Message payloads.
+ *
+ * eBay has returned this data under a few related shapes over time:
+ * `messageMedia[]`, `media[]`, `attachments[]`, and individual objects
+ * containing `mediaUrl` / `mediaURL` / `URL`. Keep this deliberately
+ * structural instead of binding to one exact schema so image rendering
+ * survives small API response changes.
+ */
+export function parseCommerceMessageMedia(
+  raw: Record<string, unknown>,
+): CommerceMessageMedia[] {
+  const out: CommerceMessageMedia[] = [];
+  const seen = new Set<string>();
+
+  const pushUrl = (rawUrl: string | undefined, meta?: Record<string, unknown>) => {
+    const url = normalizeMediaUrl(rawUrl);
+    if (!url || seen.has(url)) return;
+    seen.add(url);
+    const thumb = normalizeMediaUrl(str(meta?.thumbnailUrl));
+    const name = str(meta?.mediaName) ?? str(meta?.fileName) ?? str(meta?.name);
+    const declaredType =
+      str(meta?.mimeType) ??
+      str(meta?.contentType) ??
+      str(meta?.mediaType) ??
+      str(meta?.type);
+    out.push({
+      url,
+      mimeType: inferMimeType(url, declaredType),
+      ...(thumb && thumb !== url ? { thumbnailUrl: thumb } : {}),
+      ...(name ? { name } : {}),
+    });
+  };
+
+  const push = (obj: Record<string, unknown>) => {
+    const rawUrl =
+      str(obj.mediaUrl) ??
+      str(obj.mediaURL) ??
+      str(obj.MediaURL) ??
+      str(obj.url) ??
+      str(obj.URL) ??
+      str(obj.href) ??
+      str(obj.downloadUrl) ??
+      str(obj.thumbnailUrl);
+    pushUrl(rawUrl, obj);
+  };
+
+  const visit = (node: unknown): void => {
+    if (!node) return;
+    if (typeof node === "string") {
+      pushUrl(node);
+      return;
+    }
+    if (Array.isArray(node)) {
+      for (const child of node) visit(child);
+      return;
+    }
+    if (typeof node !== "object") return;
+    const obj = node as Record<string, unknown>;
+    push(obj);
+    for (const [key, value] of Object.entries(obj)) {
+      if (MEDIA_CONTAINER_KEYS.has(key.toLowerCase())) {
+        visit(value);
+      }
+    }
+  };
+
+  for (const [key, value] of Object.entries(raw)) {
+    if (MEDIA_CONTAINER_KEYS.has(key.toLowerCase())) {
+      visit(value);
+    }
+  }
+
+  return out;
 }
 
 function parseMessage(raw: Record<string, unknown>): CommerceMessage {
@@ -486,6 +667,7 @@ function parseMessage(raw: Record<string, unknown>): CommerceMessage {
     // content-type flag, so we sniff the body. Detection is cheap and
     // conservative: any '<' + tag-like char wins.
     isHtml: typeof body === "string" && /<[a-z!/]/i.test(body),
+    media: parseCommerceMessageMedia(raw),
   };
 }
 
@@ -671,14 +853,27 @@ export async function sendCommerceMessage(
   }
   if (args.emailCopyToSender) body.emailCopyToSender = true;
 
-  const { status, body: responseBody } = await callCommerceMessage(
-    integrationId,
-    accessToken,
-    "POST",
-    "/send_message",
-    body,
-    "CommerceMessage_SendMessage",
-  );
+  let status: number;
+  let responseBody: string;
+  try {
+    const response = await callCommerceMessage(
+      integrationId,
+      accessToken,
+      "POST",
+      "/send_message",
+      body,
+      "CommerceMessage_SendMessage",
+    );
+    status = response.status;
+    responseBody = response.body;
+  } catch (err) {
+    return {
+      success: false,
+      status: 0,
+      needsReauth: false,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
   const parsed = parseJson(responseBody);
 
   if (status >= 200 && status < 300) {
