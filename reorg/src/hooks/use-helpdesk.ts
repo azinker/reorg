@@ -174,7 +174,7 @@ export interface HelpdeskPendingOutboundJob {
   id: string;
   composerMode: "REPLY" | "NOTE" | "EXTERNAL";
   bodyText: string;
-  status: "PENDING" | "SENDING";
+  status: "PENDING" | "SENDING" | "FAILED" | "CANCELED";
   scheduledAt: string;
   createdAt: string;
   willBlockReason: string | null;

@@ -384,12 +384,14 @@ export default function HelpDeskClient() {
         : -1;
   const prevNavIndex = selectedIndex >= 0 ? selectedIndex - 1 : navIndex - 1;
   const nextNavIndex = selectedIndex >= 0 ? selectedIndex + 1 : navIndex;
-  const prevTicketId =
-    prevNavIndex >= 0 ? tickets[prevNavIndex]?.id ?? null : null;
-  const nextTicketId =
+  const prevTicket =
+    prevNavIndex >= 0 ? tickets[prevNavIndex] ?? null : null;
+  const nextTicket =
     nextNavIndex >= 0 && nextNavIndex < tickets.length
-      ? tickets[nextNavIndex]?.id ?? null
+      ? tickets[nextNavIndex] ?? null
       : null;
+  const prevTicketId = prevTicket?.id ?? null;
+  const nextTicketId = nextTicket?.id ?? null;
   const goPrev = prevTicketId
     ? () => selectTicket(prevTicketId)
     : undefined;
@@ -602,6 +604,8 @@ export default function HelpDeskClient() {
                   onNext={goNext}
                   hasPrev={!!prevTicketId}
                   hasNext={!!nextTicketId}
+                  prevTicket={prevTicket}
+                  nextTicket={nextTicket}
                   onSent={refresh}
                   agentFolders={agentFolders}
                 />
@@ -661,6 +665,8 @@ export default function HelpDeskClient() {
                 onNext={goNext}
                 hasPrev={!!prevTicketId}
                 hasNext={!!nextTicketId}
+                prevTicket={prevTicket}
+                nextTicket={nextTicket}
                 onSent={refresh}
                 agentFolders={agentFolders}
               />

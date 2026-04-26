@@ -371,6 +371,25 @@ export function Composer({
     };
   }, [mode, ticket, flags?.enableResendExternal]);
 
+  const recoverableOutbound = useMemo(
+    () =>
+      (ticket.pendingOutboundJobs ?? [])
+        .filter((job) => job.status === "FAILED" || job.status === "CANCELED")
+        .sort(
+          (a, b) =>
+            new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+        )[0] ?? null,
+    [ticket.pendingOutboundJobs],
+  );
+
+  function restoreRecoverableOutbound(job: HelpdeskPendingOutboundJob) {
+    setMode(job.composerMode === "NOTE" ? "REPLY" : job.composerMode);
+    setBody(job.bodyText);
+    setExpanded(true);
+    setError(null);
+    window.setTimeout(() => textareaRef.current?.focus(), 0);
+  }
+
   async function handleSubmit() {
     if (!canSubmit) return;
     const draftBody = body.trim();
@@ -492,10 +511,36 @@ export function Composer({
     </div>
   ) : null;
 
+  const recoverableBanner =
+    !pending && recoverableOutbound ? (
+      <div className="flex items-center justify-between gap-3 border-b border-red-500/20 bg-red-500/10 px-4 py-2 text-xs text-red-700 dark:text-red-300">
+        <div className="flex min-w-0 items-center gap-2">
+          <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+          <span className="truncate">
+            Last reply {recoverableOutbound.status.toLowerCase()}:{" "}
+            {recoverableOutbound.willBlockReason ?? "open it to edit and retry."}
+          </span>
+        </div>
+        <button
+          type="button"
+          onClick={() => restoreRecoverableOutbound(recoverableOutbound)}
+          className="inline-flex h-6 shrink-0 items-center gap-1 rounded-md border border-current/30 px-2 font-medium transition-colors hover:bg-surface-2 cursor-pointer"
+        >
+          Edit draft
+        </button>
+      </div>
+    ) : null;
+
   // Collapsed pill (eDesk-style). Click to expand into the full composer.
   // Renders at the bottom of the thread pane and replaces all the chrome
   // until the agent commits to typing.
-  if (!prefs.composerSticky && !expanded && !pending && body.trim().length === 0) {
+  if (
+    !prefs.composerSticky &&
+    !expanded &&
+    !pending &&
+    !recoverableOutbound &&
+    body.trim().length === 0
+  ) {
     const placeholder =
       mode === "NOTE"
         ? "Add a private note…"
@@ -526,6 +571,7 @@ export function Composer({
     <div className="shrink-0 border-t border-hairline bg-card/95 shadow-[0_-8px_24px_rgb(0_0_0_/_0.10)]">
       {archivedBanner}
       {pendingBanner}
+      {recoverableBanner}
       <div
         role="separator"
         aria-orientation="horizontal"

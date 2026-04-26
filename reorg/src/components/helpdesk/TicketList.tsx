@@ -139,6 +139,20 @@ function relTime(date: string | null): string {
   return new Date(date).toLocaleDateString();
 }
 
+function workReason(t: HelpdeskTicketSummary): string {
+  if (t.isSpam || t.status === "SPAM") return "Spam review";
+  if (t.isArchived || t.status === "ARCHIVED") return "Archived";
+  if (t.snoozedUntil && new Date(t.snoozedUntil).getTime() > Date.now()) {
+    return "Snoozed";
+  }
+  if (t.type === "SYSTEM" || t.systemMessageType) return "eBay update";
+  if (t.unreadCount > 0) return "Buyer replied";
+  if (t.status === "WAITING") return "Waiting";
+  if (t.status === "RESOLVED") return "Resolved";
+  if (!t.primaryAssignee) return "Unassigned";
+  return "Needs review";
+}
+
 interface ContextMenuState {
   ticketId: string;
   x: number;
@@ -774,6 +788,9 @@ export function TicketList({
                           Pre-sales
                         </span>
                       )}
+                      <span className="rounded border border-hairline bg-surface px-1.5 py-0.5 font-medium text-muted-foreground">
+                        {workReason(t)}
+                      </span>
                       <SLATimer
                         lastBuyerMessageAt={t.lastBuyerMessageAt}
                         firstResponseAt={t.firstResponseAt ?? null}
@@ -1155,9 +1172,20 @@ function EmptyTicketListState({ search }: { search: string }) {
         </p>
         <p className="mt-1 max-w-xs text-xs text-muted-foreground">
           {hasSearch
-            ? "Try a buyer username, eBay order ID, or a different folder."
+            ? "Try the buyer's eBay username, the full order number, or switch back to All Tickets."
             : "Buyer messages will appear here after the next Help Desk sync."}
         </p>
+        <div className="mt-3 flex flex-wrap justify-center gap-1.5 text-[10px] text-muted-foreground">
+          <span className="rounded-full border border-hairline bg-surface px-2 py-0.5">
+            Buyer username
+          </span>
+          <span className="rounded-full border border-hairline bg-surface px-2 py-0.5">
+            eBay order ID
+          </span>
+          <span className="rounded-full border border-hairline bg-surface px-2 py-0.5">
+            Folder filter
+          </span>
+        </div>
       </div>
     </div>
   );

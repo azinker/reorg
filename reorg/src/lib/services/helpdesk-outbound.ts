@@ -113,6 +113,7 @@ export async function processHelpdeskOutboundJobs(): Promise<OutboundWorkerResul
           attemptCount: { increment: 1 },
         },
       });
+      await restoreTicketAfterUnsentJob(job, "worker_exception");
       await audit(job, "HELPDESK_OUTBOUND_FAILED", { error: msg });
     }
   }
@@ -139,6 +140,7 @@ async function sendOne(
         lastError: `blocked_by_${reason}`,
       },
     });
+    await restoreTicketAfterUnsentJob(job, reason);
     await audit(job, "HELPDESK_OUTBOUND_BLOCKED", { reason });
     return "blocked";
   }
@@ -152,6 +154,7 @@ async function sendOne(
         lastError: "note_misrouted_to_outbound",
       },
     });
+    await restoreTicketAfterUnsentJob(job, "note_misrouted_to_outbound");
     return "blocked";
   }
 
@@ -187,6 +190,7 @@ async function sendEbayReply(
         lastError: "ebay_send_disabled",
       },
     });
+    await restoreTicketAfterUnsentJob(job, "ebay_send_disabled");
     await audit(job, "HELPDESK_OUTBOUND_BLOCKED", { reason: "ebay_send_flag_off" });
     return "blocked";
   }
@@ -292,6 +296,7 @@ async function sendEbayReply(
         attemptCount: { increment: 1 },
       },
     });
+    await restoreTicketAfterUnsentJob(job, "commerce_message_send_failed");
     await audit(job, "HELPDESK_OUTBOUND_FAILED", {
       reason: "commerce_message_send_failed",
       transport: "ebay_cm",
@@ -414,6 +419,7 @@ async function sendExternalEmail(
         lastError: "external_email_disabled",
       },
     });
+    await restoreTicketAfterUnsentJob(job, "external_email_disabled");
     await audit(job, "HELPDESK_OUTBOUND_BLOCKED", { reason: "resend_flag_off" });
     return "blocked";
   }
@@ -447,6 +453,7 @@ async function sendExternalEmail(
         attemptCount: { increment: 1 },
       },
     });
+    await restoreTicketAfterUnsentJob(job, "resend_failed");
     await audit(job, "HELPDESK_OUTBOUND_FAILED", {
       transport: "resend",
       error: sendRes.error.message,
@@ -505,6 +512,64 @@ async function sendExternalEmail(
     externalId,
   });
   return "sent";
+}
+
+async function restoreTicketAfterUnsentJob(
+  job: HelpdeskOutboundJob & { ticket: HelpdeskTicket },
+  reason: string,
+): Promise<void> {
+  const metadata =
+    job.metadata && typeof job.metadata === "object" && !Array.isArray(job.metadata)
+      ? (job.metadata as Record<string, unknown>)
+      : {};
+  const previousStatus = metadata.previousTicketStatus;
+  if (!isHelpdeskTicketStatus(previousStatus)) return;
+
+  const previousIsArchived = metadata.previousIsArchived === true;
+  if (!job.setStatus && !previousIsArchived) return;
+
+  const previousArchivedAt =
+    typeof metadata.previousArchivedAt === "string"
+      ? new Date(metadata.previousArchivedAt)
+      : null;
+  const previousResolvedAt =
+    typeof metadata.previousResolvedAt === "string"
+      ? new Date(metadata.previousResolvedAt)
+      : null;
+  const previousResolvedById =
+    typeof metadata.previousResolvedById === "string"
+      ? metadata.previousResolvedById
+      : null;
+
+  const restored = await db.helpdeskTicket.updateMany({
+    where: {
+      id: job.ticketId,
+      ...(job.setStatus ? { status: job.setStatus } : {}),
+      ...(previousIsArchived ? { isArchived: false } : {}),
+    },
+    data: {
+      status: previousStatus,
+      resolvedAt: previousResolvedAt,
+      resolvedById: previousResolvedById,
+      isArchived: previousIsArchived,
+      archivedAt: previousIsArchived ? previousArchivedAt ?? new Date() : null,
+    },
+  });
+
+  if (restored.count > 0) {
+    await audit(job, "HELPDESK_OUTBOUND_STATUS_ROLLED_BACK", {
+      reason,
+      restoredStatus: previousStatus,
+      restoredArchived: previousIsArchived,
+    });
+  }
+}
+
+function isHelpdeskTicketStatus(value: unknown): value is HelpdeskTicketStatus {
+  return (
+    typeof value === "string" &&
+    Object.values(HelpdeskTicketStatus).includes(value as HelpdeskTicketStatus)
+  );
 }
 
 async function audit(

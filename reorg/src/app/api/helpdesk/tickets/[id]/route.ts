@@ -29,6 +29,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
   const isPrefetch = request.nextUrl.searchParams.get("prefetch") === "1";
 
   const { id } = await params;
+  const recentOutboundErrorCutoff = new Date(Date.now() - 48 * 60 * 60_000);
   const ticket = await db.helpdeskTicket.findUnique({
     where: { id },
     include: {
@@ -61,19 +62,30 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
           },
         },
       },
-      // Surface in-flight outbound jobs (the 5s undo window + any rows
-      // currently being SENDING by the cron) so the thread can render an
-      // immediate "Sending…" bubble. We deliberately exclude SENT (those
-      // become real HelpdeskMessage rows on next sync) and CANCELED
-      // (Undo'd by the agent — they don't want to see it).
+      // Surface in-flight outbound jobs plus recent failures so the thread
+      // can render queued/sending/failed feedback. SENT rows become real
+      // HelpdeskMessage rows on the next sync, so they stay out of this list.
       outboundJobs: {
         where: {
-          status: {
-            in: [
-              HelpdeskOutboundStatus.PENDING,
-              HelpdeskOutboundStatus.SENDING,
-            ],
-          },
+          OR: [
+            {
+              status: {
+                in: [
+                  HelpdeskOutboundStatus.PENDING,
+                  HelpdeskOutboundStatus.SENDING,
+                ],
+              },
+            },
+            {
+              status: {
+                in: [
+                  HelpdeskOutboundStatus.FAILED,
+                  HelpdeskOutboundStatus.CANCELED,
+                ],
+              },
+              updatedAt: { gte: recentOutboundErrorCutoff },
+            },
+          ],
         },
         orderBy: { createdAt: "asc" },
         include: {

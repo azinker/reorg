@@ -56,6 +56,7 @@ const KNOWN_COLUMN_KEYS = [
   "type",
   "location",
   "latestUpdate",
+  "reason",
   "owner",
   "timeLeft",
   "created",
@@ -83,6 +84,7 @@ const COLUMN_DEFS: Record<ColumnKey, ColumnDef> = {
   type: { key: "type", label: "Type", width: "140px", sortable: true },
   location: { key: "location", label: "Location", width: "130px", sortable: true },
   latestUpdate: { key: "latestUpdate", label: "Latest Update", width: "minmax(280px, 1fr)", sortable: false },
+  reason: { key: "reason", label: "Reason", width: "130px", sortable: true },
   owner: { key: "owner", label: "Owner", width: "140px", sortable: true },
   timeLeft: { key: "timeLeft", label: "Time Left", width: "120px", sortable: true },
   created: { key: "created", label: "Created", width: "100px", sortable: true, align: "right" },
@@ -337,6 +339,40 @@ function ticketLocationClass(label: string): string {
   }
 }
 
+function ticketWorkReason(t: HelpdeskTicketSummary): string {
+  if (t.isSpam || t.status === "SPAM") return "Spam review";
+  if (t.isArchived || t.status === "ARCHIVED") return "Archived";
+  if (t.snoozedUntil && new Date(t.snoozedUntil).getTime() > Date.now()) {
+    return "Snoozed";
+  }
+  if (t.type === "SYSTEM" || t.systemMessageType) return "eBay update";
+  if (t.unreadCount > 0) return "Buyer replied";
+  if (t.status === "WAITING") return "Waiting on buyer";
+  if (t.status === "RESOLVED") return "Resolved";
+  if (!t.primaryAssignee) return "Unassigned";
+  return "Needs review";
+}
+
+function ticketWorkReasonClass(label: string): string {
+  switch (label) {
+    case "Buyer replied":
+      return "border-brand/40 bg-brand-muted text-brand";
+    case "eBay update":
+      return "border-blue-500/30 bg-blue-500/10 text-blue-700 dark:text-blue-300";
+    case "Waiting on buyer":
+      return "border-violet-500/30 bg-violet-500/10 text-violet-700 dark:text-violet-300";
+    case "Resolved":
+      return "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300";
+    case "Snoozed":
+    case "Archived":
+      return "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300";
+    case "Spam review":
+      return "border-red-500/30 bg-red-500/10 text-red-700 dark:text-red-300";
+    default:
+      return "border-hairline bg-surface text-muted-foreground";
+  }
+}
+
 // ─── Sort logic (client-side stable sort over loaded page) ─────────────────
 
 type SortKey = ColumnKey;
@@ -366,6 +402,8 @@ function compareTickets(
       return a.type.localeCompare(b.type);
     case "location":
       return ticketLocationLabel(a).localeCompare(ticketLocationLabel(b));
+    case "reason":
+      return ticketWorkReason(a).localeCompare(ticketWorkReason(b));
     case "owner":
       return (a.primaryAssignee?.name ?? "zzz").localeCompare(
         b.primaryAssignee?.name ?? "zzz",
@@ -451,6 +489,10 @@ export function TicketTable({
           if (!next.includes("location")) {
             const typeIndex = next.indexOf("type");
             next.splice(typeIndex >= 0 ? typeIndex + 1 : next.length, 0, "location");
+          }
+          if (!next.includes("reason")) {
+            const latestIndex = next.indexOf("latestUpdate");
+            next.splice(latestIndex >= 0 ? latestIndex + 1 : next.length, 0, "reason");
           }
           setColumns(next);
         }
@@ -647,8 +689,19 @@ export function TicketTable({
             <div>
               <p className="text-sm font-medium text-foreground">No tickets in view</p>
               <p className="mt-1 max-w-xs text-xs text-muted-foreground">
-                Try a different folder, marketplace, or status filter.
+                Try a different folder, marketplace, status filter, or clear the search field.
               </p>
+              <div className="mt-3 flex flex-wrap justify-center gap-1.5 text-[10px] text-muted-foreground">
+                <span className="rounded-full border border-hairline bg-surface px-2 py-0.5">
+                  Status
+                </span>
+                <span className="rounded-full border border-hairline bg-surface px-2 py-0.5">
+                  Marketplace
+                </span>
+                <span className="rounded-full border border-hairline bg-surface px-2 py-0.5">
+                  Search
+                </span>
+              </div>
             </div>
           </div>
         ) : (
@@ -1098,6 +1151,23 @@ function Cell({ column, ticket: t, isUnread, timeLeft, otherViewers }: CellProps
               {text}
             </p>
           </div>
+        </div>
+      );
+    }
+
+    case "reason": {
+      const reason = ticketWorkReason(t);
+      return (
+        <div className="flex min-w-0 items-center px-2">
+          <span
+            className={cn(
+              "inline-flex max-w-full items-center rounded border px-2 py-0.5 text-[11px] font-semibold uppercase shadow-sm",
+              ticketWorkReasonClass(reason),
+            )}
+            title={`Why this ticket is in view: ${reason}`}
+          >
+            <span className="truncate">{reason}</span>
+          </span>
         </div>
       );
     }

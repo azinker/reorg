@@ -652,6 +652,14 @@ export function ThreadView({
     return () => ac.abort();
   }, [ticketId]);
 
+  const notableEvents = useMemo(
+    () =>
+      events.filter((e) =>
+        ["case", "cancel", "refund", "feedback", "order_received", "order_shipped"].includes(e.kind),
+      ),
+    [events],
+  );
+
   const [optimisticOutboundJobs, setOptimisticOutboundJobs] = useState<
     HelpdeskPendingOutboundJob[]
   >([]);
@@ -860,6 +868,10 @@ export function ThreadView({
         </div>
       )}
 
+      {notableEvents.length > 0 ? (
+        <TimelineStoryStrip events={notableEvents} />
+      ) : null}
+
       <div
         ref={scrollRef}
         className="min-h-0 flex-1 scroll-smooth overflow-y-auto bg-background px-4 py-5 sm:px-6"
@@ -979,6 +991,47 @@ function ThreadEmptyState({ eventsLoading }: { eventsLoading: boolean }) {
       <p className="text-sm text-muted-foreground">
         {eventsLoading ? "Loading conversation..." : "No messages yet."}
       </p>
+    </div>
+  );
+}
+
+function TimelineStoryStrip({ events }: { events: SystemEvent[] }) {
+  const latest = events
+    .slice()
+    .sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime())[0];
+  if (!latest) return null;
+  const visible = events.slice(-4);
+  const Icon = SYSTEM_ICON[latest.kind] ?? CircleDashed;
+
+  return (
+    <div className="shrink-0 border-b border-hairline bg-card/70 px-4 py-1.5 text-[11px] text-muted-foreground">
+      <div className="mx-auto flex max-w-3xl items-center gap-2">
+        <span className="inline-flex shrink-0 items-center gap-1.5 font-semibold text-foreground">
+          <Icon className="h-3.5 w-3.5 text-brand" />
+          Timeline
+        </span>
+        <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden">
+          {visible.map((event) => {
+            const EventIcon = SYSTEM_ICON[event.kind] ?? CircleDashed;
+            return (
+              <span
+                key={event.id}
+                className={cn(
+                  "inline-flex max-w-[12rem] shrink-0 items-center gap-1 rounded-full border px-2 py-0.5",
+                  classForEventKind(event.kind),
+                )}
+                title={`${event.text} · ${formatDateTime(event.at)}`}
+              >
+                <EventIcon className="h-3 w-3 shrink-0" />
+                <span className="truncate">{event.text}</span>
+              </span>
+            );
+          })}
+        </div>
+        <span className="hidden shrink-0 tabular-nums sm:inline">
+          Latest {formatRelativeTime(latest.at)}
+        </span>
+      </div>
     </div>
   );
 }
@@ -1205,6 +1258,42 @@ interface TimelineItemProps {
   onImageClick?: (images: InlineImage[], index: number) => void;
 }
 
+function pendingJobMeta(job: HelpdeskPendingOutboundJob) {
+  if (job.status === "FAILED") {
+    return {
+      label: "Failed",
+      detail: job.willBlockReason ?? "The reply did not send.",
+      tone: "red" as const,
+    };
+  }
+  if (job.status === "CANCELED") {
+    return {
+      label: "Canceled",
+      detail: "Canceled before send.",
+      tone: "amber" as const,
+    };
+  }
+  if (job.willBlockReason) {
+    return {
+      label: "Blocked",
+      detail: job.willBlockReason,
+      tone: "amber" as const,
+    };
+  }
+  if (job.status === "SENDING") {
+    return {
+      label: "Sending",
+      detail: "The outbound worker is sending this reply.",
+      tone: "blue" as const,
+    };
+  }
+  return {
+    label: "SENT",
+    detail: "Queued for delivery.",
+    tone: "green" as const,
+  };
+}
+
 function TimelineItem({
   row,
   buyerInitial,
@@ -1250,13 +1339,13 @@ function TimelineItem({
 
   if (row.kind === "pending") {
     const j = row.data;
-    const blocked = !!j.willBlockReason;
+    const meta = pendingJobMeta(j);
+    const blocked = meta.tone === "amber" || meta.tone === "red";
     // We render a right-aligned bubble that mimics the agent reply look
     // (purple, dashed border to signal "not yet committed"). When the
     // cron actually delivers the reply, the API stops returning this job
     // in `pendingOutboundJobs` and the next ticket-detail refetch
     // replaces this transient bubble with the permanent HelpdeskMessage.
-    const statusLabel = blocked ? `Send blocked: ${j.willBlockReason}` : "SENT";
     return (
       <div className="group/msg flex flex-row-reverse gap-3 py-0.5">
         <div className="shrink-0 pt-0.5">
@@ -1278,12 +1367,17 @@ function TimelineItem({
             <span
               className={cn(
                 "shrink-0 rounded border px-1.5 py-0 text-[9px] font-semibold uppercase tracking-wider",
-                blocked
+                meta.tone === "red"
+                  ? "border-red-500/40 bg-red-500/10 text-red-700 dark:text-red-300"
+                  : meta.tone === "amber"
                   ? "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300"
+                  : meta.tone === "blue"
+                    ? "border-sky-500/40 bg-sky-500/10 text-sky-700 dark:text-sky-300"
                   : "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
               )}
+              title={meta.detail}
             >
-              {statusLabel}
+              {meta.label}
             </span>
             <span
               className={cn(
@@ -1297,12 +1391,19 @@ function TimelineItem({
           <div
             className={cn(
               "rounded-md border border-dashed px-3 py-2 text-[13px] leading-[1.5] opacity-90 shadow-sm",
-              blocked
+              meta.tone === "red"
+                ? "border-red-500/50 bg-red-50 text-foreground dark:bg-red-950/20"
+                : blocked
                 ? "border-amber-500/50 bg-amber-50 text-foreground dark:bg-amber-950/20"
                 : agentAccent.bubble,
             )}
           >
             <p className="whitespace-pre-wrap">{j.bodyText}</p>
+            {blocked ? (
+              <p className="mt-2 rounded border border-current/20 bg-background/30 px-2 py-1 text-[11px] opacity-90">
+                {meta.detail}
+              </p>
+            ) : null}
           </div>
         </div>
       </div>

@@ -245,7 +245,7 @@ export function buildFolderWhere(
       return { status: HelpdeskTicketStatus.RESOLVED, isArchived: false };
     case "unassigned":
       return {
-        AND: [open, notSnoozed, notCancellation, { primaryAssigneeId: null }],
+        AND: [open, notSnoozed, notCancellation, notSystem, { primaryAssigneeId: null }],
       };
     case "mentioned":
       // mentions are stored as [{ handle, userId }]; array_contains matches

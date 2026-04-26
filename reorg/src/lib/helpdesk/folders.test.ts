@@ -11,6 +11,8 @@ test("FOLDER_LABELS covers every folder key", () => {
     "all_tickets",
     "all_new",
     "all_to_do",
+    "all_to_do_unread",
+    "all_to_do_awaiting",
     "all_waiting",
     "buyer_cancellation",
     "snoozed",
@@ -71,10 +73,11 @@ test("buildFolderWhere(spam) excludes archived spam", () => {
   assert.equal(where.isArchived, false);
 });
 
-test("buildFolderWhere(unassigned) requires primaryAssigneeId IS NULL", () => {
+test("buildFolderWhere(unassigned) requires primaryAssigneeId IS NULL and excludes system tickets", () => {
   const where = buildFolderWhere("unassigned", ctx);
   const json = JSON.stringify(where);
   assert.match(json, /"primaryAssigneeId":null/);
+  assert.match(json, /"type":\{"not":"SYSTEM"\}/);
 });
 
 test("buildFolderWhere(mentioned) filters notes by ctx user", () => {

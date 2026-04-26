@@ -51,6 +51,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import {
+  AlertTriangle,
   Check,
   ChevronDown,
   Copy,
@@ -525,6 +526,31 @@ function CustomerCard({
     return "—";
   })();
 
+  const openRelatedCount =
+    related?.data?.filter(
+      (t) => t.status !== "RESOLVED" && t.status !== "ARCHIVED",
+    ).length ?? 0;
+  const attentionLevel =
+    ticket.type === "ITEM_NOT_RECEIVED" ||
+    ticket.type === "RETURN_REQUEST" ||
+    ticket.type === "NEGATIVE_FEEDBACK" ||
+    ticket.type === "CANCELLATION" ||
+    ticket.unreadCount > 0
+      ? "high"
+      : openRelatedCount > 0 || ticket.status === "WAITING"
+        ? "medium"
+        : "normal";
+  const attentionText =
+    attentionLevel === "high"
+      ? ticket.unreadCount > 0
+        ? "Buyer is waiting on a reply"
+        : "Escalated issue type"
+      : attentionLevel === "medium"
+        ? openRelatedCount > 0
+          ? `${openRelatedCount} other open ticket${openRelatedCount === 1 ? "" : "s"}`
+          : "Waiting on buyer"
+        : "No special risk signals";
+
   return (
     <section className="border-b border-hairline bg-card/60 px-4 py-4">
       <div className="mb-3 flex items-center gap-2">
@@ -590,6 +616,24 @@ function CustomerCard({
       <div className="my-3 border-t border-hairline" />
 
       <dl className="space-y-3 rounded-md border border-hairline bg-surface/35 p-3 text-sm">
+        <div
+          className={cn(
+            "flex items-start gap-2 rounded-md border px-2.5 py-2",
+            attentionLevel === "high"
+              ? "border-red-500/30 bg-red-500/10 text-red-700 dark:text-red-300"
+              : attentionLevel === "medium"
+                ? "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300"
+                : "border-emerald-500/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
+          )}
+        >
+          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+          <div className="min-w-0">
+            <p className="text-[10px] font-semibold uppercase tracking-wider">
+              Work signal
+            </p>
+            <p className="truncate text-xs text-foreground">{attentionText}</p>
+          </div>
+        </div>
         <Row label="Channel">
           <div className="flex items-center justify-end gap-1.5">
             <span className="inline-flex items-center gap-1 rounded bg-surface-2 px-1 py-px text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">

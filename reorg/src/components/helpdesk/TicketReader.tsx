@@ -33,6 +33,7 @@ import {
 } from "@/components/helpdesk/HelpdeskSettingsDialog";
 import type {
   HelpdeskTicketDetail,
+  HelpdeskTicketSummary,
   HelpdeskSyncStatus,
 } from "@/hooks/use-helpdesk";
 
@@ -54,6 +55,17 @@ function storeDisplayLabel(ticket: HelpdeskTicketDetail): string {
   return raw.replace(/\s*\(eBay\)\s*/i, "").trim() || raw;
 }
 
+function navTicketLabel(ticket: HelpdeskTicketSummary | null): string {
+  if (!ticket) return "";
+  return (
+    ticket.buyerName ??
+    ticket.buyerUserId ??
+    ticket.subject ??
+    ticket.ebayOrderNumber ??
+    "ticket"
+  );
+}
+
 interface TicketReaderProps {
   ticket: HelpdeskTicketDetail | null;
   loading: boolean;
@@ -68,6 +80,8 @@ interface TicketReaderProps {
   onNext?: () => void;
   hasPrev?: boolean;
   hasNext?: boolean;
+  prevTicket?: HelpdeskTicketSummary | null;
+  nextTicket?: HelpdeskTicketSummary | null;
   onSent: () => void;
   agentFolders?: { id: string; name: string; color: string }[];
 }
@@ -83,6 +97,8 @@ export function TicketReader({
   onNext,
   hasPrev = false,
   hasNext = false,
+  prevTicket = null,
+  nextTicket = null,
   onSent,
   agentFolders = [],
 }: TicketReaderProps) {
@@ -239,6 +255,25 @@ export function TicketReader({
             <ChevronRight className="h-4 w-4" />
           </button>
         </div>
+        {(prevTicket || nextTicket) && (
+          <div className="hidden min-w-0 max-w-[12rem] text-[11px] text-muted-foreground lg:block">
+            {nextTicket ? (
+              <span className="block truncate">
+                Next:{" "}
+                <span className="font-medium text-foreground">
+                  {navTicketLabel(nextTicket)}
+                </span>
+              </span>
+            ) : prevTicket ? (
+              <span className="block truncate">
+                Previous:{" "}
+                <span className="font-medium text-foreground">
+                  {navTicketLabel(prevTicket)}
+                </span>
+              </span>
+            ) : null}
+          </div>
+        )}
         <div className="mx-1 hidden h-8 w-px shrink-0 bg-hairline sm:block" aria-hidden />
         <div className="min-w-[14rem] flex-1">
           {ticket ? (

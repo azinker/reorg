@@ -8,8 +8,12 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { FileText, Search, Loader2, ChevronDown } from "lucide-react";
-import { fillTemplate, type TemplateContext } from "@/lib/helpdesk/template-fill";
+import { AlertTriangle, FileText, Search, Loader2, ChevronDown } from "lucide-react";
+import {
+  fillTemplate,
+  findUnfilledPlaceholders,
+  type TemplateContext,
+} from "@/lib/helpdesk/template-fill";
 import { cn } from "@/lib/utils";
 
 interface TemplateRow {
@@ -30,12 +34,23 @@ interface TemplatePickerProps {
   disabled?: boolean;
 }
 
+const AVAILABLE_SNIPPETS = [
+  "{{first_name}}",
+  "{{buyer_name}}",
+  "{{buyer_username}}",
+  "{{order_number}}",
+  "{{item_title}}",
+  "{{tracking_number}}",
+  "{{store_name}}",
+];
+
 export function TemplatePicker({ ctx, onPick, disabled }: TemplatePickerProps) {
   const [open, setOpen] = useState(false);
   const [items, setItems] = useState<TemplateRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [activeId, setActiveId] = useState<string | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
 
   // Click-outside to close
@@ -91,6 +106,27 @@ export function TemplatePicker({ ctx, onPick, disabled }: TemplatePickerProps) {
     );
   }, [items, search]);
 
+  useEffect(() => {
+    if (filtered.length === 0) {
+      setActiveId(null);
+      return;
+    }
+    if (!activeId || !filtered.some((t) => t.id === activeId)) {
+      setActiveId(filtered[0]?.id ?? null);
+    }
+  }, [activeId, filtered]);
+
+  const activeTemplate = useMemo(
+    () => filtered.find((t) => t.id === activeId) ?? filtered[0] ?? null,
+    [activeId, filtered],
+  );
+  const activePreview = activeTemplate
+    ? fillTemplate(activeTemplate.bodyText, ctx)
+    : "";
+  const missingSnippets = activePreview
+    ? findUnfilledPlaceholders(activePreview)
+    : [];
+
   function pickTemplate(t: TemplateRow) {
     const filled = fillTemplate(t.bodyText, ctx);
     onPick(filled);
@@ -114,7 +150,7 @@ export function TemplatePicker({ ctx, onPick, disabled }: TemplatePickerProps) {
       </button>
 
       {open && (
-        <div className="absolute bottom-full left-0 z-30 mb-1 w-80 overflow-hidden rounded-md border border-hairline bg-popover text-popover-foreground shadow-2xl shadow-black/30">
+        <div className="absolute bottom-full left-0 z-30 mb-1 w-[min(42rem,calc(100vw-2rem))] overflow-hidden rounded-md border border-hairline bg-popover text-popover-foreground shadow-2xl shadow-black/30">
           <div className="flex items-center gap-2 border-b border-hairline px-2 py-1.5">
             <Search className="h-3 w-3 text-foreground/55" />
             <input
@@ -126,8 +162,9 @@ export function TemplatePicker({ ctx, onPick, disabled }: TemplatePickerProps) {
               className="flex-1 bg-transparent text-xs text-foreground placeholder:text-foreground/55 focus:outline-none"
             />
           </div>
-          <div className="max-h-72 overflow-y-auto py-1">
-            {loading && (
+          <div className="grid max-h-80 grid-cols-[minmax(0,1fr)_16rem] overflow-hidden">
+            <div className="min-h-0 overflow-y-auto py-1">
+              {loading && (
               <div className="flex items-center justify-center py-6">
                 <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
               </div>
@@ -147,8 +184,13 @@ export function TemplatePicker({ ctx, onPick, disabled }: TemplatePickerProps) {
                 <button
                   key={t.id}
                   type="button"
+                  onMouseEnter={() => setActiveId(t.id)}
+                  onFocus={() => setActiveId(t.id)}
                   onClick={() => pickTemplate(t)}
-                  className="flex w-full items-start gap-2 px-3 py-2 text-left transition-colors hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand/30 cursor-pointer"
+                  className={cn(
+                    "flex w-full items-start gap-2 px-3 py-2 text-left transition-colors hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand/30 cursor-pointer",
+                    activeTemplate?.id === t.id && "bg-surface-2/80",
+                  )}
                 >
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
@@ -170,17 +212,49 @@ export function TemplatePicker({ ctx, onPick, disabled }: TemplatePickerProps) {
                         </span>
                       )}
                     </div>
-                    <p className="mt-0.5 line-clamp-2 text-[11px] text-foreground/65">
+                    <p className="mt-0.5 line-clamp-2 text-[11px] text-foreground/75">
                       {t.bodyText.slice(0, 120)}
                     </p>
                   </div>
                   {t.shortcut && (
-                    <code className="shrink-0 rounded bg-surface-2 px-1.5 py-0.5 text-[10px] text-foreground/60">
+                    <code className="shrink-0 rounded bg-surface-2 px-1.5 py-0.5 text-[10px] text-foreground/70">
                       {t.shortcut}
                     </code>
                   )}
                 </button>
               ))}
+            </div>
+            <div className="min-h-0 border-l border-hairline bg-card/70 p-3">
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                Preview
+              </p>
+              {activeTemplate ? (
+                <>
+                  <p className="mt-1 truncate text-xs font-semibold text-foreground">
+                    {activeTemplate.name}
+                  </p>
+                  <div className="mt-2 max-h-40 overflow-y-auto whitespace-pre-wrap rounded-md border border-hairline bg-surface px-2 py-2 text-[11px] leading-5 text-foreground">
+                    {activePreview}
+                  </div>
+                  {missingSnippets.length > 0 ? (
+                    <div className="mt-2 flex items-start gap-1.5 rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-1.5 text-[10px] text-amber-700 dark:text-amber-300">
+                      <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
+                      <span>
+                        Missing: {missingSnippets.map((s) => `{{${s}}}`).join(", ")}
+                      </span>
+                    </div>
+                  ) : null}
+                  <p className="mt-2 text-[10px] leading-4 text-muted-foreground">
+                    Snippets: {AVAILABLE_SNIPPETS.join(", ")}
+                  </p>
+                </>
+              ) : (
+                <p className="mt-2 text-[11px] leading-5 text-muted-foreground">
+                  Hover a template to preview it. Available snippets:{" "}
+                  {AVAILABLE_SNIPPETS.join(", ")}
+                </p>
+              )}
+            </div>
           </div>
         </div>
       )}
