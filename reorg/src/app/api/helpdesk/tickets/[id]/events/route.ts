@@ -92,6 +92,8 @@ interface TimelineEvent {
   action: string;
   kind: SystemEventKind;
   text: string;
+  href?: string | null;
+  externalId?: string | null;
   actor: {
     id: string;
     name: string | null;
@@ -398,13 +400,217 @@ function systemTicketTimelineText(args: {
   }
 }
 
+function stripHtmlToPlainText(value: string | null | undefined): string {
+  if (!value) return "";
+  return value
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&#8202;/g, " ")
+    .replace(/&#39;/g, "'")
+    .replace(/&quot;/g, '"')
+    .replace(/&amp;/g, "&")
+    .replace(/&copy;/gi, "(c)")
+    .replace(/&zwnj;/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+const EBAY_DATE_MONTHS: Record<string, number> = {
+  jan: 0,
+  feb: 1,
+  mar: 2,
+  apr: 3,
+  may: 4,
+  jun: 5,
+  jul: 6,
+  aug: 7,
+  sep: 8,
+  oct: 9,
+  nov: 10,
+  dec: 11,
+};
+
+function parseEbayDateOnly(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const match = /^([A-Za-z]{3})\s+(\d{1,2}),\s+(\d{4})$/.exec(value.trim());
+  if (!match) return null;
+  const month = EBAY_DATE_MONTHS[match[1]!.toLowerCase()];
+  if (month == null) return null;
+  const day = Number(match[2]);
+  const year = Number(match[3]);
+  if (!Number.isFinite(day) || !Number.isFinite(year)) return null;
+  // eBay system emails often only include a date ("Case opened Apr 15,
+  // 2026"). Noon Eastern-ish in UTC preserves the calendar day in the UI
+  // while keeping the synthesized event clearly approximate.
+  return new Date(Date.UTC(year, month, day, 16, 0, 0)).toISOString();
+}
+
+function extractEbayCaseUrl(bodyText: string | null | undefined): string | null {
+  const raw = (bodyText ?? "").replace(/&amp;/gi, "&");
+  const direct =
+    /https?:\/\/www\.ebay\.com\/res\/ItemNotReceived\/ViewRequest\?id=\d+[^"'<>\s]*/i.exec(
+      raw,
+    )?.[0] ??
+    /https?:\/\/www\.ebay\.com\/ItemNotReceived\/\?[^"'<>\s]*/i.exec(raw)?.[0] ??
+    null;
+  if (!direct) return null;
+  try {
+    const url = new URL(direct);
+    if (!url.hostname.endsWith("ebay.com")) return null;
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
+function extractEbayRequestContext(args: {
+  subject: string | null;
+  bodyText: string | null;
+}): {
+  caseId: string | null;
+  href: string | null;
+  kindLabel: string;
+  openedAt: string | null;
+  isDeliveredUpdate: boolean;
+  isClosed: boolean;
+  closedByBuyer: boolean;
+} {
+  const plain = stripHtmlToPlainText(args.bodyText);
+  const subject = args.subject ?? "";
+  const haystack = `${subject} ${plain}`;
+  const caseId =
+    /ViewRequest\?id=(\d{6,})/i.exec(args.bodyText ?? "")?.[1] ??
+    /Request\s+#\s*:?\s*(\d{6,})/i.exec(haystack)?.[1] ??
+    /Request\s+#(\d{6,})/i.exec(haystack)?.[1] ??
+    /Case\s+ID\s*:?\s*(\d{6,})/i.exec(haystack)?.[1] ??
+    null;
+  const openedDate =
+    /(?:Request|Case)\s+opened:?\s+([A-Za-z]{3}\s+\d{1,2},\s+\d{4})/i.exec(
+      haystack,
+    )?.[1] ?? null;
+  const href =
+    extractEbayCaseUrl(args.bodyText) ??
+    (caseId ? `https://www.ebay.com/res/ItemNotReceived/ViewRequest?id=${caseId}` : null);
+  const isInr =
+    /ItemNotReceived/i.test(args.bodyText ?? "") ||
+    /item\s+not\s+received|not\s+received\s+request|hasn'?t\s+arrived/i.test(haystack) ||
+    /buyer'?s\s+item\s+arrived|shipping\s+status\s+shows.*delivered/i.test(haystack);
+  const isDeliveredUpdate =
+    /buyer'?s\s+item\s+arrived|shipping\s+status\s+shows.*delivered|item\s+has\s+arrived/i.test(
+      haystack,
+    );
+  const closedByBuyer =
+    /closed\s+by\s+the\s+buyer|buyer\s+has\s+closed\s+this\s+request|the\s+buyer\s+closed\s+this\s+request/i.test(
+      haystack,
+    );
+  const isClosed =
+    closedByBuyer ||
+    /case\s+closed|case\s+is\s+now\s+closed|request\s+was\s+closed/i.test(haystack);
+
+  return {
+    caseId,
+    href,
+    kindLabel: isInr ? "item-not-received case" : "case",
+    openedAt: parseEbayDateOnly(openedDate),
+    isDeliveredUpdate,
+    isClosed,
+    closedByBuyer,
+  };
+}
+
+function systemTicketTimelineEvents(args: {
+  ticketId: string;
+  messageId: string | null;
+  systemMessageType: string | null;
+  subject: string | null;
+  bodyText: string | null;
+  at: Date | string;
+}): TimelineEvent[] {
+  const ctx = extractEbayRequestContext({
+    subject: args.subject,
+    bodyText: args.bodyText,
+  });
+  const events: TimelineEvent[] = [];
+  const baseId = args.messageId ?? args.ticketId;
+
+  if (ctx.caseId && ctx.openedAt) {
+    events.push({
+      id: `related-case-opened-${baseId}-${ctx.caseId}`,
+      type: "system",
+      action: "EBAY_CASE_OPENED",
+      kind: "case",
+      text: `Buyer opened ${ctx.kindLabel} #${ctx.caseId} on eBay`,
+      href: ctx.href,
+      externalId: ctx.caseId,
+      actor: null,
+      at: ctx.openedAt,
+    });
+  }
+
+  if (ctx.caseId && ctx.isDeliveredUpdate) {
+    events.push({
+      id: `related-case-delivered-${baseId}-${ctx.caseId}`,
+      type: "system",
+      action: "EBAY_ITEM_DELIVERED",
+      kind: "case",
+      text: `eBay marked item delivered for ${ctx.kindLabel} #${ctx.caseId}`,
+      href: ctx.href,
+      externalId: ctx.caseId,
+      actor: null,
+      at: args.at,
+    });
+  }
+
+  if (ctx.caseId && ctx.isClosed) {
+    events.push({
+      id: `related-case-closed-${baseId}-${ctx.caseId}`,
+      type: "system",
+      action: "EBAY_CASE_CLOSED",
+      kind: "case",
+      text: `${
+        ctx.closedByBuyer ? "Buyer closed" : "eBay closed"
+      } ${ctx.kindLabel} #${ctx.caseId} on eBay`,
+      href: ctx.href,
+      externalId: ctx.caseId,
+      actor: null,
+      at: args.at,
+    });
+  }
+
+  if (events.length > 0) return events;
+
+  const formatted = systemTicketTimelineText({
+    systemMessageType: args.systemMessageType,
+    subject: args.subject,
+    bodyText: args.bodyText,
+  });
+  return [
+    {
+      id: `related-system-${baseId}`,
+      type: "system",
+      action: formatted.action,
+      kind: "case",
+      text: formatted.text,
+      actor: null,
+      at: args.at,
+    },
+  ];
+}
+
 function dedupeTimelineEvents(events: TimelineEvent[]): TimelineEvent[] {
   const seen = new Set<string>();
   const out: TimelineEvent[] = [];
   for (const event of events) {
     const atMs = new Date(event.at).getTime();
     const minute = Number.isFinite(atMs) ? Math.floor(atMs / 60_000) : 0;
-    const key = `${event.kind}|${event.action}|${event.text}|${minute}`;
+    const day = Number.isFinite(atMs)
+      ? new Date(atMs).toISOString().slice(0, 10)
+      : "unknown-day";
+    const key = event.externalId
+      ? `${event.kind}|${event.action}|${event.externalId}|${day}`
+      : `${event.kind}|${event.action}|${event.text}|${minute}`;
     if (seen.has(key)) continue;
     seen.add(key);
     out.push(event);
@@ -655,8 +861,9 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
             messages: {
               where: { deletedAt: null },
               orderBy: { sentAt: "asc" },
-              take: 1,
+              take: 25,
               select: {
+                id: true,
                 subject: true,
                 bodyText: true,
                 sentAt: true,
@@ -671,25 +878,36 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
   const relatedTicketIds = [id, ...relatedSystemTickets.map((t) => t.id)];
 
   for (const ticket of relatedSystemTickets) {
-    const firstMessage = ticket.messages[0] ?? null;
-    const formatted = systemTicketTimelineText({
-      systemMessageType: ticket.systemMessageType,
-      subject: firstMessage?.subject ?? ticket.subject,
-      bodyText: firstMessage?.bodyText ?? null,
-    });
-    events.push({
-      id: `related-system-${ticket.id}`,
-      type: "system" as const,
-      action: formatted.action,
-      kind: "case" as const,
-      text: formatted.text,
-      actor: null,
-      at:
-        firstMessage?.sentAt ??
-        ticket.lastBuyerMessageAt ??
-        ticket.lastAgentMessageAt ??
-        ticket.createdAt,
-    });
+    const systemMessages =
+      ticket.messages.length > 0
+        ? ticket.messages
+        : [
+            {
+              id: null,
+              subject: ticket.subject,
+              bodyText: null,
+              sentAt:
+                ticket.lastBuyerMessageAt ??
+                ticket.lastAgentMessageAt ??
+                ticket.createdAt,
+            },
+          ];
+    for (const message of systemMessages) {
+      events.push(
+        ...systemTicketTimelineEvents({
+          ticketId: ticket.id,
+          messageId: message.id,
+          systemMessageType: ticket.systemMessageType,
+          subject: message.subject ?? ticket.subject,
+          bodyText: message.bodyText ?? null,
+          at:
+            message.sentAt ??
+            ticket.lastBuyerMessageAt ??
+            ticket.lastAgentMessageAt ??
+            ticket.createdAt,
+        }),
+      );
+    }
   }
 
   // HelpdeskCase / HelpdeskFeedback / HelpdeskCancellation are populated by
@@ -764,20 +982,22 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
       // agent doesn't have to translate eBay's acronyms in their head.
       const kindLabel =
         c.kind === "RETURN"
-          ? "return"
+          ? "return case"
           : c.kind === "NOT_AS_DESCRIBED"
             ? "INAD claim"
             : c.kind === "ITEM_NOT_RECEIVED"
               ? "item-not-received case"
               : c.kind === "CHARGEBACK"
-                ? "chargeback"
+                ? "chargeback case"
                 : "case";
       events.push({
         id: `case-opened-${c.id}`,
         type: "system" as const,
         action: "EBAY_CASE_OPENED",
         kind: "case" as const,
-        text: `Buyer opened a ${kindLabel} on eBay`,
+        text: `Buyer opened ${kindLabel} #${c.externalId} on eBay`,
+        href: c.manageUrl,
+        externalId: c.externalId,
         actor: null,
         at: c.openedAt,
       });
@@ -797,7 +1017,9 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
           type: "system" as const,
           action: "EBAY_CASE_CLOSED",
           kind: "case" as const,
-          text: `eBay closed the ${kindLabel}${closeQualifier}`,
+          text: `eBay closed ${kindLabel} #${c.externalId}${closeQualifier}`,
+          href: c.manageUrl,
+          externalId: c.externalId,
           actor: null,
           at: c.closedAt,
         });

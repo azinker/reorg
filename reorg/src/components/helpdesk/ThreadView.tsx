@@ -116,6 +116,8 @@ interface SystemEvent {
   action: string;
   kind: SystemEventKind;
   text: string;
+  href?: string | null;
+  externalId?: string | null;
   actor: {
     id: string;
     name: string | null;
@@ -1013,6 +1015,24 @@ function TimelineStoryStrip({ events }: { events: SystemEvent[] }) {
         <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden">
           {visible.map((event) => {
             const EventIcon = SYSTEM_ICON[event.kind] ?? CircleDashed;
+            if (event.href) {
+              return (
+                <a
+                  key={event.id}
+                  href={event.href}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className={cn(
+                    "inline-flex max-w-[14rem] shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 transition-colors hover:border-brand/60 hover:text-foreground cursor-pointer",
+                    classForEventKind(event.kind),
+                  )}
+                  title={`${event.text} - ${formatDateTime(event.at)}`}
+                >
+                  <EventIcon className="h-3 w-3 shrink-0" />
+                  <span className="truncate">{event.text}</span>
+                </a>
+              );
+            }
             return (
               <span
                 key={event.id}
@@ -1315,6 +1335,31 @@ function TimelineItem({
   if (row.kind === "system") {
     const ev = row.data;
     const Icon = SYSTEM_ICON[ev.kind] ?? CircleDashed;
+    if (ev.href) {
+      return (
+        <div className="my-1 flex items-center justify-center gap-3">
+          <span className="h-px flex-1 max-w-[18%] bg-hairline" />
+          <a
+            href={ev.href}
+            target="_blank"
+            rel="noopener noreferrer"
+            className={cn(
+              "inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-[11px] shadow-sm transition-colors hover:border-brand/60 hover:text-foreground cursor-pointer",
+              classForEventKind(ev.kind),
+            )}
+            title={`${formatRelativeTime(ev.at)} - open on eBay`}
+          >
+            <Icon className="h-3 w-3" />
+            <span className="font-medium">{ev.text}</span>
+            <span className="opacity-60">-</span>
+            <span className="tabular-nums opacity-80">
+              {formatDateTime(ev.at)}
+            </span>
+          </a>
+          <span className="h-px flex-1 max-w-[18%] bg-hairline" />
+        </div>
+      );
+    }
     return (
       <div className="my-1 flex items-center justify-center gap-3">
         <span className="h-px flex-1 max-w-[18%] bg-hairline" />
