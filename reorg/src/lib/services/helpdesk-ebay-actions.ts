@@ -332,14 +332,14 @@ async function listFeedback(args: {
       externalId: String(r.FeedbackID ?? r.TransactionID ?? r.ItemID ?? ""),
       kind,
       starRating: null, // GetFeedback doesn't expose DSR star ratings here
-      comment: typeof r.CommentText === "string" ? r.CommentText : null,
+      comment: r.CommentText != null ? String(r.CommentText) : null,
       sellerResponse:
-        typeof r.CommentReplaced === "string" && r.CommentReplaced
-          ? r.CommentReplaced
+        r.CommentReplaced != null && String(r.CommentReplaced).trim()
+          ? String(r.CommentReplaced)
           : null,
       ebayOrderNumber: typeof r.OrderLineItemID === "string" ? null : null,
-      ebayItemId: typeof r.ItemID === "string" ? r.ItemID : null,
-      buyerUserId: typeof r.CommentingUser === "string" ? r.CommentingUser : null,
+      ebayItemId: r.ItemID != null ? String(r.ItemID) : null,
+      buyerUserId: r.CommentingUser != null ? String(r.CommentingUser) : null,
       leftAt: r.CommentTime ? new Date(String(r.CommentTime)) : new Date(),
       raw: r,
     };
