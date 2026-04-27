@@ -45,6 +45,9 @@ export default function HelpDeskClient() {
     null,
   );
   const prefs = useHelpdeskPrefs();
+  const searchParams = useSearchParams();
+  const initialTicketIdRef = useRef<string | null>(searchParams.get("ticket"));
+  const lastQParamRef = useRef<string | null>(null);
 
   // Pick up `?q=` from the URL — sub-pages (filters, dashboard, profile,
   // global-settings) drive their global-search field by pushing
@@ -125,9 +128,21 @@ export default function HelpDeskClient() {
 
   useEffect(() => { void fetchAgentFolders(); }, [fetchAgentFolders]);
 
-  const handleAgentFolderSelect = useCallback((folderId: string) => {
-    setActiveAgentFolderId(folderId);
+  const clearActiveSearch = useCallback(() => {
+    setSearch("");
+    lastQParamRef.current = null;
+
+    if (typeof window === "undefined") return;
+    const url = new URL(window.location.href);
+    if (!url.searchParams.has("q")) return;
+    url.searchParams.delete("q");
+    window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
   }, []);
+
+  const handleAgentFolderSelect = useCallback((folderId: string) => {
+    clearActiveSearch();
+    setActiveAgentFolderId(folderId);
+  }, [clearActiveSearch]);
 
   const handleAgentFolderCreate = useCallback(async (name: string, color: string) => {
     try {
@@ -166,10 +181,11 @@ export default function HelpDeskClient() {
 
   // When a system folder is selected, clear agent folder selection
   const handleSystemFolderChange = useCallback((f: HelpdeskFolderKey) => {
+    clearActiveSearch();
     setActiveAgentFolderId(null);
     setFolder(f);
     if (f !== "from_ebay") setSystemMessageType(null);
-  }, []);
+  }, [clearActiveSearch]);
 
   const channelArg = channelFilter === "ALL" ? undefined : channelFilter;
   // Network-side debounce on top of the header's input-side debounce.
@@ -188,8 +204,12 @@ export default function HelpDeskClient() {
   // is only here to coalesce two-stage typing patterns into a single
   // fetch.
   const debouncedSearch = useDebouncedValue(search, 200);
+  const rawSearch = search.trim();
+  const debouncedSearchTrimmed = debouncedSearch.trim();
   const searchArg =
-    debouncedSearch.trim().length > 0 ? debouncedSearch.trim() : undefined;
+    rawSearch.length > 0 && debouncedSearchTrimmed.length > 0
+      ? debouncedSearchTrimmed
+      : undefined;
 
   /**
    * Deep-link support: when another page links here as `/help-desk?ticket=<id>`
@@ -198,11 +218,6 @@ export default function HelpDeskClient() {
    * the URL alone — replicating the URL on every selection would fight the
    * native browser back-button experience.
    */
-  const searchParams = useSearchParams();
-  const initialTicketIdRef = useRef<string | null>(searchParams.get("ticket"));
-
-  const lastQParamRef = useRef<string | null>(null);
-
   const {
     tickets,
     counts,
