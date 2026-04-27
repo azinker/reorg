@@ -1007,18 +1007,27 @@ function OrderInfoSection({
                 <div className="space-y-1.5">
                   {trackingEntries.map((entry) => {
                     const carrier = entry.carrier ?? trackingCarrier;
+                    const url = trackingUrl(carrier, entry.number);
                     return (
                       <div
                         key={`${carrier}-${entry.number}`}
-                        className="flex flex-wrap items-center gap-1.5 text-foreground"
+                        className="flex min-w-0 items-center gap-1.5 whitespace-nowrap text-foreground"
                       >
                         <Truck className="h-3 w-3 shrink-0 text-brand" />
-                        <span className="font-medium">{carrier}</span>
-                        <span className="font-mono break-all">
-                          {entry.number}
+                        <span className="shrink-0 text-xs font-medium">
+                          {carrier}
                         </span>
-                        <span className="text-muted-foreground">-</span>
-                        <span className="tabular-nums text-muted-foreground">
+                        <a
+                          href={url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="min-w-0 flex-1 truncate font-mono text-[11px] font-medium text-brand hover:underline"
+                          title={`Track ${entry.number} on ${carrier}`}
+                        >
+                          {entry.number}
+                        </a>
+                        <span className="shrink-0 text-muted-foreground">-</span>
+                        <span className="shrink-0 tabular-nums text-[10px] text-muted-foreground">
                           {formatNumericDate(entry.shippedTime ?? ctx?.shippedTime)}
                         </span>
                         <CopyButton
@@ -1328,6 +1337,30 @@ function formatNumericDate(value: string | null | undefined): string {
   } catch {
     return "—";
   }
+}
+
+function trackingUrl(carrier: string | null | undefined, number: string): string {
+  const trackingNumber = number.trim();
+  const normalizedCarrier = (carrier ?? "").toLowerCase();
+  const encoded = encodeURIComponent(trackingNumber);
+  if (/usps|postal|post office/.test(normalizedCarrier)) {
+    return `https://tools.usps.com/go/TrackConfirmAction?tLabels=${encoded}`;
+  }
+  if (/\bups\b|united parcel/.test(normalizedCarrier)) {
+    return `https://www.ups.com/track?tracknum=${encoded}`;
+  }
+  if (/fedex|federal express/.test(normalizedCarrier)) {
+    return `https://www.fedex.com/fedextrack/?trknbr=${encoded}`;
+  }
+  if (/\bdhl\b/.test(normalizedCarrier)) {
+    return `https://www.dhl.com/us-en/home/tracking/tracking-express.html?tracking-id=${encoded}`;
+  }
+  if (/ontrac/.test(normalizedCarrier)) {
+    return `https://www.ontrac.com/tracking/?number=${encoded}`;
+  }
+  return `https://www.google.com/search?q=${encodeURIComponent(
+    `${carrier ?? ""} tracking ${trackingNumber}`.trim(),
+  )}`;
 }
 
 function formatEstimatedDelivery(min: string | null | undefined, max: string | null | undefined): string {
