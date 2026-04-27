@@ -500,10 +500,14 @@ function CustomerCard({
   related: RelatedResponse | null;
 }) {
 
-  // Customer-since: prefer the earliest ticket we have on file (true first
-  // contact). Fall back to this ticket's createdAt when the related summary
-  // hasn't returned yet.
-  const customerSince = related?.earliestTicketAt ?? ticket.createdAt;
+  // Customer-since: for post-order tickets, prefer the real order/purchase
+  // timestamp from eBay. Do not fall back to the Help Desk ticket's createdAt
+  // for order-linked tickets; that makes old orders look like new purchases
+  // when eBay context is still loading or unavailable.
+  const customerSince =
+    order?.createdTime ??
+    order?.paidTime ??
+    (!ticket.ebayOrderNumber ? related?.earliestTicketAt ?? ticket.createdAt : null);
   const orderCount = related?.orderCount ?? (ticket.ebayOrderNumber ? 1 : 0);
   const isNewCustomer = orderCount <= 1;
 
@@ -705,12 +709,14 @@ function CustomerCard({
         </Row>
         <Row label="Customer Since">
           <span className="text-foreground">
-            {new Date(customerSince).toLocaleDateString(undefined, {
-              weekday: "short",
-              year: "numeric",
-              month: "short",
-              day: "numeric",
-            })}
+            {customerSince
+              ? new Date(customerSince).toLocaleDateString(undefined, {
+                  weekday: "short",
+                  year: "numeric",
+                  month: "short",
+                  day: "numeric",
+                })
+              : "—"}
           </span>
         </Row>
         <Row label="Assignee">
@@ -984,9 +990,7 @@ function OrderInfoSection({
                   Ordered
                 </p>
                 <p className="text-foreground">
-                  {formatShortDate(
-                    ctx?.createdTime ?? ctx?.paidTime ?? ticket.createdAt,
-                  )}
+                  {formatShortDate(ctx?.createdTime ?? ctx?.paidTime)}
                 </p>
               </div>
               <div>
@@ -1299,9 +1303,12 @@ function CopyButton({ value, title }: { value: string; title: string }) {
 function formatShortDate(value: string | null | undefined): string {
   if (!value) return "—";
   try {
-    return new Date(value).toLocaleDateString(undefined, {
+    const date = new Date(value);
+    const includeYear = date.getFullYear() !== new Date().getFullYear();
+    return date.toLocaleDateString(undefined, {
       month: "short",
       day: "numeric",
+      ...(includeYear ? { year: "numeric" as const } : {}),
     });
   } catch {
     return "—";

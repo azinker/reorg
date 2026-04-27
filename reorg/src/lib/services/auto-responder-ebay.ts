@@ -5,6 +5,7 @@ import type { Platform } from "@prisma/client";
 // ΓöÇΓöÇΓöÇ eBay Trading API constants (shared with ship-orders) ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 
 const TRADING_API = "https://api.ebay.com/ws/api.dll";
+const FULFILLMENT_API = "https://api.ebay.com/sell/fulfillment/v1/order";
 const SITE_ID = "0";
 const COMPAT_LEVEL = "1199";
 const REQUEST_TIMEOUT_MS = 30_000;
@@ -680,6 +681,277 @@ function orderLineItemTitle(
   return base ? `${base} [${missingValues.join(", ")}]` : missingValues.join(", ");
 }
 
+function parseFulfillmentMoneyToCents(raw: unknown): number | null {
+  const obj = asRecord(raw);
+  return parseDollarsToCents(obj?.value ?? raw);
+}
+
+function pickFulfillmentCurrency(raw: unknown): string | null {
+  const obj = asRecord(raw);
+  return nonEmptyString(obj?.currency) ?? pickCurrency(raw);
+}
+
+function firstDate(...values: Array<unknown>): string | null {
+  for (const value of values) {
+    const text = nonEmptyString(value);
+    if (text) return text;
+  }
+  return null;
+}
+
+function fulfillmentLineItemTitle(line: Record<string, unknown>): string {
+  const base = nonEmptyString(line.title) ?? nonEmptyString(line.legacyItemId) ?? "";
+  const aspects = asList<Record<string, unknown>>(line.variationAspects)
+    .map((aspect) => nonEmptyString(aspect.value))
+    .filter((value): value is string => !!value);
+  if (aspects.length === 0) return base;
+
+  const normalizedBase = base.toLowerCase();
+  const missingAspects = aspects.filter(
+    (value) => !normalizedBase.includes(value.toLowerCase()),
+  );
+  if (missingAspects.length === 0) return base;
+  return base ? `${base} [${missingAspects.join(", ")}]` : missingAspects.join(", ");
+}
+
+function inferCarrierFromTracking(number: string | null, fallback: string | null): string | null {
+  if (fallback && !/^shippingmethod/i.test(fallback)) return fallback;
+  const compact = number?.replace(/\s+/g, "") ?? "";
+  if (/^9\d{18,}$/.test(compact)) return "USPS";
+  if (/^1Z[0-9A-Z]{16}$/i.test(compact)) return "UPS";
+  return fallback;
+}
+
+function trackingNumberFromFulfillmentHref(href: string): string | null {
+  try {
+    const url = new URL(href);
+    const last = decodeURIComponent(url.pathname.split("/").filter(Boolean).at(-1) ?? "");
+    return last.length >= 8 ? last : null;
+  } catch {
+    const last = href.split("/").filter(Boolean).at(-1) ?? "";
+    return last.length >= 8 ? decodeURIComponent(last) : null;
+  }
+}
+
+function fulfillmentAddress(
+  instruction: Record<string, unknown> | null,
+): EbayOrderContextAddress | null {
+  const shippingStep = asRecord(instruction?.shippingStep);
+  const shipTo = asRecord(shippingStep?.shipTo);
+  const address = asRecord(shipTo?.contactAddress);
+  if (!shipTo && !address) return null;
+
+  const phone = asRecord(shipTo?.primaryPhone);
+  const result: EbayOrderContextAddress = {
+    name:
+      nonEmptyString(shipTo?.fullName) ??
+      nonEmptyString(shipTo?.name) ??
+      nonEmptyString(address?.name),
+    street1:
+      nonEmptyString(address?.addressLine1) ??
+      nonEmptyString(address?.street1),
+    street2:
+      nonEmptyString(address?.addressLine2) ??
+      nonEmptyString(address?.street2),
+    cityName: nonEmptyString(address?.city) ?? nonEmptyString(address?.cityName),
+    stateOrProvince:
+      nonEmptyString(address?.stateOrProvince) ??
+      nonEmptyString(address?.state),
+    postalCode: nonEmptyString(address?.postalCode),
+    countryName:
+      nonEmptyString(address?.country) ??
+      nonEmptyString(address?.countryCode),
+    phone:
+      nonEmptyString(phone?.phoneNumber) ??
+      nonEmptyString(shipTo?.phoneNumber),
+  };
+
+  return Object.values(result).some(Boolean) ? result : null;
+}
+
+async function fetchFulfillmentShipment(
+  accessToken: string,
+  href: string,
+): Promise<Record<string, unknown> | null> {
+  const res = await fetchWithTimeout(href, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      Accept: "application/json",
+    },
+  });
+
+  void recordNetworkTransferSample({
+    channel: "AUTO_RESPONDER",
+    label: "helpdesk_fulfillment_shipment",
+    bytesEstimate: Buffer.byteLength(href) + Buffer.byteLength(res.body),
+  });
+
+  if (!res.ok) return null;
+  try {
+    return JSON.parse(res.body) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+async function fetchEbayFulfillmentOrderContext(
+  integrationId: string,
+  orderId: string,
+  accessToken: string,
+): Promise<EbayOrderContext | null> {
+  const url = `${FULFILLMENT_API}/${encodeURIComponent(orderId)}`;
+  const res = await fetchWithTimeout(url, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      Accept: "application/json",
+    },
+  });
+
+  void recordNetworkTransferSample({
+    channel: "AUTO_RESPONDER",
+    label: `helpdesk_fulfillment_order_context / ${integrationId}`,
+    bytesEstimate: Buffer.byteLength(url) + Buffer.byteLength(res.body),
+    integrationId,
+  });
+
+  if (!res.ok) return null;
+
+  let order: Record<string, unknown>;
+  try {
+    order = JSON.parse(res.body) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+
+  const fulfillmentHrefs = asList(order.fulfillmentHrefs)
+    .map((href) => nonEmptyString(href))
+    .filter((href): href is string => !!href);
+  const shipments = (
+    await Promise.all(
+      fulfillmentHrefs.map((href) => fetchFulfillmentShipment(accessToken, href)),
+    )
+  ).filter((shipment): shipment is Record<string, unknown> => !!shipment);
+
+  const instructions = asList<Record<string, unknown>>(order.fulfillmentStartInstructions)
+    .map((instruction) => asRecord(instruction))
+    .filter((instruction): instruction is Record<string, unknown> => !!instruction);
+  const firstInstruction = instructions[0] ?? null;
+  const firstShippingStep = asRecord(firstInstruction?.shippingStep);
+  const firstLine = asRecord(asList(order.lineItems)[0]);
+  const firstLineInstructions = asRecord(firstLine?.lineItemFulfillmentInstructions);
+
+  const trackingNumbers = shipments
+    .map((shipment) => {
+      const number =
+        nonEmptyString(shipment.shipmentTrackingNumber) ??
+        nonEmptyString(shipment.trackingNumber) ??
+        trackingNumberFromFulfillmentHref(nonEmptyString(shipment.href) ?? "");
+      if (!number) return null;
+      const carrier = inferCarrierFromTracking(
+        number,
+        nonEmptyString(shipment.shippingCarrierCode) ??
+          nonEmptyString(shipment.carrierCode) ??
+          nonEmptyString(shipment.shippingServiceCode),
+      );
+      return {
+        number,
+        carrier,
+        shippedTime: firstDate(shipment.shippedDate, shipment.shippedTime),
+      } satisfies EbayOrderTracking;
+    })
+    .filter((tracking): tracking is EbayOrderTracking => !!tracking);
+  for (const href of fulfillmentHrefs) {
+    const number = trackingNumberFromFulfillmentHref(href);
+    if (!number || trackingNumbers.some((tracking) => tracking.number === number)) continue;
+    trackingNumbers.push({
+      number,
+      carrier: inferCarrierFromTracking(number, null),
+      shippedTime: null,
+    });
+  }
+
+  const firstTracking = trackingNumbers[0] ?? { number: null, carrier: null };
+  const pricing = asRecord(order.pricingSummary);
+  const paymentSummary = asRecord(order.paymentSummary);
+  const firstPayment = asRecord(asList(paymentSummary?.payments)[0]);
+  const deliveryCost = asRecord(pricing?.deliveryCost);
+  const total = asRecord(pricing?.total);
+  const subtotal = asRecord(pricing?.priceSubtotal);
+
+  const lineItems: EbayOrderContextLineItem[] = asList<Record<string, unknown>>(order.lineItems)
+    .map((line) => asRecord(line))
+    .filter((line): line is Record<string, unknown> => !!line)
+    .map((line) => {
+      const quantityRaw = Number(line.quantity ?? 1);
+      const quantity = Number.isFinite(quantityRaw) && quantityRaw > 0 ? quantityRaw : 1;
+      const totalCents = parseFulfillmentMoneyToCents(line.total);
+      return {
+        itemId:
+          nonEmptyString(line.legacyItemId) ??
+          nonEmptyString(line.itemId) ??
+          nonEmptyString(line.lineItemId) ??
+          "",
+        title: fulfillmentLineItemTitle(line),
+        sku: nonEmptyString(line.sku),
+        quantity,
+        unitPriceCents:
+          parseFulfillmentMoneyToCents(line.lineItemCost) ??
+          (totalCents != null ? Math.round(totalCents / quantity) : null),
+        pictureUrl: nonEmptyString(line.imageUrl) ?? nonEmptyString(line.pictureUrl),
+      };
+    })
+    .filter((line) => line.itemId);
+
+  const shippingService =
+    nonEmptyString(firstTracking.carrier) ??
+    nonEmptyString(firstShippingStep?.shippingServiceCode) ??
+    nonEmptyString(firstInstruction?.shippingServiceCode);
+
+  return {
+    orderId:
+      nonEmptyString(order.legacyOrderId) ??
+      nonEmptyString(order.orderId) ??
+      orderId,
+    salesRecordNumber: nonEmptyString(order.salesRecordReference),
+    buyerUserId: nonEmptyString(asRecord(order.buyer)?.username) ?? "",
+    buyerName: nonEmptyString(asRecord(order.buyer)?.username) ?? "",
+    buyerEmail: null,
+    orderStatus:
+      nonEmptyString(order.orderFulfillmentStatus) ??
+      nonEmptyString(order.orderPaymentStatus),
+    createdTime: firstDate(order.creationDate),
+    paidTime: firstDate(firstPayment?.paymentDate),
+    shippedTime: firstDate(
+      ...trackingNumbers.map((tracking) => tracking.shippedTime),
+    ),
+    estimatedDeliveryMin: firstDate(
+      firstInstruction?.minEstimatedDeliveryDate,
+      firstLineInstructions?.minEstimatedDeliveryDate,
+    ),
+    estimatedDeliveryMax: firstDate(
+      firstInstruction?.maxEstimatedDeliveryDate,
+      firstLineInstructions?.maxEstimatedDeliveryDate,
+    ),
+    actualDeliveryTime: null,
+    shippingService,
+    trackingNumber: firstTracking.number,
+    trackingCarrier: firstTracking.carrier,
+    trackingNumbers,
+    totalCents:
+      parseFulfillmentMoneyToCents(total) ??
+      parseFulfillmentMoneyToCents(subtotal),
+    shippingCents: parseFulfillmentMoneyToCents(deliveryCost),
+    currency:
+      pickFulfillmentCurrency(total) ??
+      pickFulfillmentCurrency(subtotal) ??
+      pickFulfillmentCurrency(deliveryCost),
+    shippingAddress: fulfillmentAddress(firstInstruction),
+    lineItems,
+  };
+}
+
 export async function fetchEbayOrderContext(
   integrationId: string,
   config: EbayConfig,
@@ -713,14 +985,18 @@ export async function fetchEbayOrderContext(
     integrationId,
   });
 
-  if (!res.ok) return null;
+  if (!res.ok) {
+    return fetchEbayFulfillmentOrderContext(integrationId, orderId, accessToken);
+  }
 
   const parsed = parseXmlSimple(res.body);
   const root = parsed.GetOrdersResponse as Record<string, unknown> | undefined;
   const orderArray = root?.OrderArray as Record<string, unknown> | undefined;
   const rawOrders = orderArray?.Order;
   const orders = Array.isArray(rawOrders) ? rawOrders : rawOrders ? [rawOrders] : [];
-  if (orders.length === 0) return null;
+  if (orders.length === 0) {
+    return fetchEbayFulfillmentOrderContext(integrationId, orderId, accessToken);
+  }
 
   const order = orders[0] as Record<string, unknown>;
   const ta = order.TransactionArray as Record<string, unknown> | undefined;
