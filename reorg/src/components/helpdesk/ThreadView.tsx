@@ -35,6 +35,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { cn } from "@/lib/utils";
 import {
   Loader2,
@@ -590,12 +591,37 @@ export function ThreadView({
     index: number;
   } | null>(null);
 
+  const ticketImageGallery = useMemo(() => {
+    if (!ticket) return [];
+    const seen = new Set<string>();
+    const images: InlineImage[] = [];
+    for (const message of ticket.messages) {
+      for (const img of extractInlineImages(message.rawMedia, message.bodyText)) {
+        const key = upgradeEbayImageUrl(img.url);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        images.push(img);
+      }
+    }
+    return images;
+  }, [ticket]);
+
   const openLightbox = useCallback(
     (images: InlineImage[], index: number) => {
       if (images.length === 0) return;
-      setLightbox({ images, index: Math.max(0, Math.min(index, images.length - 1)) });
+      const clicked = images[index];
+      const gallery = ticketImageGallery.length > 0 ? ticketImageGallery : images;
+      const clickedKey = clicked ? upgradeEbayImageUrl(clicked.url) : null;
+      const galleryIndex = clickedKey
+        ? gallery.findIndex((img) => upgradeEbayImageUrl(img.url) === clickedKey)
+        : -1;
+      const nextIndex = galleryIndex >= 0 ? galleryIndex : index;
+      setLightbox({
+        images: gallery,
+        index: Math.max(0, Math.min(nextIndex, gallery.length - 1)),
+      });
     },
-    [],
+    [ticketImageGallery],
   );
   const closeLightbox = useCallback(() => setLightbox(null), []);
   const lightboxNext = useCallback(() => {
@@ -623,13 +649,18 @@ export function ThreadView({
 
   useEffect(() => {
     if (!lightbox) return;
+    const originalOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") closeLightbox();
       else if (e.key === "ArrowRight") lightboxNext();
       else if (e.key === "ArrowLeft") lightboxPrev();
     };
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      document.body.style.overflow = originalOverflow;
+    };
   }, [lightbox, closeLightbox, lightboxNext, lightboxPrev]);
 
   useEffect(() => {
@@ -1188,9 +1219,9 @@ function Lightbox({
     document.body.removeChild(a);
   };
 
-  return (
+  return createPortal(
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-sm"
+      className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/90 backdrop-blur-sm"
       role="dialog"
       aria-modal="true"
       aria-label="Image viewer"
@@ -1309,7 +1340,8 @@ function Lightbox({
           </div>
         </>
       )}
-    </div>
+    </div>,
+    document.body,
   );
 }
 
