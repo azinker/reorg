@@ -71,9 +71,28 @@ async function fetchWithTimeout(
     const response = await fetch(url, { ...init, signal: controller.signal });
     const body = await response.text();
     return { ok: response.ok, status: response.status, body };
+  } catch (err) {
+    throw new Error(`eBay Trading API fetch failed: ${formatFetchError(err)}`);
   } finally {
     clearTimeout(timer);
   }
+}
+
+function formatFetchError(err: unknown): string {
+  if (err instanceof DOMException && err.name === "AbortError") {
+    return `request timed out after ${REQUEST_TIMEOUT_MS / 1000}s`;
+  }
+  if (err instanceof Error) {
+    const cause = err.cause as
+      | { code?: unknown; hostname?: unknown; syscall?: unknown }
+      | undefined;
+    const causeDetail =
+      cause && (cause.code || cause.hostname || cause.syscall)
+        ? ` (${[cause.code, cause.syscall, cause.hostname].filter(Boolean).join(" ")})`
+        : "";
+    return `${err.message}${causeDetail}`;
+  }
+  return String(err);
 }
 
 export async function getEbayAccessToken(

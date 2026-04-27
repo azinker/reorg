@@ -248,6 +248,78 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     cmBodyKeys.add(`${m.direction}::${body}`);
   }
 
+  function rawMediaArray(rawMedia: Prisma.JsonValue): Prisma.JsonValue[] {
+    return Array.isArray(rawMedia) ? (rawMedia as Prisma.JsonArray) : [];
+  }
+
+  function rawMediaUrl(item: Prisma.JsonValue): string | null {
+    if (typeof item === "string") return item.replace(/&amp;/gi, "&");
+    if (!item || typeof item !== "object" || Array.isArray(item)) return null;
+    const obj = item as Record<string, unknown>;
+    const url =
+      typeof obj.url === "string"
+        ? obj.url
+        : typeof obj.URL === "string"
+          ? obj.URL
+          : typeof obj.MediaURL === "string"
+            ? obj.MediaURL
+            : typeof obj.mediaUrl === "string"
+              ? obj.mediaUrl
+              : typeof obj.mediaURL === "string"
+                ? obj.mediaURL
+                : typeof obj.href === "string"
+                  ? obj.href
+                  : typeof obj.downloadUrl === "string"
+                    ? obj.downloadUrl
+                    : null;
+    return url ? url.replace(/&amp;/gi, "&") : null;
+  }
+
+  function mergeRawMedia(
+    existing: Prisma.JsonValue,
+    additions: Prisma.JsonValue[] | undefined,
+  ): Prisma.JsonValue {
+    if (!additions || additions.length === 0) return existing;
+    const existingArray = rawMediaArray(existing);
+    const seen = new Set(
+      existingArray
+        .map((item) => rawMediaUrl(item))
+        .filter((url): url is string => Boolean(url)),
+    );
+    const fresh = additions.filter((item) => {
+      const url = rawMediaUrl(item);
+      if (!url) return false;
+      if (seen.has(url)) return false;
+      seen.add(url);
+      return true;
+    });
+    if (fresh.length === 0) return existing;
+    return [...existingArray, ...fresh] as Prisma.JsonValue;
+  }
+
+  // If a Commerce-Message row is the canonical visible copy but a hidden
+  // Trading-API exploded sub carries the image media, lift those images
+  // onto the CM row at read time. This preserves CM's better timestamps
+  // and identity while still showing buyer-uploaded photos.
+  const hiddenTradingMediaByCmKey = new Map<string, Prisma.JsonValue[]>();
+  for (const m of ticket.messages) {
+    const raw = m.rawData as Record<string, unknown> | null;
+    const isExplodedSub =
+      raw && typeof raw["digestSource"] === "string";
+    if (!isExplodedSub) continue;
+    const body = normalizeBodyForDedup(m.bodyText);
+    if (!body) continue;
+    const key = `${m.direction}::${body}`;
+    if (!cmBodyKeys.has(key)) continue;
+    const media = rawMediaArray(m.rawMedia);
+    if (media.length === 0) continue;
+    const existing = hiddenTradingMediaByCmKey.get(key) ?? [];
+    hiddenTradingMediaByCmKey.set(
+      key,
+      mergeRawMedia(existing as Prisma.JsonValue, media) as Prisma.JsonValue[],
+    );
+  }
+
   // Body sentinel the Trading-API sync writes into an envelope row AFTER
   // its sub-messages are extracted and lifted (see
   // helpdesk-ebay-sync.ts → `envelopeStubBody()`). The envelope carries
@@ -305,6 +377,16 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     .slice()
     .sort((a, b) => a.sentAt.getTime() - b.sentAt.getTime())
     .map<MessageRow>((m) => {
+      const extId = m.externalId ?? "";
+      if (extId.startsWith("cm:")) {
+        const body = normalizeBodyForDedup(m.bodyText);
+        if (!body) return m;
+        const merged = mergeRawMedia(
+          m.rawMedia,
+          hiddenTradingMediaByCmKey.get(`${m.direction}::${body}`),
+        );
+        return merged === m.rawMedia ? m : { ...m, rawMedia: merged };
+      }
       const raw = m.rawData as Record<string, unknown> | null;
       const src =
         raw && typeof raw["digestSource"] === "string"

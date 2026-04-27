@@ -1187,6 +1187,7 @@ async function reconcileMessages(args: ReconcileArgs): Promise<ReconcileResult> 
 
     // Insert message (idempotent on (ticketId, externalId))
     let inserted = false;
+    let duplicateEnvelope = false;
     const messageBodyText = body.text ?? "";
     const sellerUserIdLower = getSellerUserId(args.integration)?.toLowerCase() ?? null;
     const rawSender = body.sender?.trim() || null;
@@ -1245,14 +1246,16 @@ async function reconcileMessages(args: ReconcileArgs): Promise<ReconcileResult> 
     } catch (err) {
       // Ignore unique-constraint duplicates; surface other errors.
       if (
-        !(err instanceof Error) ||
-        !err.message.includes("Unique constraint failed")
+        err instanceof Error &&
+        err.message.includes("Unique constraint failed")
       ) {
+        duplicateEnvelope = true;
+      } else {
         console.error("[helpdesk-sync] message insert failed", err);
       }
     }
 
-    if (!inserted) continue;
+    if (!inserted && !duplicateEnvelope) continue;
 
     // ── Synced-outbound status transition. When an OUTBOUND message
     // lands and is newer than every inbound on the ticket, the ball is
@@ -1280,6 +1283,7 @@ async function reconcileMessages(args: ReconcileArgs): Promise<ReconcileResult> 
     // Buyer follow-ups still bounce these tickets back to TO_DO via
     // `deriveStatusOnInbound` above.
     if (
+      inserted &&
       direction === HelpdeskMessageDirection.OUTBOUND &&
       messageSource !== HelpdeskMessageSource.AUTO_RESPONDER &&
       ticket.status !== HelpdeskTicketStatus.RESOLVED &&
@@ -1565,7 +1569,7 @@ async function reconcileMessages(args: ReconcileArgs): Promise<ReconcileResult> 
               messageBodyText,
             );
             if (previewImgs.length > 0) {
-              const liveSub = await db.helpdeskMessage.findFirst({
+              let imageTarget = await db.helpdeskMessage.findFirst({
                 where: {
                   ticketId: ticket.id,
                   AND: [
@@ -1575,9 +1579,38 @@ async function reconcileMessages(args: ReconcileArgs): Promise<ReconcileResult> 
                 },
                 select: { id: true, rawMedia: true },
               });
-              if (liveSub) {
-                const existing = Array.isArray(liveSub.rawMedia)
-                  ? (liveSub.rawMedia as Array<{ url: string }>)
+
+              // If the live Trading sub was skipped because the
+              // Commerce-Message row already exists with the same body,
+              // lift the images onto that canonical CM row instead.
+              if (!imageTarget && parsed.isDigest) {
+                const liveParsed = parsed.subMessages.find((sub) => sub.isLive);
+                if (liveParsed && liveParsed.direction !== "unknown") {
+                  const liveDirection =
+                    liveParsed.direction === "inbound"
+                      ? HelpdeskMessageDirection.INBOUND
+                      : HelpdeskMessageDirection.OUTBOUND;
+                  const candidates = await db.helpdeskMessage.findMany({
+                    where: {
+                      ticketId: ticket.id,
+                      direction: liveDirection,
+                      externalId: { startsWith: "cm:" },
+                    },
+                    select: { id: true, bodyText: true, rawMedia: true },
+                    take: 50,
+                  });
+                  imageTarget =
+                    candidates.find(
+                      (candidate) =>
+                        hashBodyForMatch(candidate.bodyText) ===
+                        liveParsed.bodyHash,
+                    ) ?? null;
+                }
+              }
+
+              if (imageTarget) {
+                const existing = Array.isArray(imageTarget.rawMedia)
+                  ? (imageTarget.rawMedia as Array<{ url: string }>)
                   : [];
                 const existingUrls = new Set(existing.map((e) => e.url));
                 const newMedia = [
@@ -1585,7 +1618,7 @@ async function reconcileMessages(args: ReconcileArgs): Promise<ReconcileResult> 
                   ...previewImgs.filter((p) => !existingUrls.has(p.url)),
                 ];
                 await db.helpdeskMessage.update({
-                  where: { id: liveSub.id },
+                  where: { id: imageTarget.id },
                   data: { rawMedia: newMedia as unknown as Prisma.InputJsonValue },
                 });
               }

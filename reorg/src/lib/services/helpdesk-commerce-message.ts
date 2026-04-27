@@ -215,7 +215,16 @@ function formatNetworkError(err: unknown) {
   if (err instanceof DOMException && err.name === "AbortError") {
     return `request timed out after ${REQUEST_TIMEOUT_MS / 1000}s`;
   }
-  if (err instanceof Error) return err.message;
+  if (err instanceof Error) {
+    const cause = err.cause as
+      | { code?: unknown; hostname?: unknown; syscall?: unknown }
+      | undefined;
+    const causeDetail =
+      cause && (cause.code || cause.hostname || cause.syscall)
+        ? ` (${[cause.code, cause.syscall, cause.hostname].filter(Boolean).join(" ")})`
+        : "";
+    return `${err.message}${causeDetail}`;
+  }
   return String(err);
 }
 
@@ -344,7 +353,20 @@ export async function getConversations(
   status: number;
   needsReauth: boolean;
 }> {
-  const accessToken = await getEbayAccessToken(integrationId, config);
+  let accessToken: string;
+  try {
+    accessToken = await getEbayAccessToken(integrationId, config);
+  } catch (err) {
+    console.warn("[commerce-message] token fetch failed for getConversations", {
+      integrationId,
+      error: formatNetworkError(err),
+    });
+    return {
+      conversations: [],
+      status: 0,
+      needsReauth: false,
+    };
+  }
   const params = new URLSearchParams();
   params.set("conversation_type", args.conversationType);
   if (args.conversationStatus) {
@@ -717,7 +739,20 @@ export async function getConversationMessages(
   status: number;
   needsReauth: boolean;
 }> {
-  const accessToken = await getEbayAccessToken(integrationId, config);
+  let accessToken: string;
+  try {
+    accessToken = await getEbayAccessToken(integrationId, config);
+  } catch (err) {
+    console.warn(
+      "[commerce-message] token fetch failed for getConversationMessages",
+      {
+        integrationId,
+        conversationId: args.conversationId,
+        error: formatNetworkError(err),
+      },
+    );
+    return { messages: [], status: 0, needsReauth: false };
+  }
   const params = new URLSearchParams();
   params.set("conversation_type", args.conversationType ?? "FROM_MEMBERS");
   if (args.since) params.set("modified_after", args.since);
@@ -839,7 +874,17 @@ export async function sendCommerceMessage(
     };
   }
 
-  const accessToken = await getEbayAccessToken(integrationId, config);
+  let accessToken: string;
+  try {
+    accessToken = await getEbayAccessToken(integrationId, config);
+  } catch (err) {
+    return {
+      success: false,
+      status: 0,
+      needsReauth: false,
+      error: `eBay OAuth token fetch failed: ${formatNetworkError(err)}`,
+    };
+  }
   const body: Record<string, unknown> = {
     messageText: args.messageText,
   };
