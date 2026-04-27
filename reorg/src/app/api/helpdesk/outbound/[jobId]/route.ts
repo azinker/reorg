@@ -138,6 +138,7 @@ export async function POST(_request: NextRequest, { params }: RouteParams) {
         lastError: null,
         externalId: null,
         sentAt: null,
+        attemptCount: 0,
       },
     });
     if (updated.count === 0) {

@@ -312,7 +312,7 @@ export function Composer({
         setPending((p) => (p?.id === pending.id ? null : p));
         setComposerNotice({
           at: Date.now(),
-          text: "Queued for delivery.",
+          text: "Sending now.",
           tone: "info",
         });
         onQueuedOutbound?.({
@@ -525,7 +525,7 @@ export function Composer({
         )}
         <span className="truncate">
           {pending.willBlockReason
-            ? `Queued but will be blocked by ${pending.willBlockReason.replace(/_/g, " ")}`
+            ? `Temporary send issue: ${pending.willBlockReason.replace(/_/g, " ")}`
             : `Sending in ${pendingSecondsLeft}s`}
         </span>
       </div>

@@ -43,6 +43,14 @@ import {
 } from "@/lib/services/helpdesk-commerce-message";
 
 const MAX_BATCH = 25;
+const AUTO_RETRY_DELAYS_MS = [
+  30_000,
+  60_000,
+  2 * 60_000,
+  5 * 60_000,
+  10 * 60_000,
+  30 * 60_000,
+] as const;
 
 export interface OutboundWorkerResult {
   picked: number;
@@ -104,6 +112,9 @@ export async function processHelpdeskOutboundJobs(): Promise<OutboundWorkerResul
     } catch (err) {
       result.failed++;
       const msg = err instanceof Error ? err.message : String(err);
+      if (await scheduleTransientRetry(job, msg, "worker_exception")) {
+        continue;
+      }
       result.errors.push(`${job.id}: ${msg}`);
       await db.helpdeskOutboundJob.update({
         where: { id: job.id },
@@ -294,6 +305,21 @@ async function sendEbayReply(
     const errDetail = finalSend.error
       ? `${finalSend.error}${finalSend.errorId ? ` (${finalSend.errorId})` : ""}`
       : `commerce_message_send_failed (http ${finalSend.status})`;
+    if (
+      await scheduleTransientRetry(
+        job,
+        errDetail,
+        "commerce_message_send_failed",
+        {
+          transport: "ebay_cm",
+          httpStatus: finalSend.status,
+          errorId: finalSend.errorId,
+          needsReauth: finalSend.needsReauth,
+        },
+      )
+    ) {
+      return "failed";
+    }
     await db.helpdeskOutboundJob.update({
       where: { id: job.id },
       data: {
@@ -407,6 +433,42 @@ async function sendEbayReply(
     httpStatus: finalSend.status,
   });
   return "sent";
+}
+
+function isTransientOutboundError(message: string): boolean {
+  return /(?:fetch failed|ENOTFOUND|EAI_AGAIN|ETIMEDOUT|ECONNRESET|ECONNREFUSED|UND_ERR|network|timeout|gateway|502|503|504)/i.test(
+    message,
+  );
+}
+
+async function scheduleTransientRetry(
+  job: HelpdeskOutboundJob & { ticket: HelpdeskTicket },
+  message: string,
+  reason: string,
+  extra: Record<string, unknown> = {},
+): Promise<boolean> {
+  if (!isTransientOutboundError(message)) return false;
+  if (job.attemptCount >= AUTO_RETRY_DELAYS_MS.length) return false;
+
+  const delayMs = AUTO_RETRY_DELAYS_MS[job.attemptCount] ?? AUTO_RETRY_DELAYS_MS.at(-1)!;
+  const scheduledAt = new Date(Date.now() + delayMs);
+  await db.helpdeskOutboundJob.update({
+    where: { id: job.id },
+    data: {
+      status: HelpdeskOutboundStatus.PENDING,
+      scheduledAt,
+      lastError: `temporary_eBay_connection_issue: ${message}`.slice(0, 500),
+      attemptCount: { increment: 1 },
+    },
+  });
+  await audit(job, "HELPDESK_OUTBOUND_RETRY_SCHEDULED", {
+    reason,
+    retryAt: scheduledAt.toISOString(),
+    retryDelayMs: delayMs,
+    error: message,
+    ...extra,
+  });
+  return true;
 }
 
 async function sendExternalEmail(

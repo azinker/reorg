@@ -64,6 +64,7 @@ export function buildEbayConfig(integration: { config: unknown }): EbayConfig {
 async function fetchWithTimeout(
   url: string,
   init: RequestInit & { method?: string },
+  label = "eBay API",
 ): Promise<{ ok: boolean; status: number; body: string }> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
@@ -72,7 +73,7 @@ async function fetchWithTimeout(
     const body = await response.text();
     return { ok: response.ok, status: response.status, body };
   } catch (err) {
-    throw new Error(`eBay Trading API fetch failed: ${formatFetchError(err)}`);
+    throw new Error(`${label} fetch failed: ${formatFetchError(err)}`);
   } finally {
     clearTimeout(timer);
   }
@@ -108,17 +109,21 @@ export async function getEbayAccessToken(
   }
 
   const credentials = Buffer.from(`${config.appId}:${config.certId}`).toString("base64");
-  const res = await fetchWithTimeout("https://api.ebay.com/identity/v1/oauth2/token", {
-    method: "POST",
-    headers: {
-      Authorization: `Basic ${credentials}`,
-      "Content-Type": "application/x-www-form-urlencoded",
+  const res = await fetchWithTimeout(
+    "https://api.ebay.com/identity/v1/oauth2/token",
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Basic ${credentials}`,
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: new URLSearchParams({
+        grant_type: "refresh_token",
+        refresh_token: config.refreshToken,
+      }).toString(),
     },
-    body: new URLSearchParams({
-      grant_type: "refresh_token",
-      refresh_token: config.refreshToken,
-    }).toString(),
-  });
+    "eBay OAuth token",
+  );
 
   if (!res.ok) throw new Error(`eBay token refresh failed: ${res.status}`);
 

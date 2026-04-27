@@ -734,6 +734,31 @@ export function ThreadView({
     return [...serverJobs, ...optimistic];
   }, [ticket, optimisticOutboundJobs]);
 
+  const activeOutboundRefreshSignature = useMemo(() => {
+    const soon = Date.now() + 2 * 60_000;
+    return pendingOutboundJobs
+      .filter((job) => {
+        if (job.status !== "PENDING" && job.status !== "SENDING") return false;
+        return new Date(job.scheduledAt).getTime() <= soon;
+      })
+      .map((job) => `${job.id}:${job.status}:${job.scheduledAt}`)
+      .join("|");
+  }, [pendingOutboundJobs]);
+
+  useEffect(() => {
+    if (!ticketId || !activeOutboundRefreshSignature) return;
+    const interval = window.setInterval(() => {
+      onSent();
+    }, 5_000);
+    const timeout = window.setTimeout(() => {
+      window.clearInterval(interval);
+    }, 2 * 60_000);
+    return () => {
+      window.clearInterval(interval);
+      window.clearTimeout(timeout);
+    };
+  }, [ticketId, activeOutboundRefreshSignature, onSent]);
+
   // Build a single, day-bucketed timeline. Day separators get injected as
   // their own item type so the virtualiser treats them like any other row.
   type TimelineRow =
@@ -1339,6 +1364,14 @@ function pendingJobMeta(job: HelpdeskPendingOutboundJob) {
       tone: "red" as const,
     };
   }
+  if (/temporary_eBay_connection_issue|fetch failed|ENOTFOUND|EAI_AGAIN|ETIMEDOUT/i.test(job.willBlockReason ?? "")) {
+    return {
+      label: "Retrying",
+      detail:
+        "Temporary eBay connection issue. The outbound worker will retry automatically.",
+      tone: "amber" as const,
+    };
+  }
   if (job.status === "CANCELED") {
     return {
       label: "Canceled",
@@ -1361,8 +1394,8 @@ function pendingJobMeta(job: HelpdeskPendingOutboundJob) {
     };
   }
   return {
-    label: "Queued",
-    detail: "Queued for the outbound worker; not confirmed on eBay yet.",
+    label: "Sending",
+    detail: "Waiting for eBay confirmation from the outbound worker.",
     tone: "blue" as const,
   };
 }
