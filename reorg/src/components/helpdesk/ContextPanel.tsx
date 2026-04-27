@@ -858,6 +858,43 @@ function OrderInfoSection({
             },
           ]
         : [];
+  const fallbackListing =
+    ticket.listingInfo && ticket.ebayItemId === ticket.listingInfo.itemId
+      ? ticket.listingInfo
+      : null;
+  const productItems: OrderContextLineItem[] =
+    ctx?.lineItems && ctx.lineItems.length > 0
+      ? ctx.lineItems.map((item) => {
+          const listing =
+            ticket.listingInfo && ticket.listingInfo.itemId === item.itemId
+              ? ticket.listingInfo
+              : null;
+          return {
+            ...item,
+            title:
+              item.title?.trim() ||
+              ticket.ebayItemTitle ||
+              listing?.title ||
+              item.itemId,
+            sku: item.sku ?? listing?.sku ?? null,
+            pictureUrl: item.pictureUrl ?? listing?.imageUrl ?? null,
+          };
+        })
+      : ticket.ebayItemId
+        ? [
+            {
+              itemId: ticket.ebayItemId,
+              title:
+                ticket.ebayItemTitle ??
+                fallbackListing?.title ??
+                ticket.ebayItemId,
+              sku: fallbackListing?.sku ?? null,
+              quantity: 1,
+              unitPriceCents: null,
+              pictureUrl: fallbackListing?.imageUrl ?? null,
+            } satisfies OrderContextLineItem,
+          ]
+        : [];
 
   return (
     <section className="border-b border-hairline bg-card/40">
@@ -1066,21 +1103,7 @@ function OrderInfoSection({
               Products
             </p>
             <div className="space-y-2">
-              {(ctx?.lineItems && ctx.lineItems.length > 0
-                ? ctx.lineItems
-                : ticket.ebayItemId
-                  ? [
-                      {
-                        itemId: ticket.ebayItemId,
-                        title: ticket.ebayItemTitle ?? ticket.ebayItemId,
-                        sku: null,
-                        quantity: 1,
-                        unitPriceCents: null,
-                        pictureUrl: null,
-                      } satisfies OrderContextLineItem,
-                    ]
-                  : []
-              ).map((item) => (
+              {productItems.map((item) => (
                 <a
                   key={item.itemId}
                   href={`https://www.ebay.com/itm/${item.itemId}`}
@@ -1124,8 +1147,7 @@ function OrderInfoSection({
                   </div>
                 </a>
               ))}
-              {(!ctx?.lineItems || ctx.lineItems.length === 0) &&
-              !ticket.ebayItemId ? (
+              {productItems.length === 0 ? (
                 <p className="text-xs text-muted-foreground">
                   No products on this ticket.
                 </p>

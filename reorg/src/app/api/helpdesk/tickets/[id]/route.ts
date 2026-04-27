@@ -534,7 +534,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
   // Lookup keys off (integrationId, platformItemId) which has a unique
   // constraint per variant. We prefer the parent variation row
   // (platformVariantId=null) so the card shows a representative title
-  // and image rather than a single child variant.
+  // and image rather than an arbitrary child variant.
   let listingInfo: {
     itemId: string;
     sku: string | null;
@@ -542,19 +542,29 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     imageUrl: string | null;
   } | null = null;
   if (ticket.ebayItemId) {
-    const listing = await db.marketplaceListing.findFirst({
-      where: {
-        integrationId: ticket.integration.id,
-        platformItemId: ticket.ebayItemId,
-      },
-      orderBy: [{ platformVariantId: "asc" }],
-      select: {
-        platformItemId: true,
-        sku: true,
-        title: true,
-        imageUrl: true,
-      },
-    });
+    const listingSelect = {
+      platformItemId: true,
+      sku: true,
+      title: true,
+      imageUrl: true,
+    } satisfies Prisma.MarketplaceListingSelect;
+    const listing =
+      (await db.marketplaceListing.findFirst({
+        where: {
+          integrationId: ticket.integration.id,
+          platformItemId: ticket.ebayItemId,
+          platformVariantId: null,
+        },
+        select: listingSelect,
+      })) ??
+      (await db.marketplaceListing.findFirst({
+        where: {
+          integrationId: ticket.integration.id,
+          platformItemId: ticket.ebayItemId,
+        },
+        orderBy: [{ platformVariantId: "asc" }],
+        select: listingSelect,
+      }));
     if (listing) {
       listingInfo = {
         itemId: listing.platformItemId,

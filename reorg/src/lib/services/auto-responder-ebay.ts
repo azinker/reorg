@@ -493,7 +493,7 @@ ${idElements}
 
     const item = firstTx?.Item as Record<string, unknown> | undefined;
     const itemId = String(item?.ItemID ?? "").trim();
-    const itemTitle = String(item?.Title ?? "").trim();
+    const itemTitle = firstTx ? orderLineItemTitle(firstTx, item) : String(item?.Title ?? "").trim();
     const shippedTime = order.ShippedTime ? String(order.ShippedTime) : undefined;
     const orderStatus = order.OrderStatus ? String(order.OrderStatus) : undefined;
 
@@ -628,6 +628,58 @@ function pickCurrency(raw: unknown): string | null {
   return "USD";
 }
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function asList<T = unknown>(value: unknown): T[] {
+  if (Array.isArray(value)) return value as T[];
+  return value == null ? [] : [value as T];
+}
+
+function nonEmptyString(value: unknown): string | null {
+  if (value == null) return null;
+  const text = String(value).trim();
+  return text.length > 0 ? text : null;
+}
+
+function variationValues(variation: Record<string, unknown> | null): string[] {
+  const specifics = asRecord(variation?.VariationSpecifics);
+  const values: string[] = [];
+  for (const row of asList<Record<string, unknown>>(specifics?.NameValueList)) {
+    const rowRecord = asRecord(row);
+    if (!rowRecord) continue;
+    for (const value of asList(rowRecord.Value)) {
+      const text = nonEmptyString(value);
+      if (text) values.push(text);
+    }
+  }
+  return values;
+}
+
+function orderLineItemTitle(
+  tx: Record<string, unknown>,
+  item: Record<string, unknown> | undefined,
+): string {
+  const variation = asRecord(tx.Variation);
+  const base =
+    nonEmptyString(variation?.VariationTitle) ??
+    nonEmptyString(item?.Title) ??
+    nonEmptyString(tx.Title) ??
+    "";
+  const values = variationValues(variation);
+  if (values.length === 0) return base;
+
+  const normalizedBase = base.toLowerCase();
+  const missingValues = values.filter(
+    (value) => !normalizedBase.includes(value.toLowerCase()),
+  );
+  if (missingValues.length === 0) return base;
+  return base ? `${base} [${missingValues.join(", ")}]` : missingValues.join(", ");
+}
+
 export async function fetchEbayOrderContext(
   integrationId: string,
   config: EbayConfig,
@@ -733,9 +785,12 @@ export async function fetchEbayOrderContext(
     .map((tx) => tx as Record<string, unknown>)
     .map((tx) => {
       const item = tx.Item as Record<string, unknown> | undefined;
+      const variation = asRecord(tx.Variation);
       const itemId = item?.ItemID ? String(item.ItemID) : "";
-      const title = item?.Title ? String(item.Title) : "";
-      const sku = (item?.SKU ?? tx.SKU) ? String(item?.SKU ?? tx.SKU) : null;
+      const title = orderLineItemTitle(tx, item);
+      const sku = (variation?.SKU ?? item?.SKU ?? tx.SKU)
+        ? String(variation?.SKU ?? item?.SKU ?? tx.SKU)
+        : null;
       const qty = Number(tx.QuantityPurchased ?? 1);
       const unitPriceCents = parseDollarsToCents(tx.TransactionPrice);
       const pictureUrl =

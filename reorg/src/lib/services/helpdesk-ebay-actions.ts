@@ -34,8 +34,8 @@ import {
   HelpdeskCaseStatus,
   HelpdeskCancellationStatus,
   HelpdeskFeedbackKind,
+  Prisma,
   type Integration,
-  type Prisma,
 } from "@prisma/client";
 import {
   buildEbayConfig,
@@ -321,11 +321,11 @@ async function listFeedback(args: {
 
   const entries: EbayFeedbackEntry[] = list.map((row: unknown) => {
     const r = (row ?? {}) as Record<string, unknown>;
-    const ratingStr = r.CommentType as string | undefined; // Positive / Negative / Neutral
+    const ratingStr = String(r.CommentType ?? "").trim().toUpperCase(); // Positive / Negative / Neutral
     const kind: HelpdeskFeedbackKind =
-      ratingStr === "Negative"
+      ratingStr === "NEGATIVE"
         ? HelpdeskFeedbackKind.NEGATIVE
-        : ratingStr === "Neutral"
+        : ratingStr === "NEUTRAL"
           ? HelpdeskFeedbackKind.NEUTRAL
           : HelpdeskFeedbackKind.POSITIVE;
     return {
@@ -358,20 +358,45 @@ async function listFeedback(args: {
 async function findTicketIdForLinkage(args: {
   integrationId: string;
   ebayOrderNumber: string | null;
+  ebayItemId?: string | null;
   buyerUserId: string | null;
 }): Promise<string | null> {
-  const where: Prisma.HelpdeskTicketWhereInput[] = [];
   if (args.ebayOrderNumber) {
-    where.push({ ebayOrderNumber: args.ebayOrderNumber });
+    const ticket = await db.helpdeskTicket.findFirst({
+      where: {
+        integrationId: args.integrationId,
+        ebayOrderNumber: args.ebayOrderNumber,
+      },
+      orderBy: { createdAt: "desc" },
+      select: { id: true },
+    });
+    if (ticket) return ticket.id;
   }
-  if (args.buyerUserId) {
-    where.push({ buyerUserId: args.buyerUserId });
+
+  if (args.buyerUserId && args.ebayItemId) {
+    const ticket = await db.helpdeskTicket.findFirst({
+      where: {
+        integrationId: args.integrationId,
+        ebayItemId: args.ebayItemId,
+        buyerUserId: {
+          equals: args.buyerUserId,
+          mode: Prisma.QueryMode.insensitive,
+        },
+      },
+      orderBy: { createdAt: "desc" },
+      select: { id: true },
+    });
+    if (ticket) return ticket.id;
   }
-  if (where.length === 0) return null;
+
+  if (!args.buyerUserId) return null;
   const ticket = await db.helpdeskTicket.findFirst({
     where: {
       integrationId: args.integrationId,
-      OR: where,
+      buyerUserId: {
+        equals: args.buyerUserId,
+        mode: Prisma.QueryMode.insensitive,
+      },
     },
     orderBy: { createdAt: "desc" },
     select: { id: true },
@@ -639,6 +664,7 @@ async function syncFeedbackForIntegration(
       const ticketId = await findTicketIdForLinkage({
         integrationId: integration.id,
         ebayOrderNumber: entry.ebayOrderNumber,
+        ebayItemId: entry.ebayItemId,
         buyerUserId: entry.buyerUserId,
       });
       await db.helpdeskFeedback.upsert({
@@ -664,7 +690,14 @@ async function syncFeedbackForIntegration(
         },
         update: {
           ticketId: ticketId ?? undefined,
+          kind: entry.kind,
+          starRating: entry.starRating,
+          comment: entry.comment,
           sellerResponse: entry.sellerResponse,
+          ebayOrderNumber: entry.ebayOrderNumber,
+          ebayItemId: entry.ebayItemId,
+          buyerUserId: entry.buyerUserId,
+          leftAt: entry.leftAt,
           rawData: entry.raw as Prisma.InputJsonValue,
         },
       });

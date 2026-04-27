@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { auth } from "@/lib/auth";
+import { runHelpdeskActionsPoll } from "@/lib/services/helpdesk-ebay-actions";
 import { runHelpdeskPoll } from "@/lib/services/helpdesk-ebay-sync";
 import { recordHelpdeskPollStatus } from "@/lib/services/helpdesk-poll-status";
 
@@ -27,6 +28,13 @@ export async function POST(_request: NextRequest) {
   const tickedAt = new Date().toISOString();
   try {
     const result = await runHelpdeskPoll();
+    let actionsResult: Awaited<ReturnType<typeof runHelpdeskActionsPoll>> | null =
+      null;
+    try {
+      actionsResult = await runHelpdeskActionsPoll();
+    } catch (err) {
+      console.error("[helpdesk/sync] actions worker crashed", err);
+    }
     await recordHelpdeskPollStatus({
       tickedAt,
       outcome: "completed",
@@ -34,7 +42,7 @@ export async function POST(_request: NextRequest) {
       summaries: result.summaries,
       error: null,
     });
-    return NextResponse.json({ ok: true, ...result });
+    return NextResponse.json({ ok: true, ...result, actions: actionsResult });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     await recordHelpdeskPollStatus({
