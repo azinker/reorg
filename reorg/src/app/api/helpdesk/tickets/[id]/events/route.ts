@@ -74,6 +74,7 @@ type SystemEventKind =
   | "cancel"
   | "refund"
   | "read"
+  | "cross_listing"
   // Agent-folder moves — distinct from assign so the pill styling
   // can read as a routing action rather than a person-assignment.
   | "folder"
@@ -713,6 +714,47 @@ function dedupeTimelineEvents(events: TimelineEvent[]): TimelineEvent[] {
   return out;
 }
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function nonEmptyString(value: unknown): string | null {
+  return typeof value === "string" && value.trim().length > 0
+    ? value.trim()
+    : null;
+}
+
+function crossListingTimelineEvent(message: {
+  id: string;
+  sentAt: Date;
+  rawData: Prisma.JsonValue;
+}): TimelineEvent | null {
+  const raw = asRecord(message.rawData);
+  const ctx = asRecord(raw?.crossListingInquiry);
+  if (!ctx) return null;
+  const itemId = nonEmptyString(ctx.sourceItemId);
+  const itemTitle = nonEmptyString(ctx.sourceItemTitle);
+  const href =
+    nonEmptyString(ctx.sourceItemUrl) ??
+    (itemId ? `https://www.ebay.com/itm/${itemId}` : null);
+  const subject = nonEmptyString(ctx.sourceSubject);
+  const label = itemTitle ?? subject ?? (itemId ? `item #${itemId}` : "another item");
+  return {
+    id: `cross-listing-${message.id}`,
+    type: "system",
+    action: "HELPDESK_CROSS_LISTING_INQUIRY",
+    kind: "cross_listing",
+    text: `Buyer Messaged From Another Listing: ${label}${itemId ? ` #${itemId}` : ""}`,
+    shortText: itemId ? `From Another Item #${itemId}` : "From Another Item",
+    href,
+    externalId: itemId,
+    actor: null,
+    at: message.sentAt,
+  };
+}
+
 export async function GET(_request: NextRequest, { params }: RouteParams) {
   const session = await auth();
   if (!session?.user?.id) {
@@ -919,6 +961,25 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
   }
 
   // ─── Synthesised events from eBay action mirrors ────────────────────────────
+  // Cross-listing buyer questions. These are normal buyer messages that came
+  // from a different item after the buyer already had an order. The message is
+  // stored on the order ticket, and this pill gives the agent the missing
+  // context with a direct link to the listing the buyer used.
+  const crossListingMessages = await db.helpdeskMessage.findMany({
+    where: { ticketId: id, deletedAt: null },
+    orderBy: [{ sentAt: "asc" }, { createdAt: "asc" }],
+    take: 500,
+    select: {
+      id: true,
+      sentAt: true,
+      rawData: true,
+    },
+  });
+  for (const message of crossListingMessages) {
+    const event = crossListingTimelineEvent(message);
+    if (event) events.push(event);
+  }
+
   const relatedTicketPredicates: Prisma.HelpdeskTicketWhereInput[] = [];
   if (exists.ebayOrderNumber) {
     relatedTicketPredicates.push({ ebayOrderNumber: exists.ebayOrderNumber });

@@ -28,6 +28,7 @@ import {
   HelpdeskTicketKind,
   HelpdeskTicketType,
   type HelpdeskFilter,
+  type HelpdeskTicket,
   type Integration,
   type Prisma,
 } from "@prisma/client";
@@ -110,6 +111,15 @@ const MAX_BODY_CHUNKS_PER_TICK = 20;
 /** Wall-clock budget in ms ΓÇö used to bail out gracefully. */
 const TICK_BUDGET_MS = 75_000;
 
+/**
+ * If a recent buyer asks a pre-sale question from a different listing, fold
+ * that question into their latest order ticket instead of creating a second
+ * orphaned PRE_SALES ticket. Keep this bounded so a buyer who returns months
+ * later with an unrelated pre-sale question does not get attached to stale
+ * order work.
+ */
+const CROSS_LISTING_ORDER_LOOKBACK_DAYS = 90;
+
 // ΓöÇΓöÇΓöÇ Types ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 
 export interface HelpdeskPollSummary {
@@ -131,6 +141,16 @@ export interface HelpdeskPollSummary {
 export interface HelpdeskPollResult {
   durationMs: number;
   summaries: HelpdeskPollSummary[];
+}
+
+interface CrossListingInquiryContext {
+  sourceItemId: string;
+  sourceItemTitle: string | null;
+  sourceSubject: string | null;
+  sourceConversationId: string | null;
+  targetTicketId: string;
+  targetOrderNumber: string | null;
+  targetItemId: string | null;
 }
 
 // ΓöÇΓöÇΓöÇ Public entrypoint ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
@@ -186,6 +206,15 @@ export async function runHelpdeskPoll(): Promise<HelpdeskPollResult> {
   } catch (err) {
     console.error(
       "[helpdesk-sync] AR-only archive sweep failed",
+      err instanceof Error ? err.message : err,
+    );
+  }
+
+  try {
+    await sweepAdoptRecentCrossListingPreSalesTickets(integrations);
+  } catch (err) {
+    console.error(
+      "[helpdesk-sync] cross-listing pre-sales adoption sweep failed",
       err instanceof Error ? err.message : err,
     );
   }
@@ -857,6 +886,7 @@ async function reconcileMessages(args: ReconcileArgs): Promise<ReconcileResult> 
         },
       },
     });
+    let crossListingInquiry: CrossListingInquiryContext | null = null;
 
     // Pre-sales → post-sales adoption. If this message has an order number
     // (threadKey=ord:...) and we don't have a ticket at that key yet, look
@@ -973,6 +1003,50 @@ async function reconcileMessages(args: ReconcileArgs): Promise<ReconcileResult> 
           ticket = existingOrderTicket;
           break;
         }
+      }
+    }
+
+    // Cross-listing adoption (item-only message -> latest recent order ticket).
+    //
+    // Buyers sometimes open the seller contact box from a different listing
+    // after they already have an order with us. In eBay this appears as a
+    // pre-sale item conversation, but operationally it belongs with that
+    // buyer's latest order thread so the agent sees the whole relationship in
+    // one place. We only do this for inbound item-only messages, and only when
+    // the current ticket is absent or still an unanswered pre-sales stub. The
+    // source listing/conversation is stored on the message rawData so the UI
+    // can explain it and outbound replies can target the correct eBay thread.
+    const canCrossAdoptItemInquiry =
+      direction === HelpdeskMessageDirection.INBOUND &&
+      !extractedOrderNumber &&
+      itemId &&
+      buyerUserId &&
+      threadKey.startsWith("itm:") &&
+      (!ticket ||
+        (ticket.kind === HelpdeskTicketKind.PRE_SALES &&
+          !ticket.ebayOrderNumber &&
+          !ticket.lastAgentMessageAt));
+    if (canCrossAdoptItemInquiry && itemId && buyerUserId) {
+      const sourceTicket = ticket;
+      const orderTicket = await findLatestRecentOrderTicketForBuyer({
+        integration: args.integration,
+        buyerUserId,
+        excludeTicketId: sourceTicket?.id ?? null,
+      });
+      if (orderTicket && orderTicket.id !== sourceTicket?.id) {
+        ticket = orderTicket;
+        crossListingInquiry =
+          orderTicket.ebayItemId && orderTicket.ebayItemId === itemId
+            ? null
+            : {
+                sourceItemId: itemId,
+                sourceItemTitle: extractItemTitleFromSubject(subject, itemId),
+                sourceSubject: subject || null,
+                sourceConversationId: sourceTicket?.ebayConversationId ?? null,
+                targetTicketId: orderTicket.id,
+                targetOrderNumber: orderTicket.ebayOrderNumber,
+                targetItemId: orderTicket.ebayItemId,
+              };
       }
     }
 
@@ -1231,6 +1305,7 @@ async function reconcileMessages(args: ReconcileArgs): Promise<ReconcileResult> 
             looksLikeHtmlBody(messageBodyText),
           rawMedia: (body.mediaUrls ?? []) as Prisma.InputJsonValue,
           rawData: {
+            ...crossListingRawData(crossListingInquiry),
             questionType: body.questionType ?? null,
             parentMessageID: body.parentMessageID ?? null,
             recipientUserID: body.recipientUserID ?? null,
@@ -1462,6 +1537,7 @@ async function reconcileMessages(args: ReconcileArgs): Promise<ReconcileResult> 
                   isHtml: true,
                   rawMedia: [] as Prisma.InputJsonValue,
                   rawData: {
+                    ...crossListingRawData(crossListingInquiry),
                     digestSource: body.messageID,
                     subIndex: sub.index,
                     isLive: sub.isLive,
@@ -1804,6 +1880,316 @@ function buyerOrderHint(body: EbayMessageBody): boolean {
   // commonly contains "Order #" or "OrderID" for post-sale threads.
   const subject = (body.subject ?? "").toLowerCase();
   return /order\s*[#:]/i.test(subject) || /shipped/i.test(subject);
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function extractItemTitleFromSubject(
+  subject: string | null,
+  itemId: string,
+): string | null {
+  const raw = subject?.trim();
+  if (!raw) return null;
+  const marker = " sent a message about ";
+  const markerIndex = raw.toLowerCase().indexOf(marker);
+  const afterMarker =
+    markerIndex >= 0 ? raw.slice(markerIndex + marker.length) : raw;
+  const withoutItemId = afterMarker
+    .replace(new RegExp(`\\s*#${escapeRegExp(itemId)}\\s*$`), "")
+    .trim();
+  return withoutItemId ? withoutItemId.slice(0, 180) : null;
+}
+
+function crossListingRawData(
+  context: CrossListingInquiryContext | null,
+): Record<string, unknown> {
+  if (!context) return {};
+  return {
+    crossListingInquiry: {
+      sourceItemId: context.sourceItemId,
+      sourceItemTitle: context.sourceItemTitle,
+      sourceSubject: context.sourceSubject,
+      sourceConversationId: context.sourceConversationId,
+      sourceItemUrl: `https://www.ebay.com/itm/${context.sourceItemId}`,
+      targetTicketId: context.targetTicketId,
+      targetOrderNumber: context.targetOrderNumber,
+      targetItemId: context.targetItemId,
+    },
+  };
+}
+
+function mergeCrossListingRawData(
+  rawData: Prisma.JsonValue,
+  context: CrossListingInquiryContext | null,
+): Prisma.InputJsonValue {
+  if (!context) return rawData as Prisma.InputJsonValue;
+  const base =
+    rawData && typeof rawData === "object" && !Array.isArray(rawData)
+      ? (rawData as Record<string, unknown>)
+      : {};
+  return {
+    ...base,
+    ...crossListingRawData(context),
+  } as Prisma.InputJsonValue;
+}
+
+async function findLatestRecentOrderTicketForBuyer(args: {
+  integration: Integration;
+  buyerUserId: string;
+  excludeTicketId: string | null;
+}): Promise<HelpdeskTicket | null> {
+  const cutoff = new Date(
+    Date.now() - CROSS_LISTING_ORDER_LOOKBACK_DAYS * 24 * 60 * 60 * 1000,
+  );
+  const notClauses: Prisma.HelpdeskTicketWhereInput[] = [
+    { type: HelpdeskTicketType.SYSTEM },
+    { threadKey: { startsWith: "sys:" } },
+  ];
+  if (args.excludeTicketId) {
+    notClauses.push({ id: args.excludeTicketId });
+  }
+  const baseWhere: Prisma.HelpdeskTicketWhereInput = {
+    integrationId: args.integration.id,
+    buyerUserId: { equals: args.buyerUserId, mode: "insensitive" },
+    ebayOrderNumber: { not: null },
+    isSpam: false,
+    NOT: notClauses,
+  };
+
+  const recentOrders = await db.marketplaceSaleOrder.findMany({
+    where: {
+      platform: args.integration.platform,
+      buyerIdentifier: { equals: args.buyerUserId, mode: "insensitive" },
+      orderDate: { gte: cutoff },
+    },
+    select: { externalOrderId: true },
+    orderBy: { orderDate: "desc" },
+    take: 10,
+  });
+
+  const seenOrderNumbers = new Set<string>();
+  for (const order of recentOrders) {
+    const orderNumber = order.externalOrderId?.trim();
+    if (!orderNumber || seenOrderNumbers.has(orderNumber)) continue;
+    seenOrderNumbers.add(orderNumber);
+    const ticket = await db.helpdeskTicket.findFirst({
+      where: {
+        ...baseWhere,
+        ebayOrderNumber: orderNumber,
+      },
+      orderBy: { updatedAt: "desc" },
+    });
+    if (ticket) return ticket;
+  }
+
+  return db.helpdeskTicket.findFirst({
+    where: {
+      ...baseWhere,
+      OR: [
+        { lastBuyerMessageAt: { gte: cutoff } },
+        { lastAgentMessageAt: { gte: cutoff } },
+        { createdAt: { gte: cutoff } },
+        { updatedAt: { gte: cutoff } },
+      ],
+    },
+    orderBy: [{ lastBuyerMessageAt: "desc" }, { updatedAt: "desc" }],
+  });
+}
+
+async function sweepAdoptRecentCrossListingPreSalesTickets(
+  integrations: Integration[],
+): Promise<void> {
+  const cutoff = new Date(
+    Date.now() - CROSS_LISTING_ORDER_LOOKBACK_DAYS * 24 * 60 * 60 * 1000,
+  );
+
+  for (const integration of integrations) {
+    const preSalesTickets = await db.helpdeskTicket.findMany({
+      where: {
+        integrationId: integration.id,
+        kind: HelpdeskTicketKind.PRE_SALES,
+        ebayOrderNumber: null,
+        buyerUserId: { not: null },
+        ebayItemId: { not: null },
+        lastAgentMessageAt: null,
+        isArchived: false,
+        isSpam: false,
+        OR: [
+          { lastBuyerMessageAt: { gte: cutoff } },
+          { createdAt: { gte: cutoff } },
+          { updatedAt: { gte: cutoff } },
+        ],
+      },
+      orderBy: { updatedAt: "desc" },
+      take: 100,
+    });
+
+    for (const preSalesTicket of preSalesTickets) {
+      if (!preSalesTicket.buyerUserId || !preSalesTicket.ebayItemId) continue;
+      const orderTicket = await findLatestRecentOrderTicketForBuyer({
+        integration,
+        buyerUserId: preSalesTicket.buyerUserId,
+        excludeTicketId: preSalesTicket.id,
+      });
+      if (!orderTicket || orderTicket.id === preSalesTicket.id) continue;
+
+      await mergePreSalesTicketIntoOrderTicket({
+        sourceTicket: preSalesTicket,
+        targetTicket: orderTicket,
+      });
+    }
+  }
+}
+
+async function mergePreSalesTicketIntoOrderTicket(args: {
+  sourceTicket: HelpdeskTicket;
+  targetTicket: HelpdeskTicket;
+}): Promise<void> {
+  const sourceItemId = args.sourceTicket.ebayItemId;
+  if (!sourceItemId) return;
+  const isDifferentItem =
+    !!args.targetTicket.ebayItemId &&
+    args.targetTicket.ebayItemId !== sourceItemId;
+  const context: CrossListingInquiryContext | null = isDifferentItem
+    ? {
+        sourceItemId,
+        sourceItemTitle: extractItemTitleFromSubject(
+          args.sourceTicket.subject,
+          sourceItemId,
+        ),
+        sourceSubject: args.sourceTicket.subject,
+        sourceConversationId: args.sourceTicket.ebayConversationId,
+        targetTicketId: args.targetTicket.id,
+        targetOrderNumber: args.targetTicket.ebayOrderNumber,
+        targetItemId: args.targetTicket.ebayItemId,
+      }
+    : null;
+
+  const messages = await db.helpdeskMessage.findMany({
+    where: { ticketId: args.sourceTicket.id, deletedAt: null },
+    orderBy: [{ sentAt: "asc" }, { createdAt: "asc" }],
+    select: {
+      id: true,
+      direction: true,
+      externalId: true,
+      rawData: true,
+      sentAt: true,
+    },
+  });
+  if (messages.length === 0) return;
+
+  const latestInboundAt =
+    messages
+      .filter((m) => m.direction === HelpdeskMessageDirection.INBOUND)
+      .map((m) => m.sentAt)
+      .sort((a, b) => b.getTime() - a.getTime())[0] ?? null;
+  const now = new Date();
+
+  await db.$transaction(async (tx) => {
+    for (const message of messages) {
+      const duplicate = message.externalId
+        ? await tx.helpdeskMessage.findFirst({
+            where: {
+              ticketId: args.targetTicket.id,
+              externalId: message.externalId,
+            },
+            select: { id: true, rawData: true },
+          })
+        : null;
+
+      if (duplicate) {
+        if (context) {
+          await tx.helpdeskMessage.update({
+            where: { id: duplicate.id },
+            data: {
+              rawData: mergeCrossListingRawData(duplicate.rawData, context),
+            },
+          });
+        }
+        continue;
+      }
+
+      await tx.helpdeskMessage.update({
+        where: { id: message.id },
+        data: {
+          ticketId: args.targetTicket.id,
+          rawData: mergeCrossListingRawData(message.rawData, context),
+        },
+      });
+    }
+
+    const ticketUpdate: Prisma.HelpdeskTicketUpdateInput = {
+      unreadCount: Math.max(
+        args.targetTicket.unreadCount,
+        args.sourceTicket.unreadCount,
+      ),
+    };
+    if (
+      latestInboundAt &&
+      (!args.targetTicket.lastBuyerMessageAt ||
+        latestInboundAt > args.targetTicket.lastBuyerMessageAt)
+    ) {
+      ticketUpdate.lastBuyerMessageAt = latestInboundAt;
+    }
+    if (
+      args.sourceTicket.status === HelpdeskTicketStatus.TO_DO ||
+      args.sourceTicket.unreadCount > 0
+    ) {
+      const nextStatus = deriveStatusOnInbound({
+        status: args.targetTicket.status,
+        hasAgentReplied: args.targetTicket.lastAgentMessageAt !== null,
+        isArchived: args.targetTicket.isArchived,
+        isSpam: args.targetTicket.isSpam,
+      });
+      ticketUpdate.status = nextStatus;
+      if (args.targetTicket.status === HelpdeskTicketStatus.RESOLVED) {
+        ticketUpdate.reopenCount = { increment: 1 };
+        ticketUpdate.lastReopenedAt = now;
+      }
+      if (args.targetTicket.isArchived && !args.targetTicket.isSpam) {
+        ticketUpdate.isArchived = false;
+        ticketUpdate.archivedAt = null;
+      }
+      if (args.targetTicket.snoozedUntil) {
+        ticketUpdate.snoozedUntil = null;
+        if (args.targetTicket.snoozedById) {
+          ticketUpdate.snoozedBy = { disconnect: true };
+        }
+      }
+    }
+
+    await tx.helpdeskTicket.update({
+      where: { id: args.targetTicket.id },
+      data: ticketUpdate,
+    });
+
+    await tx.helpdeskTicket.update({
+      where: { id: args.sourceTicket.id },
+      data: {
+        isArchived: true,
+        archivedAt: now,
+        status: HelpdeskTicketStatus.RESOLVED,
+        unreadCount: 0,
+      },
+    });
+
+    await tx.auditLog.create({
+      data: {
+        action: "HELPDESK_CROSS_LISTING_TICKET_MERGED",
+        entityType: "HelpdeskTicket",
+        entityId: args.targetTicket.id,
+        details: {
+          sourceTicketId: args.sourceTicket.id,
+          sourceItemId,
+          sourceConversationId: args.sourceTicket.ebayConversationId,
+          targetOrderNumber: args.targetTicket.ebayOrderNumber,
+          targetTicketId: args.targetTicket.id,
+        } as Prisma.InputJsonValue,
+      },
+    });
+  });
 }
 
 /**

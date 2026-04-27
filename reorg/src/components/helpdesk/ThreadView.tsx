@@ -108,6 +108,7 @@ type SystemEventKind =
   | "cancel"
   | "refund"
   | "read"
+  | "cross_listing"
   | "folder"
   | "order_received"
   | "order_shipped";
@@ -203,6 +204,7 @@ const SYSTEM_ICON: Record<SystemEventKind, typeof Eye> = {
   cancel: XCircle,
   refund: DollarSign,
   read: InboxIcon,
+  cross_listing: ShoppingCart,
   folder: FilterIcon,
   order_received: ShoppingCart,
   order_shipped: Truck,
@@ -229,6 +231,7 @@ function classForEventKind(kind: SystemEventKind): string {
       return "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300";
     case "order_received":
     case "order_shipped":
+    case "cross_listing":
       return "border-brand/40 bg-brand-muted text-foreground";
     case "type":
     case "status":

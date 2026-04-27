@@ -52,6 +52,47 @@ const AUTO_RETRY_DELAYS_MS = [
   30 * 60_000,
 ] as const;
 
+interface LatestInboundReplyContext {
+  conversationId: string | null;
+  referenceItemId: string | null;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function nonEmptyString(value: unknown): string | null {
+  return typeof value === "string" && value.trim().length > 0
+    ? value.trim()
+    : null;
+}
+
+async function getLatestInboundReplyContext(
+  ticketId: string,
+): Promise<LatestInboundReplyContext> {
+  const message = await db.helpdeskMessage.findFirst({
+    where: {
+      ticketId,
+      direction: HelpdeskMessageDirection.INBOUND,
+      deletedAt: null,
+    },
+    orderBy: [{ sentAt: "desc" }, { createdAt: "desc" }],
+    select: { rawData: true },
+  });
+  const raw = asRecord(message?.rawData);
+  const crossListing = asRecord(raw?.crossListingInquiry);
+  return {
+    conversationId:
+      nonEmptyString(crossListing?.sourceConversationId) ??
+      nonEmptyString(raw?.conversationId),
+    referenceItemId:
+      nonEmptyString(crossListing?.sourceItemId) ??
+      nonEmptyString(raw?.itemID),
+  };
+}
+
 export interface OutboundWorkerResult {
   picked: number;
   sent: number;
@@ -240,22 +281,32 @@ async function sendEbayReply(
   // LISTING }` so the message is threaded to the specific listing the
   // buyer asked about.
   const config = buildEbayConfig(job.ticket.integration);
+  const latestInboundContext = await getLatestInboundReplyContext(job.ticketId);
+  const referenceItemId =
+    latestInboundContext.referenceItemId ?? job.ticket.ebayItemId ?? undefined;
 
   // Resolve conversationId on-demand when we don't already have one. This
   // covers tickets created before we started storing ebayConversationId
   // or those where the inbound sweep hasn't stamped one yet. Falls back
   // to `otherPartyUsername` if resolution fails.
-  let conversationId: string | undefined = job.ticket.ebayConversationId ?? undefined;
+  let conversationId: string | undefined =
+    latestInboundContext.conversationId ??
+    job.ticket.ebayConversationId ??
+    undefined;
   if (!conversationId) {
     try {
       const resolved = await resolveConversationIdForBuyer(
         job.ticket.integrationId,
         config,
         job.ticket.buyerUserId,
-        { itemIdHint: job.ticket.ebayItemId ?? undefined },
+        { itemIdHint: referenceItemId },
       );
       conversationId = resolved.best?.conversationId;
-      if (conversationId) {
+      const shouldPersistResolvedConversation =
+        !!conversationId &&
+        !!job.ticket.ebayItemId &&
+        referenceItemId === job.ticket.ebayItemId;
+      if (shouldPersistResolvedConversation) {
         await db.helpdeskTicket.update({
           where: { id: job.ticketId },
           data: { ebayConversationId: conversationId },
@@ -278,7 +329,7 @@ async function sendEbayReply(
     conversationId,
     otherPartyUsername: conversationId ? undefined : job.ticket.buyerUserId,
     messageText,
-    referenceItemId: job.ticket.ebayItemId ?? undefined,
+    referenceItemId,
   });
 
   // If the CM send failed because we had a stale conversationId (eBay
@@ -295,7 +346,7 @@ async function sendEbayReply(
     const retry = await sendCommerceMessage(job.ticket.integrationId, config, {
       otherPartyUsername: job.ticket.buyerUserId,
       messageText,
-      referenceItemId: job.ticket.ebayItemId ?? undefined,
+      referenceItemId,
     });
     if (retry.success) finalSend = retry;
     else finalSend = send; // keep the original error as the user-visible one
@@ -393,6 +444,8 @@ async function sendEbayReply(
           messageId: finalSend.messageId ?? null,
           source: "helpdesk_outbound",
           jobId: job.id,
+          conversationId: conversationId ?? null,
+          referenceItemId: referenceItemId ?? null,
         },
       },
     });
