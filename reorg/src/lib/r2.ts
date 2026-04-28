@@ -1,4 +1,9 @@
-import { DeleteObjectCommand, GetObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import {
+  DeleteObjectCommand,
+  GetObjectCommand,
+  PutObjectCommand,
+  S3Client,
+} from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 const REQUIRED_R2_ENV_VARS = [
@@ -69,6 +74,21 @@ export async function getR2ObjectBytes(storageKey: string): Promise<Uint8Array> 
   }
 
   return response.Body.transformToByteArray();
+}
+
+export async function putR2Object(
+  storageKey: string,
+  body: Uint8Array,
+  options: { contentType?: string } = {},
+): Promise<void> {
+  await getR2Client().send(
+    new PutObjectCommand({
+      Bucket: getR2BucketName(),
+      Key: storageKey,
+      Body: body,
+      ContentType: options.contentType,
+    }),
+  );
 }
 
 /** Remove an object from the backup bucket (idempotent on S3-compatible stores). */

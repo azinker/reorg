@@ -329,13 +329,15 @@ async function listFeedback(args: {
           ? HelpdeskFeedbackKind.NEUTRAL
           : HelpdeskFeedbackKind.POSITIVE;
     return {
-      externalId: String(r.FeedbackID ?? r.TransactionID ?? r.ItemID ?? ""),
+      externalId: String(
+        r.FeedbackID ?? r.TransactionID ?? r.OrderLineItemID ?? r.ItemID ?? "",
+      ),
       kind,
       starRating: null, // GetFeedback doesn't expose DSR star ratings here
       comment: r.CommentText != null ? String(r.CommentText) : null,
       sellerResponse:
-        r.CommentReplaced != null && String(r.CommentReplaced).trim()
-          ? String(r.CommentReplaced)
+        r.FeedbackResponse != null && String(r.FeedbackResponse).trim()
+          ? String(r.FeedbackResponse)
           : null,
       ebayOrderNumber: typeof r.OrderLineItemID === "string" ? null : null,
       ebayItemId: r.ItemID != null ? String(r.ItemID) : null,

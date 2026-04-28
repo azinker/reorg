@@ -45,8 +45,10 @@
 
 import { recordNetworkTransferSample } from "@/lib/services/network-transfer-samples";
 import { EbayConfig, getEbayAccessToken } from "@/lib/services/helpdesk-ebay";
+import type { EbayMessageMediaInput } from "@/lib/helpdesk/outbound-attachments";
 
 const BASE = "https://api.ebay.com/commerce/message/v1";
+const MEDIA_BASE = "https://apim.ebay.com/commerce/media/v1_beta";
 const REQUEST_TIMEOUT_MS = 20_000;
 const MARKETPLACE_ID = "EBAY_US";
 const READ_RETRY_DELAYS_MS = [400, 1200];
@@ -278,6 +280,141 @@ function num(v: unknown): number | undefined {
 }
 function bool(v: unknown): boolean | undefined {
   return typeof v === "boolean" ? v : undefined;
+}
+
+function record(v: unknown): Record<string, unknown> | undefined {
+  return v && typeof v === "object" && !Array.isArray(v)
+    ? (v as Record<string, unknown>)
+    : undefined;
+}
+
+function extractImageUrl(parsed: unknown): string | undefined {
+  const root = record(parsed);
+  if (!root) return undefined;
+  for (const key of ["imageUrl", "imageURL", "mediaUrl", "url", "href"]) {
+    const value = str(root[key]);
+    if (value) return value;
+  }
+  const image = record(root.image);
+  if (image) {
+    for (const key of ["imageUrl", "imageURL", "mediaUrl", "url", "href"]) {
+      const value = str(image[key]);
+      if (value) return value;
+    }
+  }
+  return undefined;
+}
+
+export interface UploadEbayMediaImageResult {
+  success: boolean;
+  status: number;
+  imageUrl?: string;
+  needsReauth: boolean;
+  error?: string;
+  errorId?: number;
+  raw?: string;
+}
+
+export async function uploadImageToEbayMedia(
+  integrationId: string,
+  config: EbayConfig,
+  args: {
+    fileName: string;
+    mimeType: string;
+    bytes: Uint8Array;
+  },
+): Promise<UploadEbayMediaImageResult> {
+  let accessToken: string;
+  try {
+    accessToken = await getEbayAccessToken(integrationId, config);
+  } catch (err) {
+    return {
+      success: false,
+      status: 0,
+      needsReauth: false,
+      error: `eBay OAuth token fetch failed: ${formatNetworkError(err)}`,
+    };
+  }
+
+  const form = new FormData();
+  const imageBuffer = args.bytes.slice().buffer as ArrayBuffer;
+  form.set(
+    "image",
+    new Blob([imageBuffer], { type: args.mimeType }),
+    args.fileName,
+  );
+
+  let status: number;
+  let responseBody: string;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  try {
+    const response = await fetch(`${MEDIA_BASE}/image`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        Accept: "application/json",
+        "X-EBAY-C-MARKETPLACE-ID": MARKETPLACE_ID,
+      },
+      body: form,
+      signal: controller.signal,
+    });
+    status = response.status;
+    responseBody = await response.text();
+  } catch (err) {
+    return {
+      success: false,
+      status: 0,
+      needsReauth: false,
+      error: `CommerceMedia_UploadImage network failed: ${formatNetworkError(err)}`,
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+
+  void recordNetworkTransferSample({
+    channel: "HELPDESK",
+    label: "helpdesk_ebay / CommerceMedia_UploadImage",
+    bytesEstimate: args.bytes.byteLength + Buffer.byteLength(responseBody),
+    integrationId,
+    metadata: {
+      feature: "helpdesk",
+      callName: "CommerceMedia_UploadImage",
+      fileName: args.fileName,
+      mimeType: args.mimeType,
+    },
+  });
+
+  const parsed = parseJson(responseBody);
+  if (status >= 200 && status < 300) {
+    const imageUrl = extractImageUrl(parsed);
+    if (imageUrl) {
+      return {
+        success: true,
+        status,
+        imageUrl,
+        needsReauth: false,
+        raw: responseBody,
+      };
+    }
+    return {
+      success: false,
+      status,
+      needsReauth: false,
+      error: "eBay media upload did not return an imageUrl",
+      raw: responseBody,
+    };
+  }
+
+  const { errorId, errorMessage } = extractErrorId(parsed);
+  return {
+    success: false,
+    status,
+    needsReauth: errorId === 1100 || status === 401,
+    error: errorMessage ?? responseBody.slice(0, 400),
+    errorId,
+    raw: responseBody,
+  };
 }
 
 function parseLatestMessage(raw: unknown): CommerceMessageLatestMessage | undefined {
@@ -831,6 +968,9 @@ export interface SendCommerceMessageArgs {
   /** Optional LISTING reference. Pass the eBay itemId to thread the
    *  message to a specific listing; omit for general/non-listing replies. */
   referenceItemId?: string;
+  /** Optional Commerce Message media attachments. Images must already be
+   *  uploaded to eBay Media and referenced by HTTPS URL. */
+  messageMedia?: EbayMessageMediaInput[];
   /** When true, eBay also emails a copy of the reply to the seller. */
   emailCopyToSender?: boolean;
 }
@@ -895,6 +1035,9 @@ export async function sendCommerceMessage(
       referenceId: args.referenceItemId,
       referenceType: "LISTING",
     };
+  }
+  if (args.messageMedia && args.messageMedia.length > 0) {
+    body.messageMedia = args.messageMedia;
   }
   if (args.emailCopyToSender) body.emailCopyToSender = true;
 

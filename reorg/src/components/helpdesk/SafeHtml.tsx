@@ -36,6 +36,7 @@ interface SafeHtmlProps {
   /** When true, the body is treated as HTML even if it doesn't sniff as such. */
   forceHtml?: boolean;
   className?: string;
+  style?: React.CSSProperties;
   /**
    * When true, ALL `<img>` tags are removed from the rendered body. Used
    * by the message timeline whenever a separate inline-image strip is
@@ -871,6 +872,7 @@ export function SafeHtml({
   html,
   forceHtml,
   className,
+  style,
   stripImages = false,
 }: SafeHtmlProps) {
   const { isHtml, decoded } = useMemo(
@@ -923,7 +925,7 @@ export function SafeHtml({
   if (!isHtml) {
     const cleaned = stripEbayPlainText(decoded);
     return (
-      <div className={className}>
+      <div className={className} style={style}>
         <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground/90">
           {cleaned ? (
             renderLinkifiedText(cleaned)
@@ -970,6 +972,7 @@ export function SafeHtml({
   return (
     <div
       className={`helpdesk-html-body max-w-full overflow-x-auto text-sm leading-relaxed text-foreground/90 ${className ?? ""}`}
+      style={style}
       // eslint-disable-next-line react/no-danger -- sanitised by DOMPurify above
       dangerouslySetInnerHTML={{ __html: sanitised }}
     />

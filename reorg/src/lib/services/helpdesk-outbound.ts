@@ -36,11 +36,18 @@ import {
   helpdeskFlagsSnapshotAsync,
   type HelpdeskFlagsSnapshot,
 } from "@/lib/helpdesk/flags";
-import { buildEbayConfig } from "@/lib/services/helpdesk-ebay";
+import { buildEbayConfig, type EbayConfig } from "@/lib/services/helpdesk-ebay";
 import {
   sendCommerceMessage,
   resolveConversationIdForBuyer,
+  uploadImageToEbayMedia,
 } from "@/lib/services/helpdesk-commerce-message";
+import {
+  readQueuedHelpdeskAttachments,
+  type EbayMessageMediaInput,
+  type QueuedHelpdeskAttachment,
+} from "@/lib/helpdesk/outbound-attachments";
+import { getR2ObjectBytes } from "@/lib/r2";
 
 const MAX_BATCH = 25;
 const AUTO_RETRY_DELAYS_MS = [
@@ -324,12 +331,37 @@ async function sendEbayReply(
     job.bodyText.length <= MAX_MESSAGE_LEN
       ? job.bodyText
       : `${job.bodyText.slice(0, MAX_MESSAGE_LEN - 1).trimEnd()}…`;
+  const queuedAttachments = readQueuedHelpdeskAttachments(job.metadata);
+  if (queuedAttachments.length > 0 && !flags.enableAttachments) {
+    await db.helpdeskOutboundJob.update({
+      where: { id: job.id },
+      data: {
+        status: HelpdeskOutboundStatus.CANCELED,
+        lastError: "attachments_disabled",
+      },
+    });
+    await restoreTicketAfterUnsentJob(job, "attachments_disabled");
+    await audit(job, "HELPDESK_OUTBOUND_BLOCKED", {
+      reason: "attachments_flag_off",
+      attachmentCount: queuedAttachments.length,
+    });
+    return "blocked";
+  }
+  const messageMedia =
+    queuedAttachments.length > 0
+      ? await uploadQueuedAttachmentsToEbayMedia(
+          job.ticket.integrationId,
+          config,
+          queuedAttachments,
+        )
+      : undefined;
 
   const send = await sendCommerceMessage(job.ticket.integrationId, config, {
     conversationId,
     otherPartyUsername: conversationId ? undefined : job.ticket.buyerUserId,
     messageText,
     referenceItemId,
+    messageMedia,
   });
 
   // If the CM send failed because we had a stale conversationId (eBay
@@ -347,6 +379,7 @@ async function sendEbayReply(
       otherPartyUsername: job.ticket.buyerUserId,
       messageText,
       referenceItemId,
+      messageMedia,
     });
     if (retry.success) finalSend = retry;
     else finalSend = send; // keep the original error as the user-visible one
@@ -446,7 +479,10 @@ async function sendEbayReply(
           jobId: job.id,
           conversationId: conversationId ?? null,
           referenceItemId: referenceItemId ?? null,
+          attachmentCount: queuedAttachments.length,
+          messageMedia: messageMedia ?? [],
         },
+        rawMedia: messageMedia ?? [],
       },
     });
 
@@ -484,8 +520,37 @@ async function sendEbayReply(
     transport: "ebay_cm",
     externalId: finalSend.messageId ?? null,
     httpStatus: finalSend.status,
+    attachmentCount: queuedAttachments.length,
   });
   return "sent";
+}
+
+async function uploadQueuedAttachmentsToEbayMedia(
+  integrationId: string,
+  config: EbayConfig,
+  attachments: QueuedHelpdeskAttachment[],
+): Promise<EbayMessageMediaInput[]> {
+  const media: EbayMessageMediaInput[] = [];
+  for (const attachment of attachments) {
+    const bytes = await getR2ObjectBytes(attachment.storageKey);
+    const upload = await uploadImageToEbayMedia(integrationId, config, {
+      fileName: attachment.fileName,
+      mimeType: attachment.mimeType,
+      bytes,
+    });
+    if (!upload.success || !upload.imageUrl) {
+      const detail = upload.error
+        ? `${upload.error}${upload.errorId ? ` (${upload.errorId})` : ""}`
+        : `http ${upload.status}`;
+      throw new Error(`commerce_media_upload_failed: ${detail}`);
+    }
+    media.push({
+      mediaName: attachment.fileName.slice(0, 80),
+      mediaType: "IMAGE",
+      mediaUrl: upload.imageUrl,
+    });
+  }
+  return media;
 }
 
 function isTransientOutboundError(message: string): boolean {

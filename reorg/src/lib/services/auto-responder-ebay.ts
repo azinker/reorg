@@ -532,6 +532,8 @@ ${idElements}
  */
 export interface EbayOrderContextLineItem {
   itemId: string;
+  orderLineItemId: string | null;
+  transactionId: string | null;
   title: string;
   sku: string | null;
   quantity: number;
@@ -893,6 +895,8 @@ async function fetchEbayFulfillmentOrderContext(
           nonEmptyString(line.itemId) ??
           nonEmptyString(line.lineItemId) ??
           "",
+        orderLineItemId: nonEmptyString(line.lineItemId),
+        transactionId: null,
         title: fulfillmentLineItemTitle(line),
         sku: nonEmptyString(line.sku),
         quantity,
@@ -1083,6 +1087,9 @@ export async function fetchEbayOrderContext(
           : null;
       return {
         itemId,
+        orderLineItemId:
+          tx.OrderLineItemID != null ? String(tx.OrderLineItemID) : null,
+        transactionId: tx.TransactionID != null ? String(tx.TransactionID) : null,
         title,
         sku,
         quantity: Number.isFinite(qty) ? qty : 1,

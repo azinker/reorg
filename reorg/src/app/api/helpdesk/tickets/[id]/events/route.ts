@@ -34,8 +34,16 @@ import {
   SYSTEM_MESSAGE_TYPES,
   type SystemMessageType,
 } from "@/lib/helpdesk/from-ebay-detect";
-import { buildEbayConfig } from "@/lib/services/auto-responder-ebay";
+import {
+  buildEbayConfig,
+  type EbayOrderContext,
+} from "@/lib/services/auto-responder-ebay";
 import { getOrderContextCached } from "@/lib/services/helpdesk-order-context-cache";
+import {
+  feedbackMirrorToSnapshot,
+  fetchEbayFeedbackForOrderContext,
+  type HelpdeskFeedbackSnapshot,
+} from "@/lib/services/helpdesk-feedback";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -917,6 +925,7 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
   // derived rows still render and the timeline degrades to message-only.
   const platform = exists.integration?.platform;
   const isEbay = platform === "TPP_EBAY" || platform === "TT_EBAY";
+  let orderCtxForEvents: EbayOrderContext | null | undefined = undefined;
   if (isEbay && exists.ebayOrderNumber && exists.integration) {
     try {
       const config = buildEbayConfig({ config: exists.integration.config });
@@ -926,6 +935,7 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
         exists.ebayOrderNumber,
         { awaitFresh: false },
       );
+      orderCtxForEvents = ctx;
       if (ctx) {
         if (ctx.createdTime) {
           events.push({
@@ -957,6 +967,7 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
       }
     } catch (err) {
       console.warn("[helpdesk/events] order context fetch failed", err);
+      orderCtxForEvents = null;
     }
   }
 
@@ -1097,6 +1108,17 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
             },
           }
         : null;
+    const buyerItemMirrorFilter =
+      exists.integration && exists.buyerUserId && exists.ebayItemId
+        ? {
+            integrationId: exists.integration.id,
+            buyerUserId: {
+              equals: exists.buyerUserId,
+              mode: Prisma.QueryMode.insensitive,
+            },
+            ebayItemId: exists.ebayItemId,
+          }
+        : null;
     const caseMirrorOr: Prisma.HelpdeskCaseWhereInput[] = [
       { ticketId: { in: relatedTicketIds } },
     ];
@@ -1116,6 +1138,9 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
       feedbackMirrorOr.push(buyerMirrorFilter);
       cancellationMirrorOr.push(buyerMirrorFilter);
     }
+    if (buyerItemMirrorFilter) {
+      feedbackMirrorOr.push(buyerItemMirrorFilter);
+    }
 
     const [cases, feedback, cancellations] = await Promise.all([
       db.helpdeskCase.findMany({
@@ -1134,6 +1159,37 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
         take: 50,
       }),
     ]);
+    let feedbackSnapshots: HelpdeskFeedbackSnapshot[] = feedback.map(
+      feedbackMirrorToSnapshot,
+    );
+    if (
+      feedbackSnapshots.length === 0 &&
+      isEbay &&
+      exists.ebayOrderNumber &&
+      exists.integration
+    ) {
+      try {
+        const config = buildEbayConfig({ config: exists.integration.config });
+        let ctx = orderCtxForEvents;
+        if (ctx === undefined) {
+          ctx = await getOrderContextCached(
+            exists.integration.id,
+            config,
+            exists.ebayOrderNumber,
+            { awaitFresh: true },
+          );
+        }
+        if (ctx) {
+          feedbackSnapshots = await fetchEbayFeedbackForOrderContext({
+            integrationId: exists.integration.id,
+            config,
+            order: ctx,
+          });
+        }
+      } catch (err) {
+        console.warn("[helpdesk/events] live feedback fetch failed", err);
+      }
+    }
 
     for (const c of cases) {
       // HelpdeskCaseKind values map back to eBay's user-facing category
@@ -1197,7 +1253,7 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
       }
     }
 
-    for (const f of feedback) {
+    for (const f of feedbackSnapshots) {
       const ratingLabel =
         f.kind === "POSITIVE"
           ? "positive feedback"

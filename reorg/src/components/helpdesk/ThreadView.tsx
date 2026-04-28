@@ -1004,6 +1004,7 @@ export function ThreadView({
                     row={row}
                     buyerInitial={buyerInitial}
                     agentAccent={agentAccent}
+                    messageFontSizePx={prefs.messageFontSizePx}
                     onImageClick={openLightbox}
                     onRetryOutbound={retryOutboundJob}
                     retryingJobIds={retryingJobIds}
@@ -1020,6 +1021,7 @@ export function ThreadView({
                 row={row}
                 buyerInitial={buyerInitial}
                 agentAccent={agentAccent}
+                messageFontSizePx={prefs.messageFontSizePx}
                 onImageClick={openLightbox}
                 onRetryOutbound={retryOutboundJob}
                 retryingJobIds={retryingJobIds}
@@ -1381,6 +1383,7 @@ interface TimelineItemProps {
    * delivered message.
    */
   agentAccent: ReturnType<typeof agentBubbleClasses>;
+  messageFontSizePx: number;
   /**
    * Opens the lightbox at the ThreadView root with the supplied image
    * set + starting index. Optional because system/day rows never call
@@ -1439,6 +1442,7 @@ function TimelineItem({
   row,
   buyerInitial,
   agentAccent,
+  messageFontSizePx,
   onImageClick,
   onRetryOutbound,
   retryingJobIds,
@@ -1835,6 +1839,7 @@ function TimelineItem({
             html={m.bodyText}
             forceHtml={m.isHtml}
             stripImages={inlineImages.length > 0}
+            style={{ fontSize: `${messageFontSizePx}px` }}
           />
 
           {isInbound && translationText ? (

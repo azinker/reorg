@@ -61,6 +61,7 @@ import {
   Package,
   Phone,
   ShoppingBag,
+  Star,
   StickyNote,
   Truck,
   User as UserIcon,
@@ -106,6 +107,8 @@ interface RelatedResponse {
 
 interface OrderContextLineItem {
   itemId: string;
+  orderLineItemId: string | null;
+  transactionId: string | null;
   title: string;
   sku: string | null;
   quantity: number;
@@ -155,6 +158,37 @@ interface OrderContextResponse {
   data: OrderContext | null;
   cached?: boolean;
   reason?: string;
+}
+
+type FeedbackSummaryState = "LEFT" | "NOT_LEFT" | "UNKNOWN";
+
+interface FeedbackSummaryItem {
+  id: string;
+  externalId: string;
+  kind: "POSITIVE" | "NEUTRAL" | "NEGATIVE";
+  starRating: number | null;
+  comment: string | null;
+  sellerResponse: string | null;
+  ebayOrderNumber: string | null;
+  ebayItemId: string | null;
+  buyerUserId: string | null;
+  leftAt: string;
+  source: "mirror" | "live";
+}
+
+interface FeedbackSummaryResponse {
+  data: {
+    state: FeedbackSummaryState;
+    items: FeedbackSummaryItem[];
+    checkedLive: boolean;
+    reason?: string;
+  };
+}
+
+interface UseFeedbackSummaryResult {
+  data: FeedbackSummaryResponse["data"] | null;
+  loading: boolean;
+  error: string | null;
 }
 
 export function ContextPanel({
@@ -229,6 +263,7 @@ function ContextPanelInner({ ticket, containerWidth, dividerCls }: InnerProps) {
   //     different `limit` values (the previous code did exactly that).
   const order = useOrderContext(ticket);
   const related = useRelatedTickets(ticket);
+  const feedback = useFeedbackSummary(ticket);
 
   return (
     // h-full + min-h-0 so flex-1 inside us actually scrolls instead of growing
@@ -266,6 +301,7 @@ function ContextPanelInner({ ticket, containerWidth, dividerCls }: InnerProps) {
               // thumbnail + a deep link to the eBay listing.
               <ProductInquirySection listing={ticket.listingInfo} />
             ) : null}
+            <FeedbackSection ticket={ticket} feedback={feedback} />
             <RelatedSection ticket={ticket} related={related} />
           </>
         )}
@@ -357,6 +393,7 @@ interface UseOrderContextResult {
  */
 const orderContextCache = new Map<string, OrderContext | null>();
 const relatedCache = new Map<string, RelatedResponse>();
+const feedbackSummaryCache = new Map<string, FeedbackSummaryResponse["data"]>();
 
 /**
  * Fetches the live eBay order context once per ticket and exposes it to
@@ -412,6 +449,57 @@ function useOrderContext(ticket: HelpdeskTicketDetail): UseOrderContextResult {
       ac.abort();
     };
   }, [ticket.id, ticket.ebayOrderNumber]);
+
+  return { data, loading, error };
+}
+
+function useFeedbackSummary(
+  ticket: HelpdeskTicketDetail,
+): UseFeedbackSummaryResult {
+  const isEbay = ticket.channel === "TPP_EBAY" || ticket.channel === "TT_EBAY";
+  const shouldFetch =
+    isEbay && Boolean(ticket.buyerUserId) && Boolean(ticket.ebayOrderNumber || ticket.ebayItemId);
+  const cached = feedbackSummaryCache.get(ticket.id) ?? null;
+  const [data, setData] = useState<FeedbackSummaryResponse["data"] | null>(cached);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!shouldFetch) {
+      setData(null);
+      setError(null);
+      setLoading(false);
+      return;
+    }
+    const cachedForTicket = feedbackSummaryCache.get(ticket.id) ?? null;
+    if (cachedForTicket) {
+      setData(cachedForTicket);
+    } else {
+      setLoading(true);
+    }
+    setError(null);
+    const ac = new AbortController();
+    void (async () => {
+      try {
+        const res = await fetch(
+          `/api/helpdesk/tickets/${ticket.id}/feedback`,
+          { cache: "no-store", signal: ac.signal },
+        );
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const json = (await res.json()) as FeedbackSummaryResponse;
+        if (ac.signal.aborted) return;
+        setData(json.data);
+        feedbackSummaryCache.set(ticket.id, json.data);
+      } catch (err) {
+        if (ac.signal.aborted) return;
+        if (err instanceof DOMException && err.name === "AbortError") return;
+        setError(err instanceof Error ? err.message : String(err));
+      } finally {
+        if (!ac.signal.aborted) setLoading(false);
+      }
+    })();
+    return () => ac.abort();
+  }, [shouldFetch, ticket.id]);
 
   return { data, loading, error };
 }
@@ -864,6 +952,10 @@ function OrderInfoSection({
             },
           ]
         : [];
+  const deliveryAddressText = ctx?.shippingAddress
+    ? formatAddressMultiline(ctx.shippingAddress)
+    : null;
+  const buyerPhone = ctx?.shippingAddress?.phone?.trim() || null;
   const fallbackListing =
     ticket.listingInfo && ticket.ebayItemId === ticket.listingInfo.itemId
       ? ticket.listingInfo
@@ -890,6 +982,8 @@ function OrderInfoSection({
         ? [
             {
               itemId: ticket.ebayItemId,
+              orderLineItemId: null,
+              transactionId: null,
               title:
                 ticket.ebayItemTitle ??
                 fallbackListing?.title ??
@@ -1086,22 +1180,52 @@ function OrderInfoSection({
             </div>
 
             <div className="px-3 py-2.5 text-sm">
-              <p className="mb-0.5 text-[11px] uppercase tracking-wider text-muted-foreground">
-                Delivery Address
-              </p>
+              <div className="mb-0.5 flex items-center justify-between gap-2">
+                <p className="text-[11px] uppercase tracking-wider text-muted-foreground">
+                  Delivery Address
+                </p>
+                {deliveryAddressText ? (
+                  <CopyButton
+                    value={deliveryAddressText}
+                    title="Copy delivery address"
+                  />
+                ) : null}
+              </div>
               {ctx?.shippingAddress ? (
-                <a
-                  href={mapUrl(ctx.shippingAddress)}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-start gap-1 text-brand hover:underline"
-                  title="Open in Google Maps"
-                >
-                  <MapPin className="mt-0.5 h-3 w-3 shrink-0" />
-                  <span className="whitespace-pre-line text-sm leading-snug text-foreground">
-                    {formatAddressMultiline(ctx.shippingAddress)}
-                  </span>
-                </a>
+                <>
+                  <a
+                    href={mapUrl(ctx.shippingAddress)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-start gap-1 text-brand hover:underline"
+                    title="Open in Google Maps"
+                  >
+                    <MapPin className="mt-0.5 h-3 w-3 shrink-0" />
+                    <span className="whitespace-pre-line text-sm leading-snug text-foreground">
+                      {deliveryAddressText}
+                    </span>
+                  </a>
+                  {buyerPhone ? (
+                    <div className="mt-2 rounded border border-hairline bg-surface/50 px-2 py-1.5">
+                      <div className="mb-0.5 flex items-center justify-between gap-2">
+                        <p className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                          Buyer Phone Number
+                        </p>
+                        <CopyButton
+                          value={buyerPhone}
+                          title="Copy buyer phone number"
+                        />
+                      </div>
+                      <a
+                        href={`tel:${buyerPhone.replace(/[^\d+]/g, "")}`}
+                        className="inline-flex items-center gap-1 font-mono text-xs text-brand hover:underline"
+                      >
+                        <Phone className="h-3 w-3" />
+                        {buyerPhone}
+                      </a>
+                    </div>
+                  ) : null}
+                </>
               ) : (
                 <span className="text-muted-foreground">—</span>
               )}
@@ -1202,6 +1326,98 @@ function OrderInfoSection({
 
 // ── Related tickets ────────────────────────────────────────────────────────
 
+function FeedbackSection({
+  ticket,
+  feedback,
+}: {
+  ticket: HelpdeskTicketDetail;
+  feedback: UseFeedbackSummaryResult;
+}) {
+  const isEbay = ticket.channel === "TPP_EBAY" || ticket.channel === "TT_EBAY";
+  if (!isEbay || (!ticket.ebayOrderNumber && !ticket.ebayItemId)) return null;
+
+  const first = feedback.data?.items[0] ?? null;
+  const state = feedback.data?.state ?? "UNKNOWN";
+
+  return (
+    <section className="border-b border-hairline bg-card/40 px-4 py-3">
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <Star className="h-3.5 w-3.5 text-brand" />
+          <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+            Feedback
+          </h3>
+        </div>
+        {feedback.loading ? (
+          <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground">
+            <Loader2 className="h-3 w-3 animate-spin" />
+            Checking
+          </span>
+        ) : first?.source === "live" ? (
+          <span className="rounded bg-surface-2 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-foreground">
+            Live
+          </span>
+        ) : null}
+      </div>
+
+      {feedback.error ? (
+        <p className="text-xs text-amber-700 dark:text-amber-300">
+          Feedback lookup unavailable.
+        </p>
+      ) : first ? (
+        <div className="rounded-md border border-hairline bg-surface/50 p-2">
+          <div className="flex items-center justify-between gap-2">
+            <span
+              className={cn(
+                "rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider",
+                first.kind === "POSITIVE"
+                  ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
+                  : first.kind === "NEGATIVE"
+                    ? "bg-red-500/15 text-red-700 dark:text-red-300"
+                    : "bg-amber-500/15 text-amber-700 dark:text-amber-300",
+              )}
+            >
+              {first.kind.toLowerCase()}
+            </span>
+            <span className="text-[10px] text-muted-foreground">
+              {formatFeedbackDate(first.leftAt)}
+            </span>
+          </div>
+          {typeof first.starRating === "number" && first.starRating > 0 ? (
+            <p className="mt-1 text-xs text-foreground">
+              Rating: {first.starRating}/5
+            </p>
+          ) : null}
+          {first.comment ? (
+            <p className="mt-1 line-clamp-4 text-xs leading-relaxed text-foreground">
+              "{first.comment}"
+            </p>
+          ) : (
+            <p className="mt-1 text-xs text-muted-foreground">
+              Feedback was left without a public comment.
+            </p>
+          )}
+          {first.sellerResponse ? (
+            <p className="mt-1 line-clamp-3 text-[11px] leading-relaxed text-muted-foreground">
+              Seller response: {first.sellerResponse}
+            </p>
+          ) : null}
+        </div>
+      ) : state === "NOT_LEFT" ? (
+        <p className="text-xs text-muted-foreground">
+          Feedback has not been left for this order.
+        </p>
+      ) : feedback.loading ? (
+        <p className="text-xs text-muted-foreground">Checking eBay feedback...</p>
+      ) : (
+        <p className="text-xs text-muted-foreground">
+          No feedback result available yet.
+        </p>
+      )}
+    </section>
+  );
+}
+
 function RelatedSection({
   ticket,
   related: relatedHook,
@@ -1256,6 +1472,8 @@ function RelatedSection({
 
 // ── Small helpers ─────────────────────────────────────────────────────────
 
+const EBAY_ORDER_TIME_ZONE = "America/Los_Angeles";
+
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="flex items-start justify-between gap-3">
@@ -1304,8 +1522,11 @@ function formatShortDate(value: string | null | undefined): string {
   if (!value) return "—";
   try {
     const date = new Date(value);
-    const includeYear = date.getFullYear() !== new Date().getFullYear();
+    const includeYear =
+      yearInTimeZone(date, EBAY_ORDER_TIME_ZONE) !==
+      yearInTimeZone(new Date(), EBAY_ORDER_TIME_ZONE);
     return date.toLocaleDateString(undefined, {
+      timeZone: EBAY_ORDER_TIME_ZONE,
       month: "short",
       day: "numeric",
       ...(includeYear ? { year: "numeric" as const } : {}),
@@ -1324,6 +1545,7 @@ function formatLongDate(value: string | null | undefined): string {
   if (!value) return "—";
   try {
     return new Date(value).toLocaleDateString(undefined, {
+      timeZone: EBAY_ORDER_TIME_ZONE,
       weekday: "short",
       month: "short",
       day: "numeric",
@@ -1337,6 +1559,7 @@ function formatNumericDate(value: string | null | undefined): string {
   if (!value) return "—";
   try {
     return new Date(value).toLocaleDateString(undefined, {
+      timeZone: EBAY_ORDER_TIME_ZONE,
       month: "numeric",
       day: "numeric",
       year: "2-digit",
@@ -1380,6 +1603,7 @@ function formatEstimatedDelivery(min: string | null | undefined, max: string | n
   const fmt = (d: Date | null) =>
     d
       ? d.toLocaleDateString(undefined, {
+          timeZone: EBAY_ORDER_TIME_ZONE,
           weekday: "short",
           day: "numeric",
           month: "short",
@@ -1389,6 +1613,27 @@ function formatEstimatedDelivery(min: string | null | undefined, max: string | n
   const b = fmt(maxDate);
   if (a && b && a !== b) return `${a} – ${b}`;
   return a ?? b ?? "—";
+}
+
+function yearInTimeZone(date: Date, timeZone: string): string {
+  return new Intl.DateTimeFormat(undefined, {
+    timeZone,
+    year: "numeric",
+  }).format(date);
+}
+
+function formatFeedbackDate(value: string | null | undefined): string {
+  if (!value) return "-";
+  try {
+    return new Date(value).toLocaleString(undefined, {
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    });
+  } catch {
+    return "-";
+  }
 }
 
 function shortService(service: string): string {

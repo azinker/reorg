@@ -35,10 +35,13 @@ import {
   Paperclip,
   Zap,
   ChevronDown,
+  Check,
   GripHorizontal,
   Pin,
   PinOff,
   Clock3,
+  Settings2,
+  UserPlus,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type {
@@ -50,6 +53,13 @@ import { TemplatePicker } from "@/components/helpdesk/TemplatePicker";
 import { QuickActionMenu, QUICK_ACTIONS } from "@/components/helpdesk/QuickActionMenu";
 import { fillTemplate, type TemplateContext } from "@/lib/helpdesk/template-fill";
 import {
+  EBAY_IMAGE_ATTACHMENT_ACCEPT,
+  MAX_EBAY_IMAGE_ATTACHMENTS,
+  inferEbayImageMimeType,
+  validateEbayImageAttachment,
+} from "@/lib/helpdesk/outbound-attachments";
+import {
+  type HelpdeskQuickBarItem,
   updateHelpdeskPrefs,
   useHelpdeskPrefs,
 } from "@/components/helpdesk/HelpdeskSettingsDialog";
@@ -96,6 +106,41 @@ interface PendingJob {
   createdAt: string;
 }
 
+interface AgentOption {
+  id: string;
+  name: string | null;
+  email: string | null;
+  handle?: string | null;
+  avatarUrl?: string | null;
+}
+
+interface TemplateRow {
+  id: string;
+  name: string;
+  bodyText: string;
+  isShared: boolean;
+  isMine: boolean;
+  shortcut: string | null;
+  language: string | null;
+  description: string | null;
+}
+
+interface ComposerAttachment {
+  id: string;
+  file: File;
+  fileName: string;
+  mimeType: string;
+  sizeBytes: number;
+  previewUrl: string;
+}
+
+interface QuickBarResolvedItem {
+  item: HelpdeskQuickBarItem;
+  label: string;
+  body: string | null;
+  available: boolean;
+}
+
 export function Composer({
   ticket,
   syncStatus,
@@ -119,6 +164,7 @@ export function Composer({
   const statusMenuRef = useRef<HTMLDivElement | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [pending, setPending] = useState<PendingJob | null>(null);
+  const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
   const [pendingSecondsLeft, setPendingSecondsLeft] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [composerNotice, setComposerNotice] = useState<{
@@ -135,6 +181,8 @@ export function Composer({
   const [expanded, setExpanded] = useState(false);
   const [composerHeight, setComposerHeight] = useState(prefs.composerHeightPx);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const attachmentsRef = useRef<ComposerAttachment[]>([]);
 
   // Tracking number for this ticket's related order. Populated lazily from
   // the same endpoint ContextPanel uses; the server keeps a 5-min in-memory
@@ -150,6 +198,18 @@ export function Composer({
 
   const flags = syncStatus?.flags;
   const safeMode = flags?.safeMode ?? true;
+
+  useEffect(() => {
+    attachmentsRef.current = attachments;
+  }, [attachments]);
+
+  useEffect(() => {
+    return () => {
+      for (const attachment of attachmentsRef.current) {
+        URL.revokeObjectURL(attachment.previewUrl);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     sendDelaySecondsRef.current = sendDelaySeconds;
@@ -173,8 +233,21 @@ export function Composer({
     setStatusOverridden(false);
     setExpanded(prefs.composerSticky);
     setStatusMenuOpen(false);
+    setAttachments((prev) => {
+      for (const attachment of prev) URL.revokeObjectURL(attachment.previewUrl);
+      return [];
+    });
     setOrderTracking({ number: null, carrier: null, deliveryName: null, buyerName: null });
   }, [ticket.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (mode === "REPLY") return;
+    setAttachments((prev) => {
+      if (prev.length === 0) return prev;
+      for (const attachment of prev) URL.revokeObjectURL(attachment.previewUrl);
+      return [];
+    });
+  }, [mode]);
 
   useEffect(() => {
     setComposerHeight(prefs.composerHeightPx);
@@ -341,13 +414,23 @@ export function Composer({
     [ticket, orderTracking],
   );
 
+  function appendBodyText(text: string) {
+    setBody((prev) => (prev.trim() ? `${prev}\n\n${text}` : text));
+    window.setTimeout(() => textareaRef.current?.focus(), 0);
+  }
+
   const ticketIsArchived = ticket.isArchived;
 
   // Archived tickets can still be replied to — the server will un-archive
   // the ticket on send (per user decision `unarchive_waiting`). We surface
   // an informational banner above the composer so the agent knows clicking
   // "Send" will pull the ticket back into Waiting; nothing is blocked.
-  const canSubmit = !submitting && !pending && body.trim().length > 0;
+  const canAttachImages = mode === "REPLY" && Boolean(flags?.enableAttachments);
+  const canSubmit =
+    !submitting &&
+    !pending &&
+    body.trim().length > 0 &&
+    (attachments.length === 0 || canAttachImages);
 
   const modeMeta = useMemo(() => {
     if (mode === "REPLY") {
@@ -414,6 +497,60 @@ export function Composer({
     window.setTimeout(() => textareaRef.current?.focus(), 0);
   }
 
+  function clearAttachments() {
+    setAttachments((prev) => {
+      for (const attachment of prev) URL.revokeObjectURL(attachment.previewUrl);
+      return [];
+    });
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  }
+
+  function removeAttachment(id: string) {
+    setAttachments((prev) => {
+      const target = prev.find((attachment) => attachment.id === id);
+      if (target) URL.revokeObjectURL(target.previewUrl);
+      return prev.filter((attachment) => attachment.id !== id);
+    });
+  }
+
+  function handleAttachmentFiles(fileList: FileList | null) {
+    if (!fileList || fileList.length === 0) return;
+    if (!canAttachImages) {
+      setError("eBay image attachments are disabled.");
+      return;
+    }
+    const incoming = Array.from(fileList);
+    if (attachments.length + incoming.length > MAX_EBAY_IMAGE_ATTACHMENTS) {
+      setError(`eBay allows up to ${MAX_EBAY_IMAGE_ATTACHMENTS} images per reply.`);
+      return;
+    }
+    const next: ComposerAttachment[] = [];
+    for (const file of incoming) {
+      const mimeType = inferEbayImageMimeType(file.name, file.type);
+      const validation = validateEbayImageAttachment({
+        fileName: file.name,
+        mimeType,
+        sizeBytes: file.size,
+      });
+      if (validation) {
+        for (const attachment of next) URL.revokeObjectURL(attachment.previewUrl);
+        setError(validation);
+        return;
+      }
+      next.push({
+        id: makeClientId(),
+        file,
+        fileName: file.name,
+        mimeType,
+        sizeBytes: file.size,
+        previewUrl: URL.createObjectURL(file),
+      });
+    }
+    setError(null);
+    setAttachments((prev) => [...prev, ...next]);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  }
+
   async function handleSubmit() {
     if (!canSubmit) return;
     const draftBody = body.trim();
@@ -422,17 +559,24 @@ export function Composer({
     setError(null);
     setSubmitting(true);
     try {
-      const res = await fetch(`/api/helpdesk/tickets/${ticket.id}/messages`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          composerMode: mode,
-          bodyText: draftBody,
-          sendDelaySeconds: effectiveSendDelaySeconds,
-          setStatus:
-            mode === "NOTE" || statusChoice === "NONE" ? undefined : statusChoice,
-        }),
-      });
+      const requestBody = {
+        composerMode: mode,
+        bodyText: draftBody,
+        sendDelaySeconds: effectiveSendDelaySeconds,
+        setStatus:
+          mode === "NOTE" || statusChoice === "NONE" ? undefined : statusChoice,
+      };
+      const res =
+        attachments.length > 0
+          ? await fetch(`/api/helpdesk/tickets/${ticket.id}/messages`, {
+              method: "POST",
+              body: buildMessageFormData(requestBody, attachments),
+            })
+          : await fetch(`/api/helpdesk/tickets/${ticket.id}/messages`, {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify(requestBody),
+            });
       if (!res.ok) {
         const j = (await res.json().catch(() => ({}))) as { error?: unknown };
         throw new Error(
@@ -450,6 +594,7 @@ export function Composer({
             };
       };
       setBody("");
+      clearAttachments();
       if (json.data.kind === "note") {
         setComposerNotice({
           at: Date.now(),
@@ -731,31 +876,13 @@ export function Composer({
         </div>
       )}
 
-      {/*
-        eDesk-style "always-visible" quick chips. We surface the three most
-        common one-click replies right above the textarea so the agent doesn't
-        have to expand the QuickActionMenu dropdown for the 80% case. Note mode
-        hides them — internal notes don't have a tracking number to share.
-      */}
       {mode !== "NOTE" && !pending && !modeMeta.disabled && (
-        <div className="flex flex-wrap items-center gap-1.5 border-b border-hairline bg-surface/40 px-4 py-1.5">
-          {QUICK_ACTIONS.slice(0, 3).map((a) => (
-            <button
-              key={a.id}
-              type="button"
-              onClick={() => {
-                const filled = fillTemplate(a.body, templateCtx);
-                setBody((prev) => (prev.trim() ? `${prev}\n\n${filled}` : filled));
-                window.setTimeout(() => textareaRef.current?.focus(), 0);
-              }}
-              className="inline-flex h-6 items-center gap-1 rounded-full border border-hairline-strong/70 bg-surface px-2.5 text-[11px] font-medium text-foreground/80 shadow-sm transition-colors hover:border-brand/45 hover:bg-surface-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/30 cursor-pointer"
-              title={a.label}
-            >
-              <Zap className="h-3 w-3 text-brand/80" />
-              {a.label}
-            </button>
-          ))}
-        </div>
+        <QuickBar
+          ctx={templateCtx}
+          items={prefs.quickBarItems}
+          onPick={appendBodyText}
+          onChange={(quickBarItems) => updateHelpdeskPrefs({ quickBarItems })}
+        />
       )}
 
       {/* Textarea */}
@@ -782,6 +909,40 @@ export function Composer({
         className="block w-full resize-none border-0 bg-transparent px-4 py-2 text-sm leading-6 text-foreground placeholder:text-foreground/55 transition-colors focus:bg-background/20 focus:outline-none focus:ring-0 disabled:opacity-50"
       />
 
+      {attachments.length > 0 && (
+        <div className="flex flex-wrap gap-2 border-t border-hairline bg-surface/35 px-4 py-2">
+          {attachments.map((attachment) => (
+            <div
+              key={attachment.id}
+              className="group relative flex items-center gap-2 rounded-md border border-hairline bg-card px-2 py-1.5 text-xs shadow-sm"
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={attachment.previewUrl}
+                alt=""
+                className="h-9 w-9 rounded border border-hairline object-cover"
+              />
+              <div className="min-w-0 max-w-[12rem]">
+                <p className="truncate font-medium text-foreground">
+                  {attachment.fileName}
+                </p>
+                <p className="text-[10px] text-muted-foreground">
+                  {formatBytes(attachment.sizeBytes)}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => removeAttachment(attachment.id)}
+                className="inline-flex h-5 w-5 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-surface-2 hover:text-foreground cursor-pointer"
+                title="Remove image"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* Footer: template picker + status selector + send button */}
       <div className="flex flex-wrap items-center gap-2 border-t border-hairline bg-card/80 px-3 py-1.5 text-xs">
         {mode !== "NOTE" && (
@@ -789,39 +950,40 @@ export function Composer({
             <TemplatePicker
               ctx={templateCtx}
               disabled={!!pending || modeMeta.disabled}
-              onPick={(filled) => {
-                setBody((prev) =>
-                  prev.trim() ? `${prev}\n\n${filled}` : filled,
-                );
-                window.setTimeout(() => textareaRef.current?.focus(), 0);
-              }}
+              onPick={appendBodyText}
             />
             <QuickActionMenu
               ctx={templateCtx}
               disabled={!!pending || modeMeta.disabled}
-              onPick={(filled) => {
-                setBody((prev) =>
-                  prev.trim() ? `${prev}\n\n${filled}` : filled,
-                );
-                window.setTimeout(() => textareaRef.current?.focus(), 0);
-              }}
+              onPick={appendBodyText}
             />
-            {/*
-              Outbound attachments: feature-flag gated and v1 limited to External
-              (Resend) mode. eBay's RTQ API does not support file attachments —
-              only inline-image URLs in the body — so Reply mode hides this entirely.
-            */}
-            {flags?.enableAttachments && mode === "EXTERNAL" && (
-              <button
-                type="button"
-                disabled
-                title="Attachment upload UI coming in v1.1 — Resend transport already supported."
-                className="inline-flex h-7 items-center gap-1 rounded-md border border-hairline bg-surface px-2 text-muted-foreground cursor-not-allowed opacity-60"
-              >
-                <Paperclip className="h-3.5 w-3.5" />
-                Attach
-              </button>
+            {canAttachImages && (
+              <>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept={EBAY_IMAGE_ATTACHMENT_ACCEPT}
+                  multiple
+                  className="hidden"
+                  onChange={(e) => handleAttachmentFiles(e.currentTarget.files)}
+                />
+                <button
+                  type="button"
+                  disabled={!!pending || attachments.length >= MAX_EBAY_IMAGE_ATTACHMENTS}
+                  onClick={() => fileInputRef.current?.click()}
+                  title="Attach eBay-supported images"
+                  className="inline-flex h-7 items-center gap-1 rounded-md border border-hairline bg-surface px-2 text-xs text-foreground shadow-sm transition-colors hover:border-brand/35 hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"
+                >
+                  <Paperclip className="h-3.5 w-3.5" />
+                  Image
+                </button>
+              </>
             )}
+            <QuickAssignControl
+              ticket={ticket}
+              disabled={!!pending}
+              onAssigned={onSent}
+            />
             <label className="inline-flex h-7 items-center gap-1 rounded-md border border-hairline-strong/70 bg-surface px-2 text-[11px] text-foreground/70">
               <Clock3 className="h-3.5 w-3.5" />
               Delay
@@ -950,6 +1112,458 @@ export function Composer({
       </div>
     </div>
   );
+}
+
+function QuickBar({
+  ctx,
+  items,
+  onPick,
+  onChange,
+}: {
+  ctx: TemplateContext;
+  items: HelpdeskQuickBarItem[];
+  onPick: (body: string) => void;
+  onChange: (items: HelpdeskQuickBarItem[]) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [templates, setTemplates] = useState<TemplateRow[]>([]);
+  const [loadingTemplates, setLoadingTemplates] = useState(false);
+  const [search, setSearch] = useState("");
+  const ref = useRef<HTMLDivElement | null>(null);
+  const needsTemplates =
+    open || items.some((item) => item.kind === "template");
+
+  useEffect(() => {
+    if (!open) return;
+    function onClick(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    }
+    window.addEventListener("mousedown", onClick);
+    return () => window.removeEventListener("mousedown", onClick);
+  }, [open]);
+
+  useEffect(() => {
+    if (!needsTemplates || templates.length > 0 || loadingTemplates) return;
+    const ac = new AbortController();
+    setLoadingTemplates(true);
+    fetch("/api/helpdesk/templates", { cache: "no-store", signal: ac.signal })
+      .then((r) => {
+        if (!r.ok) throw new Error(`templates ${r.status}`);
+        return r.json() as Promise<{ data?: TemplateRow[] }>;
+      })
+      .then((json) => {
+        if (ac.signal.aborted) return;
+        setTemplates(
+          (json.data ?? []).slice().sort((a, b) =>
+            a.name.localeCompare(b.name, undefined, { sensitivity: "base" }),
+          ),
+        );
+      })
+      .catch(() => {
+        if (!ac.signal.aborted) setTemplates([]);
+      })
+      .finally(() => {
+        if (!ac.signal.aborted) setLoadingTemplates(false);
+      });
+    return () => ac.abort();
+  }, [loadingTemplates, needsTemplates, templates.length]);
+
+  const selectedKeys = new Set(items.map((item) => quickBarKey(item)));
+  const selected: QuickBarResolvedItem[] = items
+    .flatMap((item): QuickBarResolvedItem[] => {
+      if (item.kind === "quick") {
+        const quick = QUICK_ACTIONS.find((q) => q.id === item.id);
+        return quick
+          ? [{ item, label: item.label, body: quick.body, available: true }]
+          : [];
+      }
+      const template = templates.find((t) => t.id === item.id);
+      return [{
+        item,
+        label: template?.name ?? item.label,
+        body: template?.bodyText ?? null,
+        available: Boolean(template),
+      }];
+    });
+  const q = search.trim().toLowerCase();
+  const filteredTemplates = q
+    ? templates.filter((t) =>
+        [t.name, t.shortcut, t.description, t.bodyText]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase()
+          .includes(q),
+      )
+    : templates;
+
+  function toggle(item: HelpdeskQuickBarItem) {
+    const key = quickBarKey(item);
+    if (selectedKeys.has(key)) {
+      onChange(items.filter((existing) => quickBarKey(existing) !== key));
+      return;
+    }
+    onChange([...items, item].slice(0, 8));
+  }
+
+  return (
+    <div
+      ref={ref}
+      className="relative flex flex-wrap items-center gap-1.5 border-b border-hairline bg-surface/40 px-4 py-1.5"
+    >
+      {selected.map((entry) => (
+        <button
+          key={quickBarKey(entry.item)}
+          type="button"
+          disabled={!entry.available}
+          onClick={() => {
+            if (!entry.body) return;
+            onPick(fillTemplate(entry.body, ctx));
+          }}
+          className="inline-flex h-6 items-center gap-1 rounded-full border border-hairline-strong/70 bg-surface px-2.5 text-[11px] font-medium text-foreground/80 shadow-sm transition-colors hover:border-brand/45 hover:bg-surface-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/30 disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"
+          title={entry.available ? entry.label : "Loading template"}
+        >
+          <Zap className="h-3 w-3 text-brand/80" />
+          {entry.label}
+        </button>
+      ))}
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className={cn(
+          "inline-flex h-6 items-center gap-1 rounded-md border px-2 text-[11px] font-medium transition-colors cursor-pointer",
+          open
+            ? "border-brand/40 bg-brand-muted text-brand"
+            : "border-hairline-strong/70 bg-surface text-foreground/70 hover:bg-surface-2 hover:text-foreground",
+        )}
+      >
+        <Settings2 className="h-3 w-3" />
+        {items.length === 0 ? "Customize quick bar" : "Edit"}
+      </button>
+
+      {open && (
+        <div className="absolute bottom-full left-3 z-30 mb-1 w-[min(34rem,calc(100vw-2rem))] rounded-md border border-hairline bg-popover p-2 text-popover-foreground shadow-2xl shadow-black/30">
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+              Quick bar
+            </p>
+            <span className="text-[10px] text-muted-foreground">
+              {items.length}/8
+            </span>
+          </div>
+          <div className="mb-2">
+            <input
+              type="text"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search templates"
+              className="h-7 w-full rounded-md border border-hairline bg-surface px-2 text-xs text-foreground outline-none focus:border-brand/50"
+            />
+          </div>
+          <div className="grid max-h-72 gap-2 overflow-y-auto sm:grid-cols-2">
+            <div>
+              <p className="mb-1 px-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                Quick replies
+              </p>
+              {QUICK_ACTIONS.map((quick) => {
+                const item: HelpdeskQuickBarItem = {
+                  kind: "quick",
+                  id: quick.id,
+                  label: quick.label,
+                };
+                const active = selectedKeys.has(quickBarKey(item));
+                return (
+                  <QuickBarToggle
+                    key={quick.id}
+                    active={active}
+                    label={quick.label}
+                    onClick={() => toggle(item)}
+                  />
+                );
+              })}
+            </div>
+            <div>
+              <p className="mb-1 px-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                Templates
+              </p>
+              {loadingTemplates ? (
+                <div className="flex items-center gap-2 px-2 py-2 text-xs text-muted-foreground">
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                  Loading templates
+                </div>
+              ) : filteredTemplates.length === 0 ? (
+                <p className="px-2 py-2 text-xs text-muted-foreground">
+                  No templates match.
+                </p>
+              ) : (
+                filteredTemplates.slice(0, 40).map((template) => {
+                  const item: HelpdeskQuickBarItem = {
+                    kind: "template",
+                    id: template.id,
+                    label: template.name,
+                  };
+                  const active = selectedKeys.has(quickBarKey(item));
+                  return (
+                    <QuickBarToggle
+                      key={template.id}
+                      active={active}
+                      label={template.name}
+                      onClick={() => toggle(item)}
+                    />
+                  );
+                })
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function QuickBarToggle({
+  active,
+  label,
+  onClick,
+}: {
+  active: boolean;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "flex h-7 w-full items-center gap-2 rounded-md px-2 text-left text-xs transition-colors hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/30 cursor-pointer",
+        active ? "bg-brand-muted text-brand" : "text-foreground",
+      )}
+    >
+      <span className="flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded border border-hairline bg-surface">
+        {active ? <Check className="h-3 w-3" /> : null}
+      </span>
+      <span className="min-w-0 flex-1 truncate">{label}</span>
+    </button>
+  );
+}
+
+function quickBarKey(item: HelpdeskQuickBarItem): string {
+  return `${item.kind}:${item.id}`;
+}
+
+function QuickAssignControl({
+  ticket,
+  disabled,
+  onAssigned,
+}: {
+  ticket: HelpdeskTicketDetail;
+  disabled?: boolean;
+  onAssigned: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [agents, setAgents] = useState<AgentOption[] | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [assigned, setAssigned] = useState(ticket.primaryAssignee);
+  const ref = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    setAssigned(ticket.primaryAssignee);
+  }, [ticket.id, ticket.primaryAssignee]);
+
+  useEffect(() => {
+    if (!open) return;
+    function onClick(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    }
+    window.addEventListener("mousedown", onClick);
+    return () => window.removeEventListener("mousedown", onClick);
+  }, [open]);
+
+  async function loadAgents() {
+    if (agents !== null || loading) return;
+    setLoading(true);
+    try {
+      const res = await fetch("/api/helpdesk/agents", { cache: "no-store" });
+      if (!res.ok) throw new Error(`agents ${res.status}`);
+      const json = (await res.json()) as { data?: AgentOption[] };
+      setAgents(json.data ?? []);
+    } catch {
+      setAgents([]);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function assign(userId: string | null) {
+    setSaving(true);
+    try {
+      const res = await fetch("/api/helpdesk/tickets/batch", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          ticketIds: [ticket.id],
+          action: "assignPrimary",
+          userId,
+        }),
+      });
+      if (!res.ok) throw new Error(`assign ${res.status}`);
+      setAssigned(userId ? agents?.find((a) => a.id === userId) ?? null : null);
+      setOpen(false);
+      onAssigned();
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const assignedLabel = assigned
+    ? assigned.name ?? assigned.handle ?? assigned.email ?? "Assigned"
+    : "Assign";
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        disabled={disabled || saving}
+        onClick={() => {
+          setOpen((v) => !v);
+          void loadAgents();
+        }}
+        title={
+          assigned
+            ? `Assigned to ${assignedLabel}. Click to reassign.`
+            : "Assign agent"
+        }
+        className={cn(
+          "inline-flex h-7 max-w-[11rem] items-center gap-1 rounded-md border border-hairline-strong/70 bg-surface px-2 text-[11px] text-foreground/75 transition-colors hover:bg-surface-2 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer",
+          assigned && "border-brand/35 bg-brand-muted/60 text-brand",
+        )}
+      >
+        {saving ? (
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+        ) : assigned ? (
+          <SmallAgentAvatar user={assigned} />
+        ) : (
+          <UserPlus className="h-3.5 w-3.5" />
+        )}
+        <span className="min-w-0 truncate">{assignedLabel}</span>
+        <ChevronDown className="h-3 w-3 opacity-60" />
+      </button>
+
+      {open && (
+        <div className="absolute bottom-full left-0 z-30 mb-1 w-56 rounded-md border border-hairline bg-popover p-1 text-popover-foreground shadow-xl">
+          {loading ? (
+            <div className="flex items-center gap-2 px-2.5 py-2 text-xs text-muted-foreground">
+              <Loader2 className="h-3 w-3 animate-spin" />
+              Loading agents
+            </div>
+          ) : agents && agents.length > 0 ? (
+            agents.map((agent) => {
+              const label = agent.name ?? agent.handle ?? agent.email ?? "Agent";
+              const active = assigned?.id === agent.id;
+              return (
+                <button
+                  key={agent.id}
+                  type="button"
+                  onClick={() => void assign(agent.id)}
+                  className={cn(
+                    "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-foreground hover:bg-surface-2 cursor-pointer",
+                    active && "bg-surface-2 font-medium",
+                  )}
+                >
+                  <SmallAgentAvatar user={agent} />
+                  <span className="min-w-0 flex-1 truncate">{label}</span>
+                  {active ? <Check className="h-3.5 w-3.5" /> : null}
+                </button>
+              );
+            })
+          ) : (
+            <div className="px-2.5 py-2 text-xs text-muted-foreground">
+              No agents available.
+            </div>
+          )}
+          {assigned ? (
+            <>
+              <div className="my-1 h-px bg-hairline" aria-hidden />
+              <button
+                type="button"
+                onClick={() => void assign(null)}
+                className="flex w-full items-center rounded-md px-2.5 py-1.5 text-left text-xs text-red-600 hover:bg-surface-2 dark:text-red-300 cursor-pointer"
+              >
+                Unassign
+              </button>
+            </>
+          ) : null}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SmallAgentAvatar({ user }: { user: AgentOption }) {
+  const label = user.name ?? user.handle ?? user.email ?? "Agent";
+  if (user.avatarUrl) {
+    // eslint-disable-next-line @next/next/no-img-element
+    return (
+      <img
+        src={user.avatarUrl}
+        alt=""
+        className="h-4 w-4 shrink-0 rounded-full object-cover"
+      />
+    );
+  }
+  return (
+    <span className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-brand/15 text-[9px] font-semibold uppercase text-brand">
+      {agentInitials(label)}
+    </span>
+  );
+}
+
+function agentInitials(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  const chars =
+    parts.length >= 2
+      ? `${parts[0]?.[0] ?? ""}${parts[1]?.[0] ?? ""}`
+      : name.slice(0, 2);
+  return chars.toUpperCase() || "?";
+}
+
+function buildMessageFormData(
+  body: {
+    composerMode: ComposerMode;
+    bodyText: string;
+    sendDelaySeconds: number;
+    setStatus?: "WAITING" | "RESOLVED";
+  },
+  attachments: ComposerAttachment[],
+): FormData {
+  const form = new FormData();
+  form.set("composerMode", body.composerMode);
+  form.set("bodyText", body.bodyText);
+  form.set("sendDelaySeconds", String(body.sendDelaySeconds));
+  if (body.setStatus) form.set("setStatus", body.setStatus);
+  for (const attachment of attachments) {
+    form.append("attachments", attachment.file, attachment.fileName);
+  }
+  return form;
+}
+
+function makeClientId(): string {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return crypto.randomUUID();
+  }
+  return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  const kb = bytes / 1024;
+  if (kb < 1024) return `${kb.toFixed(kb >= 10 ? 0 : 1)} KB`;
+  const mb = kb / 1024;
+  return `${mb.toFixed(mb >= 10 ? 0 : 1)} MB`;
 }
 
 function clampNumber(value: number, min: number, max: number): number {

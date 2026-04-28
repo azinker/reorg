@@ -10,6 +10,7 @@
  */
 
 import { NextResponse, type NextRequest } from "next/server";
+import { randomUUID } from "crypto";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
@@ -24,6 +25,14 @@ import {
   resolveMentions,
   fanOutMentionNotifications,
 } from "@/lib/helpdesk/mentions";
+import {
+  MAX_EBAY_IMAGE_ATTACHMENTS,
+  inferEbayImageMimeType,
+  normalizeAttachmentFileName,
+  validateEbayImageAttachment,
+  type QueuedHelpdeskAttachment,
+} from "@/lib/helpdesk/outbound-attachments";
+import { isR2Configured, putR2Object } from "@/lib/r2";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -31,7 +40,7 @@ export const dynamic = "force-dynamic";
 const bodySchema = z.object({
   composerMode: z.enum(["REPLY", "NOTE", "EXTERNAL"]),
   bodyText: z.string().trim().min(1).max(10_000),
-  sendDelaySeconds: z.number().int().min(0).max(60).default(5),
+  sendDelaySeconds: z.coerce.number().int().min(0).max(60).default(5),
   setStatus: z.enum(["WAITING", "RESOLVED"]).optional(),
 });
 
@@ -46,7 +55,19 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
   }
 
   const { id } = await params;
-  const body = await request.json().catch(() => null);
+  const contentType = request.headers.get("content-type") ?? "";
+  let attachmentFiles: File[] = [];
+  const body = contentType.includes("multipart/form-data")
+    ? await request.formData().then((form) => {
+        attachmentFiles = form.getAll("attachments").filter(isFile);
+        return {
+          composerMode: form.get("composerMode"),
+          bodyText: form.get("bodyText"),
+          sendDelaySeconds: form.get("sendDelaySeconds"),
+          setStatus: form.get("setStatus") || undefined,
+        };
+      }).catch(() => null)
+    : await request.json().catch(() => null);
   const parsed = bodySchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(
@@ -59,6 +80,18 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
   if (!ticket) {
     return NextResponse.json({ error: "Ticket not found" }, { status: 404 });
   }
+
+  const flags = await helpdeskFlagsSnapshotAsync();
+  const queuedAttachments =
+    attachmentFiles.length > 0
+      ? await queueAttachmentsOrResponse({
+          ticketId: id,
+          composerMode: parsed.data.composerMode,
+          files: attachmentFiles,
+          attachmentsEnabled: flags.enableAttachments,
+        })
+      : [];
+  if (queuedAttachments instanceof Response) return queuedAttachments;
 
   // Archived + outbound (REPLY / EXTERNAL) path: un-archive on send.
   //
@@ -171,7 +204,6 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
   // snapshot so the global write lock (Settings → Write Safety) participates
   // in the safe-mode signal — agents see the banner the moment Cory or
   // Adam flips the lock.
-  const flags = await helpdeskFlagsSnapshotAsync();
   const willBlockReason: string | null = flags.safeMode
     ? flags.globalWriteLock
       ? "global_write_lock"
@@ -197,6 +229,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         previousResolvedById: ticket.resolvedById,
         previousIsArchived: ticket.isArchived,
         previousArchivedAt: ticket.archivedAt?.toISOString() ?? null,
+        attachments: queuedAttachments,
       },
     },
   });
@@ -225,6 +258,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         scheduledAt: scheduledAt.toISOString(),
         optimisticStatus: setStatus,
         willBlockReason,
+        attachmentCount: queuedAttachments.length,
       },
     },
   });
@@ -237,4 +271,70 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       willBlockReason,
     },
   });
+}
+
+function isFile(value: FormDataEntryValue): value is File {
+  return typeof File !== "undefined" && value instanceof File;
+}
+
+async function queueAttachmentsOrResponse(args: {
+  ticketId: string;
+  composerMode: "REPLY" | "NOTE" | "EXTERNAL";
+  files: File[];
+  attachmentsEnabled: boolean;
+}): Promise<QueuedHelpdeskAttachment[] | Response> {
+  if (args.composerMode !== "REPLY") {
+    return NextResponse.json(
+      { error: "Attachments are only available for eBay replies." },
+      { status: 400 },
+    );
+  }
+  if (!args.attachmentsEnabled) {
+    return NextResponse.json(
+      { error: "Outbound attachments are disabled." },
+      { status: 403 },
+    );
+  }
+  if (!isR2Configured()) {
+    return NextResponse.json(
+      { error: "Attachment storage is not configured." },
+      { status: 500 },
+    );
+  }
+  if (args.files.length > MAX_EBAY_IMAGE_ATTACHMENTS) {
+    return NextResponse.json(
+      { error: `eBay allows up to ${MAX_EBAY_IMAGE_ATTACHMENTS} images per reply.` },
+      { status: 400 },
+    );
+  }
+
+  const validated = args.files.map((file) => {
+    const fileName = normalizeAttachmentFileName(file.name);
+    const mimeType = inferEbayImageMimeType(fileName, file.type);
+    const validation = validateEbayImageAttachment({
+      fileName,
+      mimeType,
+      sizeBytes: file.size,
+    });
+    return { file, fileName, mimeType, validation };
+  });
+  const invalid = validated.find((entry) => entry.validation);
+  if (invalid?.validation) {
+    return NextResponse.json({ error: invalid.validation }, { status: 400 });
+  }
+
+  const queued: QueuedHelpdeskAttachment[] = [];
+  for (const entry of validated) {
+    const storageKey = `helpdesk/outbound/${args.ticketId}/${randomUUID()}-${entry.fileName}`;
+    const bytes = new Uint8Array(await entry.file.arrayBuffer());
+    await putR2Object(storageKey, bytes, { contentType: entry.mimeType });
+    queued.push({
+      storageKey,
+      fileName: entry.fileName,
+      mimeType: entry.mimeType,
+      sizeBytes: entry.file.size,
+    });
+  }
+
+  return queued;
 }

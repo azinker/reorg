@@ -58,6 +58,10 @@ export type HelpdeskAgentBubbleAccent =
   | "amber"
   | "red";
 
+export type HelpdeskQuickBarItem =
+  | { kind: "quick"; id: string; label: string }
+  | { kind: "template"; id: string; label: string };
+
 export interface HelpdeskPrefs {
   sendDelaySeconds: number;
   autoAdvance: boolean;
@@ -70,6 +74,8 @@ export interface HelpdeskPrefs {
   inboxWidthPct: number;
   defaultSendStatus: HelpdeskDefaultSendStatus;
   agentBubbleAccent: HelpdeskAgentBubbleAccent;
+  quickBarItems: HelpdeskQuickBarItem[];
+  messageFontSizePx: number;
 }
 
 const DEFAULTS: HelpdeskPrefs = {
@@ -90,6 +96,8 @@ const DEFAULTS: HelpdeskPrefs = {
   // a long INBOUND thread. Purple is the reorG primary hue and reads as
   // "ours" without screaming "error".
   agentBubbleAccent: "purple",
+  quickBarItems: [],
+  messageFontSizePx: 14,
 };
 
 function readPrefs(): HelpdeskPrefs {
@@ -133,10 +141,35 @@ function readPrefs(): HelpdeskPrefs {
         parsed.agentBubbleAccent === "red"
           ? parsed.agentBubbleAccent
           : DEFAULTS.agentBubbleAccent,
+      quickBarItems: parseQuickBarItems(parsed.quickBarItems),
+      messageFontSizePx: clampInt(
+        parsed.messageFontSizePx,
+        12,
+        18,
+        DEFAULTS.messageFontSizePx,
+      ),
     };
   } catch {
     return DEFAULTS;
   }
+}
+
+function parseQuickBarItems(value: unknown): HelpdeskQuickBarItem[] {
+  if (!Array.isArray(value)) return DEFAULTS.quickBarItems;
+  return value
+    .map((entry): HelpdeskQuickBarItem | null => {
+      if (!entry || typeof entry !== "object") return null;
+      const item = entry as Record<string, unknown>;
+      const kind = item.kind;
+      const id = typeof item.id === "string" ? item.id.trim() : "";
+      const label = typeof item.label === "string" ? item.label.trim() : "";
+      if (!id || !label) return null;
+      if (kind === "quick") return { kind, id, label: label.slice(0, 60) };
+      if (kind === "template") return { kind, id, label: label.slice(0, 60) };
+      return null;
+    })
+    .filter((item): item is HelpdeskQuickBarItem => item !== null)
+    .slice(0, 8);
 }
 
 /** Imperative setter for prefs (used by header layout toggle, drag-handle persist). */
@@ -169,7 +202,9 @@ function writePrefs(p: HelpdeskPrefs, previous?: HelpdeskPrefs) {
     prev.threadWidthPct !== p.threadWidthPct ||
     prev.inboxWidthPct !== p.inboxWidthPct ||
     prev.defaultSendStatus !== p.defaultSendStatus ||
-    prev.agentBubbleAccent !== p.agentBubbleAccent;
+    prev.agentBubbleAccent !== p.agentBubbleAccent ||
+    prev.messageFontSizePx !== p.messageFontSizePx ||
+    JSON.stringify(prev.quickBarItems) !== JSON.stringify(p.quickBarItems);
   if (!changed) return;
   window.localStorage.setItem(STORAGE_KEY, JSON.stringify(p));
   window.dispatchEvent(new CustomEvent("helpdesk:prefs-changed", { detail: p }));
@@ -466,6 +501,25 @@ export function HelpdeskSettingsDialog({ open, onClose }: HelpdeskSettingsDialog
           </Field>
 
           <Field
+            label="Message font size"
+            description="Text size for message content in the conversation pane."
+          >
+            <div className="flex items-center gap-2">
+              <input
+                type="range"
+                min={12}
+                max={18}
+                value={prefs.messageFontSizePx}
+                onChange={(e) => update("messageFontSizePx", Number(e.target.value))}
+                className="w-28 cursor-pointer accent-brand"
+              />
+              <span className="w-12 text-right text-foreground">
+                {prefs.messageFontSizePx}px
+              </span>
+            </div>
+          </Field>
+
+          <Field
             label="Auto-mark read"
             description="Clear the unread badge as soon as you open a ticket."
           >
@@ -552,7 +606,7 @@ export function HelpdeskSettingsDialog({ open, onClose }: HelpdeskSettingsDialog
         </div>
 
         <p className="mt-5 text-[10px] text-muted-foreground">
-          Layout, density, separator widths, and accent color are saved on this browser per agent.
+          Layout, density, separator widths, font size, quick bar, and accent color are saved on this browser per agent.
           Default Send action is saved across browsers.
         </p>
       </div>
