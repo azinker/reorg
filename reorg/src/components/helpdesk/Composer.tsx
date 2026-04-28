@@ -6,7 +6,7 @@
  * Three modes:
  *   - REPLY    → eBay member message (requires existing buyer thread)
  *   - NOTE     → internal note, never sent externally
- *   - EXTERNAL → email via Resend (requires buyer email + flag)
+ *   - EXTERNAL → email via Resend (agent enters recipient fields)
  *
  * Send pipeline:
  *   1. POST /api/helpdesk/tickets/[id]/messages → returns jobId + scheduledAt
@@ -21,7 +21,7 @@
  * NOTES never go through outbound queue. They write immediately.
  */
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { forwardRef, useEffect, useMemo, useRef, useState } from "react";
 import {
   Loader2,
   MessageSquareText,
@@ -63,6 +63,7 @@ import {
   updateHelpdeskPrefs,
   useHelpdeskPrefs,
 } from "@/components/helpdesk/HelpdeskSettingsDialog";
+import { normalizeExternalEmailDraft } from "@/lib/helpdesk/external-email-fields";
 
 type ComposerMode = "REPLY" | "NOTE" | "EXTERNAL";
 type StatusChoice = "WAITING" | "RESOLVED" | "NONE";
@@ -165,6 +166,10 @@ export function Composer({
   const [submitting, setSubmitting] = useState(false);
   const [pending, setPending] = useState<PendingJob | null>(null);
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
+  const [externalTo, setExternalTo] = useState("");
+  const [externalCc, setExternalCc] = useState("");
+  const [externalBcc, setExternalBcc] = useState("");
+  const [externalSubject, setExternalSubject] = useState("");
   const [pendingSecondsLeft, setPendingSecondsLeft] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [composerNotice, setComposerNotice] = useState<{
@@ -181,6 +186,7 @@ export function Composer({
   const [expanded, setExpanded] = useState(false);
   const [composerHeight, setComposerHeight] = useState(prefs.composerHeightPx);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const externalToRef = useRef<HTMLInputElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const attachmentsRef = useRef<ComposerAttachment[]>([]);
 
@@ -233,6 +239,10 @@ export function Composer({
     setStatusOverridden(false);
     setExpanded(prefs.composerSticky);
     setStatusMenuOpen(false);
+    setExternalTo("");
+    setExternalCc("");
+    setExternalBcc("");
+    setExternalSubject("");
     setAttachments((prev) => {
       for (const attachment of prev) URL.revokeObjectURL(attachment.previewUrl);
       return [];
@@ -241,7 +251,7 @@ export function Composer({
   }, [ticket.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    if (mode === "REPLY") return;
+    if (mode === "REPLY" || mode === "EXTERNAL") return;
     setAttachments((prev) => {
       if (prev.length === 0) return prev;
       for (const attachment of prev) URL.revokeObjectURL(attachment.previewUrl);
@@ -426,11 +436,21 @@ export function Composer({
   // an informational banner above the composer so the agent knows clicking
   // "Send" will pull the ticket back into Waiting; nothing is blocked.
   const attachmentFlagEnabled = Boolean(flags?.enableAttachments);
-  const canAttachImages = mode === "REPLY" && attachmentFlagEnabled;
+  const canAttachImages =
+    (mode === "REPLY" || mode === "EXTERNAL") && attachmentFlagEnabled;
   const externalEmailEnabled = Boolean(flags?.enableResendExternal);
-  const externalEmailHasRecipient = Boolean(ticket.buyerEmail);
+  const normalizedExternalEmail = useMemo(
+    () =>
+      normalizeExternalEmailDraft({
+        to: externalTo,
+        cc: externalCc,
+        bcc: externalBcc,
+        subject: externalSubject,
+      }),
+    [externalTo, externalCc, externalBcc, externalSubject],
+  );
   const currentModeCanSend =
-    mode !== "EXTERNAL" || (externalEmailEnabled && externalEmailHasRecipient);
+    mode !== "EXTERNAL" || (externalEmailEnabled && normalizedExternalEmail.ok);
   const canSubmit =
     !submitting &&
     !pending &&
@@ -467,8 +487,8 @@ export function Composer({
   }, [mode, ticket, externalEmailEnabled]);
 
   const modeWarning =
-    mode === "EXTERNAL" && externalEmailEnabled && !externalEmailHasRecipient
-      ? "No buyer email is available on this ticket yet, so External email cannot send from here."
+    mode === "EXTERNAL" && externalEmailEnabled && !normalizedExternalEmail.ok
+      ? normalizedExternalEmail.error
       : null;
 
   const recoverableOutbound = useMemo(() => {
@@ -524,12 +544,12 @@ export function Composer({
   function handleAttachmentFiles(fileList: FileList | null) {
     if (!fileList || fileList.length === 0) return;
     if (!canAttachImages) {
-      setError("eBay image attachments are disabled.");
+      setError("Image attachments are disabled.");
       return;
     }
     const incoming = Array.from(fileList);
     if (attachments.length + incoming.length > MAX_EBAY_IMAGE_ATTACHMENTS) {
-      setError(`eBay allows up to ${MAX_EBAY_IMAGE_ATTACHMENTS} images per reply.`);
+      setError(`You can attach up to ${MAX_EBAY_IMAGE_ATTACHMENTS} images.`);
       return;
     }
     const next: ComposerAttachment[] = [];
@@ -573,6 +593,10 @@ export function Composer({
         sendDelaySeconds: effectiveSendDelaySeconds,
         setStatus:
           mode === "NOTE" || statusChoice === "NONE" ? undefined : statusChoice,
+        externalTo: mode === "EXTERNAL" ? externalTo : undefined,
+        externalCc: mode === "EXTERNAL" ? externalCc : undefined,
+        externalBcc: mode === "EXTERNAL" ? externalBcc : undefined,
+        externalSubject: mode === "EXTERNAL" ? externalSubject : undefined,
       };
       const res =
         attachments.length > 0
@@ -797,7 +821,10 @@ export function Composer({
           <ModeTab
             active={mode === "EXTERNAL"}
             disabled={!canSelectEmail(flags?.enableResendExternal ?? false)}
-            onClick={() => setMode("EXTERNAL")}
+            onClick={() => {
+              setMode("EXTERNAL");
+              window.setTimeout(() => externalToRef.current?.focus(), 0);
+            }}
             icon={<Mail className="h-3 w-3" />}
           >
             External
@@ -890,6 +917,47 @@ export function Composer({
         </div>
       )}
 
+      {mode === "EXTERNAL" && !modeMeta.disabled && (
+        <div className="space-y-1.5 border-b border-hairline bg-surface/35 px-4 py-2 text-xs">
+          <div className="grid gap-1.5 md:grid-cols-3">
+            <EmailField
+              ref={externalToRef}
+              label="To"
+              value={externalTo}
+              onChange={setExternalTo}
+              disabled={!!pending}
+              required
+            />
+            <EmailField
+              label="CC"
+              value={externalCc}
+              onChange={setExternalCc}
+              disabled={!!pending}
+            />
+            <EmailField
+              label="BCC"
+              value={externalBcc}
+              onChange={setExternalBcc}
+              disabled={!!pending}
+            />
+          </div>
+          <label className="grid grid-cols-[4.5rem_minmax(0,1fr)] items-center gap-2">
+            <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+              Subject
+            </span>
+            <input
+              type="text"
+              value={externalSubject}
+              onChange={(e) => setExternalSubject(e.target.value)}
+              disabled={!!pending}
+              placeholder={ticket.subject ?? "Ticket follow-up"}
+              maxLength={300}
+              className="h-8 min-w-0 rounded-md border border-hairline bg-card px-2 text-xs text-foreground outline-none transition-colors placeholder:text-foreground/45 focus:border-brand/50 disabled:opacity-50"
+            />
+          </label>
+        </div>
+      )}
+
       {mode !== "NOTE" && !pending && !modeMeta.disabled && (
         <QuickBar
           ctx={templateCtx}
@@ -971,7 +1039,7 @@ export function Composer({
               disabled={!!pending || modeMeta.disabled}
               onPick={appendBodyText}
             />
-            {mode === "REPLY" && (
+            {(mode === "REPLY" || mode === "EXTERNAL") && (
               <>
                 <input
                   ref={fileInputRef}
@@ -997,7 +1065,7 @@ export function Composer({
                   }}
                   title={
                     attachmentFlagEnabled
-                      ? "Attach eBay-supported images"
+                      ? "Attach supported images"
                       : "Outbound image attachments are disabled in Global Settings."
                   }
                   className={cn(
@@ -1144,6 +1212,40 @@ export function Composer({
     </div>
   );
 }
+
+const EmailField = forwardRef<
+  HTMLInputElement,
+  {
+    label: string;
+    value: string;
+    onChange: (value: string) => void;
+    disabled?: boolean;
+    required?: boolean;
+  }
+>(function EmailField(
+  { label, value, onChange, disabled = false, required = false },
+  ref,
+) {
+  return (
+    <label className="grid grid-cols-[4.5rem_minmax(0,1fr)] items-center gap-2">
+      <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+        {label}
+        {required ? <span className="text-brand"> *</span> : null}
+      </span>
+      <input
+        ref={ref}
+        type="text"
+        inputMode="email"
+        autoComplete="email"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        disabled={disabled}
+        placeholder="name@example.com"
+        className="h-8 min-w-0 rounded-md border border-hairline bg-card px-2 text-xs text-foreground outline-none transition-colors placeholder:text-foreground/45 focus:border-brand/50 disabled:opacity-50"
+      />
+    </label>
+  );
+});
 
 function QuickBar({
   ctx,
@@ -1574,6 +1676,10 @@ function buildMessageFormData(
     bodyText: string;
     sendDelaySeconds: number;
     setStatus?: "WAITING" | "RESOLVED";
+    externalTo?: string;
+    externalCc?: string;
+    externalBcc?: string;
+    externalSubject?: string;
   },
   attachments: ComposerAttachment[],
 ): FormData {
@@ -1582,6 +1688,12 @@ function buildMessageFormData(
   form.set("bodyText", body.bodyText);
   form.set("sendDelaySeconds", String(body.sendDelaySeconds));
   if (body.setStatus) form.set("setStatus", body.setStatus);
+  if (body.externalTo != null) form.set("externalTo", body.externalTo);
+  if (body.externalCc != null) form.set("externalCc", body.externalCc);
+  if (body.externalBcc != null) form.set("externalBcc", body.externalBcc);
+  if (body.externalSubject != null) {
+    form.set("externalSubject", body.externalSubject);
+  }
   for (const attachment of attachments) {
     form.append("attachments", attachment.file, attachment.fileName);
   }

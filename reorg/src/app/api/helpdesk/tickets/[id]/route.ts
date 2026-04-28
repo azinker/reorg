@@ -11,7 +11,6 @@ import {
   envelopeStubBody,
   extractEnvelopePreviewImages,
 } from "@/lib/helpdesk/html-clean";
-import { resolveBuyerFromSaleOrder } from "@/lib/helpdesk/buyer-resolve";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -104,12 +103,6 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
   if (!ticket) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
-
-  const saleOrderBuyer =
-    !ticket.buyerEmail && ticket.ebayOrderNumber
-      ? await resolveBuyerFromSaleOrder(ticket.channel, ticket.ebayOrderNumber)
-      : null;
-  const buyerEmail = ticket.buyerEmail ?? saleOrderBuyer?.email ?? null;
 
   // ── Digest envelope dedupe + image lift.
   //
@@ -602,7 +595,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       threadKey: ticket.threadKey,
       buyerUserId: ticket.buyerUserId,
       buyerName: ticket.buyerName,
-      buyerEmail,
+      buyerEmail: ticket.buyerEmail,
       ebayItemId: ticket.ebayItemId,
       ebayItemTitle: ticket.ebayItemTitle,
       ebayOrderNumber: ticket.ebayOrderNumber,

@@ -32,6 +32,10 @@ import {
   validateEbayImageAttachment,
   type QueuedHelpdeskAttachment,
 } from "@/lib/helpdesk/outbound-attachments";
+import {
+  normalizeExternalEmailDraft,
+  type ExternalEmailDraft,
+} from "@/lib/helpdesk/external-email-fields";
 import { isR2Configured, putR2Object } from "@/lib/r2";
 
 export const runtime = "nodejs";
@@ -42,6 +46,10 @@ const bodySchema = z.object({
   bodyText: z.string().trim().min(1).max(10_000),
   sendDelaySeconds: z.coerce.number().int().min(0).max(60).default(5),
   setStatus: z.enum(["WAITING", "RESOLVED"]).optional(),
+  externalTo: z.string().max(2_000).optional(),
+  externalCc: z.string().max(2_000).optional(),
+  externalBcc: z.string().max(2_000).optional(),
+  externalSubject: z.string().max(300).optional(),
 });
 
 interface RouteParams {
@@ -65,6 +73,10 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
           bodyText: form.get("bodyText"),
           sendDelaySeconds: form.get("sendDelaySeconds"),
           setStatus: form.get("setStatus") || undefined,
+          externalTo: form.get("externalTo") ?? undefined,
+          externalCc: form.get("externalCc") ?? undefined,
+          externalBcc: form.get("externalBcc") ?? undefined,
+          externalSubject: form.get("externalSubject") ?? undefined,
         };
       }).catch(() => null)
     : await request.json().catch(() => null);
@@ -79,6 +91,20 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
   const ticket = await db.helpdeskTicket.findUnique({ where: { id } });
   if (!ticket) {
     return NextResponse.json({ error: "Ticket not found" }, { status: 404 });
+  }
+
+  let externalEmailDraft: ExternalEmailDraft | null = null;
+  if (parsed.data.composerMode === "EXTERNAL") {
+    const normalized = normalizeExternalEmailDraft({
+      to: parsed.data.externalTo,
+      cc: parsed.data.externalCc,
+      bcc: parsed.data.externalBcc,
+      subject: parsed.data.externalSubject,
+    });
+    if (!normalized.ok) {
+      return NextResponse.json({ error: normalized.error }, { status: 400 });
+    }
+    externalEmailDraft = normalized.draft;
   }
 
   const flags = await helpdeskFlagsSnapshotAsync();
@@ -214,6 +240,16 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         ? "external_email_disabled"
         : null;
 
+  const metadata = {
+    previousTicketStatus: ticket.status,
+    previousResolvedAt: ticket.resolvedAt?.toISOString() ?? null,
+    previousResolvedById: ticket.resolvedById,
+    previousIsArchived: ticket.isArchived,
+    previousArchivedAt: ticket.archivedAt?.toISOString() ?? null,
+    attachments: queuedAttachments,
+    ...(externalEmailDraft ? { externalEmail: externalEmailDraft } : {}),
+  };
+
   const job = await db.helpdeskOutboundJob.create({
     data: {
       ticketId: id,
@@ -223,14 +259,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       scheduledAt,
       setStatus,
       status: HelpdeskOutboundStatus.PENDING,
-      metadata: {
-        previousTicketStatus: ticket.status,
-        previousResolvedAt: ticket.resolvedAt?.toISOString() ?? null,
-        previousResolvedById: ticket.resolvedById,
-        previousIsArchived: ticket.isArchived,
-        previousArchivedAt: ticket.archivedAt?.toISOString() ?? null,
-        attachments: queuedAttachments,
-      },
+      metadata,
     },
   });
 
@@ -259,6 +288,9 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         optimisticStatus: setStatus,
         willBlockReason,
         attachmentCount: queuedAttachments.length,
+        externalToCount: externalEmailDraft?.to.length ?? 0,
+        externalCcCount: externalEmailDraft?.cc.length ?? 0,
+        externalBccCount: externalEmailDraft?.bcc.length ?? 0,
       },
     },
   });
@@ -283,9 +315,9 @@ async function queueAttachmentsOrResponse(args: {
   files: File[];
   attachmentsEnabled: boolean;
 }): Promise<QueuedHelpdeskAttachment[] | Response> {
-  if (args.composerMode !== "REPLY") {
+  if (args.composerMode === "NOTE") {
     return NextResponse.json(
-      { error: "Attachments are only available for eBay replies." },
+      { error: "Attachments are only available for outbound messages." },
       { status: 400 },
     );
   }
@@ -303,7 +335,7 @@ async function queueAttachmentsOrResponse(args: {
   }
   if (args.files.length > MAX_EBAY_IMAGE_ATTACHMENTS) {
     return NextResponse.json(
-      { error: `eBay allows up to ${MAX_EBAY_IMAGE_ATTACHMENTS} images per reply.` },
+      { error: `You can attach up to ${MAX_EBAY_IMAGE_ATTACHMENTS} images.` },
       { status: 400 },
     );
   }
