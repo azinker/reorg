@@ -360,7 +360,7 @@ export function Composer({
   // Choose default mode the first time we see this ticket
   useEffect(() => {
     if (mode === "REPLY" && !canReply(ticket)) {
-      setMode(canEmail(ticket, flags?.enableResendExternal ?? false) ? "EXTERNAL" : "NOTE");
+      setMode(canSelectEmail(flags?.enableResendExternal ?? false) ? "EXTERNAL" : "NOTE");
     }
   }, [ticket.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -427,10 +427,15 @@ export function Composer({
   // "Send" will pull the ticket back into Waiting; nothing is blocked.
   const attachmentFlagEnabled = Boolean(flags?.enableAttachments);
   const canAttachImages = mode === "REPLY" && attachmentFlagEnabled;
+  const externalEmailEnabled = Boolean(flags?.enableResendExternal);
+  const externalEmailHasRecipient = Boolean(ticket.buyerEmail);
+  const currentModeCanSend =
+    mode !== "EXTERNAL" || (externalEmailEnabled && externalEmailHasRecipient);
   const canSubmit =
     !submitting &&
     !pending &&
     body.trim().length > 0 &&
+    currentModeCanSend &&
     (attachments.length === 0 || canAttachImages);
 
   const modeMeta = useMemo(() => {
@@ -444,16 +449,13 @@ export function Composer({
       };
     }
     if (mode === "EXTERNAL") {
-      const eligible = canEmail(ticket, flags?.enableResendExternal ?? false);
       return {
         label: "External email (Resend)",
         icon: <Mail className="h-3.5 w-3.5" />,
-        disabled: !eligible,
-        disabledReason: eligible
+        disabled: !externalEmailEnabled,
+        disabledReason: externalEmailEnabled
           ? null
-          : !ticket.buyerEmail
-            ? "No buyer email on this ticket."
-            : "Resend external sending is disabled.",
+          : "Resend external sending is disabled.",
       };
     }
     return {
@@ -462,7 +464,12 @@ export function Composer({
       disabled: false,
       disabledReason: null,
     };
-  }, [mode, ticket, flags?.enableResendExternal]);
+  }, [mode, ticket, externalEmailEnabled]);
+
+  const modeWarning =
+    mode === "EXTERNAL" && externalEmailEnabled && !externalEmailHasRecipient
+      ? "No buyer email is available on this ticket yet, so External email cannot send from here."
+      : null;
 
   const recoverableOutbound = useMemo(() => {
     const jobs = ticket.pendingOutboundJobs ?? [];
@@ -789,7 +796,7 @@ export function Composer({
           </ModeTab>
           <ModeTab
             active={mode === "EXTERNAL"}
-            disabled={!canEmail(ticket, flags?.enableResendExternal ?? false)}
+            disabled={!canSelectEmail(flags?.enableResendExternal ?? false)}
             onClick={() => setMode("EXTERNAL")}
             icon={<Mail className="h-3 w-3" />}
           >
@@ -874,6 +881,12 @@ export function Composer({
       {modeMeta.disabled && modeMeta.disabledReason && (
         <div className="bg-surface px-4 py-1.5 text-[11px] text-foreground/65">
           {modeMeta.disabledReason}
+        </div>
+      )}
+
+      {modeWarning && (
+        <div className="bg-amber-500/10 px-4 py-1.5 text-[11px] text-amber-700 dark:text-amber-300">
+          {modeWarning}
         </div>
       )}
 
@@ -1632,12 +1645,8 @@ function canReply(ticket: HelpdeskTicketDetail): boolean {
   return ebayChannel && Boolean(ticket.buyerUserId);
 }
 
-function canEmail(
-  ticket: HelpdeskTicketDetail,
-  enableResendExternal: boolean,
-): boolean {
-  if (!enableResendExternal) return false;
-  return Boolean(ticket.buyerEmail);
+function canSelectEmail(enableResendExternal: boolean): boolean {
+  return enableResendExternal;
 }
 
 function ModeTab({

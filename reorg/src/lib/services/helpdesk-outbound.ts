@@ -52,6 +52,7 @@ import {
   helpdeskReplyDomainFromEnv,
   helpdeskReplySecretFromEnv,
 } from "@/lib/helpdesk/external-email-routing";
+import { resolveBuyerFromSaleOrder } from "@/lib/helpdesk/buyer-resolve";
 import { getR2ObjectBytes } from "@/lib/r2";
 
 const MAX_BATCH = 25;
@@ -615,7 +616,12 @@ async function sendExternalEmail(
     return "blocked";
   }
 
-  if (!job.ticket.buyerEmail) {
+  const fallbackBuyer =
+    !job.ticket.buyerEmail && job.ticket.ebayOrderNumber
+      ? await resolveBuyerFromSaleOrder(job.ticket.channel, job.ticket.ebayOrderNumber)
+      : null;
+  const buyerEmail = job.ticket.buyerEmail ?? fallbackBuyer?.email ?? null;
+  if (!buyerEmail) {
     throw new Error("Ticket missing buyer email for external send");
   }
 
@@ -641,7 +647,7 @@ async function sendExternalEmail(
   });
   const sendRes = await resend.emails.send({
     from: fromAddress,
-    to: [job.ticket.buyerEmail],
+    to: [buyerEmail],
     subject,
     text: job.bodyText,
     replyTo,
@@ -684,7 +690,7 @@ async function sendExternalEmail(
         rawData: {
           transport: "resend",
           id: externalId,
-          to: job.ticket.buyerEmail,
+          to: buyerEmail,
           from: fromAddress,
           replyTo,
           replyDomain,
@@ -696,6 +702,9 @@ async function sendExternalEmail(
     const ticketUpdate: Record<string, unknown> = {
       lastAgentMessageAt: sentAt,
     };
+    if (!job.ticket.buyerEmail) {
+      ticketUpdate.buyerEmail = buyerEmail;
+    }
     if (!job.ticket.firstResponseAt) ticketUpdate.firstResponseAt = sentAt;
     if (job.setStatus) {
       ticketUpdate.status = job.setStatus;
