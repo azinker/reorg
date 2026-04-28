@@ -47,6 +47,11 @@ import {
   type EbayMessageMediaInput,
   type QueuedHelpdeskAttachment,
 } from "@/lib/helpdesk/outbound-attachments";
+import {
+  buildHelpdeskReplyToHeader,
+  helpdeskReplyDomainFromEnv,
+  helpdeskReplySecretFromEnv,
+} from "@/lib/helpdesk/external-email-routing";
 import { getR2ObjectBytes } from "@/lib/r2";
 
 const MAX_BATCH = 25;
@@ -616,19 +621,34 @@ async function sendExternalEmail(
 
   const apiKey = process.env.HELPDESK_RESEND_API_KEY ?? process.env.RESEND_API_KEY;
   const fromAddress = process.env.HELPDESK_RESEND_FROM ?? process.env.RESEND_FROM;
+  const replyDomain = helpdeskReplyDomainFromEnv();
+  const replySecret = helpdeskReplySecretFromEnv();
   if (!apiKey) throw new Error("HELPDESK_RESEND_API_KEY/RESEND_API_KEY missing");
   if (!fromAddress) throw new Error("HELPDESK_RESEND_FROM/RESEND_FROM missing");
+  if (!replyDomain) throw new Error("HELPDESK_RESEND_REPLY_DOMAIN missing");
+  if (!replySecret) throw new Error("HELPDESK_EMAIL_REPLY_SECRET/AUTH_SECRET missing");
 
   // Lazy import to keep cold start small.
   const { Resend } = await import("resend");
   const resend = new Resend(apiKey);
   const subject =
     job.ticket.subject ?? `Regarding your order ${job.ticket.ebayOrderNumber ?? ""}`.trim();
+  const replyTo = buildHelpdeskReplyToHeader({
+    ticketId: job.ticketId,
+    domain: replyDomain,
+    secret: replySecret,
+    displayName: "Sales",
+  });
   const sendRes = await resend.emails.send({
     from: fromAddress,
     to: [job.ticket.buyerEmail],
     subject,
     text: job.bodyText,
+    replyTo,
+    headers: {
+      "X-reorg-helpdesk-ticket": job.ticketId,
+      "X-reorg-helpdesk-outbound-job": job.id,
+    },
   });
   if (sendRes.error) {
     await db.helpdeskOutboundJob.update({
@@ -658,9 +678,18 @@ async function sendExternalEmail(
         externalId: externalId ?? `outbound:${job.id}`,
         authorUserId: job.authorUserId,
         fromName: fromAddress,
+        fromIdentifier: replyTo,
         bodyText: job.bodyText,
         sentAt,
-        rawData: { transport: "resend", id: externalId },
+        rawData: {
+          transport: "resend",
+          id: externalId,
+          to: job.ticket.buyerEmail,
+          from: fromAddress,
+          replyTo,
+          replyDomain,
+          outboundJobId: job.id,
+        },
       },
     });
 
@@ -696,6 +725,7 @@ async function sendExternalEmail(
   await audit(job, "HELPDESK_OUTBOUND_SENT", {
     transport: "resend",
     externalId,
+    replyTo,
   });
   return "sent";
 }

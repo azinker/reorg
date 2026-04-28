@@ -66,6 +66,7 @@ import {
   Download,
   Languages,
   RefreshCw,
+  Mail,
 } from "lucide-react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import type {
@@ -1567,6 +1568,15 @@ function TimelineItem({
                 Retry
               </button>
             ) : null}
+            {j.composerMode === "EXTERNAL" ? (
+              <span
+                className="inline-flex shrink-0 items-center gap-1 rounded-full border border-sky-500/45 bg-sky-400/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-sky-800 shadow-sm dark:text-sky-200"
+                title="This queued message will send as an external email through Resend."
+              >
+                <Mail className="h-3 w-3" />
+                External email
+              </span>
+            ) : null}
             <span
               className={cn(
                 "truncate text-[13px] font-semibold",
@@ -1630,6 +1640,7 @@ function TimelineItem({
   const isInbound = m.direction === "INBOUND";
   const isAR = m.source === "AUTO_RESPONDER";
   const isEbayUi = m.source === "EBAY_UI";
+  const isExternalEmail = m.source === "EXTERNAL_EMAIL";
 
   // eBay system notifications (Return approved, Case closed, Refund
   // issued, etc.) arrive as INBOUND rows whose sender is literally
@@ -1813,6 +1824,19 @@ function TimelineItem({
                 <path d="M12 2 1 6v6c0 5.5 3.8 10.7 11 12 7.2-1.3 11-6.5 11-12V6l-11-4z" />
               </svg>
               Sent directly on eBay
+            </span>
+          )}
+          {isExternalEmail && (
+            <span
+              className="inline-flex shrink-0 items-center gap-1 rounded-full border border-sky-500/45 bg-sky-400/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-sky-800 shadow-sm dark:text-sky-200"
+              title={
+                isInbound
+                  ? "This buyer reply arrived through the Help Desk external email inbox."
+                  : "This reply was sent through the Help Desk external email channel."
+              }
+            >
+              <Mail className="h-3 w-3" />
+              External email
             </span>
           )}
           {isInbound && (

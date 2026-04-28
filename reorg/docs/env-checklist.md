@@ -19,7 +19,11 @@ Use this reference when configuring reorG. Copy `.env.example` to `.env` and fil
 | `RESEND_API_KEY` | API key for sending emails (login links, alerts) | [Resend.com](https://resend.com) dashboard | Yes (for magic links) | `re_xxxxxxxxxxxxx` |
 | `EMAIL_FROM` | Sender address for reorG emails | Your domain / Resend verified address | Yes (if using email) | `reorG <noreply@theperfectpart.net>` |
 | `HELPDESK_RESEND_API_KEY` | Optional dedicated Resend API key for Help Desk External emails. Falls back to `RESEND_API_KEY` if blank. | Resend dashboard -> API Keys | Yes (for Help Desk External email) | `re_xxxxxxxxxxxxx` |
+| `HELPDESK_RESEND_INBOUND_API_KEY` | Optional dedicated Resend API key for the Help Desk inbound reply account. Use this when replies arrive in a separate Resend account. | Resend dashboard -> API Keys in the inbound account | Yes (if inbound uses a separate account) | `re_xxxxxxxxxxxxx` |
 | `HELPDESK_RESEND_FROM` | Sender address for Help Desk External emails | A verified domain in Resend | Yes (for Help Desk External email) | `Sales@theperfectpart.net` |
+| `HELPDESK_RESEND_REPLY_DOMAIN` | Inbound subdomain used for ticket-specific Help Desk Reply-To addresses | Resend Inbound domain setup | Yes (for Help Desk reply routing) | `reply.theperfectpart.net` |
+| `HELPDESK_RESEND_WEBHOOK_SECRET` | Resend webhook signing secret for inbound Help Desk replies | Resend webhook details page | Yes (for Help Desk reply routing) | `whsec_xxxxxxxxxxxxx` |
+| `HELPDESK_EMAIL_REPLY_SECRET` | Optional HMAC secret for signed ticket Reply-To addresses. Falls back to `AUTH_SECRET` if blank. | You generate it | Recommended | Long random string |
 | **eBay – TPP (The Perfect Part)** |
 | `EBAY_TPP_APP_ID` | eBay app ID for TPP account | [eBay Developer Portal](https://developer.ebay.com) | Yes (if using TPP) | Alphanumeric string |
 | `EBAY_TPP_CERT_ID` | eBay certificate ID for TPP | eBay Developer Portal | Yes (if using TPP) | Alphanumeric string |
