@@ -60,6 +60,10 @@ import {
   type ResendLookupErrorLike,
   type ResendProviderAuditSnapshot,
 } from "@/lib/helpdesk/resend-audit";
+import {
+  formatHelpdeskFromAddress,
+  renderExternalEmailHtml,
+} from "@/lib/helpdesk/external-email-render";
 import { getR2ObjectBytes } from "@/lib/r2";
 
 const MAX_BATCH = 25;
@@ -640,6 +644,7 @@ async function sendExternalEmail(
   // Lazy import to keep cold start small.
   const { Resend } = await import("resend");
   const resend = new Resend(apiKey);
+  const formattedFrom = formatHelpdeskFromAddress(fromAddress);
   const subject =
     externalEmail.subject ??
     job.ticket.subject ??
@@ -672,18 +677,26 @@ async function sendExternalEmail(
       ? await buildResendAttachments(queuedAttachments)
       : undefined;
   const sendRes = await resend.emails.send({
-    from: fromAddress,
+    from: formattedFrom,
     to: externalEmail.to,
     cc: externalEmail.cc.length > 0 ? externalEmail.cc : undefined,
     bcc: externalEmail.bcc.length > 0 ? externalEmail.bcc : undefined,
     subject,
     text: job.bodyText,
+    html: renderExternalEmailHtml(job.bodyText),
     replyTo,
     attachments: resendAttachments,
     headers: {
       "X-reorg-helpdesk-ticket": job.ticketId,
       "X-reorg-helpdesk-outbound-job": job.id,
+      "X-Entity-Ref-ID": `reorg-helpdesk-${job.id}`,
+      "Auto-Submitted": "no",
+      "X-Auto-Response-Suppress": "All",
     },
+    tags: [
+      { name: "channel", value: "helpdesk_external" },
+      { name: "ticket", value: job.ticketId.slice(0, 64) },
+    ],
   });
   if (sendRes.error) {
     await db.helpdeskOutboundJob.update({
@@ -731,7 +744,7 @@ async function sendExternalEmail(
         source: HelpdeskMessageSource.EXTERNAL_EMAIL,
         externalId: externalId ?? `outbound:${job.id}`,
         authorUserId: job.authorUserId,
-        fromName: fromAddress,
+        fromName: formattedFrom,
         fromIdentifier: replyTo,
         bodyText: job.bodyText,
         sentAt,
@@ -743,7 +756,8 @@ async function sendExternalEmail(
           to: externalEmail.to,
           cc: externalEmail.cc,
           bcc: externalEmail.bcc,
-          from: fromAddress,
+          from: formattedFrom,
+          fromAddress,
           replyTo,
           replyDomain,
           outboundJobId: job.id,

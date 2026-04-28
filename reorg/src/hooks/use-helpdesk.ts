@@ -147,6 +147,13 @@ export interface HelpdeskMessageDetail {
   bodyText: string;
   isHtml: boolean;
   rawMedia: unknown;
+  externalEmail: {
+    from: string | null;
+    to: string[];
+    cc: string[];
+    bcc: string[];
+    replyTo: string | null;
+  } | null;
   sentAt: string;
   author: HelpdeskUserBadge | null;
 }

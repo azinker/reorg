@@ -54,6 +54,72 @@ function summarizeBody(
   return text;
 }
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function stringOrNull(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function stringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((entry): entry is string => typeof entry === "string")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
+function formatEmailListPreview(values: string[]): string {
+  if (values.length === 0) return "";
+  if (values.length === 1) return values[0];
+  return `${values[0]} +${values.length - 1}`;
+}
+
+function summarizeMessagePreview(message: {
+  direction: string;
+  source: string;
+  bodyText: string | null;
+  isHtml: boolean;
+  fromName: string | null;
+  fromIdentifier: string | null;
+  rawData: Prisma.JsonValue;
+}): string {
+  const body = summarizeBody(message.bodyText, message.isHtml);
+  if (message.source !== "EXTERNAL_EMAIL") return body;
+
+  const raw = asRecord(message.rawData);
+  if (message.direction === "OUTBOUND") {
+    const to = stringArray(raw?.to);
+    const label = formatEmailListPreview(to);
+    return label ? `Sent external email to ${label}: ${body}` : `Sent external email: ${body}`;
+  }
+
+  const from =
+    stringOrNull(raw?.from) ??
+    message.fromIdentifier ??
+    message.fromName ??
+    null;
+  return from ? `External reply from ${from}: ${body}` : `External reply: ${body}`;
+}
+
+function summarizeOutboundJobPreview(job: {
+  composerMode: string;
+  bodyText: string;
+  metadata: Prisma.JsonValue;
+}): string {
+  const body = summarizeBody(job.bodyText, false);
+  if (job.composerMode !== "EXTERNAL") return body;
+
+  const raw = asRecord(job.metadata);
+  const externalEmail = asRecord(raw?.externalEmail);
+  const to = stringArray(externalEmail?.to);
+  const label = formatEmailListPreview(to);
+  return label ? `Sent external email to ${label}: ${body}` : `Sent external email: ${body}`;
+}
+
 const folderEnum = z.enum([
   "pre_sales",
   "my_tickets",
@@ -190,12 +256,22 @@ export async function GET(request: NextRequest) {
         ],
       },
       orderBy: { sentAt: "desc" },
-      select: { ticketId: true, bodyText: true, isHtml: true, sentAt: true },
+      select: {
+        ticketId: true,
+        direction: true,
+        source: true,
+        bodyText: true,
+        isHtml: true,
+        fromName: true,
+        fromIdentifier: true,
+        rawData: true,
+        sentAt: true,
+      },
     });
     for (const m of recent) {
       setLatestPreview(
         m.ticketId,
-        summarizeBody(m.bodyText, m.isHtml),
+        summarizeMessagePreview(m),
         m.sentAt,
       );
     }
@@ -216,7 +292,9 @@ export async function GET(request: NextRequest) {
       orderBy: [{ sentAt: "desc" }, { createdAt: "desc" }],
       select: {
         ticketId: true,
+        composerMode: true,
         bodyText: true,
+        metadata: true,
         sentAt: true,
         createdAt: true,
       },
@@ -224,7 +302,7 @@ export async function GET(request: NextRequest) {
     for (const job of outbound) {
       setLatestPreview(
         job.ticketId,
-        summarizeBody(job.bodyText, false),
+        summarizeOutboundJobPreview(job),
         job.sentAt ?? job.createdAt,
       );
     }

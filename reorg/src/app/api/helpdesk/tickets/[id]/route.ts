@@ -19,6 +19,40 @@ interface RouteParams {
   params: Promise<{ id: string }>;
 }
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function stringOrNull(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function stringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((entry): entry is string => typeof entry === "string")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
+function externalEmailMetaForMessage(message: {
+  source: string;
+  fromIdentifier: string | null;
+  rawData: Prisma.JsonValue;
+}) {
+  if (message.source !== "EXTERNAL_EMAIL") return null;
+  const raw = asRecord(message.rawData);
+  return {
+    from: stringOrNull(raw?.from) ?? message.fromIdentifier ?? null,
+    to: stringArray(raw?.to),
+    cc: stringArray(raw?.cc),
+    bcc: stringArray(raw?.bcc),
+    replyTo: stringOrNull(raw?.replyTo),
+  };
+}
+
 export async function GET(request: NextRequest, { params }: RouteParams) {
   const session = await auth();
   if (!session?.user?.id) {
@@ -631,7 +665,10 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       })),
       createdAt: ticket.createdAt,
       updatedAt: ticket.updatedAt,
-      messages: finalMessages,
+      messages: finalMessages.map((message) => ({
+        ...message,
+        externalEmail: externalEmailMetaForMessage(message),
+      })),
       notes: ticket.notes,
       pendingOutboundJobs: ticket.outboundJobs.map((job) => ({
         id: job.id,

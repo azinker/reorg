@@ -1644,6 +1644,16 @@ function TimelineItem({
   const isAR = m.source === "AUTO_RESPONDER";
   const isEbayUi = m.source === "EBAY_UI";
   const isExternalEmail = m.source === "EXTERNAL_EMAIL";
+  const externalEmailLine =
+    isExternalEmail && m.externalEmail
+      ? isInbound
+        ? formatExternalEmailLine("From", [m.externalEmail.from].filter(isString))
+        : formatExternalEmailLine("To", m.externalEmail.to)
+      : null;
+  const externalEmailTitle =
+    isExternalEmail && m.externalEmail
+      ? externalEmailTitleFor(m.externalEmail, isInbound)
+      : undefined;
 
   // eBay system notifications (Return approved, Case closed, Refund
   // issued, etc.) arrive as INBOUND rows whose sender is literally
@@ -1831,7 +1841,7 @@ function TimelineItem({
           )}
           {isExternalEmail && (
             <span
-              className="inline-flex shrink-0 items-center gap-1 rounded-full border border-sky-500/45 bg-sky-400/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-sky-800 shadow-sm dark:text-sky-200"
+              className="inline-flex shrink-0 items-center gap-1 rounded-full border border-orange-500/45 bg-orange-400/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-orange-800 shadow-sm dark:text-orange-200"
               title={
                 isInbound
                   ? "This buyer reply arrived through the Help Desk external email inbox."
@@ -1839,9 +1849,17 @@ function TimelineItem({
               }
             >
               <Mail className="h-3 w-3" />
-              External email
+              {isInbound ? "Replied external email" : "Sent external email"}
             </span>
           )}
+          {externalEmailLine ? (
+            <span
+              className="min-w-0 max-w-full truncate text-[11px] font-medium text-orange-700 dark:text-orange-200"
+              title={externalEmailTitle}
+            >
+              {externalEmailLine}
+            </span>
+          ) : null}
           {isInbound && (
             <span
               className="text-[11px] tabular-nums text-muted-foreground"
@@ -1912,6 +1930,32 @@ function TimelineItem({
       </div>
     </div>
   );
+}
+
+function isString(value: string | null | undefined): value is string {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+function formatExternalEmailLine(label: "To" | "From", values: string[]): string | null {
+  const clean = values.map((value) => value.trim()).filter(Boolean);
+  if (clean.length === 0) return null;
+  const first = clean[0];
+  return clean.length === 1
+    ? `${label} ${first}`
+    : `${label} ${first} +${clean.length - 1}`;
+}
+
+function externalEmailTitleFor(
+  email: NonNullable<HelpdeskTicketDetail["messages"][number]["externalEmail"]>,
+  isInbound: boolean,
+): string {
+  const rows: string[] = [];
+  if (email.from) rows.push(`From: ${email.from}`);
+  if (email.to.length > 0) rows.push(`To: ${email.to.join(", ")}`);
+  if (email.cc.length > 0) rows.push(`Cc: ${email.cc.join(", ")}`);
+  if (!isInbound && email.bcc.length > 0) rows.push(`Bcc: ${email.bcc.join(", ")}`);
+  if (email.replyTo) rows.push(`Reply-To: ${email.replyTo}`);
+  return rows.join("\n");
 }
 
 // Suppress unused import warning for the rotation icon — we may use it
