@@ -92,25 +92,31 @@ export default function HelpdeskGlobalSettingsPage() {
   const [resendExternalDb, setResendExternalDb] = useState<boolean | null>(null);
   const [resendExternalToggling, setResendExternalToggling] = useState(false);
 
+  const [attachmentsDb, setAttachmentsDb] = useState<boolean | null>(null);
+  const [attachmentsToggling, setAttachmentsToggling] = useState(false);
+
   // ── Initial load: who am I + current sync status ──────────────────────────
   useEffect(() => {
     let cancelled = false;
     void (async () => {
       try {
-        const [meRes, syncRes, smRes, rsRes, esRes, reRes] = await Promise.all([
+        const [meRes, syncRes, smRes, rsRes, esRes, reRes, atRes] = await Promise.all([
           fetch("/api/users/me", { cache: "no-store" }),
           fetch("/api/helpdesk/sync-status", { cache: "no-store" }),
           fetch("/api/settings?key=helpdesk_safe_mode", { cache: "no-store" }),
           fetch("/api/settings?key=helpdesk_read_sync", { cache: "no-store" }),
           fetch("/api/settings?key=helpdesk_ebay_send", { cache: "no-store" }),
           fetch("/api/settings?key=helpdesk_resend_external", { cache: "no-store" }),
+          fetch("/api/settings?key=helpdesk_attachments", { cache: "no-store" }),
         ]);
         if (!meRes.ok) throw new Error(`me ${meRes.status}`);
         const meJson = (await meRes.json()) as { data: MeProfile };
         if (cancelled) return;
         setMe(meJson.data);
+        let attachmentDefault = false;
         if (syncRes.ok) {
           const sJson = (await syncRes.json()) as { data: HelpdeskSyncStatus };
+          attachmentDefault = sJson.data.flags.enableAttachments;
           if (!cancelled) setSync(sJson.data);
         }
         if (smRes.ok) {
@@ -128,6 +134,10 @@ export default function HelpdeskGlobalSettingsPage() {
         if (reRes.ok) {
           const reJson = (await reRes.json()) as { data: boolean | null };
           if (!cancelled) setResendExternalDb(reJson.data ?? false);
+        }
+        if (atRes.ok) {
+          const atJson = (await atRes.json()) as { data: boolean | null };
+          if (!cancelled) setAttachmentsDb(atJson.data ?? attachmentDefault);
         }
       } catch (e) {
         if (!cancelled) {
@@ -233,6 +243,26 @@ export default function HelpdeskGlobalSettingsPage() {
       // best-effort
     } finally {
       setResendExternalToggling(false);
+    }
+  }
+
+  async function onToggleAttachments() {
+    setAttachmentsToggling(true);
+    try {
+      const newVal = !attachmentsDb;
+      const res = await fetch("/api/settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ key: "helpdesk_attachments", value: newVal }),
+      });
+      if (res.ok) {
+        setAttachmentsDb(newVal);
+        await refreshSyncStatus();
+      }
+    } catch {
+      // best-effort
+    } finally {
+      setAttachmentsToggling(false);
     }
   }
 
@@ -471,7 +501,7 @@ export default function HelpdeskGlobalSettingsPage() {
         </div>
 
         {/* eBay Sends toggle */}
-        <div className="mb-4 grid gap-4 sm:grid-cols-2">
+        <div className="mb-4 grid gap-4 sm:grid-cols-3">
           <div className="rounded-lg border border-hairline bg-surface p-4">
             <div className="flex items-center justify-between gap-4">
               <div className="min-w-0">
@@ -534,6 +564,38 @@ export default function HelpdeskGlobalSettingsPage() {
               </button>
             </div>
           </div>
+
+          {/* Attachments toggle */}
+          <div className="rounded-lg border border-hairline bg-surface p-4">
+            <div className="flex items-center justify-between gap-4">
+              <div className="min-w-0">
+                <span className="text-sm font-semibold text-foreground">
+                  Image attachments
+                </span>
+                <p className="mt-0.5 text-xs text-muted-foreground">
+                  Allow eBay-supported images on buyer replies.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={onToggleAttachments}
+                disabled={attachmentsToggling}
+                className={
+                  "relative inline-flex h-6 w-11 shrink-0 items-center rounded-full border-2 border-transparent transition-colors cursor-pointer disabled:opacity-50 " +
+                  ((attachmentsDb ?? false)
+                    ? "bg-brand"
+                    : "bg-zinc-300 dark:bg-zinc-600")
+                }
+              >
+                <span
+                  className={
+                    "inline-block h-4 w-4 rounded-full bg-white shadow transition-transform " +
+                    ((attachmentsDb ?? false) ? "translate-x-5" : "translate-x-0.5")
+                  }
+                />
+              </button>
+            </div>
+          </div>
         </div>
 
         {syncLoading ? (
@@ -577,8 +639,8 @@ export default function HelpdeskGlobalSettingsPage() {
           </div>
         ) : null}
         <p className="mt-4 text-[11px] text-muted-foreground">
-          Outbound Attachments is set via environment variable. All other flags
-          can be toggled above. Safe Mode and Read Sync are also visible under{" "}
+          These controls override the safe env defaults for Help Desk. Safe Mode
+          and Read Sync are also visible under{" "}
           <Link href="/settings" className="text-brand hover:underline">
             Settings
           </Link>

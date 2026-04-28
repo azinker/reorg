@@ -157,19 +157,29 @@ export async function helpdeskFlagsSnapshotAsync(): Promise<HelpdeskFlagsSnapsho
   let dbReadSync = false;
   let dbEbaySend: boolean | null = null;
   let dbResendExternal: boolean | null = null;
+  let dbAttachments: boolean | null = null;
   try {
-    const [lockRow, safeModeRow, readSyncRow, ebaySendRow, resendRow] = await Promise.all([
+    const [
+      lockRow,
+      safeModeRow,
+      readSyncRow,
+      ebaySendRow,
+      resendRow,
+      attachmentsRow,
+    ] = await Promise.all([
       db.appSetting.findUnique({ where: { key: "global_write_lock" } }),
       db.appSetting.findUnique({ where: { key: "helpdesk_safe_mode" } }),
       db.appSetting.findUnique({ where: { key: "helpdesk_read_sync" } }),
       db.appSetting.findUnique({ where: { key: "helpdesk_ebay_send" } }),
       db.appSetting.findUnique({ where: { key: "helpdesk_resend_external" } }),
+      db.appSetting.findUnique({ where: { key: "helpdesk_attachments" } }),
     ]);
     globalWriteLock = lockRow?.value === true;
     dbSafeMode = safeModeRow ? safeModeRow.value === true : null;
     dbReadSync = readSyncRow?.value === true;
     dbEbaySend = ebaySendRow ? ebaySendRow.value === true : null;
     dbResendExternal = resendRow ? resendRow.value === true : null;
+    dbAttachments = attachmentsRow ? attachmentsRow.value === true : null;
   } catch {
     globalWriteLock = true;
     dbSafeMode = true;
@@ -185,6 +195,7 @@ export async function helpdeskFlagsSnapshotAsync(): Promise<HelpdeskFlagsSnapsho
     enableEbayReadSync: base.enableEbayReadSync || dbReadSync,
     enableEbaySend: dbEbaySend !== null ? dbEbaySend : base.enableEbaySend,
     enableResendExternal: dbResendExternal !== null ? dbResendExternal : base.enableResendExternal,
+    enableAttachments: dbAttachments !== null ? dbAttachments : base.enableAttachments,
   };
   return applyGlobalWriteLock(merged, globalWriteLock);
 }

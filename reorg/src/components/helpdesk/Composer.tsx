@@ -425,7 +425,8 @@ export function Composer({
   // the ticket on send (per user decision `unarchive_waiting`). We surface
   // an informational banner above the composer so the agent knows clicking
   // "Send" will pull the ticket back into Waiting; nothing is blocked.
-  const canAttachImages = mode === "REPLY" && Boolean(flags?.enableAttachments);
+  const attachmentFlagEnabled = Boolean(flags?.enableAttachments);
+  const canAttachImages = mode === "REPLY" && attachmentFlagEnabled;
   const canSubmit =
     !submitting &&
     !pending &&
@@ -957,7 +958,7 @@ export function Composer({
               disabled={!!pending || modeMeta.disabled}
               onPick={appendBodyText}
             />
-            {canAttachImages && (
+            {mode === "REPLY" && (
               <>
                 <input
                   ref={fileInputRef}
@@ -969,10 +970,27 @@ export function Composer({
                 />
                 <button
                   type="button"
-                  disabled={!!pending || attachments.length >= MAX_EBAY_IMAGE_ATTACHMENTS}
-                  onClick={() => fileInputRef.current?.click()}
-                  title="Attach eBay-supported images"
-                  className="inline-flex h-7 items-center gap-1 rounded-md border border-hairline bg-surface px-2 text-xs text-foreground shadow-sm transition-colors hover:border-brand/35 hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"
+                  disabled={
+                    !!pending ||
+                    attachments.length >= MAX_EBAY_IMAGE_ATTACHMENTS
+                  }
+                  aria-disabled={!attachmentFlagEnabled}
+                  onClick={() => {
+                    if (!attachmentFlagEnabled) {
+                      setError("Image attachments are disabled in Help Desk Global Settings.");
+                      return;
+                    }
+                    fileInputRef.current?.click();
+                  }}
+                  title={
+                    attachmentFlagEnabled
+                      ? "Attach eBay-supported images"
+                      : "Outbound image attachments are disabled in Global Settings."
+                  }
+                  className={cn(
+                    "inline-flex h-7 items-center gap-1 rounded-md border border-hairline bg-surface px-2 text-xs text-foreground shadow-sm transition-colors hover:border-brand/35 hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer",
+                    !attachmentFlagEnabled && "opacity-60",
+                  )}
                 >
                   <Paperclip className="h-3.5 w-3.5" />
                   Image
@@ -1130,6 +1148,7 @@ function QuickBar({
   const [loadingTemplates, setLoadingTemplates] = useState(false);
   const [search, setSearch] = useState("");
   const ref = useRef<HTMLDivElement | null>(null);
+  const templateFetchRef = useRef<AbortController | null>(null);
   const needsTemplates =
     open || items.some((item) => item.kind === "template");
 
@@ -1145,8 +1164,13 @@ function QuickBar({
   }, [open]);
 
   useEffect(() => {
-    if (!needsTemplates || templates.length > 0 || loadingTemplates) return;
+    return () => templateFetchRef.current?.abort();
+  }, []);
+
+  useEffect(() => {
+    if (!needsTemplates || templates.length > 0 || templateFetchRef.current) return;
     const ac = new AbortController();
+    templateFetchRef.current = ac;
     setLoadingTemplates(true);
     fetch("/api/helpdesk/templates", { cache: "no-store", signal: ac.signal })
       .then((r) => {
@@ -1165,10 +1189,10 @@ function QuickBar({
         if (!ac.signal.aborted) setTemplates([]);
       })
       .finally(() => {
+        if (templateFetchRef.current === ac) templateFetchRef.current = null;
         if (!ac.signal.aborted) setLoadingTemplates(false);
       });
-    return () => ac.abort();
-  }, [loadingTemplates, needsTemplates, templates.length]);
+  }, [needsTemplates, templates.length]);
 
   const selectedKeys = new Set(items.map((item) => quickBarKey(item)));
   const selected: QuickBarResolvedItem[] = items
