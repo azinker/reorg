@@ -1396,10 +1396,13 @@ interface TimelineItemProps {
 }
 
 function pendingJobMeta(job: HelpdeskPendingOutboundJob) {
+  const channelLabel = job.composerMode === "EXTERNAL" ? "external email" : "reply";
+  const providerLabel = job.composerMode === "EXTERNAL" ? "Resend" : "eBay";
+
   if (job.status === "FAILED") {
     return {
       label: "Failed",
-      detail: job.willBlockReason ?? "The reply did not send.",
+      detail: job.willBlockReason ?? `The ${channelLabel} did not send.`,
       tone: "red" as const,
     };
   }
@@ -1428,13 +1431,13 @@ function pendingJobMeta(job: HelpdeskPendingOutboundJob) {
   if (job.status === "SENDING") {
     return {
       label: "Sending",
-      detail: "The outbound worker is sending this reply.",
+      detail: `The outbound worker is sending this ${channelLabel}.`,
       tone: "blue" as const,
     };
   }
   return {
     label: "Sending",
-    detail: "Waiting for eBay confirmation from the outbound worker.",
+    detail: `Waiting for ${providerLabel} confirmation from the outbound worker.`,
     tone: "blue" as const,
   };
 }

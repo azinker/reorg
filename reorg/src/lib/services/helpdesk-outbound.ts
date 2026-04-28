@@ -53,6 +53,13 @@ import {
   helpdeskReplySecretFromEnv,
 } from "@/lib/helpdesk/external-email-routing";
 import { readExternalEmailDraftFromMetadata } from "@/lib/helpdesk/external-email-fields";
+import {
+  fingerprintSecretForAudit,
+  summarizeResendLookup,
+  type ResendEmailLookupLike,
+  type ResendLookupErrorLike,
+  type ResendProviderAuditSnapshot,
+} from "@/lib/helpdesk/resend-audit";
 import { getR2ObjectBytes } from "@/lib/r2";
 
 const MAX_BATCH = 25;
@@ -696,6 +703,25 @@ async function sendExternalEmail(
   }
 
   const externalId = sendRes.data?.id ?? null;
+  if (!externalId) {
+    await db.helpdeskOutboundJob.update({
+      where: { id: job.id },
+      data: {
+        status: HelpdeskOutboundStatus.FAILED,
+        lastError: "resend_missing_message_id",
+        attemptCount: { increment: 1 },
+      },
+    });
+    await restoreTicketAfterUnsentJob(job, "resend_missing_message_id");
+    await audit(job, "HELPDESK_OUTBOUND_FAILED", {
+      transport: "resend",
+      error: "Resend accepted the request without returning a message id.",
+    });
+    return "failed";
+  }
+
+  const resendKeyFingerprint = fingerprintSecretForAudit(apiKey);
+  const providerSnapshot = await lookupResendProviderSnapshot(resend, externalId);
   const sentAt = new Date();
   await db.$transaction(async (tx) => {
     await tx.helpdeskMessage.create({
@@ -712,6 +738,8 @@ async function sendExternalEmail(
         rawData: {
           transport: "resend",
           id: externalId,
+          providerLookup: providerSnapshot,
+          resendKeyFingerprint,
           to: externalEmail.to,
           cc: externalEmail.cc,
           bcc: externalEmail.bcc,
@@ -757,12 +785,39 @@ async function sendExternalEmail(
     transport: "resend",
     externalId,
     replyTo,
+    resendKeyFingerprint,
+    providerLookupOk: providerSnapshot.lookupOk,
+    providerLastEvent: providerSnapshot.lastEvent,
+    providerLookupError: providerSnapshot.error,
     toCount: externalEmail.to.length,
     ccCount: externalEmail.cc.length,
     bccCount: externalEmail.bcc.length,
     attachmentCount: queuedAttachments.length,
   });
   return "sent";
+}
+
+type ResendLookupClient = {
+  emails: {
+    get: (id: string) => Promise<{
+      data: ResendEmailLookupLike | null;
+      error: ResendLookupErrorLike | null;
+    }>;
+  };
+};
+
+async function lookupResendProviderSnapshot(
+  resend: ResendLookupClient,
+  externalId: string,
+): Promise<ResendProviderAuditSnapshot> {
+  try {
+    const lookup = await resend.emails.get(externalId);
+    return summarizeResendLookup(lookup.data, lookup.error);
+  } catch (err) {
+    return summarizeResendLookup(null, {
+      message: err instanceof Error ? err.message : String(err),
+    });
+  }
 }
 
 async function buildResendAttachments(
