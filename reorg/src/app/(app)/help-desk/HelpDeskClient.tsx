@@ -311,6 +311,21 @@ export default function HelpDeskClient() {
   useEffect(() => {
     if (selectedTicket) setRetainedTicket(selectedTicket);
   }, [selectedTicket]);
+  const [autoAdvanceReturn, setAutoAdvanceReturn] = useState<{
+    from: HelpdeskTicketSummary;
+    toId: string;
+    toTicket: HelpdeskTicketSummary;
+  } | null>(null);
+  useEffect(() => {
+    if (!autoAdvanceReturn) return;
+    if (
+      selectedTicketId === autoAdvanceReturn.toId ||
+      selectedTicketId === autoAdvanceReturn.from.id
+    ) {
+      return;
+    }
+    setAutoAdvanceReturn(null);
+  }, [autoAdvanceReturn, selectedTicketId]);
 
   const safeMode = useMemo(
     () => syncStatus?.flags.safeMode ?? true,
@@ -378,6 +393,11 @@ export default function HelpDeskClient() {
       tickets.slice(0, startIdx).find(isActionable) ??
       null;
     if (!next) return;
+    setAutoAdvanceReturn({
+      from: selectedTicket,
+      toId: next.id,
+      toTicket: next,
+    });
     selectTicket(next.id);
   }, [selectedTicket, tickets, prefs.autoAdvance, selectTicket]);
 
@@ -399,12 +419,23 @@ export default function HelpDeskClient() {
         : -1;
   const prevNavIndex = selectedIndex >= 0 ? selectedIndex - 1 : navIndex - 1;
   const nextNavIndex = selectedIndex >= 0 ? selectedIndex + 1 : navIndex;
-  const prevTicket =
+  const listPrevTicket =
     prevNavIndex >= 0 ? tickets[prevNavIndex] ?? null : null;
-  const nextTicket =
+  const listNextTicket =
     nextNavIndex >= 0 && nextNavIndex < tickets.length
       ? tickets[nextNavIndex] ?? null
       : null;
+  const autoAdvancePrevTicket =
+    autoAdvanceReturn?.toId === selectedTicketId
+      ? autoAdvanceReturn.from
+      : null;
+  const autoAdvanceNextTicket =
+    autoAdvanceReturn?.from.id === selectedTicketId
+      ? tickets.find((t) => t.id === autoAdvanceReturn.toId) ??
+        autoAdvanceReturn.toTicket
+      : null;
+  const prevTicket = autoAdvancePrevTicket ?? listPrevTicket;
+  const nextTicket = autoAdvanceNextTicket ?? listNextTicket;
   const prevTicketId = prevTicket?.id ?? null;
   const nextTicketId = nextTicket?.id ?? null;
   const goPrev = prevTicketId
