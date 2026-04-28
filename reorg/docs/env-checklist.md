@@ -18,6 +18,8 @@ Use this reference when configuring reorG. Copy `.env.example` to `.env` and fil
 | **Email (Resend)** |
 | `RESEND_API_KEY` | API key for sending emails (login links, alerts) | [Resend.com](https://resend.com) dashboard | Yes (for magic links) | `re_xxxxxxxxxxxxx` |
 | `EMAIL_FROM` | Sender address for reorG emails | Your domain / Resend verified address | Yes (if using email) | `reorG <noreply@theperfectpart.net>` |
+| `HELPDESK_RESEND_API_KEY` | Optional dedicated Resend API key for Help Desk External emails. Falls back to `RESEND_API_KEY` if blank. | Resend dashboard -> API Keys | Yes (for Help Desk External email) | `re_xxxxxxxxxxxxx` |
+| `HELPDESK_RESEND_FROM` | Sender address for Help Desk External emails | A verified domain in Resend | Yes (for Help Desk External email) | `Sales@theperfectpart.net` |
 | **eBay – TPP (The Perfect Part)** |
 | `EBAY_TPP_APP_ID` | eBay app ID for TPP account | [eBay Developer Portal](https://developer.ebay.com) | Yes (if using TPP) | Alphanumeric string |
 | `EBAY_TPP_CERT_ID` | eBay certificate ID for TPP | eBay Developer Portal | Yes (if using TPP) | Alphanumeric string |

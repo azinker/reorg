@@ -614,9 +614,9 @@ async function sendExternalEmail(
     throw new Error("Ticket missing buyer email for external send");
   }
 
-  const apiKey = process.env.RESEND_API_KEY;
+  const apiKey = process.env.HELPDESK_RESEND_API_KEY ?? process.env.RESEND_API_KEY;
   const fromAddress = process.env.HELPDESK_RESEND_FROM ?? process.env.RESEND_FROM;
-  if (!apiKey) throw new Error("RESEND_API_KEY missing");
+  if (!apiKey) throw new Error("HELPDESK_RESEND_API_KEY/RESEND_API_KEY missing");
   if (!fromAddress) throw new Error("HELPDESK_RESEND_FROM/RESEND_FROM missing");
 
   // Lazy import to keep cold start small.
