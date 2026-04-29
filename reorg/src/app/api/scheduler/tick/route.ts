@@ -175,12 +175,25 @@ async function handleSchedulerTick(request: NextRequest, dryRun: boolean) {
       console.error("[scheduler] auto-responder failed:", arErr);
     }
 
+    const dispatchFailures = result.dispatched.filter(
+      (item) => item.status === "dispatch_failed",
+    );
+    const successfulDispatches = result.dispatched.filter(
+      (item) => item.status === "dispatched",
+    );
+    const dispatchError =
+      dispatchFailures.length > 0
+        ? dispatchFailures
+            .map((item) => `${item.platform}: ${item.message}`)
+            .join(" | ")
+        : null;
+
     const status: Parameters<typeof saveSchedulerStatus>[0] = {
       tickedAt: new Date().toISOString(),
-      outcome: "completed",
+      outcome: dispatchFailures.length > 0 ? "failed" : "completed",
       dueCount: result.plan.filter((item) => item.due).length,
-      dispatchedCount: result.dispatched.length,
-      error: null,
+      dispatchedCount: successfulDispatches.length,
+      error: dispatchError,
     };
     await saveSchedulerStatus(status);
     await logSchedulerTick({ ...status, dryRun: false });
@@ -188,7 +201,7 @@ async function handleSchedulerTick(request: NextRequest, dryRun: boolean) {
       data: {
         dryRun: false,
         dueCount: result.plan.filter((item) => item.due).length,
-        dispatchedCount: result.dispatched.length,
+        dispatchedCount: successfulDispatches.length,
         dispatched: result.dispatched,
         inventorySnapshots: snapshotResult,
         autoResponder: autoResponderResult,

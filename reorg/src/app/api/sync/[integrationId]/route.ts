@@ -81,6 +81,19 @@ function getWebhookProofStatus(lastSyncAt: Date | null, receivedAt: Date | null)
     : "before_last_pull";
 }
 
+function isCronAuthorized(request: NextRequest): boolean {
+  const secret = process.env.CRON_SECRET;
+  if (!secret) return false;
+
+  const headerSecret = request.headers.get("x-cron-secret");
+  const authHeader = request.headers.get("authorization");
+  const bearerSecret = authHeader?.startsWith("Bearer ")
+    ? authHeader.slice("Bearer ".length)
+    : null;
+
+  return headerSecret === secret || bearerSecret === secret;
+}
+
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ integrationId: string }> }
@@ -88,6 +101,13 @@ export async function POST(
   const { integrationId } = await params;
 
   try {
+    if (
+      request.headers.get("x-trigger-source") === "scheduler" &&
+      !isCronAuthorized(request)
+    ) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
     const integration = await db.integration.findFirst({
       where: {
         OR: [

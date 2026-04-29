@@ -26,7 +26,17 @@ function resolvePageKeyForPath(pathname: string): PageKey | null {
   return null;
 }
 
-function isPublicPath(pathname: string) {
+function isSchedulerSyncDispatch(req: NextRequest): boolean {
+  return (
+    req.method === "POST" &&
+    req.nextUrl.pathname.startsWith("/api/sync/") &&
+    !req.nextUrl.pathname.endsWith("/execute") &&
+    req.headers.get("x-trigger-source") === "scheduler"
+  );
+}
+
+function isPublicPath(req: NextRequest) {
+  const { pathname } = req.nextUrl;
   return (
     pathname.startsWith("/_next") ||
     pathname.startsWith("/favicon") ||
@@ -35,6 +45,7 @@ function isPublicPath(pathname: string) {
     pathname === "/login" ||
     pathname.startsWith("/api/auth") ||
     pathname.startsWith("/api/scheduler/tick") ||
+    isSchedulerSyncDispatch(req) ||
     pathname.startsWith("/api/sync/") && pathname.endsWith("/execute") ||
     pathname.startsWith("/api/webhooks/") ||
     pathname.startsWith("/api/ebay/callback") ||
@@ -73,7 +84,7 @@ function buildNextResponse(req: NextRequest, extraHeaders?: Record<string, strin
 export default auth(function proxy(req: NextRequest & { auth?: unknown }) {
   const { pathname } = req.nextUrl;
 
-  if (isPublicPath(pathname)) {
+  if (isPublicPath(req)) {
     return buildNextResponse(req);
   }
 

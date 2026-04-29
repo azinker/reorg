@@ -475,6 +475,7 @@ export async function executeScheduledSyncs(now = new Date()) {
   }> = [];
 
   const baseUrl = getInternalBaseUrl();
+  const cronSecret = process.env.CRON_SECRET;
 
   for (const item of dueItems) {
     const integration = await db.integration.findUnique({
@@ -494,6 +495,7 @@ export async function executeScheduledSyncs(now = new Date()) {
         headers: {
           "Content-Type": "application/json",
           "x-trigger-source": "scheduler",
+          ...(cronSecret ? { "x-cron-secret": cronSecret } : {}),
         },
         body: JSON.stringify({ mode }),
         signal: AbortSignal.timeout(15_000),
@@ -517,19 +519,21 @@ export async function executeScheduledSyncs(now = new Date()) {
       console.error(`[sync-scheduler] HTTP dispatch for ${integration.platform} failed`, error);
     }
 
-    const config = getIntegrationConfig(integration);
-    const nextConfig = {
-      ...config,
-      syncState: {
-        ...config.syncState,
-        lastScheduledSyncAt: now.toISOString(),
-      },
-    };
+    if (dispatchStatus === "dispatched") {
+      const config = getIntegrationConfig(integration);
+      const nextConfig = {
+        ...config,
+        syncState: {
+          ...config.syncState,
+          lastScheduledSyncAt: now.toISOString(),
+        },
+      };
 
-    await db.integration.update({
-      where: { id: integration.id },
-      data: { config: nextConfig as unknown as Prisma.InputJsonValue },
-    });
+      await db.integration.update({
+        where: { id: integration.id },
+        data: { config: nextConfig as unknown as Prisma.InputJsonValue },
+      });
+    }
 
     dispatched.push({
       integrationId: integration.id,
