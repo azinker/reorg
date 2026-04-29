@@ -47,27 +47,15 @@ import {
   useHelpdeskPrefs,
   type HelpdeskPrefs,
 } from "@/components/helpdesk/HelpdeskSettingsDialog";
+import {
+  DEFAULT_COLUMNS,
+  KNOWN_COLUMN_KEYS,
+  type HelpdeskColumnKey,
+} from "@/lib/helpdesk/column-keys";
 
 // ─── Column definitions ─────────────────────────────────────────────────────
 
-const KNOWN_COLUMN_KEYS = [
-  "channel",
-  "customer",
-  "type",
-  "location",
-  "latestUpdate",
-  "reason",
-  "owner",
-  "timeLeft",
-  "created",
-  "status",
-  "orderId",
-  "ebayUsername",
-] as const;
-
-export type ColumnKey = (typeof KNOWN_COLUMN_KEYS)[number];
-
-const DEFAULT_COLUMNS: ColumnKey[] = [...KNOWN_COLUMN_KEYS];
+export type ColumnKey = HelpdeskColumnKey;
 
 interface ColumnDef {
   key: ColumnKey;
@@ -498,14 +486,6 @@ export function TicketTable({
           const next = cols.filter((c): c is ColumnKey =>
             KNOWN_COLUMN_KEYS.includes(c as ColumnKey),
           );
-          if (!next.includes("location")) {
-            const typeIndex = next.indexOf("type");
-            next.splice(typeIndex >= 0 ? typeIndex + 1 : next.length, 0, "location");
-          }
-          if (!next.includes("reason")) {
-            const latestIndex = next.indexOf("latestUpdate");
-            next.splice(latestIndex >= 0 ? latestIndex + 1 : next.length, 0, "reason");
-          }
           setColumns(next);
         }
       })
@@ -520,13 +500,15 @@ export function TicketTable({
   const saveColumns = useCallback(async (next: ColumnKey[]) => {
     setColumns(next);
     try {
-      await fetch("/api/helpdesk/column-prefs", {
+      const res = await fetch("/api/helpdesk/column-prefs", {
         method: "PUT",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ layout: "table", columns: next }),
       });
-    } catch {
-      // Local state already updated; surfaced silently.
+      if (!res.ok) throw new Error(`Column preferences ${res.status}`);
+    } catch (err) {
+      console.error("Failed to save Help Desk column preferences", err);
+      alert("Column preferences could not be saved. Please try again.");
     }
   }, []);
 
