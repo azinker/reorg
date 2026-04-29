@@ -9,6 +9,8 @@ export const runtime = "nodejs";
 export const maxDuration = 800;
 export const dynamic = "force-dynamic";
 
+const PLATFORM_VALUES = new Set<string>(Object.values(Platform));
+
 const postSchema = z
   .object({
     mode: z.enum(["full", "incremental"]).optional(),
@@ -34,6 +36,20 @@ async function isAuthorized(request: NextRequest) {
   return Boolean(session?.user?.id);
 }
 
+function buildIntegrationLookupWhere(integrationId: string) {
+  const normalized = integrationId.toUpperCase();
+  if (!PLATFORM_VALUES.has(normalized)) {
+    return { id: integrationId };
+  }
+
+  return {
+    OR: [
+      { id: integrationId },
+      { platform: normalized as Platform },
+    ],
+  };
+}
+
 export async function POST(
   request: NextRequest,
   context: { params: Promise<Record<string, string>> },
@@ -46,12 +62,7 @@ export async function POST(
     }
 
     const integration = await db.integration.findFirst({
-      where: {
-        OR: [
-          { id: integrationId },
-          { platform: integrationId.toUpperCase() as Platform },
-        ],
-      },
+      where: buildIntegrationLookupWhere(integrationId),
     });
 
     if (!integration) {

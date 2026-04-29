@@ -35,6 +35,8 @@ export const runtime = "nodejs";
 export const maxDuration = 800;
 export const dynamic = "force-dynamic";
 
+const PLATFORM_VALUES = new Set<string>(Object.values(Platform));
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
 }
@@ -94,6 +96,20 @@ function isCronAuthorized(request: NextRequest): boolean {
   return headerSecret === secret || bearerSecret === secret;
 }
 
+function buildIntegrationLookupWhere(integrationId: string): Prisma.IntegrationWhereInput {
+  const normalized = integrationId.toUpperCase();
+  if (!PLATFORM_VALUES.has(normalized)) {
+    return { id: integrationId };
+  }
+
+  return {
+    OR: [
+      { id: integrationId },
+      { platform: normalized as Platform },
+    ],
+  };
+}
+
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ integrationId: string }> }
@@ -109,12 +125,7 @@ export async function POST(
     }
 
     const integration = await db.integration.findFirst({
-      where: {
-        OR: [
-          { id: integrationId },
-          { platform: integrationId.toUpperCase() as Platform },
-        ],
-      },
+      where: buildIntegrationLookupWhere(integrationId),
     });
 
     if (!integration) {
@@ -243,12 +254,7 @@ export async function GET(
 
   try {
     const integration = await db.integration.findFirst({
-      where: {
-        OR: [
-          { id: integrationId },
-          { platform: integrationId.toUpperCase() as Platform },
-        ],
-      },
+      where: buildIntegrationLookupWhere(integrationId),
     });
 
     if (!integration) {
@@ -528,12 +534,7 @@ export async function DELETE(
 
   try {
     const integration = await db.integration.findFirst({
-      where: {
-        OR: [
-          { id: integrationId },
-          { platform: integrationId.toUpperCase() as Platform },
-        ],
-      },
+      where: buildIntegrationLookupWhere(integrationId),
     });
 
     if (!integration) {
