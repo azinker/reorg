@@ -146,6 +146,18 @@ function relTime(date: string | null): string {
   return new Date(date).toLocaleDateString();
 }
 
+function ticketHref(ticketId: string): string {
+  return `/help-desk?ticket=${encodeURIComponent(ticketId)}`;
+}
+
+function openTicketInNewTab(ticketId: string): void {
+  window.open(ticketHref(ticketId), "_blank", "noopener,noreferrer");
+}
+
+function isNewTabClick(e: React.MouseEvent): boolean {
+  return e.button === 1 || e.ctrlKey || e.metaKey;
+}
+
 function workReason(t: HelpdeskTicketSummary): string {
   if (t.isSpam || t.status === "SPAM") return "Spam review";
   if (t.isArchived || t.status === "ARCHIVED") return "Archived";
@@ -725,7 +737,19 @@ export function TicketList({
                   )}
                   <button
                     type="button"
-                    onClick={() => onSelect(t.id)}
+                    onClick={(e) => {
+                      if (isNewTabClick(e)) {
+                        e.preventDefault();
+                        openTicketInNewTab(t.id);
+                        return;
+                      }
+                      onSelect(t.id);
+                    }}
+                    onAuxClick={(e) => {
+                      if (e.button !== 1) return;
+                      e.preventDefault();
+                      openTicketInNewTab(t.id);
+                    }}
                     onMouseEnter={() => onPrefetch?.(t.id)}
                     onFocus={() => onPrefetch?.(t.id)}
                     className={cn(

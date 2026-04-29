@@ -441,6 +441,18 @@ interface PresenceUser {
 type PresenceMap = Record<string, PresenceUser[]>;
 type HelpdeskDensity = HelpdeskPrefs["density"];
 
+function ticketHref(ticketId: string): string {
+  return `/help-desk?ticket=${encodeURIComponent(ticketId)}`;
+}
+
+function openTicketInNewTab(ticketId: string): void {
+  window.open(ticketHref(ticketId), "_blank", "noopener,noreferrer");
+}
+
+function isNewTabClick(e: React.MouseEvent): boolean {
+  return e.button === 1 || e.ctrlKey || e.metaKey;
+}
+
 // ─── Component ─────────────────────────────────────────────────────────────
 
 interface TicketTableProps {
@@ -904,10 +916,26 @@ function TicketRow({
   // an agent to see their own green eye on every row they're hovering.
   const otherViewers = presenceUsers.filter((p) => !p.isSelf);
 
+  function openTicket(e: React.MouseEvent) {
+    if (isNewTabClick(e)) {
+      e.preventDefault();
+      openTicketInNewTab(t.id);
+      return;
+    }
+    onSelect();
+  }
+
+  function openTicketFromMiddleClick(e: React.MouseEvent) {
+    if (e.button !== 1) return;
+    e.preventDefault();
+    openTicketInNewTab(t.id);
+  }
+
   return (
     <div
       role="row"
-      onClick={onSelect}
+      onClick={openTicket}
+      onAuxClick={openTicketFromMiddleClick}
       onMouseEnter={onPrefetch}
       onFocus={onPrefetch}
       onContextMenu={(e) => onContextMenu?.(e, t.id)}
