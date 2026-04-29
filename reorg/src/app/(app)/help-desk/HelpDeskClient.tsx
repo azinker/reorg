@@ -371,17 +371,25 @@ export default function HelpDeskClient() {
   }, [selectedTicketId, tickets]);
 
   // Auto-advance: when the selected ticket transitions to RESOLVED (e.g. user
-  // sent a "Send + mark Resolved"), jump to the next visible ticket. We track
-  // the previous status with a ref so the effect only fires on a real change.
-  const prevStatusRef = useRef<string | null>(null);
+  // sent a "Send + mark Resolved"), jump to the next visible ticket. Track the
+  // ticket id with the previous status so manually reopening an already
+  // resolved ticket is treated as navigation, not a fresh resolve transition.
+  const prevSelectedStatusRef = useRef<{
+    id: string | null;
+    status: string | null;
+  }>({ id: null, status: null });
   useEffect(() => {
-    const current = selectedTicket?.status ?? null;
-    const previous = prevStatusRef.current;
-    prevStatusRef.current = current;
+    const current = {
+      id: selectedTicket?.id ?? null,
+      status: selectedTicket?.status ?? null,
+    };
+    const previous = prevSelectedStatusRef.current;
+    prevSelectedStatusRef.current = current;
     if (!prefs.autoAdvance) return;
     if (!selectedTicket) return;
-    if (previous == null || previous === current) return;
-    if (current !== "RESOLVED") return;
+    if (previous.id !== selectedTicket.id) return;
+    if (previous.status == null || previous.status === current.status) return;
+    if (current.status !== "RESOLVED") return;
     const idx = tickets.findIndex((t) => t.id === selectedTicket.id);
     const anchorIdx = idx >= 0 ? idx : lastSelectedListIndexRef.current;
     if (anchorIdx < 0) return;
