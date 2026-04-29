@@ -85,7 +85,7 @@ export async function POST(request: NextRequest) {
       const liveValue = master.upc?.trim() || null;
       const reason =
         item.rejectionReason?.trim() ||
-        "Saved locally (dashboard only — not applied on the marketplace).";
+        "Saved locally (catalog only — not applied on the marketplace).";
 
       try {
         await db.$transaction(async (tx) => {

@@ -51,7 +51,7 @@ export function classifyPushFailure(
       return {
         category: "validation",
         summary: `Invalid UPC format — ${platform} will reject this value even after the rate limit resets.`,
-        recommendedAction: `${formatError} Use "Save Locally" to store it on the dashboard without pushing to ${platform}.`,
+        recommendedAction: `${formatError} Use "Save Locally" to store it in the catalog without pushing to ${platform}.`,
         isFormatInvalid: true,
       };
     }

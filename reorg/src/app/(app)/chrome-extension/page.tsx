@@ -51,8 +51,8 @@ export default function ChromeExtensionPage() {
           Chrome extension
         </h1>
         <p className="mt-2 max-w-3xl text-sm text-muted-foreground">
-          Install the reorG Dashboard Link extension to jump from eBay, Shopify admin, or BigCommerce
-          admin straight to the matching row on the dashboard—using an existing reorG tab when
+          Install the reorG Catalog Link extension to jump from eBay, Shopify admin, or BigCommerce
+          admin straight to the matching row in the catalog using an existing reorG tab when
           possible.
         </p>
       </div>
@@ -170,7 +170,7 @@ export default function ChromeExtensionPage() {
               <div>
                 <p className="font-medium">Pin the extension (optional)</p>
                 <p className="mt-1 text-muted-foreground">
-                  Click the puzzle icon in Chrome’s toolbar and pin &quot;reorG Dashboard Link&quot;
+                  Click the puzzle icon in Chrome’s toolbar and pin &quot;reorG Catalog Link&quot;
                   for quick access while browsing listings.
                 </p>
               </div>
@@ -231,10 +231,10 @@ export default function ChromeExtensionPage() {
               (bottom-right on the listing page), or open the extension popup and click the same label.
             </li>
             <li>
-              If you already have a tab on the <strong className="text-foreground">dashboard</strong>, that
+              If you already have a tab on the <strong className="text-foreground">catalog</strong>, that
               tab is focused and the grid scrolls to the row <strong className="text-foreground">without
-              reloading</strong> the dashboard. If the reorG tab was on another page, it navigates to the
-              dashboard once.
+              reloading</strong> the catalog. If the reorG tab was on another page, it navigates to the
+              catalog once.
             </li>
             <li>Stay logged into reorG in Chrome.</li>
           </ul>
@@ -244,7 +244,7 @@ export default function ChromeExtensionPage() {
           <p>
             Updates: after the developer replaces the extension files, open{" "}
             <code className="font-mono">chrome://extensions</code> and click{" "}
-            <strong className="text-foreground">Reload</strong> on reorG Dashboard Link, or remove
+            <strong className="text-foreground">Reload</strong> on reorG Catalog Link, or remove
             and load unpacked again from a fresh unzip.
           </p>
         </section>

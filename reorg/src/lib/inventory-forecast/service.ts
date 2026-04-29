@@ -264,7 +264,7 @@ export async function runInventoryForecastFromUpload(input: {
       latestCoveredAt: null,
       platformsSynced: [] as Platform[],
       issues: skusUnmatched > 0
-        ? [{ platform: "TPP_EBAY" as Platform, level: "warning" as const, message: `${skusMatched} SKUs matched to dashboard rows. ${skusUnmatched} SKUs from the upload were not found in the dashboard and were ignored.` }]
+        ? [{ platform: "TPP_EBAY" as Platform, level: "warning" as const, message: `${skusMatched} SKUs matched to catalog rows. ${skusUnmatched} SKUs from the upload were not found in the catalog and were ignored.` }]
         : [],
     },
     platformCoverage,

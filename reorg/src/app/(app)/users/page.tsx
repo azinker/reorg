@@ -143,6 +143,12 @@ export default function UsersPage() {
     password: "",
     role: "OPERATOR" as "ADMIN" | "OPERATOR",
   });
+  const [newUserAccessMode, setNewUserAccessMode] = useState<
+    "default" | "restricted"
+  >("default");
+  const [newUserAllowedPages, setNewUserAllowedPages] = useState<Set<string>>(
+    new Set(),
+  );
 
   async function loadUsers() {
     setLoading(true);
@@ -233,10 +239,18 @@ export default function UsersPage() {
     setBanner(null);
 
     try {
+      const body: Record<string, unknown> = { ...newUserForm };
+      if (newUserForm.role === "OPERATOR") {
+        body.pagePermissions =
+          newUserAccessMode === "default"
+            ? null
+            : Array.from(newUserAllowedPages);
+      }
+
       const res = await fetch("/api/users", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(newUserForm),
+        body: JSON.stringify(body),
       });
       const json = await res.json();
       if (!res.ok) {
@@ -249,6 +263,8 @@ export default function UsersPage() {
         password: "",
         role: "OPERATOR",
       });
+      setNewUserAccessMode("default");
+      setNewUserAllowedPages(new Set());
       setBanner({ type: "success", message: "User created successfully." });
       await loadUsers();
     } catch (createError) {
@@ -259,6 +275,15 @@ export default function UsersPage() {
     } finally {
       setCreatingUser(false);
     }
+  }
+
+  function toggleNewUserPage(key: string, on: boolean) {
+    setNewUserAllowedPages((current) => {
+      const next = new Set(current);
+      if (on) next.add(key);
+      else next.delete(key);
+      return next;
+    });
   }
 
   async function impersonate(userId: string) {
@@ -469,6 +494,109 @@ export default function UsersPage() {
                       <option value="OPERATOR">Operator</option>
                     </select>
                   </label>
+                  {newUserForm.role === "OPERATOR" ? (
+                    <div className="space-y-3 rounded-lg border border-border bg-background/50 p-4">
+                      <div className="flex items-start gap-2">
+                        <KeyRound className="mt-0.5 h-4 w-4 shrink-0 text-[#C43E3E]" />
+                        <div>
+                          <h3 className="text-sm font-semibold text-foreground">
+                            Page access
+                          </h3>
+                          <p className="text-xs text-muted-foreground">
+                            Custom-locked pages stay visible in the sidebar with
+                            a lock.
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2 text-xs">
+                        <button
+                          type="button"
+                          onClick={() => setNewUserAccessMode("default")}
+                          className={cn(
+                            "rounded-md border px-2.5 py-2 text-left font-medium transition-colors cursor-pointer",
+                            newUserAccessMode === "default"
+                              ? "border-primary bg-primary/10 text-foreground"
+                              : "border-border bg-background text-muted-foreground hover:bg-muted",
+                          )}
+                        >
+                          Default operator
+                          <span className="mt-0.5 block text-[10px] font-normal text-muted-foreground">
+                            All non-admin pages
+                          </span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setNewUserAccessMode("restricted")}
+                          className={cn(
+                            "rounded-md border px-2.5 py-2 text-left font-medium transition-colors cursor-pointer",
+                            newUserAccessMode === "restricted"
+                              ? "border-primary bg-primary/10 text-foreground"
+                              : "border-border bg-background text-muted-foreground hover:bg-muted",
+                          )}
+                        >
+                          Custom allowlist
+                          <span className="mt-0.5 block text-[10px] font-normal text-muted-foreground">
+                            Pick specific pages
+                          </span>
+                        </button>
+                      </div>
+
+                      {newUserAccessMode === "restricted" ? (
+                        <div className="max-h-60 space-y-1 overflow-y-auto rounded-md border border-border bg-background p-2">
+                          {payload.pageRegistry.map((page) => {
+                            const isLocked = page.alwaysAllow || page.adminOnly;
+                            const checked = page.alwaysAllow
+                              ? true
+                              : page.adminOnly
+                                ? false
+                                : newUserAllowedPages.has(page.key);
+                            return (
+                              <label
+                                key={page.key}
+                                className={cn(
+                                  "flex cursor-pointer items-start gap-2 rounded px-2 py-1.5 text-xs hover:bg-muted",
+                                  isLocked && "cursor-not-allowed opacity-70",
+                                )}
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={checked}
+                                  disabled={isLocked}
+                                  onChange={(event) =>
+                                    toggleNewUserPage(page.key, event.target.checked)
+                                  }
+                                  className="mt-0.5"
+                                />
+                                <span className="flex-1">
+                                  <span className="font-medium text-foreground">
+                                    {page.label}
+                                  </span>
+                                  {page.alwaysAllow ? (
+                                    <span className="ml-2 text-[10px] uppercase tracking-wider text-emerald-700 dark:text-emerald-300">
+                                      Always on
+                                    </span>
+                                  ) : page.adminOnly ? (
+                                    <span className="ml-2 text-[10px] uppercase tracking-wider text-orange-700 dark:text-orange-300">
+                                      Admin only
+                                    </span>
+                                  ) : null}
+                                  <span className="block text-[11px] text-muted-foreground">
+                                    {page.description}
+                                  </span>
+                                </span>
+                              </label>
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        <p className="text-[11px] text-muted-foreground">
+                          Operator default sees every page except admin-only
+                          pages.
+                        </p>
+                      )}
+                    </div>
+                  ) : null}
                 </div>
 
                 <button
@@ -844,8 +972,9 @@ function EditUserDrawer({
                     Page access
                   </h4>
                   <p className="text-xs text-muted-foreground">
-                    Control which top-level pages this user sees in the sidebar.
-                    Server-side guards still enforce this regardless of UI.
+                    Control which top-level pages this user can open. Locked
+                    pages still appear in the sidebar and server-side guards
+                    enforce the allowlist.
                   </p>
                 </div>
               </div>

@@ -1,10 +1,10 @@
-# reorG Dashboard Link (Chrome extension)
+# reorG Catalog Link (Chrome extension)
 
-Opens the reorG dashboard and scrolls to the row for the marketplace listing you are viewing.
+Opens the reorG catalog and scrolls to the row for the marketplace listing you are viewing.
 
-- **Existing reorG tab on `/dashboard`:** the extension focuses that tab and scrolls to the row **without reloading** the page (injects a tiny script in the page context so the dashboard receives the same `CustomEvent` as a URL deep link; content scripts alone cannot reach the Next.js app).
-- **Existing reorG tab on another route** (e.g. Settings): the tab navigates to the dashboard with query params (one load).
-- **No reorG tab:** a new tab opens on the dashboard with query params.
+- **Existing reorG tab on `/catalog`:** the extension focuses that tab and scrolls to the row **without reloading** the page (injects a tiny script in the page context so the catalog receives the same `CustomEvent` as a URL deep link; content scripts alone cannot reach the Next.js app).
+- **Existing reorG tab on another route** (e.g. Settings): the tab navigates to the catalog with query params (one load).
+- **No reorG tab:** a new tab opens on the catalog with query params.
 
 On eBay, Shopify admin, and BigCommerce admin listing pages, a small **floating “Open in reorG”** button appears in the bottom-right corner (same behavior as the popup).
 
@@ -46,21 +46,21 @@ You must be logged into reorG in the browser session (same as a normal tab).
 The extension navigates to:
 
 ```text
-{reorgBaseUrl}/dashboard?itemId={id}&platform={PLATFORM}
+{reorgBaseUrl}/catalog?itemId={id}&platform={PLATFORM}
 ```
 
 - `itemId`: marketplace item / product id (digits only for eBay and Shopify admin; BC numeric id — the server adds `SH-` / `BC-` prefixes when matching).
 - `platform` (optional but recommended): `TPP_EBAY`, `TT_EBAY`, `BIGCOMMERCE`, or `SHOPIFY`.
 
-Alias: `platformItemId` is accepted by the dashboard as a synonym for `itemId`.
+Alias: `platformItemId` is accepted by the catalog as a synonym for `itemId`.
 
-The dashboard resolves the row (client-side grid match first, then `GET /api/grid/lookup-item` if needed), scrolls and highlights the row, then removes the query string from the URL.
+The catalog resolves the row (client-side grid match first, then `GET /api/grid/lookup-item` if needed), scrolls and highlights the row, then removes the query string from the URL.
 
 ## Permissions
 
 - **tabs**: find or create the reorG tab and focus it.
 - **storage**: save options (base URL, eBay default, BC host).
-- **scripting**: run a short **MAIN-world** script on the dashboard tab so `window.dispatchEvent` reaches the reorG app (required because extension content scripts are isolated from page JavaScript).
+- **scripting**: run a short **MAIN-world** script on the catalog tab so `window.dispatchEvent` reaches the reorG app (required because extension content scripts are isolated from page JavaScript).
 - **host_permissions**: reorG origin, localhost, eBay, Shopify admin, BigCommerce `*.mybigcommerce.com`.
 
 ## Development

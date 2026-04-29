@@ -48,7 +48,7 @@ export default function ShippingRatesPage() {
         </div>
         <p className="mt-1 text-sm text-muted-foreground">
           Weight-to-cost lookup table for outbound shipping cost calculations.
-          Changes here automatically update shipping costs on the dashboard.
+          Changes here automatically update shipping costs in the catalog.
         </p>
       </div>
 
@@ -56,7 +56,7 @@ export default function ShippingRatesPage() {
         <Info className="mt-0.5 h-5 w-5 shrink-0 text-muted-foreground" aria-hidden />
         <div className="text-sm text-muted-foreground">
           <p>
-            Weight values on the dashboard map to these tiers:{" "}
+            Weight values in the catalog map to these tiers:{" "}
             <code className="rounded bg-muted px-1 font-mono text-foreground">5</code> = 5oz,{" "}
             <code className="rounded bg-muted px-1 font-mono text-foreground">2LBS</code> = 2LBS (32oz).
             If a product weight falls between tiers, the next higher tier&apos;s rate is used.
@@ -130,7 +130,7 @@ export default function ShippingRatesPage() {
         {saved && (
           <span className="flex items-center gap-1 text-sm font-medium text-emerald-500 animate-in fade-in">
             <Check className="h-4 w-4" />
-            Saved — dashboard shipping costs updated
+            Saved — catalog shipping costs updated
           </span>
         )}
       </div>

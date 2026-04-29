@@ -22,6 +22,7 @@
 
 export type PageKey =
   | "dashboard"
+  | "catalog"
   | "catalog-health"
   | "inventory-forecaster"
   | "tasks"
@@ -54,6 +55,7 @@ export interface NavPage {
    *  module is server-safe (no React imports). */
   icon:
     | "LayoutDashboard"
+    | "TableProperties"
     | "Shield"
     | "Boxes"
     | "ClipboardList"
@@ -90,7 +92,15 @@ export const NAV_PAGES: NavPage[] = [
     label: "Dashboard",
     icon: "LayoutDashboard",
     alwaysAllow: true,
-    description: "Home page after login. Always visible.",
+    description: "Safe home page after login with personal operations metrics.",
+  },
+  {
+    key: "catalog",
+    href: "/catalog",
+    label: "Catalog",
+    icon: "TableProperties",
+    description:
+      "Main marketplace catalog grid with live values, staged changes, and guarded push tools.",
   },
   {
     key: "catalog-health",

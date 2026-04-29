@@ -1206,7 +1206,7 @@ async function tryApplyIncrementalQuantityFirstTtItem(
   }
 
   // If the incremental event payload does not carry the UPC details, force the
-  // slower GetItem path so the dashboard stays truthful after direct eBay edits.
+  // slower GetItem path so the catalog stays truthful after direct eBay edits.
   if (needsFullItemForUpc(item)) {
     return null;
   }
@@ -2012,7 +2012,7 @@ function needsFullItemForUpc(item: unknown): boolean {
 /**
  * Lightweight single-item refresh — calls GetItem directly and upserts.
  * Bypasses the full sync pipeline (no sync job, no cursor, no quota bookkeeping).
- * Designed for the row-refresh button on the dashboard.
+ * Designed for the row-refresh button in the catalog.
  */
 export async function refreshEbayTtItemsDirect(
   integration: { id: string; platform: string; config: Record<string, unknown> },

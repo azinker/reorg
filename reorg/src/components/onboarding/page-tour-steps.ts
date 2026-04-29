@@ -7,9 +7,45 @@ export const PAGE_TOUR_STEPS: Record<OnboardingPageKey, TourStep[]> = {
    * ================================================================ */
   dashboard: [
     {
+      id: "dashboard-home-1",
+      target: "dashboard-home",
+      title: "Dashboard Home",
+      body: "This is the safe landing page every signed-in user can open. It shows your own Help Desk workload, task pressure, and sync pulse without exposing customer, order, or catalog details.",
+    },
+    {
+      id: "dashboard-home-2",
+      target: "dashboard-helpdesk",
+      title: "Help Desk Snapshot",
+      body: "These cards show your assigned tickets, team queue pressure, SLA risk, and your last 24 hours of outbound activity.",
+    },
+    {
+      id: "dashboard-home-3",
+      target: "dashboard-tasks",
+      title: "Tasks and Catalog Access",
+      body: "This row keeps your task workload visible and shows whether the Catalog grid is available for this account.",
+    },
+    {
+      id: "dashboard-home-4",
+      target: "dashboard-ops",
+      title: "Sync Pulse",
+      body: "This area summarizes the automatic sync scheduler without requiring access to the full Sync page.",
+    },
+    {
+      id: "dashboard-home-5",
+      target: "dashboard-quick-links",
+      title: "Quick Links",
+      body: "Quick Links only includes pages this user is allowed to open.",
+    },
+  ],
+
+  /* ================================================================
+   * CATALOG
+   * ================================================================ */
+  catalog: [
+    {
       id: "dashboard-1",
       target: null,
-      title: "Welcome to the Dashboard",
+      title: "Welcome to the Catalog",
       body: "This is your main working surface — where you view, price, and manage all your marketplace listings in one place. Think of it as a master spreadsheet that stays synced with eBay, BigCommerce, and Shopify. For example, if you need to update a price on eBay TPP, you'd find the row here, change the price, review it, then push it out.",
     },
     {
@@ -412,7 +448,7 @@ export const PAGE_TOUR_STEPS: Record<OnboardingPageKey, TourStep[]> = {
       id: "network-1",
       target: "network-transfer-root",
       title: "Public Network Transfer",
-      body: "This page is for admins. It shows what reorG measured going over the network: large API responses (like the dashboard grid), eBay HTTP traffic during syncs, and when sync jobs finished. The yellow banner explains that these numbers are estimates to help you optimize — they are not copied from Neon’s billing screen.",
+      body: "This page is for admins. It shows what reorG measured going over the network: large API responses (like the catalog grid), eBay HTTP traffic during syncs, and when sync jobs finished. The yellow banner explains that these numbers are estimates to help you optimize — they are not copied from Neon’s billing screen.",
     },
     {
       id: "network-2",
@@ -484,7 +520,7 @@ export const PAGE_TOUR_STEPS: Record<OnboardingPageKey, TourStep[]> = {
       id: "unmatched-1",
       target: "unmatched-header",
       title: "Welcome to Unmatched Listings",
-      body: "These are marketplace listings that reorG couldn't automatically connect to a master SKU. They stay here until you manually link or ignore them — they don't appear on the main dashboard. Example: if BigCommerce has a listing with SKU 'BC-WIDGET-1' but eBay TPP has no matching SKU, it shows up here.",
+      body: "These are marketplace listings that reorG couldn't automatically connect to a master SKU. They stay here until you manually link or ignore them — they don't appear in the main catalog. Example: if BigCommerce has a listing with SKU 'BC-WIDGET-1' but eBay TPP has no matching SKU, it shows up here.",
     },
     {
       id: "unmatched-2",
@@ -496,7 +532,7 @@ export const PAGE_TOUR_STEPS: Record<OnboardingPageKey, TourStep[]> = {
       id: "unmatched-3",
       target: "unmatched-list",
       title: "Manual Linking",
-      body: "For each unmatched listing, you can type a master SKU to link it. If the SKU exists on the master store, the listing joins that row on the dashboard. If the SKU doesn't exist yet, reorG creates a new row for it. When multiple rows share the same SKU, you'll see a dropdown to pick which row to link to. Example: link BigCommerce SKU 'AB107_12V_2A_A' to the matching eBay TPP SKU and it appears in the correct dashboard row.",
+      body: "For each unmatched listing, you can type a master SKU to link it. If the SKU exists on the master store, the listing joins that row in the catalog. If the SKU doesn't exist yet, reorG creates a new row for it. When multiple rows share the same SKU, you'll see a dropdown to pick which row to link to. Example: link BigCommerce SKU 'AB107_12V_2A_A' to the matching eBay TPP SKU and it appears in the correct catalog row.",
     },
     {
       id: "unmatched-4",
@@ -508,7 +544,7 @@ export const PAGE_TOUR_STEPS: Record<OnboardingPageKey, TourStep[]> = {
       id: "unmatched-5",
       target: "unmatched-list",
       title: "Verify After Linking",
-      body: "After you link a listing, it should disappear from this page and appear on the dashboard under the correct SKU family. Go check the dashboard to confirm the row looks right — correct store data, prices, and quantities. Example: after linking, search for the SKU on the dashboard and verify all 4 stores show their data correctly.",
+      body: "After you link a listing, it should disappear from this page and appear in the catalog under the correct SKU family. Go check the catalog to confirm the row looks right — correct store data, prices, and quantities. Example: after linking, search for the SKU in the catalog and verify all 4 stores show their data correctly.",
     },
   ],
 
@@ -544,7 +580,7 @@ export const PAGE_TOUR_STEPS: Record<OnboardingPageKey, TourStep[]> = {
       id: "import-5",
       target: "import-result",
       title: "Review Results",
-      body: "After the import completes, check the created/updated counts and note any row-level failures. Then go to the dashboard and spot-check a few affected rows to confirm the data looks correct. Example: 'Updated 195 rows, 5 failed (unknown SKU)' — verify those 5 SKUs exist in your store and fix them.",
+      body: "After the import completes, check the created/updated counts and note any row-level failures. Then go to the catalog and spot-check a few affected rows to confirm the data looks correct. Example: 'Updated 195 rows, 5 failed (unknown SKU)' — verify those 5 SKUs exist in your store and fix them.",
     },
   ],
 
@@ -556,7 +592,7 @@ export const PAGE_TOUR_STEPS: Record<OnboardingPageKey, TourStep[]> = {
       id: "shipping-1",
       target: "shipping-header",
       title: "Welcome to Shipping Rates",
-      body: "These shipping rate tiers directly affect your dashboard's shipping cost and profit calculations. Every row on the dashboard looks up its weight here to determine shipping cost. A wrong rate here silently distorts profit on every product that uses it. Example: if the '2LBS' tier is set to $8.50 but your actual shipping cost is $10.50, every 2lb product shows $2 more profit than it should.",
+      body: "These shipping rate tiers directly affect the catalog's shipping cost and profit calculations. Every catalog row looks up its weight here to determine shipping cost. A wrong rate here silently distorts profit on every product that uses it. Example: if the '2LBS' tier is set to $8.50 but your actual shipping cost is $10.50, every 2lb product shows $2 more profit than it should.",
     },
     {
       id: "shipping-2",
@@ -568,7 +604,7 @@ export const PAGE_TOUR_STEPS: Record<OnboardingPageKey, TourStep[]> = {
       id: "shipping-3",
       target: "shipping-save",
       title: "Save & Verify",
-      body: "After saving your changes, go to the dashboard and spot-check a few products at different weights (light, medium, heavy) to make sure profit still calculates correctly. Example: check a 3oz item, a 1LBS item, and a 5LBS item to confirm shipping costs look right across the range.",
+      body: "After saving your changes, go to the catalog and spot-check a few products at different weights (light, medium, heavy) to make sure profit still calculates correctly. Example: check a 3oz item, a 1LBS item, and a 5LBS item to confirm shipping costs look right across the range.",
     },
   ],
 
@@ -622,7 +658,7 @@ export const PAGE_TOUR_STEPS: Record<OnboardingPageKey, TourStep[]> = {
       id: "users-3",
       target: "users-manage",
       title: "Manage Team Access",
-      body: "Admins can create new user accounts, assign roles, and review who has access. Each user gets their own login so you can track who made what changes. Example: add a new team member as an Operator so they can view and edit the dashboard but can't change integration settings or write locks.",
+      body: "Admins can create new user accounts, assign roles, and review who has access. Each user gets their own login so you can track who made what changes. Example: add a new team member as an Operator so they can view and edit the catalog but can't change integration settings or write locks.",
     },
     {
       id: "users-4",
@@ -658,7 +694,7 @@ export const PAGE_TOUR_STEPS: Record<OnboardingPageKey, TourStep[]> = {
       id: "settings-4",
       target: "settings-tour",
       title: "Tour & Help",
-      body: "Replay guided tours for any page to refresh your memory on features. You can also reset tours so they show up again as if you're seeing them for the first time. This is useful after major updates or when onboarding a new team member. Example: click 'Replay Dashboard Tour' to walk through all the dashboard features again with step-by-step explanations.",
+      body: "Replay guided tours for any page to refresh your memory on features. You can also reset tours so they show up again as if you're seeing them for the first time. This is useful after major updates or when onboarding a new team member. Example: click 'Replay Catalog Tour' to walk through the catalog features again with step-by-step explanations.",
     },
     {
       id: "settings-5",

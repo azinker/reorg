@@ -57,7 +57,7 @@ export default async function ProfitCenterPage() {
         </h1>
         <p className="mt-2 max-w-3xl text-sm text-muted-foreground">
           Profit Center is based on current listing economics, not historical sales revenue. It uses the live sale price,
-          supplier cost, supplier shipping, outbound shipping cost, fee rate, and ad rate already powering the dashboard.
+          supplier cost, supplier shipping, outbound shipping cost, fee rate, and ad rate already powering the catalog.
         </p>
       </div>
 

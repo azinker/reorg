@@ -15,10 +15,10 @@ async function getSettings() {
   return { ...DEFAULTS, ...sync };
 }
 
-function isDashboardUrl(fullUrl) {
+function isCatalogUrl(fullUrl) {
   try {
     const p = new URL(fullUrl).pathname;
-    return p === "/dashboard" || p.startsWith("/dashboard/");
+    return p === "/catalog" || p.startsWith("/catalog/");
   } catch {
     return false;
   }
@@ -45,13 +45,13 @@ async function openOrFocusReorg(params) {
   const q = new URLSearchParams();
   q.set("itemId", params.itemId);
   if (params.platform) q.set("platform", params.platform);
-  const dashboardWithQuery = `${base}/dashboard?${q.toString()}`;
+  const catalogWithQuery = `${base}/catalog?${q.toString()}`;
 
-  const dashboardTab = reorgTabs.find((t) => isDashboardUrl(t.url || ""));
+  const catalogTab = reorgTabs.find((t) => isCatalogUrl(t.url || ""));
   const anyReorgTab = reorgTabs[0];
-  const tab = dashboardTab ?? anyReorgTab;
+  const tab = catalogTab ?? anyReorgTab;
 
-  if (tab?.id != null && isDashboardUrl(tab.url || "")) {
+  if (tab?.id != null && isCatalogUrl(tab.url || "")) {
     try {
       await chrome.scripting.executeScript({
         target: { tabId: tab.id },
@@ -76,14 +76,14 @@ async function openOrFocusReorg(params) {
   }
 
   if (tab?.id != null) {
-    await chrome.tabs.update(tab.id, { url: dashboardWithQuery, active: true });
+    await chrome.tabs.update(tab.id, { url: catalogWithQuery, active: true });
     if (tab.windowId != null) {
       await chrome.windows.update(tab.windowId, { focused: true });
     }
     return { ok: true, action: "navigated" };
   }
 
-  await chrome.tabs.create({ url: dashboardWithQuery, active: true });
+  await chrome.tabs.create({ url: catalogWithQuery, active: true });
   return { ok: true, action: "created" };
 }
 

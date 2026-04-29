@@ -219,7 +219,8 @@ Architecture supports an Operator role later (can use table, edit, stage, push i
 ## Pages / Routes
 
 ```
-/dashboard          Main data grid (primary screen)
+/dashboard          Signed-in home dashboard (safe user/team operations metrics)
+/catalog            Main data grid (permission-controlled catalog screen)
 /sync               Pull-only sync controls + status
 /integrations       Integration management, write locks, tokens
 /engine-room        Ops control center, logs, push queue, audit

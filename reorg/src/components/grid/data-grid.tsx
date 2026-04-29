@@ -3115,7 +3115,7 @@ export function DataGrid({
         showToast(
           target
             ? `UPC saved locally for ${PLATFORM_SHORT[target.platform as Platform]} on SKU ${row.sku}.`
-            : `UPC saved locally for SKU ${row.sku} (dashboard only).`,
+            : `UPC saved locally for SKU ${row.sku} (catalog only).`,
         );
       })
       .catch((err: Error) => {
@@ -3218,7 +3218,7 @@ export function DataGrid({
           : undefined,
       );
       clearQuickPushState(getUpcQuickPushKey(rowId));
-      showToast(`UPC saved locally for SKU ${row.sku} (dashboard only).`);
+      showToast(`UPC saved locally for SKU ${row.sku} (catalog only).`);
       return;
     }
 

@@ -1,8 +1,8 @@
 /* global chrome */
 (function () {
-  const FLOAT_ID = "reorg-dashboard-link-float";
+  const FLOAT_ID = "reorg-catalog-link-float";
 
-  /** reorG brand: logo crimson + charcoal (see public/logos/reorg-icon.svg); dashboard primary violet family */
+  /** reorG brand: logo crimson + charcoal (see public/logos/reorg-icon.svg); catalog primary violet family */
   const BRAND = {
     crimson: "#B5282D",
     crimsonHover: "#9f2227",
@@ -75,7 +75,7 @@
 
     const btn = document.createElement("button");
     btn.type = "button";
-    btn.setAttribute("aria-label", "Open this listing in reorG dashboard");
+    btn.setAttribute("aria-label", "Open this listing in reorG catalog");
     const titleLine = document.createElement("span");
     titleLine.textContent = "Open in ";
     const brandSpan = document.createElement("span");

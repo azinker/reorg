@@ -690,7 +690,7 @@ export function UpcCell({
               )
             }
             className="w-full rounded border border-amber-500/50 bg-amber-500/15 px-1 py-[3px] text-[8px] font-bold leading-none text-amber-200 hover:bg-amber-500/25 cursor-pointer"
-            title="Store this UPC as LOCAL on the dashboard only — no marketplace update."
+            title="Store this UPC as LOCAL in the catalog only — no marketplace update."
           >
             {renderCompactButtonLabel("Local only")}
           </button>
@@ -822,7 +822,7 @@ export function UpcCell({
                       })
                     }
                     className="w-full rounded bg-amber-500/90 px-1.5 py-1 text-[8px] font-bold uppercase leading-none text-black hover:bg-amber-400 cursor-pointer"
-                    title="Keep this UPC on the dashboard only (LOCAL). Does not send to the marketplace."
+                    title="Keep this UPC in the catalog only (LOCAL). Does not send to the marketplace."
                   >
                     Save locally (no push)
                   </button>
@@ -1361,9 +1361,9 @@ export function UpcCell({
               setShowActions(false);
             }}
             className="mt-1 w-full rounded border border-amber-500/50 bg-amber-500/15 px-1.5 py-1.5 text-[9px] font-bold leading-none text-amber-200 hover:bg-amber-500/25 cursor-pointer"
-            title="Save on the dashboard only (LOCAL). Does not push to any marketplace."
+            title="Save in the catalog only (LOCAL). Does not push to any marketplace."
           >
-            {renderCompactButtonLabel("Local only (dashboard)")}
+            {renderCompactButtonLabel("Local only (catalog)")}
           </button>
         ) : null}
       </div>

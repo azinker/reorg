@@ -430,18 +430,18 @@ export default function SettingsPage() {
   const { theme, setTheme } = useTheme();
   const { settings, update } = useSettings();
 
-  async function replayDashboardTour() {
-    setLocalTourSeen("dashboard", false);
+  async function replayCatalogTour() {
+    setLocalTourSeen("catalog", false);
     try {
       await fetch("/api/onboarding", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "reset", page: "dashboard" }),
+        body: JSON.stringify({ action: "reset", page: "catalog" }),
       });
     } catch {
       /* offline / unauthenticated — local flag still cleared */
     }
-    router.push("/dashboard?tour=replay");
+    router.push("/catalog?tour=manual");
   }
 
   async function resetAllTours() {
@@ -561,7 +561,7 @@ export default function SettingsPage() {
             {/* Search Bar */}
             <div className="flex items-center justify-between gap-4">
               <div>
-                <p className="text-sm font-medium">Show sticky search bar on dashboard</p>
+                <p className="text-sm font-medium">Show sticky search bar on catalog</p>
                 <p className="text-xs text-muted-foreground">
                   Search bar remains visible at the top of the data grid
                 </p>
@@ -780,18 +780,18 @@ export default function SettingsPage() {
             Guided tour
           </h2>
           <p className="mb-4 text-sm text-muted-foreground">
-            New users get a one-time walkthrough of the Dashboard (search, filters, grid, and
+            New users get a one-time walkthrough of the Catalog (search, filters, grid, and
             connection status). You can open it anytime from the <strong>Tour</strong> button
             (sparkles icon) in the top bar. After you finish or exit, it won&apos;t auto-start
             again unless you reset it here.
           </p>
           <button
             type="button"
-            onClick={() => void replayDashboardTour()}
+            onClick={() => void replayCatalogTour()}
             className="inline-flex items-center gap-2 rounded-md border border-primary/40 bg-primary/10 px-4 py-2 text-sm font-medium text-primary transition-colors hover:bg-primary/20 cursor-pointer"
           >
             <Sparkles className="h-4 w-4" />
-            Replay Dashboard tour
+            Replay Catalog tour
           </button>
           <button
             type="button"

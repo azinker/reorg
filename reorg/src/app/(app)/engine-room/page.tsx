@@ -547,7 +547,7 @@ function PushQueuePanel({ items }: { items: PushQueueRow[] }) {
               <span className="font-semibold">Push blocked — queue too large.</span>{" "}
               {distinctListings.toLocaleString()} distinct listings are staged (hard cap is{" "}
               {PUSH_HARD_LISTINGS.toLocaleString()}). Push platform-by-platform using the filter
-              below, or push from the dashboard in smaller batches.
+              below, or push from the catalog in smaller batches.
             </>
           ) : (
             <>

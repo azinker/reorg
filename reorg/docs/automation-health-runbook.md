@@ -22,7 +22,7 @@ Use these pages first:
 - `/sync` for the clearest store-by-store status and next step
 - `/engine-room` for recent automation decisions, running jobs, and scheduler health
 - `/errors` for stores that need follow-up
-- `/dashboard` for the top warning banner if something falls behind
+- `/catalog` for the top warning banner if something falls behind
 
 ---
 

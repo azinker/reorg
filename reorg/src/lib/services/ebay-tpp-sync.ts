@@ -2158,7 +2158,7 @@ async function fetchAndStorePromotedListingRates(
 /**
  * Lightweight single-item refresh — calls GetItem directly and upserts.
  * Bypasses the full sync pipeline (no sync job, no cursor, no quota bookkeeping).
- * Designed for the row-refresh button on the dashboard.
+ * Designed for the row-refresh button in the catalog.
  */
 export async function refreshEbayItemsDirect(
   integration: { id: string; platform: string; config: Record<string, unknown> },

@@ -2,7 +2,10 @@ import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { createManagedUser } from "@/lib/services/user-admin";
+import {
+  createManagedUser,
+  normalizePagePermissions,
+} from "@/lib/services/user-admin";
 import { getActor } from "@/lib/impersonation";
 import { NAV_PAGES } from "@/lib/nav-pages";
 
@@ -11,6 +14,7 @@ const createUserSchema = z.object({
   email: z.string().trim().email(),
   password: z.string().min(8).max(200),
   role: z.enum(["ADMIN", "OPERATOR"]),
+  pagePermissions: z.unknown().optional(),
 });
 
 export async function GET() {
@@ -139,9 +143,28 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    let pagePermissions: ReturnType<typeof normalizePagePermissions>;
+    try {
+      pagePermissions =
+        parsed.data.role === "OPERATOR"
+          ? normalizePagePermissions(parsed.data.pagePermissions)
+          : undefined;
+    } catch (err) {
+      return NextResponse.json(
+        {
+          error:
+            err instanceof Error
+              ? err.message
+              : "Invalid pagePermissions payload",
+        },
+        { status: 400 },
+      );
+    }
+
     const created = await createManagedUser({
       ...parsed.data,
       email,
+      pagePermissions,
       createdById: session.user.id,
     });
 

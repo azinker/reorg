@@ -245,7 +245,7 @@ async function buildErrorsData() {
           `SKU: ${row.sku}`,
           `Title: ${row.title ?? "Untitled"}`,
           `Missing: ${missing.join(", ")}`,
-          "Fix this from the dashboard, import page, or shipping-rates page before relying on profit calculations.",
+          "Fix this from the catalog, import page, or shipping-rates page before relying on profit calculations.",
         ].join("\n"),
         store: "Internal Product Data",
         storeAcronym: "DATA",
@@ -254,7 +254,7 @@ async function buildErrorsData() {
         recommendedAction:
           "Fill in the missing internal values from Dashboard, Import, or Shipping Rates before relying on profit calculations.",
         actionLabel: "Fix Data",
-        actionHref: "/dashboard",
+        actionHref: "/catalog",
         priority: missingShippingTier ? 50 : 55,
       });
     }

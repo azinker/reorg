@@ -8,6 +8,7 @@ export async function createManagedUser(input: {
   email: string;
   password: string;
   role: Role;
+  pagePermissions?: PageKey[] | null;
   createdById: string;
 }) {
   const email = input.email.trim().toLowerCase();
@@ -19,6 +20,14 @@ export async function createManagedUser(input: {
       email,
       passwordHash,
       role: input.role,
+      ...(input.pagePermissions !== undefined
+        ? {
+            pagePermissions:
+              input.pagePermissions === null
+                ? Prisma.JsonNull
+                : (input.pagePermissions as unknown as Prisma.InputJsonValue),
+          }
+        : {}),
     },
     select: {
       id: true,
@@ -38,6 +47,9 @@ export async function createManagedUser(input: {
       details: {
         email: created.email,
         role: created.role,
+        ...(input.pagePermissions !== undefined
+          ? { pagePermissions: input.pagePermissions }
+          : {}),
       },
     },
   });

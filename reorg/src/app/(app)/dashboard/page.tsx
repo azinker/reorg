@@ -1,426 +1,573 @@
-"use client";
-
-import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
-import { DataGrid } from "@/components/grid/data-grid";
+import Link from "next/link";
+import { redirect } from "next/navigation";
+import {
+  Activity,
+  AlertTriangle,
+  ArrowRight,
+  CheckCircle2,
+  ClipboardList,
+  Gauge,
+  LifeBuoy,
+  Lock,
+  RefreshCw,
+  TableProperties,
+  Timer,
+  type LucideIcon,
+} from "lucide-react";
+import {
+  HelpdeskMessageDirection,
+  HelpdeskTicketStatus,
+  SyncStatus,
+  TaskStatus,
+  type Prisma,
+} from "@prisma/client";
+import { db } from "@/lib/db";
 import { PageTour } from "@/components/onboarding/page-tour";
 import { PAGE_TOUR_STEPS } from "@/components/onboarding/page-tour-steps";
-import { useDashboardConnection } from "@/contexts/dashboard-connection-context";
-import type { GridRow, Platform } from "@/lib/grid-types";
-import { usePageVisibility } from "@/lib/use-page-visibility";
-import { Loader2, RefreshCw } from "lucide-react";
+import { computeSla } from "@/lib/helpdesk/sla";
+import { getActor } from "@/lib/impersonation";
+import {
+  NAV_PAGES_BY_KEY,
+  resolveAllowedPageKeys,
+  type PageKey,
+} from "@/lib/nav-pages";
+import { cn } from "@/lib/utils";
 
-const VALID_DEEP_LINK_PLATFORMS = new Set<string>(["TPP_EBAY", "TT_EBAY", "BIGCOMMERCE", "SHOPIFY"]);
+type DashboardSearchParams = Promise<
+  Record<string, string | string[] | undefined>
+>;
 
-function DashboardGridArea({ rows }: { rows: GridRow[] }) {
-  const searchParams = useSearchParams();
-  const router = useRouter();
-  const itemId = searchParams.get("itemId") ?? searchParams.get("platformItemId");
-  const platformRaw = searchParams.get("platform");
-  const deepLinkPlatform =
-    platformRaw && VALID_DEEP_LINK_PLATFORMS.has(platformRaw) ? (platformRaw as Platform) : null;
+const ACTIVE_TICKET_STATUSES = [
+  HelpdeskTicketStatus.NEW,
+  HelpdeskTicketStatus.TO_DO,
+  HelpdeskTicketStatus.WAITING,
+] as const;
 
-  const onDeepLinkConsumed = useCallback(() => {
-    router.replace("/dashboard", { scroll: false });
-  }, [router]);
+const QUICK_LINKS: PageKey[] = [
+  "help-desk",
+  "tasks",
+  "sync",
+  "catalog",
+  "inventory-forecaster",
+];
 
-  return (
-    <div className="min-h-0 min-w-0 flex-1 overflow-hidden">
-      <DataGrid
-        rows={rows}
-        deepLinkItemId={itemId}
-        deepLinkPlatform={deepLinkPlatform}
-        onDeepLinkConsumed={onDeepLinkConsumed}
-      />
+function formatNumber(value: number) {
+  return new Intl.NumberFormat("en-US").format(value);
+}
+
+function formatDateTime(value: Date | string | null | undefined) {
+  if (!value) return "Never";
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+    timeZone: "America/New_York",
+  }).format(new Date(value));
+}
+
+function formatRelative(value: Date | string | null | undefined) {
+  if (!value) return "Never";
+  const date = new Date(value);
+  const deltaMs = Date.now() - date.getTime();
+  if (!Number.isFinite(deltaMs)) return "Unknown";
+  if (deltaMs < 60_000) return "Just now";
+  const minutes = Math.floor(deltaMs / 60_000);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 48) return `${hours}h ago`;
+  return `${Math.floor(hours / 24)}d ago`;
+}
+
+function readSettingString(
+  settings: Array<{ key: string; value: Prisma.JsonValue }>,
+  key: string,
+) {
+  const value = settings.find((setting) => setting.key === key)?.value;
+  return typeof value === "string" ? value : null;
+}
+
+function readSettingNumber(
+  settings: Array<{ key: string; value: Prisma.JsonValue }>,
+  key: string,
+) {
+  const value = settings.find((setting) => setting.key === key)?.value;
+  return typeof value === "number" ? value : null;
+}
+
+function MetricCard({
+  title,
+  value,
+  detail,
+  icon: Icon,
+  tone = "neutral",
+  href,
+}: {
+  title: string;
+  value: string;
+  detail: string;
+  icon: LucideIcon;
+  tone?: "neutral" | "good" | "warn" | "danger";
+  href?: string;
+}) {
+  const toneClass =
+    tone === "danger"
+      ? "border-red-500/25 bg-red-500/10 text-red-300"
+      : tone === "warn"
+        ? "border-amber-500/25 bg-amber-500/10 text-amber-300"
+        : tone === "good"
+          ? "border-emerald-500/25 bg-emerald-500/10 text-emerald-300"
+          : "border-border bg-card text-muted-foreground";
+
+  const card = (
+    <div
+      className={cn(
+        "group flex min-h-[128px] flex-col justify-between rounded-lg border p-4",
+        toneClass,
+      )}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">
+            {title}
+          </p>
+          <p className="mt-3 text-3xl font-semibold tracking-tight text-foreground">
+            {value}
+          </p>
+        </div>
+        <span className="rounded-md border border-current/15 bg-background/40 p-2">
+          <Icon className="h-4 w-4" />
+        </span>
+      </div>
+      <div className="mt-4 flex items-center justify-between gap-3 text-xs text-muted-foreground">
+        <span>{detail}</span>
+        {href ? (
+          <ArrowRight className="h-4 w-4 opacity-60 transition-transform group-hover:translate-x-0.5 group-hover:opacity-100" />
+        ) : null}
+      </div>
     </div>
   );
-}
 
-const GRID_VERSION_POLL_MS = 60_000;
-const SCHEDULER_HEALTH_POLL_MS = 120_000;
-
-interface GridPayload {
-  rows: GridRow[];
-  source: "db" | "error";
-  error: string | null;
-}
-
-interface SchedulerHealthPayload {
-  healthSummary?: {
-    status: "healthy" | "delayed" | "attention";
-    headline: string;
-    detail: string;
-    recommendedAction: string;
-    affectedLabels: string[];
-    missingWebhookCount: number;
-  };
-}
-
-/**
- * All three of these fetchers accept an optional AbortSignal. The dashboard
- * grid endpoint can return tens of thousands of rows and historically took
- * 10-30 s on cold Vercel instances; without a signal the request kept running
- * after the user navigated away (e.g. to /help-desk), continued to log a
- * misleading "Failed to load grid data" error to the console of the new
- * page, and held a network slot that competed with the help-desk's own
- * fetches. Passing a signal lets the dashboard's cleanup effect cancel
- * the request the instant the user leaves the page.
- */
-async function fetchGridData(signal?: AbortSignal): Promise<GridPayload> {
-  try {
-    const res = await fetch("/api/grid", { cache: "no-store", signal });
-    if (!res.ok) throw new Error(`API returned ${res.status}`);
-    const json = await res.json();
-    const dbRows: GridRow[] = json.data?.rows ?? [];
-    if (dbRows.length > 0) {
-      return { rows: dbRows, source: "db", error: null };
-    }
-
-    return {
-      rows: [],
-      source: "error",
-      error: "Live grid returned zero rows.",
-    };
-  } catch (err) {
-    // Treat anything that looks like an abort/navigation as expected and
-    // don't spam the console. Chrome reports an aborted fetch as either:
-    //   - DOMException name=AbortError (when AbortController.abort() ran
-    //     BEFORE the request started)
-    //   - TypeError "Failed to fetch" (when the page is mid-navigation
-    //     while the request is in flight — happens when user logs in to
-    //     /dashboard then immediately clicks the sidebar to /help-desk;
-    //     /api/grid is a 10-30 s call and almost always still pending
-    //     when navigation happens)
-    const aborted =
-      signal?.aborted ||
-      (err instanceof DOMException && err.name === "AbortError") ||
-      (err instanceof TypeError && /failed to fetch/i.test(err.message));
-    if (aborted) {
-      return { rows: [], source: "error", error: "aborted" };
-    }
-    console.error("Failed to load grid data from API:", err);
-    return { rows: [], source: "error", error: String(err) };
-  }
-}
-
-async function fetchGridVersion(signal?: AbortSignal): Promise<string | null> {
-  const res = await fetch("/api/grid/version", { cache: "no-store", signal }).catch(
-    () => null,
+  if (!href) return card;
+  return (
+    <Link href={href} className="block cursor-pointer">
+      {card}
+    </Link>
   );
-  if (!res) {
-    return null;
-  }
-  if (!res.ok) {
-    return null;
-  }
-  const json = await res.json().catch(() => null);
-  return typeof json.data?.version === "string" ? json.data.version : null;
 }
 
-async function fetchSchedulerHealth(
-  signal?: AbortSignal,
-): Promise<SchedulerHealthPayload["healthSummary"] | null> {
-  const res = await fetch("/api/scheduler/status", { cache: "no-store", signal });
-  if (!res.ok) {
-    throw new Error(`Scheduler status API returned ${res.status}`);
-  }
-  const json = await res.json();
-  return (json.data?.healthSummary ?? null) as SchedulerHealthPayload["healthSummary"] | null;
-}
+export default async function DashboardPage({
+  searchParams,
+}: {
+  searchParams?: DashboardSearchParams;
+}) {
+  const actor = await getActor();
+  if (!actor) redirect("/login");
 
-function summarizeGrid(rows: GridRow[]) {
-  const variationParents = rows.filter((row) => row.isParent).length;
-  const standaloneRows = rows.filter((row) => !row.isParent).length;
-  const childRows = rows.reduce((sum, row) => sum + (row.childRows?.length ?? 0), 0);
-  const actualProducts = standaloneRows + childRows;
-  const listingCounts = new Map<Platform, Set<string>>();
-
-  function collectProductRow(productRow: GridRow) {
-    for (const item of productRow.itemNumbers) {
-      if (!listingCounts.has(item.platform)) {
-        listingCounts.set(item.platform, new Set());
-      }
-      listingCounts.get(item.platform)!.add(`${item.platform}:${item.listingId}:${item.variantId ?? ""}`);
-    }
+  const params = (await searchParams) ?? {};
+  const itemIdRaw = Array.isArray(params.itemId) ? params.itemId[0] : params.itemId;
+  const platformItemIdRaw = Array.isArray(params.platformItemId)
+    ? params.platformItemId[0]
+    : params.platformItemId;
+  const legacyItemId = itemIdRaw ?? platformItemIdRaw;
+  if (legacyItemId) {
+    const q = new URLSearchParams();
+    q.set(itemIdRaw ? "itemId" : "platformItemId", legacyItemId);
+    const platformRaw = Array.isArray(params.platform)
+      ? params.platform[0]
+      : params.platform;
+    if (platformRaw) q.set("platform", platformRaw);
+    redirect(`/catalog?${q.toString()}`);
   }
 
-  for (const row of rows) {
-    if (row.isParent && row.childRows) {
-      for (const child of row.childRows) {
-        collectProductRow(child);
-      }
-      continue;
-    }
-    collectProductRow(row);
-  }
+  const deniedRaw = Array.isArray(params.denied)
+    ? params.denied[0]
+    : params.denied;
+  const deniedPage =
+    deniedRaw && deniedRaw in NAV_PAGES_BY_KEY
+      ? NAV_PAGES_BY_KEY[deniedRaw as PageKey]
+      : null;
 
-  return {
-    masterGroups: rows.length,
-    variationParents,
-    standaloneRows,
-    childRows,
-    actualProducts,
-    listingCounts,
+  const allowedPages = resolveAllowedPageKeys({
+    role: actor.role,
+    pagePermissions: actor.pagePermissions,
+  });
+  const last24h = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  const myTicketWhere: Prisma.HelpdeskTicketWhereInput = {
+    isArchived: false,
+    isSpam: false,
+    status: { in: [...ACTIVE_TICKET_STATUSES] },
+    OR: [
+      { primaryAssigneeId: actor.userId },
+      { additionalAssignees: { some: { userId: actor.userId } } },
+    ],
   };
-}
 
-export default function DashboardPage() {
-  const isPageVisible = usePageVisibility();
-  const [rows, setRows] = useState<GridRow[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [source, setSource] = useState<"db" | "error" | null>(null);
-  const [isRefreshing, setIsRefreshing] = useState(false);
-  const [schedulerHealth, setSchedulerHealth] = useState<SchedulerHealthPayload["healthSummary"] | null>(null);
-  const [loadingProgress, setLoadingProgress] = useState(8);
-  const versionRef = useRef<string | null>(null);
-  const sourceRef = useRef<"db" | "error" | null>(null);
-  const refreshInFlightRef = useRef(false);
+  const [
+    myAssignedOpen,
+    myTodoTickets,
+    myResolvedLast24h,
+    myOutboundLast24h,
+    teamOpenTickets,
+    openTicketSlaRows,
+    myOpenTasks,
+    myOverdueTasks,
+    sharedOpenTasks,
+    schedulerSettings,
+    recentFailedSyncs,
+    queuedOrRunningSyncs,
+  ] = await Promise.all([
+    db.helpdeskTicket.count({ where: myTicketWhere }),
+    db.helpdeskTicket.count({
+      where: {
+        ...myTicketWhere,
+        status: { in: [HelpdeskTicketStatus.NEW, HelpdeskTicketStatus.TO_DO] },
+      },
+    }),
+    db.helpdeskTicket.count({
+      where: {
+        resolvedById: actor.userId,
+        resolvedAt: { gte: last24h },
+      },
+    }),
+    db.helpdeskMessage.count({
+      where: {
+        authorUserId: actor.userId,
+        direction: HelpdeskMessageDirection.OUTBOUND,
+        sentAt: { gte: last24h },
+        deletedAt: null,
+      },
+    }),
+    db.helpdeskTicket.count({
+      where: {
+        isArchived: false,
+        isSpam: false,
+        status: { in: [...ACTIVE_TICKET_STATUSES] },
+      },
+    }),
+    db.helpdeskTicket.findMany({
+      where: {
+        isArchived: false,
+        isSpam: false,
+        status: { in: [...ACTIVE_TICKET_STATUSES] },
+      },
+      select: {
+        lastBuyerMessageAt: true,
+        firstResponseAt: true,
+      },
+      take: 500,
+    }),
+    db.task.count({
+      where: {
+        assignedToUserId: actor.userId,
+        deletedAt: null,
+        status: { not: TaskStatus.COMPLETED },
+      },
+    }),
+    db.task.count({
+      where: {
+        assignedToUserId: actor.userId,
+        deletedAt: null,
+        status: { not: TaskStatus.COMPLETED },
+        dueAt: { lt: new Date() },
+      },
+    }),
+    db.task.count({
+      where: {
+        isSharedTeamTask: true,
+        deletedAt: null,
+        status: { not: TaskStatus.COMPLETED },
+      },
+    }),
+    db.appSetting.findMany({
+      where: {
+        key: {
+          in: [
+            "scheduler_last_tick_at",
+            "scheduler_last_outcome",
+            "scheduler_last_due_count",
+            "scheduler_last_dispatched_count",
+            "scheduler_last_error",
+          ],
+        },
+      },
+      select: { key: true, value: true },
+    }),
+    db.syncJob.count({
+      where: { status: SyncStatus.FAILED, createdAt: { gte: last24h } },
+    }),
+    db.syncJob.count({
+      where: { status: { in: [SyncStatus.PENDING, SyncStatus.RUNNING] } },
+    }),
+  ]);
 
-  useEffect(() => {
-    let cancelled = false;
-    // Single AbortController for ALL in-flight fetches owned by the
-    // dashboard mount. When the user navigates away (e.g. to /help-desk),
-    // cleanup aborts the controller and any pending /api/grid request
-    // unwinds immediately instead of continuing to consume a network slot
-    // and the main thread on the next page.
-    const ac = new AbortController();
+  const slaAtRisk = openTicketSlaRows.reduce((count, ticket) => {
+    const bucket = computeSla({
+      lastBuyerMessageAt: ticket.lastBuyerMessageAt,
+      firstResponseAt: ticket.firstResponseAt,
+    }).bucket;
+    return bucket === "AMBER" || bucket === "RED" ? count + 1 : count;
+  }, 0);
 
-    async function loadInitial() {
-      setLoadingProgress(14);
-      const [gridData, version] = await Promise.all([
-        fetchGridData(ac.signal),
-        fetchGridVersion(ac.signal).catch(() => null),
-      ]);
-      void fetchSchedulerHealth(ac.signal)
-        .then((health) => {
-          if (!cancelled) setSchedulerHealth(health);
-        })
-        .catch(() => {
-          if (!cancelled) setSchedulerHealth(null);
-        });
-      if (cancelled) return;
+  const schedulerLastTick = readSettingString(
+    schedulerSettings,
+    "scheduler_last_tick_at",
+  );
+  const schedulerOutcome = readSettingString(
+    schedulerSettings,
+    "scheduler_last_outcome",
+  );
+  const schedulerDueCount = readSettingNumber(
+    schedulerSettings,
+    "scheduler_last_due_count",
+  );
+  const schedulerDispatchedCount = readSettingNumber(
+    schedulerSettings,
+    "scheduler_last_dispatched_count",
+  );
+  const schedulerError = readSettingString(
+    schedulerSettings,
+    "scheduler_last_error",
+  );
 
-      setLoadingProgress(100);
-      setRows(gridData.rows);
-      setSource(gridData.source);
-      setError(gridData.error);
-      sourceRef.current = gridData.source;
-      versionRef.current = version;
-    }
+  const quickLinks = QUICK_LINKS.map((key) => NAV_PAGES_BY_KEY[key]).filter(
+    (page) => allowedPages.has(page.key),
+  );
 
-    async function refreshGridIfChanged(force = false) {
-      if (refreshInFlightRef.current) return;
-
-      try {
-        const nextVersion = await fetchGridVersion(ac.signal);
-        const shouldRefresh =
-          force ||
-          sourceRef.current !== "db" ||
-          (nextVersion != null &&
-            versionRef.current != null &&
-            nextVersion !== versionRef.current);
-
-        if (!shouldRefresh) {
-          if (nextVersion != null) {
-            versionRef.current = nextVersion;
-          }
-          return;
-        }
-
-        refreshInFlightRef.current = true;
-        setIsRefreshing(true);
-        const gridData = await fetchGridData(ac.signal);
-        if (cancelled) return;
-
-        if (gridData.source === "error" && sourceRef.current === "db") {
-          console.warn("[dashboard] Background grid refresh failed, keeping existing data:", gridData.error);
-          return;
-        }
-
-        setRows(gridData.rows);
-        setSource(gridData.source);
-        setError(gridData.error);
-        sourceRef.current = gridData.source;
-        versionRef.current = nextVersion;
-      } catch (err) {
-        void err;
-      } finally {
-        refreshInFlightRef.current = false;
-        if (!cancelled) {
-          setIsRefreshing(false);
-        }
-      }
-    }
-
-    function handleVisibilityOrFocus() {
-      if (document.visibilityState === "visible") {
-        void refreshGridIfChanged();
-        void fetchSchedulerHealth(ac.signal)
-          .then((health) => {
-            if (!cancelled) setSchedulerHealth(health);
-          })
-          .catch(() => {
-            if (!cancelled) setSchedulerHealth(null);
-          });
-      }
-    }
-
-    void loadInitial();
-
-    const progressTimer = window.setInterval(() => {
-      setLoadingProgress((current) => {
-        if (current >= 92) return current;
-        const next = current + Math.max(2, Math.round((100 - current) / 8));
-        return Math.min(next, 92);
-      });
-    }, 180);
-
-    const intervalId = window.setInterval(() => {
-      if (document.visibilityState !== "visible") return;
-      void refreshGridIfChanged();
-    }, GRID_VERSION_POLL_MS);
-    const schedulerHealthTimer = window.setInterval(() => {
-      if (document.visibilityState !== "visible") return;
-      void fetchSchedulerHealth(ac.signal)
-        .then((health) => {
-          if (!cancelled) setSchedulerHealth(health);
-        })
-        .catch(() => {
-          if (!cancelled) setSchedulerHealth(null);
-        });
-    }, SCHEDULER_HEALTH_POLL_MS);
-
-    window.addEventListener("focus", handleVisibilityOrFocus);
-    document.addEventListener("visibilitychange", handleVisibilityOrFocus);
-
-    return () => {
-      cancelled = true;
-      ac.abort();
-      window.clearInterval(progressTimer);
-      window.clearInterval(intervalId);
-      window.clearInterval(schedulerHealthTimer);
-      window.removeEventListener("focus", handleVisibilityOrFocus);
-      document.removeEventListener("visibilitychange", handleVisibilityOrFocus);
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!isPageVisible) return;
-    const ac = new AbortController();
-    void fetchSchedulerHealth(ac.signal)
-      .then((health) => {
-        if (!ac.signal.aborted) setSchedulerHealth(health);
-      })
-      .catch(() => {
-        if (!ac.signal.aborted) setSchedulerHealth(null);
-      });
-    return () => ac.abort();
-  }, [isPageVisible]);
-
-  const summary = useMemo(() => (rows ? summarizeGrid(rows) : null), [rows]);
-  const { setConnectionInfo } = useDashboardConnection();
-
-  useEffect(() => {
-    if (rows == null || source == null) {
-      setConnectionInfo(null);
-      return;
-    }
-    setConnectionInfo({
-      source,
-      error,
-      summary,
-    });
-    return () => setConnectionInfo(null);
-  }, [rows, source, error, summary, setConnectionInfo]);
-
-  if (!rows) {
-    return (
-      <div className="flex h-full min-h-0 min-w-0 items-center justify-center overflow-hidden">
-        <div className="w-full max-w-md px-6">
-          <div className="flex flex-col items-center gap-3">
-            <Loader2 className="h-8 w-8 animate-spin text-primary" />
-            <span className="text-sm text-muted-foreground">Loading grid data...</span>
+  return (
+    <main className="min-h-full overflow-y-auto bg-background">
+      <div className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 py-5 sm:px-6 lg:px-8">
+        {deniedPage ? (
+          <div className="flex items-start gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
+            <Lock className="mt-0.5 h-4 w-4 shrink-0" />
+            <div>
+              <p className="font-medium text-foreground">
+                {deniedPage.label} is locked for this account.
+              </p>
+              <p className="mt-0.5 text-amber-200/80">
+                The page is still visible in the menu, but it is not included in
+                this user's allow list.
+              </p>
+            </div>
           </div>
-          <div className="mt-5 overflow-hidden rounded-full border border-purple-500/30 bg-purple-500/10 p-1 shadow-[0_0_18px_rgba(168,85,247,0.14)]">
-            <div
-              className="h-3 rounded-full bg-gradient-to-r from-fuchsia-500 via-violet-500 to-purple-400 shadow-[0_0_20px_rgba(168,85,247,0.45)] transition-[width] duration-300 ease-out"
-              style={{ width: `${loadingProgress}%` }}
+        ) : null}
+
+        <header className="flex flex-col gap-3 border-b border-border pb-5 sm:flex-row sm:items-end sm:justify-between">
+          <div data-tour="dashboard-home">
+            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[#C43E3E]">
+              reorG
+            </p>
+            <h1 className="mt-2 text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
+              Dashboard
+            </h1>
+            <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
+              Your Help Desk workload, task pressure, and sync pulse in one
+              safe home view.
+            </p>
+          </div>
+          <div className="rounded-md border border-border bg-card px-3 py-2 text-xs text-muted-foreground">
+            Signed in as{" "}
+            <span className="font-medium text-foreground">
+              {actor.name || actor.email}
+            </span>
+          </div>
+        </header>
+
+        <section data-tour="dashboard-helpdesk" className="space-y-3">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <LifeBuoy className="h-4 w-4 text-[#C43E3E]" />
+              <h2 className="text-sm font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                Help Desk
+              </h2>
+            </div>
+            {allowedPages.has("help-desk") ? (
+              <Link
+                href="/help-desk"
+                className="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted"
+              >
+                Open inbox
+                <ArrowRight className="h-3.5 w-3.5" />
+              </Link>
+            ) : null}
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <MetricCard
+              title="My Open Tickets"
+              value={formatNumber(myAssignedOpen)}
+              detail={`${formatNumber(myTodoTickets)} need agent action`}
+              icon={LifeBuoy}
+              href={allowedPages.has("help-desk") ? "/help-desk" : undefined}
+            />
+            <MetricCard
+              title="Team Open"
+              value={formatNumber(teamOpenTickets)}
+              detail="Active buyer conversations"
+              icon={Gauge}
+              tone={teamOpenTickets > 50 ? "warn" : "neutral"}
+              href={allowedPages.has("help-desk") ? "/help-desk" : undefined}
+            />
+            <MetricCard
+              title="SLA Watch"
+              value={formatNumber(slaAtRisk)}
+              detail="Open tickets amber or red"
+              icon={Timer}
+              tone={slaAtRisk > 0 ? "warn" : "good"}
+              href={allowedPages.has("help-desk") ? "/help-desk" : undefined}
+            />
+            <MetricCard
+              title="My Last 24h"
+              value={formatNumber(myOutboundLast24h)}
+              detail={`${formatNumber(myResolvedLast24h)} resolved by you`}
+              icon={CheckCircle2}
+              tone="good"
+              href={allowedPages.has("help-desk") ? "/help-desk" : undefined}
             />
           </div>
-          <div className="mt-2 flex items-center justify-between text-[11px] text-purple-300/80">
-            <span>Connecting to live grid data</span>
-            <span>{loadingProgress}%</span>
-          </div>
-        </div>
-      </div>
-    );
-  }
+        </section>
 
-  return (
-    <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
-      {schedulerHealth && schedulerHealth.status !== "healthy" && source === "db" && (
-        <div
-          data-tour="dashboard-health-banner"
-          className={
-            schedulerHealth.status === "attention"
-              ? "border-b border-red-500/20 bg-red-500/5 px-4 py-2"
-              : "border-b border-amber-500/20 bg-amber-500/5 px-4 py-2"
-          }
-        >
-          <div
-            className={
-              schedulerHealth.status === "attention"
-                ? "text-xs text-red-300"
-                : "text-xs text-amber-300"
+        <section data-tour="dashboard-tasks" className="grid gap-3 lg:grid-cols-3">
+          <MetricCard
+            title="My Tasks"
+            value={formatNumber(myOpenTasks)}
+            detail={`${formatNumber(myOverdueTasks)} overdue`}
+            icon={ClipboardList}
+            tone={myOverdueTasks > 0 ? "warn" : "neutral"}
+            href={allowedPages.has("tasks") ? "/tasks" : undefined}
+          />
+          <MetricCard
+            title="Shared Team Tasks"
+            value={formatNumber(sharedOpenTasks)}
+            detail="Open shared work items"
+            icon={Activity}
+            href={allowedPages.has("tasks") ? "/tasks" : undefined}
+          />
+          <MetricCard
+            title="Catalog Access"
+            value={allowedPages.has("catalog") ? "On" : "Locked"}
+            detail={
+              allowedPages.has("catalog")
+                ? "Catalog grid is available"
+                : "Not in this user's allow list"
             }
-          >
-            <div className="font-semibold">
-              Store update health: {schedulerHealth.headline}
+            icon={TableProperties}
+            tone={allowedPages.has("catalog") ? "good" : "warn"}
+            href={allowedPages.has("catalog") ? "/catalog" : undefined}
+          />
+        </section>
+
+        <section
+          data-tour="dashboard-ops"
+          className="grid gap-3 lg:grid-cols-[1.2fr_0.8fr]"
+        >
+          <div className="rounded-lg border border-border bg-card p-4">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <div className="flex items-center gap-2">
+                  <RefreshCw className="h-4 w-4 text-[#C43E3E]" />
+                  <h2 className="text-sm font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                    Sync Pulse
+                  </h2>
+                </div>
+                <p className="mt-3 text-2xl font-semibold text-foreground">
+                  {formatRelative(schedulerLastTick)}
+                </p>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Last scheduler tick at {formatDateTime(schedulerLastTick)}
+                </p>
+              </div>
+              <span
+                className={cn(
+                  "rounded-full border px-2.5 py-1 text-xs font-medium",
+                  schedulerOutcome === "error"
+                    ? "border-red-500/30 bg-red-500/10 text-red-300"
+                    : "border-emerald-500/30 bg-emerald-500/10 text-emerald-300",
+                )}
+              >
+                {schedulerOutcome ?? "unknown"}
+              </span>
             </div>
-            {schedulerHealth.affectedLabels.length > 0 ? (
-              <div className="mt-0.5">
-                Affected stores: {schedulerHealth.affectedLabels.join(", ")}
+            <div className="mt-4 grid gap-3 sm:grid-cols-3">
+              <div className="border-l border-border pl-3">
+                <p className="text-xs text-muted-foreground">Due</p>
+                <p className="mt-1 text-lg font-semibold text-foreground">
+                  {formatNumber(schedulerDueCount ?? 0)}
+                </p>
+              </div>
+              <div className="border-l border-border pl-3">
+                <p className="text-xs text-muted-foreground">Dispatched</p>
+                <p className="mt-1 text-lg font-semibold text-foreground">
+                  {formatNumber(schedulerDispatchedCount ?? 0)}
+                </p>
+              </div>
+              <div className="border-l border-border pl-3">
+                <p className="text-xs text-muted-foreground">Queued/Running</p>
+                <p className="mt-1 text-lg font-semibold text-foreground">
+                  {formatNumber(queuedOrRunningSyncs)}
+                </p>
+              </div>
+            </div>
+            {schedulerError ? (
+              <div className="mt-4 flex items-start gap-2 rounded-md border border-red-500/25 bg-red-500/10 px-3 py-2 text-xs text-red-200">
+                <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                <span>
+                  Latest scheduler tick reported an error. Review Sync or
+                  Engine Room if your account has access.
+                </span>
               </div>
             ) : null}
-            <div className="mt-0.5">{schedulerHealth.detail}</div>
-            <div className="mt-1 opacity-90">
-              Next step: {schedulerHealth.recommendedAction}
+          </div>
+
+          <div className="rounded-lg border border-border bg-card p-4">
+            <div className="flex items-center gap-2">
+              <AlertTriangle className="h-4 w-4 text-[#C43E3E]" />
+              <h2 className="text-sm font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                Last 24h
+              </h2>
             </div>
+            <p className="mt-3 text-2xl font-semibold text-foreground">
+              {formatNumber(recentFailedSyncs)}
+            </p>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Failed sync jobs in the last 24 hours.
+            </p>
+            {allowedPages.has("sync") ? (
+              <Link
+                href="/sync"
+                className="mt-5 inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-3 py-2 text-sm font-medium text-foreground hover:bg-muted"
+              >
+                Review sync
+                <ArrowRight className="h-4 w-4" />
+              </Link>
+            ) : null}
           </div>
-        </div>
-      )}
-      {isRefreshing && source === "db" && (
-        <div className="flex items-center gap-2 border-b border-blue-500/20 bg-blue-500/5 px-4 py-1.5">
-          <RefreshCw className="h-3.5 w-3.5 animate-spin text-blue-400" />
-          <span className="text-xs text-blue-400">
-            Refreshing live marketplace values in the background...
-          </span>
-        </div>
-      )}
-      {source === "error" && (
-        <div className="border-b border-red-500/20 bg-red-500/5 px-4 py-2">
-          <div className="text-xs text-red-300">
-            <div className="font-semibold">Dashboard connection issue</div>
-            <div className="mt-0.5">
-              The live dashboard data could not be loaded, so reorG is not showing sample rows
-              here anymore.
+        </section>
+
+        {quickLinks.length > 0 ? (
+          <section data-tour="dashboard-quick-links" className="space-y-3">
+            <h2 className="text-sm font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+              Quick Links
+            </h2>
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+              {quickLinks.map((page) => (
+                <Link
+                  key={page.key}
+                  href={page.href}
+                  className="group flex min-h-[96px] flex-col justify-between rounded-lg border border-border bg-card p-4 text-sm text-foreground hover:bg-muted/60"
+                >
+                  <span className="font-medium">{page.label}</span>
+                  <span className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
+                    <span className="line-clamp-2">{page.description}</span>
+                    <ArrowRight className="h-4 w-4 shrink-0 opacity-60 transition-transform group-hover:translate-x-0.5 group-hover:opacity-100" />
+                  </span>
+                </Link>
+              ))}
             </div>
-            {error ? <div className="mt-1 opacity-90">Detail: {error}</div> : null}
-          </div>
-        </div>
-      )}
-      <Suspense
-        fallback={
-          <div className="min-h-0 min-w-0 flex-1 overflow-hidden">
-            <DataGrid rows={rows} />
-          </div>
-        }
-      >
-        <DashboardGridArea rows={rows} />
-      </Suspense>
-      <Suspense fallback={null}>
-        <PageTour page="dashboard" steps={PAGE_TOUR_STEPS.dashboard} ready />
-      </Suspense>
-    </div>
+          </section>
+        ) : null}
+      </div>
+      <PageTour page="dashboard" steps={PAGE_TOUR_STEPS.dashboard} ready />
+    </main>
   );
 }

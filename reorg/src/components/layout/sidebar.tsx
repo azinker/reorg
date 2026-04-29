@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
 import {
   LayoutDashboard,
+  TableProperties,
   Boxes,
   ClipboardList,
   DollarSign,
@@ -29,6 +30,7 @@ import {
   Wallet,
   MessageSquareText,
   LifeBuoy,
+  Lock,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import {
@@ -45,6 +47,7 @@ import {
  */
 const ICON_COMPONENTS: Record<NavPage["icon"], React.ComponentType<{ className?: string }>> = {
   LayoutDashboard,
+  TableProperties,
   Shield,
   Boxes,
   ClipboardList,
@@ -103,18 +106,18 @@ export function Sidebar({
   const actuallyCollapsed = mobile ? false : collapsed;
 
   /**
-   * Resolve which nav items to show. We trust `allowedPageKeys` from the
-   * server when provided; otherwise we fall back to the same legacy filter
-   * used before the per-user permissions feature shipped.
+   * Resolve nav access. Operators still see non-admin pages outside their
+   * allowlist, but those entries render locked and route guards block them.
    */
-  const visibleItems = useMemo(() => {
+  const navItems = useMemo(() => {
     if (allowedPageKeys === undefined) {
       // Legacy fallback (no allowlist available) — preserves prior behavior.
-      return NAV_PAGES.filter(
+      const pages = NAV_PAGES.filter(
         (item) =>
           (item.key !== "public-network-transfer" && item.key !== "payouts") ||
           userRole !== "OPERATOR",
       );
+      return pages.map((item) => ({ item, isLocked: false }));
     }
 
     const allowed = new Set(
@@ -127,7 +130,12 @@ export function Sidebar({
           )
         : (allowedPageKeys as PageKey[]),
     );
-    return NAV_PAGES.filter((item) => allowed.has(item.key));
+    return NAV_PAGES.filter(
+      (item) => userRole !== "OPERATOR" || !item.adminOnly,
+    ).map((item) => ({
+      item,
+      isLocked: !allowed.has(item.key),
+    }));
   }, [allowedPageKeys, userRole]);
 
   /**
@@ -249,58 +257,80 @@ export function Sidebar({
       {/* Nav Items */}
       <nav className="flex-1 overflow-y-auto p-2">
         <ul className="space-y-1">
-          {visibleItems.map((item) => {
+          {navItems.map(({ item, isLocked }) => {
             const isActive =
-              pathname === item.href ||
-              (item.href !== "/dashboard" && pathname.startsWith(item.href));
+              !isLocked &&
+              (pathname === item.href ||
+                (item.href !== "/dashboard" &&
+                  pathname.startsWith(`${item.href}/`)));
             const Icon = ICON_COMPONENTS[item.icon];
+            const itemClassName = cn(
+              "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
+              isLocked
+                ? "cursor-not-allowed text-sidebar-foreground/45"
+                : isActive
+                  ? "cursor-pointer bg-sidebar-accent text-sidebar-accent-foreground"
+                  : "cursor-pointer text-sidebar-foreground hover:bg-sidebar-accent/50 hover:text-sidebar-accent-foreground",
+            );
 
             return (
               <li key={item.href}>
-                <Link
-                  href={item.href}
-                  onClick={onNavigate}
-                  className={cn(
-                    "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors cursor-pointer",
-                    isActive
-                      ? "bg-sidebar-accent text-sidebar-accent-foreground"
-                      : "text-sidebar-foreground hover:bg-sidebar-accent/50 hover:text-sidebar-accent-foreground"
-                  )}
-                  title={actuallyCollapsed ? item.label : undefined}
-                >
-                  <Icon className="h-4 w-4 shrink-0 text-[#C43E3E]" />
-                  {!actuallyCollapsed && <span>{item.label}</span>}
-                  {!actuallyCollapsed &&
-                    item.href === "/sync" &&
-                    syncIssueCount > 0 && (
-                      <span
-                        className={cn(
-                          "ml-auto inline-flex min-w-5 items-center justify-center rounded-full px-1.5 py-0.5 text-[10px] font-semibold",
-                          attentionCount > 0
-                            ? healthSummary?.status === "attention"
-                              ? "bg-red-500/15 text-red-300"
-                              : "bg-amber-500/15 text-amber-300"
-                            : "bg-amber-500/15 text-amber-300",
-                        )}
-                      >
-                        {syncIssueCount}
-                      </span>
-                    )}
-                  {actuallyCollapsed &&
-                    item.href === "/sync" &&
-                    syncIssueCount > 0 && (
-                      <span
-                        className={cn(
-                          "ml-auto h-2 w-2 rounded-full",
-                          attentionCount > 0
-                            ? healthSummary?.status === "attention"
-                              ? "bg-red-400"
-                              : "bg-amber-400"
-                            : "bg-amber-400",
-                        )}
-                      />
-                    )}
-                </Link>
+                {isLocked ? (
+                  <button
+                    type="button"
+                    className={cn(itemClassName, "w-full")}
+                    title={
+                      actuallyCollapsed
+                        ? `${item.label} is locked for your account`
+                        : "Locked for this account"
+                    }
+                    aria-disabled="true"
+                  >
+                    <Icon className="h-4 w-4 shrink-0 text-[#C43E3E]/55" />
+                    {!actuallyCollapsed && <span>{item.label}</span>}
+                    <Lock className="ml-auto h-3.5 w-3.5 text-muted-foreground" />
+                  </button>
+                ) : (
+                  <Link
+                    href={item.href}
+                    onClick={onNavigate}
+                    className={itemClassName}
+                    title={actuallyCollapsed ? item.label : undefined}
+                  >
+                    <Icon className="h-4 w-4 shrink-0 text-[#C43E3E]" />
+                    {!actuallyCollapsed && <span>{item.label}</span>}
+                    {!actuallyCollapsed &&
+                      item.href === "/sync" &&
+                      syncIssueCount > 0 && (
+                        <span
+                          className={cn(
+                            "ml-auto inline-flex min-w-5 items-center justify-center rounded-full px-1.5 py-0.5 text-[10px] font-semibold",
+                            attentionCount > 0
+                              ? healthSummary?.status === "attention"
+                                ? "bg-red-500/15 text-red-300"
+                                : "bg-amber-500/15 text-amber-300"
+                              : "bg-amber-500/15 text-amber-300",
+                          )}
+                        >
+                          {syncIssueCount}
+                        </span>
+                      )}
+                    {actuallyCollapsed &&
+                      item.href === "/sync" &&
+                      syncIssueCount > 0 && (
+                        <span
+                          className={cn(
+                            "ml-auto h-2 w-2 rounded-full",
+                            attentionCount > 0
+                              ? healthSummary?.status === "attention"
+                                ? "bg-red-400"
+                                : "bg-amber-400"
+                              : "bg-amber-400",
+                          )}
+                        />
+                      )}
+                  </Link>
+                )}
               </li>
             );
           })}

@@ -388,7 +388,7 @@ function ProfitListingDetailModal(props: {
               {detail ? `${detail.sku} | ${PLATFORM_FULL[detail.platform]}` : "Loading listing details"}
             </h2>
             <p className="mt-1 text-sm text-muted-foreground">
-              Edit shared cost inputs here, then stage marketplace changes through the same guarded push flow used by the dashboard.
+              Edit shared cost inputs here, then stage marketplace changes through the same guarded push flow used by the catalog.
             </p>
           </div>
           <button
