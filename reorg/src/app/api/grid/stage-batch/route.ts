@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { db } from "@/lib/db";
+import { requireCatalogMutationAllowed } from "@/lib/catalog-permissions-server";
 
 const UPC_STAGEABLE_PLATFORMS = new Set(["TPP_EBAY", "TT_EBAY", "BIGCOMMERCE", "SHOPIFY"]);
 
@@ -19,6 +20,9 @@ const batchSchema = z.object({
 
 export async function POST(request: NextRequest) {
   try {
+    const access = await requireCatalogMutationAllowed();
+    if (!access.allowed) return access.response;
+
     const body = await request.json();
     const parsed = batchSchema.safeParse(body);
     if (!parsed.success) {

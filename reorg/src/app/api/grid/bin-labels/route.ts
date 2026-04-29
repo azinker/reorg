@@ -5,6 +5,7 @@ import { db } from "@/lib/db";
 import { isAuthBypassEnabled } from "@/lib/app-env";
 import { BIN_LABEL_MAX_ROW_IDS, buildBinLabelsPdf } from "@/lib/services/bin-label-pdf";
 import { queueCurrentRequestBinaryResponseSample } from "@/lib/services/network-transfer-samples";
+import { getCurrentCatalogPermissions } from "@/lib/catalog-permissions-server";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -35,6 +36,16 @@ export async function POST(request: NextRequest) {
 
     if (!actorUserId) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+    const catalogPermissions = await getCurrentCatalogPermissions();
+    if (
+      catalogPermissions.hiddenColumns.includes("sku") ||
+      catalogPermissions.hiddenColumns.includes("title")
+    ) {
+      return NextResponse.json(
+        { error: "Bin labels are not available with SKU or title columns hidden." },
+        { status: 403 },
+      );
     }
 
     const json = await request.json();

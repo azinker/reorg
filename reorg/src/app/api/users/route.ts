@@ -8,6 +8,10 @@ import {
 } from "@/lib/services/user-admin";
 import { getActor } from "@/lib/impersonation";
 import { NAV_PAGES } from "@/lib/nav-pages";
+import {
+  normalizeCatalogPermissions,
+  resolveCatalogPermissions,
+} from "@/lib/catalog-permissions";
 
 const createUserSchema = z.object({
   name: z.string().trim().min(1).max(120),
@@ -15,6 +19,7 @@ const createUserSchema = z.object({
   password: z.string().min(8).max(200),
   role: z.enum(["ADMIN", "OPERATOR"]),
   pagePermissions: z.unknown().optional(),
+  catalogPermissions: z.unknown().optional(),
 });
 
 export async function GET() {
@@ -37,6 +42,7 @@ export async function GET() {
         email: true,
         role: true,
         pagePermissions: true,
+        catalogPermissions: true,
         createdAt: true,
         updatedAt: true,
       },
@@ -89,6 +95,10 @@ export async function GET() {
         email: u.email,
         role: u.role,
         pagePermissions: (u.pagePermissions as string[] | null) ?? null,
+        catalogPermissions: resolveCatalogPermissions({
+          role: u.role,
+          catalogPermissions: u.catalogPermissions,
+        }),
         createdAt: u.createdAt.toISOString(),
         updatedAt: u.updatedAt.toISOString(),
       })),
@@ -144,10 +154,15 @@ export async function POST(request: NextRequest) {
     }
 
     let pagePermissions: ReturnType<typeof normalizePagePermissions>;
+    let catalogPermissions: ReturnType<typeof normalizeCatalogPermissions>;
     try {
       pagePermissions =
         parsed.data.role === "OPERATOR"
           ? normalizePagePermissions(parsed.data.pagePermissions)
+          : undefined;
+      catalogPermissions =
+        parsed.data.role === "OPERATOR"
+          ? normalizeCatalogPermissions(parsed.data.catalogPermissions)
           : undefined;
     } catch (err) {
       return NextResponse.json(
@@ -155,7 +170,7 @@ export async function POST(request: NextRequest) {
           error:
             err instanceof Error
               ? err.message
-              : "Invalid pagePermissions payload",
+              : "Invalid permissions payload",
         },
         { status: 400 },
       );
@@ -165,6 +180,7 @@ export async function POST(request: NextRequest) {
       ...parsed.data,
       email,
       pagePermissions,
+      catalogPermissions,
       createdById: session.user.id,
     });
 

@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { db } from "@/lib/db";
+import { requireCatalogMutationAllowed } from "@/lib/catalog-permissions-server";
 
 const bodySchema = z.object({
   listingId: z.string().min(1),
@@ -12,6 +13,9 @@ export async function POST(
   { params }: { params: Promise<{ rowId: string }> },
 ) {
   try {
+    const access = await requireCatalogMutationAllowed();
+    if (!access.allowed) return access.response;
+
     const { rowId } = await params;
     const body = await request.json();
     const parsed = bodySchema.safeParse(body);

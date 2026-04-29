@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import { buildLiveUpcSummary } from "@/lib/upc-live";
 import { hydrateMissingEbayListingUpc } from "@/lib/services/ebay-live-upc";
 import { Platform } from "@prisma/client";
+import { getCurrentCatalogPermissions } from "@/lib/catalog-permissions-server";
 
 type RowUpcSummaryRow = {
   id?: string;
@@ -53,6 +54,14 @@ export async function GET(
   context: { params: Promise<unknown> },
 ) {
   try {
+    const catalogPermissions = await getCurrentCatalogPermissions();
+    if (catalogPermissions.hiddenColumns.includes("upc")) {
+      return NextResponse.json(
+        { data: { lines: [], choices: [] } },
+        { headers: { "Cache-Control": "no-store" } },
+      );
+    }
+
     const { rowId } = (await context.params) as { rowId: string };
     const isChildRow = rowId.startsWith("child-");
     const masterRowId = isChildRow ? rowId.replace(/^child-/, "") : rowId;
@@ -89,7 +98,7 @@ export async function GET(
     }
 
     let hydratedRow = row;
-    const rowHydrated = await hydrateRowListings(row);
+    const rowHydrated = catalogPermissions.readOnly ? false : await hydrateRowListings(row);
     if (rowHydrated) {
       hydratedRow = (await db.masterRow.findUnique({
         where: { id: masterRowId },
@@ -160,7 +169,9 @@ export async function GET(
 
         const hydratedChildRows: RowUpcSummaryRow[] = [];
         for (const childRow of childRows) {
-          const childChanged = await hydrateRowListings(childRow);
+          const childChanged = catalogPermissions.readOnly
+            ? false
+            : await hydrateRowListings(childRow);
           if (!childChanged) {
             hydratedChildRows.push(childRow);
             continue;

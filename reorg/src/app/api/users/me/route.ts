@@ -13,6 +13,7 @@ import { db } from "@/lib/db";
 import { updateManagedUserProfile } from "@/lib/services/user-admin";
 import { getActor } from "@/lib/impersonation";
 import { resolveAllowedPageKeys } from "@/lib/nav-pages";
+import { resolveCatalogPermissions } from "@/lib/catalog-permissions";
 
 const updateMeSchema = z.object({
   name: z.string().trim().min(1).max(120).optional(),
@@ -44,6 +45,7 @@ export async function GET() {
       bio: true,
       avatarUrl: true,
       pagePermissions: true,
+      catalogPermissions: true,
       createdAt: true,
       updatedAt: true,
     },
@@ -64,6 +66,10 @@ export async function GET() {
     data: {
       ...user,
       pagePermissions: (user.pagePermissions as string[] | null) ?? null,
+      catalogPermissions: resolveCatalogPermissions({
+        role: user.role,
+        catalogPermissions: user.catalogPermissions,
+      }),
       allowedPageKeys: allowed,
       impersonation: actor.isImpersonating
         ? {

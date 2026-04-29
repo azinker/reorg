@@ -3,6 +3,7 @@ import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { isAuthBypassEnabled } from "@/lib/app-env";
+import { getCurrentCatalogPermissions } from "@/lib/catalog-permissions-server";
 import type { Platform as PrismaPlatform } from "@prisma/client";
 
 export const runtime = "nodejs";
@@ -33,6 +34,10 @@ export async function GET(request: NextRequest) {
   const session = await auth();
   if (!session?.user?.id && !isAuthBypassEnabled()) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  const catalogPermissions = await getCurrentCatalogPermissions();
+  if (catalogPermissions.hiddenColumns.includes("itemIds")) {
+    return NextResponse.json({ error: "Listing lookup is not available." }, { status: 403 });
   }
 
   const platformItemIdParam = request.nextUrl.searchParams.get("platformItemId");

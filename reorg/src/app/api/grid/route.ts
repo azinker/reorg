@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { getGridData } from "@/lib/grid-query";
 import { getGridVersion } from "@/lib/grid-version";
 import { getServerCachedValue } from "@/lib/server-cache";
+import { getCurrentCatalogPermissions } from "@/lib/catalog-permissions-server";
+import { redactGridRowsForCatalogPermissions } from "@/lib/catalog-permissions";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -16,9 +18,11 @@ export async function GET() {
     // The buildGridRow() filter in grid-query.ts provides a defensive UI-level
     // guard for any synthetic rows that may still exist in the DB.
     const version = await getGridVersion();
+    const catalogPermissions = await getCurrentCatalogPermissions();
     if (process.env.NODE_ENV !== "production") {
       const rows = await getGridData();
-      const body = { data: { rows, total: rows.length, version } };
+      const visibleRows = redactGridRowsForCatalogPermissions(rows, catalogPermissions);
+      const body = { data: { rows: visibleRows, total: visibleRows.length, version } };
       return NextResponse.json(body);
     }
 
@@ -34,7 +38,8 @@ export async function GET() {
       },
     });
 
-    const responseBody = { data };
+    const visibleRows = redactGridRowsForCatalogPermissions(data.rows, catalogPermissions);
+    const responseBody = { data: { ...data, rows: visibleRows, total: visibleRows.length } };
     return NextResponse.json(responseBody);
   } catch (error) {
     console.error("[grid] Failed to fetch grid data", error);

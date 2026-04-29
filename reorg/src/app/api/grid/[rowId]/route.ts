@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { getGridRowById } from "@/lib/grid-query";
+import { getCurrentCatalogPermissions } from "@/lib/catalog-permissions-server";
+import { redactGridRowForCatalogPermissions } from "@/lib/catalog-permissions";
 
 export async function GET(
   _request: Request,
@@ -13,7 +15,10 @@ export async function GET(
       return NextResponse.json({ error: `Row "${rowId}" not found` }, { status: 404 });
     }
 
-    return NextResponse.json({ data: { row } });
+    const catalogPermissions = await getCurrentCatalogPermissions();
+    return NextResponse.json({
+      data: { row: redactGridRowForCatalogPermissions(row, catalogPermissions) },
+    });
   } catch (error) {
     console.error("[grid-row] failed", error);
     return NextResponse.json(

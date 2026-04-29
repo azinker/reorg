@@ -6,6 +6,11 @@ import { refreshEbayItemsDirect } from "@/lib/services/ebay-tpp-sync";
 import { refreshEbayTtItemsDirect } from "@/lib/services/ebay-tt-sync";
 import { runBigCommerceWebhookReconcile } from "@/lib/services/bigcommerce-sync";
 import { runShopifyWebhookReconcile } from "@/lib/services/shopify-sync";
+import {
+  getCurrentCatalogPermissions,
+  requireCatalogMutationAllowed,
+} from "@/lib/catalog-permissions-server";
+import { redactGridRowForCatalogPermissions } from "@/lib/catalog-permissions";
 
 export const maxDuration = 45;
 
@@ -231,6 +236,9 @@ export async function POST(
 ) {
   const startedAt = Date.now();
   try {
+    const access = await requireCatalogMutationAllowed();
+    if (!access.allowed) return access.response;
+
     const { rowId } = await params;
     const { masterRowIds, includeChildListings } = parseRowId(rowId);
 
@@ -246,11 +254,14 @@ export async function POST(
     const buckets = collectBuckets(masterRows, includeChildListings);
     if (buckets.size === 0) {
       const currentRow = await getGridRowById(rowId).catch(() => null);
+      const catalogPermissions = await getCurrentCatalogPermissions();
       return NextResponse.json({
         data: {
           rowId,
           sku: masterRows[0].sku,
-          row: currentRow,
+          row: currentRow
+            ? redactGridRowForCatalogPermissions(currentRow, catalogPermissions)
+            : currentRow,
           results: [],
           message: "No marketplace listings linked — nothing to refresh.",
         },
@@ -290,6 +301,7 @@ export async function POST(
         refreshedRow = await getGridRowById(masterRowIds[0]).catch(() => null);
       }
     }
+    const catalogPermissions = await getCurrentCatalogPermissions();
 
     const perPlatformLines = results.map((r) => {
       const label = shortPlatform(r.platform);
@@ -307,7 +319,9 @@ export async function POST(
       data: {
         rowId,
         sku: masterRows[0].sku,
-        row: refreshedRow,
+        row: refreshedRow
+          ? redactGridRowForCatalogPermissions(refreshedRow, catalogPermissions)
+          : refreshedRow,
         results,
         message,
         timings: { totalMs: Date.now() - startedAt },

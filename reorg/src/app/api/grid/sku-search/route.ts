@@ -1,8 +1,18 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { db } from "@/lib/db";
+import { getCurrentCatalogPermissions } from "@/lib/catalog-permissions-server";
 
 export async function GET(request: NextRequest) {
   try {
+    const catalogPermissions = await getCurrentCatalogPermissions();
+    if (
+      catalogPermissions.hiddenColumns.includes("sku") ||
+      catalogPermissions.hiddenColumns.includes("title") ||
+      catalogPermissions.hiddenColumns.includes("itemIds")
+    ) {
+      return NextResponse.json({ data: [] });
+    }
+
     const q = request.nextUrl.searchParams.get("q")?.trim() ?? "";
 
     if (q.length === 0) {

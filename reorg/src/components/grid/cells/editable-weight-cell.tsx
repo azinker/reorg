@@ -8,9 +8,10 @@ interface EditableWeightCellProps {
   value: string | null;
   rowId: string;
   onSave: (rowId: string, weight: string) => void;
+  readOnly?: boolean;
 }
 
-export function EditableWeightCell({ value, rowId, onSave }: EditableWeightCellProps) {
+export function EditableWeightCell({ value, rowId, onSave, readOnly = false }: EditableWeightCellProps) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
   const [unit, setUnit] = useState<"oz" | "LBS">("oz");
@@ -70,6 +71,14 @@ export function EditableWeightCell({ value, rowId, onSave }: EditableWeightCellP
   function handleKeyDown(e: React.KeyboardEvent) {
     if (e.key === "Enter") save();
     else if (e.key === "Escape") setEditing(false);
+  }
+
+  if (readOnly) {
+    return value ? (
+      <span className="scalable-text">{fmtWeight(value)}</span>
+    ) : (
+      <span className="text-[11px] text-amber-500 italic">Missing</span>
+    );
   }
 
   return (

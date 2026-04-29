@@ -270,6 +270,7 @@ interface EditableStoreBlockProps {
   quickPushState?: QuickPushState;
   failedPushState?: FailedPushState;
   showItemId?: boolean;
+  readOnly?: boolean;
 }
 
 export type QuickPushPhase =
@@ -300,6 +301,7 @@ function EditableStoreBlock({
   quickPushState,
   failedPushState,
   showItemId = false,
+  readOnly = false,
 }: EditableStoreBlockProps) {
   const label = PLATFORM_SHORT[item.platform];
   const colorClass = PLATFORM_COLORS[item.platform];
@@ -320,6 +322,7 @@ function EditableStoreBlock({
   }
 
   function startEdit() {
+    if (readOnly) return;
     const current = hasStaged ? Number(item.stagedValue) : Number(item.value);
     setDraftCents(current ? Math.round(current * 100) : 0);
     setEditing(true);
@@ -542,7 +545,7 @@ function EditableStoreBlock({
                 ) : null}
               </div>
             ) : null}
-            {quickPhase !== "idle" ? (
+            {!readOnly && quickPhase !== "idle" ? (
               <div className="mt-1 w-full min-w-0 space-y-1">
                 {fastPushRetry ? (
                   <button
@@ -571,7 +574,7 @@ function EditableStoreBlock({
                   <p className="break-words text-[9px] leading-snug text-red-600/90 dark:text-red-300/90">{quickPushState.detail}</p>
                 ) : null}
               </div>
-            ) : (
+            ) : !readOnly ? (
               <div className="mt-1 grid grid-cols-2 gap-1">
                 <button
                   onClick={() => onPush(rowId, item.platform, item.listingId, "review")}
@@ -595,9 +598,9 @@ function EditableStoreBlock({
                   {renderCompactButtonLabel("Discard")}
                 </button>
               </div>
-            )}
+            ) : null}
           </>
-        ) : quickPhase !== "idle" ? (
+        ) : !readOnly && quickPhase !== "idle" ? (
           <div className="flex w-full min-w-0 flex-col items-stretch gap-1">
             <span className={cn("font-medium leading-tight", isNegative(item.value) ? "text-red-600 dark:text-red-400" : "text-emerald-700 dark:text-emerald-400")}>{fmt(item.value)}</span>
             {fastPushRetry ? (
@@ -631,13 +634,15 @@ function EditableStoreBlock({
           <span className={cn("font-medium leading-tight", isNegative(item.value) ? "text-red-600 dark:text-red-400" : "text-emerald-700 dark:text-emerald-400")}>{fmt(item.value)}</span>
         )}
       </div>
-      <button
-        onClick={startEdit}
-        className="shrink-0 rounded p-0.5 text-muted-foreground/65 transition-colors group-hover/edit:text-foreground dark:text-transparent dark:group-hover/edit:text-muted-foreground/75 hover:!text-foreground cursor-pointer"
-        title="Edit price"
-      >
-        <Pencil className="h-3 w-3" />
-      </button>
+      {!readOnly && (
+        <button
+          onClick={startEdit}
+          className="shrink-0 rounded p-0.5 text-muted-foreground/65 transition-colors group-hover/edit:text-foreground dark:text-transparent dark:group-hover/edit:text-muted-foreground/75 hover:!text-foreground cursor-pointer"
+          title="Edit price"
+        >
+          <Pencil className="h-3 w-3" />
+        </button>
+      )}
       <CopyButton text={displayVal} />
     </div>
   );
@@ -655,6 +660,7 @@ interface EditableStoreBlockGroupProps {
   includeMissingPlatforms?: boolean;
   missingLabel?: string;
   missingPlaceholder?: MissingStorePlaceholder;
+  readOnly?: boolean;
 }
 
 export function EditableStoreBlockGroup({
@@ -669,6 +675,7 @@ export function EditableStoreBlockGroup({
   includeMissingPlatforms = false,
   missingLabel = "Listing not found",
   missingPlaceholder = "absent",
+  readOnly = false,
 }: EditableStoreBlockGroupProps) {
   const [bulkOpen, setBulkOpen] = useState(false);
   const [bulkCents, setBulkCents] = useState(0);
@@ -741,7 +748,7 @@ export function EditableStoreBlockGroup({
 
   return (
     <div ref={containerRef} className="flex w-full min-w-0 flex-col gap-1">
-      {items.length > 1 && !bulkOpen && (
+      {!readOnly && items.length > 1 && !bulkOpen && (
         <button
           onClick={() => { setBulkCents(0); setBulkShowActions(false); setBulkSourceLabel(null); setBulkOpen(true); }}
           className="flex w-fit items-center gap-1 rounded-md border border-dashed border-muted-foreground/30 px-2 py-0.5 text-[10px] font-medium text-muted-foreground transition-colors hover:border-primary/50 hover:text-foreground cursor-pointer"
@@ -861,6 +868,7 @@ export function EditableStoreBlockGroup({
             quickPushState={quickPushStates?.[`${rowId}:${entry.item.platform}:${entry.item.listingId}:salePrice`]}
             failedPushState={failedPushStates?.[`${rowId}:${entry.item.platform}:${entry.item.listingId}:salePrice`]}
             showItemId={hasDuplicatePlatforms && (platformCounts.get(entry.item.platform) ?? 0) > 1}
+            readOnly={readOnly}
           />
         ) : (
           <MissingStoreBlock
@@ -888,6 +896,7 @@ interface EditableAdRateBlockProps {
   quickPushState?: QuickPushState;
   failedPushState?: FailedPushState;
   showItemId?: boolean;
+  readOnly?: boolean;
 }
 
 function EditableAdRateBlock({
@@ -899,6 +908,7 @@ function EditableAdRateBlock({
   quickPushState,
   failedPushState,
   showItemId = false,
+  readOnly = false,
 }: EditableAdRateBlockProps) {
   const label = PLATFORM_SHORT[item.platform];
   const colorClass = PLATFORM_COLORS[item.platform];
@@ -1024,6 +1034,7 @@ function EditableAdRateBlock({
   }
 
   function startEdit() {
+    if (readOnly) return;
     if (isNonAdPlatform) return;
     const current = hasStaged ? Number(item.stagedValue) : (item.value != null ? Number(item.value) : 0);
     setDraftPercent((current * 100).toFixed(1));
@@ -1201,7 +1212,7 @@ function EditableAdRateBlock({
                 ) : null}
               </div>
             ) : null}
-            {quickPhase !== "idle" ? (
+            {!readOnly && quickPhase !== "idle" ? (
               <div className="mt-1 w-full min-w-0 space-y-1">
                 {fastPushRetry ? (
                   <button
@@ -1230,7 +1241,7 @@ function EditableAdRateBlock({
                   <p className="break-words text-[9px] leading-snug text-red-600/90 dark:text-red-300/90">{quickPushState.detail}</p>
                 ) : null}
               </div>
-            ) : (
+            ) : !readOnly ? (
               <div className="mt-1 grid grid-cols-2 gap-1">
                 <button
                   onClick={() => onPush(rowId, item.platform, item.listingId, "review")}
@@ -1254,9 +1265,9 @@ function EditableAdRateBlock({
                   {renderCompactButtonLabel("Discard")}
                 </button>
               </div>
-            )}
+            ) : null}
           </>
-        ) : quickPhase !== "idle" ? (
+        ) : !readOnly && quickPhase !== "idle" ? (
           <div className="flex w-full min-w-0 flex-col items-stretch gap-1">
             <span className="font-medium leading-tight text-emerald-700 dark:text-emerald-400">{fmtPercent(item.value)}</span>
             {fastPushRetry ? (
@@ -1290,13 +1301,15 @@ function EditableAdRateBlock({
           <span className="font-medium leading-tight text-emerald-700 dark:text-emerald-400">{fmtPercent(item.value)}</span>
         )}
       </div>
-      <button
-        onClick={startEdit}
-        className="shrink-0 rounded p-0.5 text-muted-foreground/65 transition-colors group-hover/edit:text-foreground dark:text-transparent dark:group-hover/edit:text-muted-foreground/75 hover:!text-foreground cursor-pointer"
-        title="Edit ad rate"
-      >
-        <Pencil className="h-3 w-3" />
-      </button>
+      {!readOnly && (
+        <button
+          onClick={startEdit}
+          className="shrink-0 rounded p-0.5 text-muted-foreground/65 transition-colors group-hover/edit:text-foreground dark:text-transparent dark:group-hover/edit:text-muted-foreground/75 hover:!text-foreground cursor-pointer"
+          title="Edit ad rate"
+        >
+          <Pencil className="h-3 w-3" />
+        </button>
+      )}
     </div>
   );
 }
@@ -1313,6 +1326,7 @@ interface EditableAdRateBlockGroupProps {
   missingLabel?: string;
   missingLabelsByPlatform?: Partial<Record<Platform, string>>;
   missingPlaceholder?: MissingStorePlaceholder;
+  readOnly?: boolean;
 }
 
 export function EditableAdRateBlockGroup({
@@ -1327,6 +1341,7 @@ export function EditableAdRateBlockGroup({
   missingLabel = "Listing not found",
   missingLabelsByPlatform,
   missingPlaceholder = "absent",
+  readOnly = false,
 }: EditableAdRateBlockGroupProps) {
   if (items.length === 0 && !includeMissingPlatforms) {
     return <span className="text-xs text-muted-foreground">—</span>;
@@ -1353,6 +1368,7 @@ export function EditableAdRateBlockGroup({
             quickPushState={quickPushStates?.[`${rowId}:${entry.item.platform}:${entry.item.listingId}:adRate`]}
             failedPushState={failedPushStates?.[`${rowId}:${entry.item.platform}:${entry.item.listingId}:adRate`]}
             showItemId={hasDuplicatePlatforms && (platformCounts.get(entry.item.platform) ?? 0) > 1}
+            readOnly={readOnly}
           />
         ) : (
           <MissingStoreBlock

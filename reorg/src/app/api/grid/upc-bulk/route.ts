@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { buildLiveUpcSummary } from "@/lib/upc-live";
+import { getCurrentCatalogPermissions } from "@/lib/catalog-permissions-server";
 
 const bulkUpcSchema = z.object({
   rowIds: z.array(z.string().min(1)).max(10_000).optional().default([]),
@@ -9,6 +10,11 @@ const bulkUpcSchema = z.object({
 
 export async function POST(request: NextRequest) {
   try {
+    const catalogPermissions = await getCurrentCatalogPermissions();
+    if (catalogPermissions.hiddenColumns.includes("upc")) {
+      return NextResponse.json({ data: { items: [] } });
+    }
+
     const body = await request.json().catch(() => null);
     const parsed = bulkUpcSchema.safeParse(body);
 

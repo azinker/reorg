@@ -23,6 +23,7 @@ import {
   updateManagedUserAsAdmin,
 } from "@/lib/services/user-admin";
 import { readImpersonationCookie } from "@/lib/impersonation";
+import { normalizeCatalogPermissions } from "@/lib/catalog-permissions";
 
 const patchSchema = z.object({
   name: z.string().trim().min(1).max(120).optional(),
@@ -32,6 +33,7 @@ const patchSchema = z.object({
   // normalizePagePermissions() sanitize it (filter unknown keys, dedupe,
   // accept null for "reset to operator default").
   pagePermissions: z.unknown().optional(),
+  catalogPermissions: z.unknown().optional(),
 });
 
 export async function PATCH(
@@ -115,15 +117,17 @@ export async function PATCH(
   }
 
   let pagePermissions: ReturnType<typeof normalizePagePermissions>;
+  let catalogPermissions: ReturnType<typeof normalizeCatalogPermissions>;
   try {
     pagePermissions = normalizePagePermissions(parsed.data.pagePermissions);
+    catalogPermissions = normalizeCatalogPermissions(parsed.data.catalogPermissions);
   } catch (err) {
     return NextResponse.json(
       {
         error:
           err instanceof Error
             ? err.message
-            : "Invalid pagePermissions payload",
+            : "Invalid permissions payload",
       },
       { status: 400 },
     );
@@ -136,6 +140,7 @@ export async function PATCH(
       name: parsed.data.name,
       role: parsed.data.role,
       pagePermissions,
+      catalogPermissions,
       password: parsed.data.password,
     });
 

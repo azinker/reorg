@@ -10,9 +10,10 @@ interface EditableCurrencyCellProps {
   rowId: string;
   field: string;
   onSave?: (rowId: string, field: string, value: number | null) => void;
+  readOnly?: boolean;
 }
 
-export function EditableCurrencyCell({ value, rowId, field, onSave }: EditableCurrencyCellProps) {
+export function EditableCurrencyCell({ value, rowId, field, onSave, readOnly = false }: EditableCurrencyCellProps) {
   const [editing, setEditing] = useState(false);
   const [draftCents, setDraftCents] = useState(0);
   const inputRef = useRef<CurrencyInputHandle>(null);
@@ -56,6 +57,17 @@ export function EditableCurrencyCell({ value, rowId, field, onSave }: EditableCu
           <X className="h-3 w-3" />
         </button>
       </div>
+    );
+  }
+
+  if (readOnly) {
+    return (
+      <span className={cn(
+        "text-xs tabular-nums",
+        value == null ? "text-amber-500 italic" : "text-foreground"
+      )}>
+        {value != null ? `$${value.toFixed(2)}` : "â€”"}
+      </span>
     );
   }
 

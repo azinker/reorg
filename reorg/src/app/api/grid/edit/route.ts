@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { db } from "@/lib/db";
+import { requireCatalogMutationAllowed } from "@/lib/catalog-permissions-server";
 
 const editMasterSchema = z.object({
   sku: z.string(),
@@ -10,6 +11,9 @@ const editMasterSchema = z.object({
 
 export async function PUT(request: NextRequest) {
   try {
+    const access = await requireCatalogMutationAllowed();
+    if (!access.allowed) return access.response;
+
     const body = await request.json();
     const parsed = editMasterSchema.safeParse(body);
 

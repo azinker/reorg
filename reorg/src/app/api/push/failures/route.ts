@@ -4,6 +4,7 @@ import { isAuthBypassEnabled } from "@/lib/app-env";
 import { db } from "@/lib/db";
 import { PLATFORM_FULL, PLATFORM_SHORT } from "@/lib/grid-types";
 import { classifyPushFailure } from "@/lib/push-failure";
+import { requireCatalogMutationAllowed } from "@/lib/catalog-permissions-server";
 import type { Platform } from "@prisma/client";
 
 type FailedResultRow = {
@@ -202,6 +203,9 @@ export async function GET() {
 }
 
 export async function DELETE(request: Request) {
+  const access = await requireCatalogMutationAllowed();
+  if (!access.allowed) return access.response;
+
   const session = await auth();
   if (!session?.user?.id && !isAuthBypassEnabled()) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });

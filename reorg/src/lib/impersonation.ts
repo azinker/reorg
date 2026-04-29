@@ -106,6 +106,7 @@ export interface Actor {
   name: string;
   role: "ADMIN" | "OPERATOR";
   pagePermissions: string[] | null;
+  catalogPermissions: unknown | null;
   /** True iff an admin is currently impersonating someone else. */
   isImpersonating: boolean;
   /**
@@ -143,7 +144,7 @@ export async function getActor(): Promise<Actor | null> {
     // No impersonation cookie — return the real user as the actor.
     const me = await db.user.findUnique({
       where: { id: realUserId },
-      select: { pagePermissions: true },
+      select: { pagePermissions: true, catalogPermissions: true },
     });
     return {
       userId: realUserId,
@@ -151,6 +152,7 @@ export async function getActor(): Promise<Actor | null> {
       name: realName,
       role: realRole,
       pagePermissions: (me?.pagePermissions as string[] | null) ?? null,
+      catalogPermissions: me?.catalogPermissions ?? null,
       isImpersonating: false,
       realUserId,
       realEmail,
@@ -169,6 +171,7 @@ export async function getActor(): Promise<Actor | null> {
       name: realName,
       role: realRole,
       pagePermissions: null,
+      catalogPermissions: null,
       isImpersonating: false,
       realUserId,
       realEmail,
@@ -184,6 +187,7 @@ export async function getActor(): Promise<Actor | null> {
       name: true,
       role: true,
       pagePermissions: true,
+      catalogPermissions: true,
     },
   });
 
@@ -194,6 +198,7 @@ export async function getActor(): Promise<Actor | null> {
       name: realName,
       role: realRole,
       pagePermissions: null,
+      catalogPermissions: null,
       isImpersonating: false,
       realUserId,
       realEmail,
@@ -207,6 +212,7 @@ export async function getActor(): Promise<Actor | null> {
     name: target.name ?? target.email,
     role: target.role as "ADMIN" | "OPERATOR",
     pagePermissions: (target.pagePermissions as string[] | null) ?? null,
+    catalogPermissions: target.catalogPermissions ?? null,
     isImpersonating: true,
     realUserId,
     realEmail,

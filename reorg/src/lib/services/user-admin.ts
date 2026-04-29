@@ -2,6 +2,7 @@ import bcrypt from "bcryptjs";
 import { db } from "@/lib/db";
 import { Prisma, type Role } from "@prisma/client";
 import { isPageKey, type PageKey } from "@/lib/nav-pages";
+import type { CatalogPermissions } from "@/lib/catalog-permissions";
 
 export async function createManagedUser(input: {
   name: string;
@@ -9,6 +10,7 @@ export async function createManagedUser(input: {
   password: string;
   role: Role;
   pagePermissions?: PageKey[] | null;
+  catalogPermissions?: CatalogPermissions | null;
   createdById: string;
 }) {
   const email = input.email.trim().toLowerCase();
@@ -26,6 +28,14 @@ export async function createManagedUser(input: {
               input.pagePermissions === null
                 ? Prisma.JsonNull
                 : (input.pagePermissions as unknown as Prisma.InputJsonValue),
+          }
+        : {}),
+      ...(input.catalogPermissions !== undefined
+        ? {
+            catalogPermissions:
+              input.catalogPermissions === null
+                ? Prisma.JsonNull
+                : (input.catalogPermissions as unknown as Prisma.InputJsonValue),
           }
         : {}),
     },
@@ -49,6 +59,9 @@ export async function createManagedUser(input: {
         role: created.role,
         ...(input.pagePermissions !== undefined
           ? { pagePermissions: input.pagePermissions }
+          : {}),
+        ...(input.catalogPermissions !== undefined
+          ? { catalogPermissions: input.catalogPermissions }
           : {}),
       },
     },
@@ -162,6 +175,7 @@ export async function updateManagedUserAsAdmin(input: {
   name?: string;
   role?: Role;
   pagePermissions?: PageKey[] | null;
+  catalogPermissions?: CatalogPermissions | null;
   password?: string;
 }) {
   const data: Prisma.UserUpdateInput = {};
@@ -180,6 +194,12 @@ export async function updateManagedUserAsAdmin(input: {
         ? Prisma.JsonNull
         : (input.pagePermissions as unknown as Prisma.InputJsonValue);
   }
+  if (input.catalogPermissions !== undefined) {
+    data.catalogPermissions =
+      input.catalogPermissions === null
+        ? Prisma.JsonNull
+        : (input.catalogPermissions as unknown as Prisma.InputJsonValue);
+  }
   if (typeof input.password === "string" && input.password.trim()) {
     data.passwordHash = await bcrypt.hash(input.password, 10);
   }
@@ -197,6 +217,7 @@ export async function updateManagedUserAsAdmin(input: {
       email: true,
       role: true,
       pagePermissions: true,
+      catalogPermissions: true,
       updatedAt: true,
     },
   });
@@ -212,6 +233,9 @@ export async function updateManagedUserAsAdmin(input: {
         ...(input.role ? { role: input.role } : {}),
         ...(input.pagePermissions !== undefined
           ? { pagePermissions: input.pagePermissions }
+          : {}),
+        ...(input.catalogPermissions !== undefined
+          ? { catalogPermissions: input.catalogPermissions }
           : {}),
       },
     },

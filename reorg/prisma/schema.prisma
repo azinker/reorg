@@ -284,6 +284,9 @@ model User {
   /// granted in addition to the always-allowed set. Admin role overrides this.
   /// Page keys are defined in src/lib/nav-pages.ts.
   pagePermissions Json?
+  /// Per-user catalog restrictions. NULL = normal editable catalog access.
+  /// Object shape is normalized in src/lib/catalog-permissions.ts.
+  catalogPermissions Json?
 
   /// Per-agent Help Desk default for the Composer's primary "Send" button:
   /// what status should the ticket land in after the message goes out?

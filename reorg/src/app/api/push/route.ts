@@ -7,6 +7,7 @@ import { buildAdapter } from "@/lib/integrations/factory";
 import { getIntegrationConfig } from "@/lib/integrations/runtime-config";
 import { isLivePushEnabled } from "@/lib/automation-settings";
 import { isAuthBypassEnabled } from "@/lib/app-env";
+import { requireCatalogMutationAllowed } from "@/lib/catalog-permissions-server";
 import type { Platform } from "@prisma/client";
 
 export const runtime = "nodejs";
@@ -185,6 +186,9 @@ export async function POST(request: NextRequest) {
     }
 
     const { changes, dryRun, confirmedLivePush, skipPrePushBackup } = parsed.data;
+    const access = await requireCatalogMutationAllowed();
+    if (!access.allowed) return access.response;
+
     const session = await auth();
     const actorUserId = session?.user?.id ?? ((isAuthBypassEnabled() ? (await getSystemUser()).id : null));
 

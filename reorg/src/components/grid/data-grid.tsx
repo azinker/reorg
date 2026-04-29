@@ -6,6 +6,11 @@ import { cn } from "@/lib/utils";
 import type { GridRow, FilterState, ColumnConfig, StoreValue, Platform, UpcPushTarget } from "@/lib/grid-types";
 import { findRowIdByPlatformItemId } from "@/lib/grid-deep-link";
 import { DEFAULT_COLUMNS, PLATFORM_SHORT, PLATFORM_FULL, PLATFORM_COLORS, calcProfit, calcFee } from "@/lib/grid-types";
+import {
+  applyCatalogColumnRestrictions,
+  DEFAULT_CATALOG_PERMISSIONS,
+  type CatalogPermissions,
+} from "@/lib/catalog-permissions";
 import { StickySearch } from "@/components/grid/sticky-search";
 import { FilterBar } from "@/components/grid/filter-bar";
 import { UpcCell, type LiveUpcChoice } from "@/components/grid/cells/upc-cell";
@@ -54,6 +59,7 @@ import {
   Link2,
   Barcode,
   Loader2,
+  Lock,
 } from "lucide-react";
 import { saveAs } from "file-saver";
 
@@ -65,6 +71,7 @@ interface DataGridProps {
   deepLinkPlatform?: Platform | null;
   /** Called after deep link scroll attempt so the page can strip query params */
   onDeepLinkConsumed?: () => void;
+  catalogPermissions?: CatalogPermissions;
 }
 
 type PushField = "salePrice" | "adRate" | "upc";
@@ -639,10 +646,17 @@ export function DataGrid({
   deepLinkItemId = null,
   deepLinkPlatform = null,
   onDeepLinkConsumed,
+  catalogPermissions = DEFAULT_CATALOG_PERMISSIONS,
 }: DataGridProps) {
   const { lookupShippingCost } = useShippingRates();
   const { settings } = useSettings();
   const { feeRate: globalFeeRate, setFeeRate: setGlobalFeeRate } = usePlatformFee();
+  const readOnly = catalogPermissions.readOnly;
+  const hiddenColumnKey = catalogPermissions.hiddenColumns.join("|");
+  const hiddenColumnSet = useMemo(
+    () => new Set(catalogPermissions.hiddenColumns),
+    [hiddenColumnKey],
+  );
   const densityPad = getDensityPadding(settings.density);
   const rowEstimate = getRowHeightEstimate(settings.rowHeight);
   const [gridRows, setGridRows] = useState<GridRow[]>(() =>
@@ -805,7 +819,10 @@ export function DataGrid({
   const [sortField, setSortField] = useState<SortField>(() => settings.defaultSort as SortField);
   const [sortDir, setSortDir] = useState<SortDir>("asc");
   const [columns, setColumns] = useState<ColumnConfig[]>(() =>
-    loadUserPref("columns", DEFAULT_COLUMNS)
+    applyCatalogColumnRestrictions(
+      loadUserPref("columns", DEFAULT_COLUMNS),
+      catalogPermissions.hiddenColumns,
+    )
   );
   const [highlightedRowId, setHighlightedRowId] = useState<string | null>(null);
   const [toast, setToast] = useState<{ message: string; isError: boolean } | null>(null);
@@ -843,6 +860,12 @@ export function DataGrid({
       setToast(null);
       toastClearTimerRef.current = null;
     }, durationMs);
+  }
+
+  function ensureCatalogEditable() {
+    if (!readOnly) return true;
+    showToast("Catalog is read-only for your account.", 4500, true);
+    return false;
   }
 
   function getRefreshErrorLabel(errMsg: string): string {
@@ -1049,6 +1072,7 @@ export function DataGrid({
   }
 
   async function handleRefreshRow(rowId: string, parentRowId?: string) {
+    if (!ensureCatalogEditable()) return;
     if (refreshActiveRef.current) {
       const alreadyQueued = refreshQueueRef.current.some((q) => q.rowId === rowId);
       if (!alreadyQueued) {
@@ -1097,6 +1121,7 @@ export function DataGrid({
   }, []);
 
   async function handleRematch() {
+    if (!ensureCatalogEditable()) return;
     if (!rematchRow || !rematchListingId || !rematchNewSku.trim()) return;
     setRematchLoading(true);
     setRematchError(null);
@@ -1350,6 +1375,7 @@ export function DataGrid({
     launchMode: PushLaunchMode = "review",
     previewItems?: PushItem[],
   ) {
+    if (!ensureCatalogEditable()) return;
     if (items.length === 0) {
       showToast("No staged changes were ready to review for push.");
       return;
@@ -1802,6 +1828,9 @@ export function DataGrid({
   }
 
   async function submitPushRequest(items: PushItem[], dryRun: boolean, confirmedLivePush: boolean) {
+    if (readOnly) {
+      throw new Error("Catalog is read-only for your account.");
+    }
     const response = await fetch("/api/push", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -1838,6 +1867,7 @@ export function DataGrid({
     field: PushField,
     newValue?: number | string,
   ) {
+    if (!ensureCatalogEditable()) return;
     const key = field === "upc" ? getUpcQuickPushKey(rowId) : getQuickPushKey(rowId, platform, listingId, field);
     const row = findRow(rowId);
     const pushItem = buildPushItem(row, platform, listingId, field, newValue);
@@ -1924,6 +1954,7 @@ export function DataGrid({
   }
 
   function startInlineFastPushItems(key: string, items: PushItem[]) {
+    if (!ensureCatalogEditable()) return;
     if (items.length === 0) {
       showToast("No staged change was ready for fast push.");
       return;
@@ -2226,6 +2257,7 @@ export function DataGrid({
   }
 
   function persistMasterEdit(sku: string, field: string, value: number | string | null) {
+    if (readOnly) return;
     fetch("/api/grid/edit", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
@@ -2242,6 +2274,7 @@ export function DataGrid({
     field?: PushField,
     identity?: { variantId?: string; marketplaceListingId?: string | null },
   ) {
+    if (readOnly) return Promise.resolve();
     return fetch("/api/grid/stage", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -2275,6 +2308,7 @@ export function DataGrid({
   }
 
   function handleWeightSave(rowId: string, weight: string) {
+    if (!ensureCatalogEditable()) return;
     const row = findRow(rowId);
     const oldWeight = row?.weight ?? "none";
     const sku = row?.sku ?? rowId;
@@ -2287,6 +2321,7 @@ export function DataGrid({
   }
 
   function handleCellSave(rowId: string, field: string, value: number | null) {
+    if (!ensureCatalogEditable()) return;
     const row = findRow(rowId);
     const sku = row?.sku ?? rowId;
     const label = field === "supplierCost" ? "Supplier Cost" : "Supplier Shipping";
@@ -2300,6 +2335,7 @@ export function DataGrid({
   }
 
   function handleSalePriceEdit(rowId: string, platform: string, listingId: string, newPrice: number, mode: "stage" | "push" | "fastPush", identity?: { variantId?: string; marketplaceListingId?: string | null }) {
+    if (!ensureCatalogEditable()) return;
     const row = findRow(rowId);
     const sku = row?.sku ?? rowId;
     const platLabel = PLATFORM_SHORT[platform as keyof typeof PLATFORM_SHORT] ?? platform;
@@ -2373,6 +2409,7 @@ export function DataGrid({
   }
 
   function handleSalePriceBulkEdit(rowId: string, newPrice: number, mode: "stage" | "push") {
+    if (!ensureCatalogEditable()) return;
     const row = findRow(rowId);
     if (!row) return;
 
@@ -2436,6 +2473,7 @@ export function DataGrid({
   }
 
   function handleAdRateEdit(rowId: string, platform: string, listingId: string, newRate: number, mode: "stage" | "push" | "fastPush", identity?: { variantId?: string; marketplaceListingId?: string | null }) {
+    if (!ensureCatalogEditable()) return;
     const row = findRow(rowId);
     const sku = row?.sku ?? rowId;
     const platLabel = PLATFORM_SHORT[platform as keyof typeof PLATFORM_SHORT] ?? platform;
@@ -2510,6 +2548,7 @@ export function DataGrid({
   }
 
   function handlePushStagedAdRate(rowId: string, platform: string, listingId: string, launchMode: PushLaunchMode = "review") {
+    if (!ensureCatalogEditable()) return;
     const row = findRow(rowId);
     const sku = row?.sku ?? rowId;
     const platLabel = PLATFORM_SHORT[platform as keyof typeof PLATFORM_SHORT] ?? platform;
@@ -2530,6 +2569,7 @@ export function DataGrid({
   }
 
   async function handleDiscardStagedAdRate(rowId: string, platform: string, listingId: string) {
+    if (!ensureCatalogEditable()) return;
     const row = findRow(rowId);
     const sku = row?.sku ?? rowId;
     const platLabel = PLATFORM_SHORT[platform as keyof typeof PLATFORM_SHORT] ?? platform;
@@ -2561,6 +2601,7 @@ export function DataGrid({
   }
 
   function persistAdRateAction(sku: string, platform: string, listingId: string, action: string, newRate?: number, identity?: { variantId?: string; marketplaceListingId?: string | null }) {
+    if (readOnly) return Promise.resolve();
     return fetch("/api/grid/stage", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -2577,6 +2618,7 @@ export function DataGrid({
   }
 
   function handleBulkEditApply(params: BulkEditApplyParams) {
+    if (!ensureCatalogEditable()) return;
     const { field, platform: targetPlatform, value, mode, rowIds } = params;
 
     const isStoreSpecific = field === "salePrice" || field === "adRate";
@@ -2680,6 +2722,7 @@ export function DataGrid({
   };
 
   function handlePushStaged(rowId: string, platform: string, listingId: string, launchMode: PushLaunchMode = "review") {
+    if (!ensureCatalogEditable()) return;
     const row = findRow(rowId);
     const sku = row?.sku ?? rowId;
     const platLabel = PLATFORM_SHORT[platform as keyof typeof PLATFORM_SHORT] ?? platform;
@@ -2700,6 +2743,7 @@ export function DataGrid({
   }
 
   async function handleDiscardStaged(rowId: string, platform: string, listingId: string) {
+    if (!ensureCatalogEditable()) return;
     const row = findRow(rowId);
     const sku = row?.sku ?? rowId;
     const platLabel = PLATFORM_SHORT[platform as keyof typeof PLATFORM_SHORT] ?? platform;
@@ -2729,6 +2773,12 @@ export function DataGrid({
     clearQuickPushState(getQuickPushKey(rowId, platform, listingId, "salePrice"));
     showToast(`Staged Price Discarded — SKU ${sku} (${platLabel}) reverted from ${stagedVal} to ${liveVal}`);
   }
+
+  useEffect(() => {
+    setColumns((current) =>
+      applyCatalogColumnRestrictions(current, hiddenColumnSet),
+    );
+  }, [hiddenColumnSet]);
 
   useEffect(() => {
     saveUserPref("columns", columns);
@@ -2789,6 +2839,7 @@ export function DataGrid({
   }
 
   async function openBulkUpcModal() {
+    if (!ensureCatalogEditable()) return;
     setBulkUpcOpen(true);
     setBulkUpcLoading(true);
     setBulkUpcSubmitting(null);
@@ -2861,6 +2912,7 @@ export function DataGrid({
   }
 
   async function runBulkUpcAction(mode: "stage" | "review" | "fast") {
+    if (!ensureCatalogEditable()) return;
     if (bulkUpcSelectedCandidates.length === 0) {
       showToast("Select at least one row to bulk match UPCs.");
       return;
@@ -2928,6 +2980,7 @@ export function DataGrid({
     targetPlatform?: string,
     targetListingId?: string,
   ) {
+    if (!ensureCatalogEditable()) return;
     const row = findRow(rowId);
     if (!row || row.isParent || !row.hasStagedUpc || !row.stagedUpc) {
       showToast("No staged UPC is ready to push on this row.");
@@ -2960,6 +3013,7 @@ export function DataGrid({
   }
 
   function handleDiscardStagedUpc(rowId: string) {
+    if (!ensureCatalogEditable()) return;
     const row = findRow(rowId);
     if (!row || !row.hasStagedUpc) {
       showToast("No staged UPC is waiting on this row.");
@@ -2986,6 +3040,7 @@ export function DataGrid({
   }
 
   function handleDiscardStagedUpcTarget(rowId: string, platform: string, listingId: string) {
+    if (!ensureCatalogEditable()) return;
     const row = findRow(rowId);
     if (!row || !row.hasStagedUpc) {
       showToast("No staged UPC is waiting on this row.");
@@ -3025,6 +3080,7 @@ export function DataGrid({
     target?: { platform?: string; listingId?: string },
     rejectionReason?: string,
   ) {
+    if (readOnly) return Promise.resolve(null);
     return fetch("/api/grid/stage", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -3063,6 +3119,7 @@ export function DataGrid({
     rowId: string,
     options?: { platform?: string; listingId?: string; rejectionReason?: string },
   ) {
+    if (!ensureCatalogEditable()) return;
     const row = findRow(rowId);
     if (!row || row.isParent) {
       showToast("Save locally is only available on a product row.");
@@ -3130,6 +3187,7 @@ export function DataGrid({
     mode: "stage" | "push" | "fastPush" | "localOnly",
     targetSelection?: { platform: string; listingId: string; currentValue?: string | null },
   ) {
+    if (!ensureCatalogEditable()) return;
     const row = findRow(rowId);
     if (!row || row.isParent) {
       showToast("UPC can only be edited on a single row or child row.");
@@ -3266,6 +3324,7 @@ export function DataGrid({
     mode: "stage" | "push" | "fastPush",
     options?: { allowSingleSource?: boolean },
   ) {
+    if (!ensureCatalogEditable()) return;
     const row = findRow(rowId);
     if (!row || row.isParent) {
       showToast("Match UPC can only be used on a single row or child row.");
@@ -3403,6 +3462,7 @@ export function DataGrid({
   }
 
   function toggleColumn(colId: string) {
+    if (hiddenColumnSet.has(colId)) return;
     setColumns((prev) =>
       prev.map((c) => (c.id === colId ? { ...c, visible: !c.visible } : c))
     );
@@ -3519,6 +3579,7 @@ export function DataGrid({
   }, []);
 
   function isColVisible(id: string) {
+    if (hiddenColumnSet.has(id)) return false;
     return columns.find((c) => c.id === id)?.visible ?? true;
   }
 
@@ -3641,6 +3702,7 @@ export function DataGrid({
   }, [gridRows]);
 
   function reviewAllStagedValues() {
+    if (!ensureCatalogEditable()) return;
     const pushItems: PushItem[] = [];
     const seenKeys = new Set<string>();
 
@@ -3688,6 +3750,7 @@ export function DataGrid({
   }
 
   function handleClearAllStaged() {
+    if (!ensureCatalogEditable()) return;
     const quickKeysToClear = new Set<string>();
     function collectQuickKeysForClear(row: GridRow) {
       for (const sp of row.salePrices) {
@@ -3806,6 +3869,7 @@ export function DataGrid({
   }, [gridRows, gpSource, gpDest]);
 
   function handleGlobalPriceUpdate(mode: "stage" | "push") {
+    if (!ensureCatalogEditable()) return;
     if (!gpSource || gpDest.size === 0) return;
     const srcShort = PLATFORM_SHORT[gpSource];
     const destShorts = [...gpDest].map((p) => PLATFORM_SHORT[p]).join(", ");
@@ -3895,8 +3959,9 @@ export function DataGrid({
 
   /** Settings → Freeze key columns; column defs still mark which are “key” for width math. */
   const freezeKeyColumns = settings.frozenColumns;
-  const frozenCols = columns.filter((c) => c.frozen && c.visible);
-  const scrollCols = columns.filter((c) => !c.frozen && c.visible);
+  const visibleColumns = columns.filter((c) => c.visible && !hiddenColumnSet.has(c.id));
+  const frozenCols = visibleColumns.filter((c) => c.frozen);
+  const scrollCols = visibleColumns.filter((c) => !c.frozen);
 
   const expandColWidth = parseInt(COL_WIDTHS.expand.replace(/\D/g, ""));
   const frozenWidth = frozenCols.reduce((sum, c) => {
@@ -3951,7 +4016,13 @@ export function DataGrid({
           {flatRows.length !== gridRows.length && ` (${gridRows.length} total)`}
         </span>
         <div className="flex items-center gap-2">
-          {selectedRowIds.size > 0 && (
+          {readOnly && (
+            <span className="inline-flex items-center gap-1 rounded border border-orange-300 bg-orange-50 px-2.5 py-1 text-xs font-semibold text-orange-700 dark:border-orange-500/30 dark:bg-orange-500/10 dark:text-orange-300">
+              <Lock className="h-3 w-3" />
+              Read-only catalog
+            </span>
+          )}
+          {!readOnly && selectedRowIds.size > 0 && (
             <button
               onClick={() => setBulkEditOpen(true)}
               className="flex items-center gap-1 rounded border border-violet-400 bg-violet-100 text-violet-800 dark:border-violet-500/50 dark:bg-violet-600/20 dark:text-violet-200 px-2.5 py-1 text-xs font-semibold transition-colors hover:bg-violet-200 dark:hover:bg-violet-600/30 cursor-pointer"
@@ -3960,7 +4031,7 @@ export function DataGrid({
               Selected ({selectedRowIds.size})
             </button>
           )}
-          {failedPushCount > 0 && (
+          {!readOnly && failedPushCount > 0 && (
             <button
               onClick={() => {
                 void loadFailedPushes();
@@ -3972,7 +4043,7 @@ export function DataGrid({
               Push Alerts ({failedPushCount})
             </button>
           )}
-          {stagedCount > 0 && (
+          {!readOnly && stagedCount > 0 && (
             <button
               onClick={reviewAllStagedValues}
               className="flex items-center gap-1 rounded border border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-300 px-2.5 py-1 text-xs font-medium transition-colors hover:bg-emerald-100 dark:hover:bg-emerald-500/20 cursor-pointer"
@@ -3981,23 +4052,28 @@ export function DataGrid({
               Push Staged Values ({stagedCount})
             </button>
           )}
-          <button
-            onClick={() => void openBulkUpcModal()}
-            className="flex items-center gap-1 rounded border border-violet-300 bg-violet-50 text-violet-700 dark:border-violet-500/30 dark:bg-violet-500/10 dark:text-violet-300 px-2.5 py-1 text-xs font-medium transition-colors hover:bg-violet-100 dark:hover:bg-violet-500/20 cursor-pointer"
-          >
-            <ArrowRight className="h-3 w-3" />
-            Bulk Match UPCs
-          </button>
-          <button
-            data-tour="dashboard-global-price"
-            onClick={() => { setGpSource(null); setGpDest(new Set()); setGpMode(null); setGlobalPriceOpen(true); }}
-            className="flex items-center gap-1 rounded border border-violet-300 bg-violet-50 text-violet-700 dark:border-violet-500/30 dark:bg-violet-500/10 dark:text-violet-300 px-2.5 py-1 text-xs font-medium transition-colors hover:bg-violet-100 dark:hover:bg-violet-500/20 cursor-pointer"
-          >
-            <RefreshCw className="h-3 w-3" />
-            Global Price Update
-          </button>
-          <div data-tour="dashboard-staged-tools" className="flex items-center gap-2">
-            {stagedCount > 0 && (
+          {!readOnly && (
+            <button
+              onClick={() => void openBulkUpcModal()}
+              className="flex items-center gap-1 rounded border border-violet-300 bg-violet-50 text-violet-700 dark:border-violet-500/30 dark:bg-violet-500/10 dark:text-violet-300 px-2.5 py-1 text-xs font-medium transition-colors hover:bg-violet-100 dark:hover:bg-violet-500/20 cursor-pointer"
+            >
+              <ArrowRight className="h-3 w-3" />
+              Bulk Match UPCs
+            </button>
+          )}
+          {!readOnly && (
+            <button
+              data-tour="dashboard-global-price"
+              onClick={() => { setGpSource(null); setGpDest(new Set()); setGpMode(null); setGlobalPriceOpen(true); }}
+              className="flex items-center gap-1 rounded border border-violet-300 bg-violet-50 text-violet-700 dark:border-violet-500/30 dark:bg-violet-500/10 dark:text-violet-300 px-2.5 py-1 text-xs font-medium transition-colors hover:bg-violet-100 dark:hover:bg-violet-500/20 cursor-pointer"
+            >
+              <RefreshCw className="h-3 w-3" />
+              Global Price Update
+            </button>
+          )}
+          {!readOnly && (
+            <div data-tour="dashboard-staged-tools" className="flex items-center gap-2">
+              {stagedCount > 0 && (
               <button
                 onClick={() => { setClearStagedInput(""); setClearStagedOpen(true); }}
                 className="flex items-center gap-1 rounded border border-amber-300 bg-amber-50 text-amber-700 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-400 px-2.5 py-1 text-xs font-medium transition-colors hover:bg-amber-100 dark:hover:bg-amber-500/20 cursor-pointer"
@@ -4005,10 +4081,11 @@ export function DataGrid({
                 <Trash2 className="h-3 w-3" />
                 Clear Staged ({stagedCount})
               </button>
-            )}
-          </div>
+              )}
+            </div>
+          )}
           <div data-tour="dashboard-columns-export" className="flex items-center gap-2">
-            <ColumnManager columns={columns} onToggle={toggleColumn} />
+            <ColumnManager columns={visibleColumns} onToggle={toggleColumn} />
             <button className="flex items-center gap-1 rounded px-2 py-1 text-xs text-muted-foreground transition-colors hover:text-foreground cursor-pointer">
               <Download className="h-3 w-3" />
               Export
@@ -4042,7 +4119,7 @@ export function DataGrid({
               data-tour="dashboard-header-expand"
               className={cn(COL_WIDTHS.expand, "flex items-center justify-center py-3")}
             >
-              {selectableRowIds.length > 0 && (
+              {!readOnly && selectableRowIds.length > 0 && (
                 <button
                   onClick={toggleSelectAll}
                   className={cn(
@@ -4143,6 +4220,9 @@ export function DataGrid({
                 data-tour="dashboard-header-platform-fees"
                 className={cn(COL_WIDTHS.platformFees, "flex items-center gap-0.5 px-3 py-3")}
               >
+                {readOnly ? (
+                  <span>Platform Fees</span>
+                ) : (
                 <PlatformFeeHeader
                   feeRate={globalFeeRate}
                   onSave={(rate) => {
@@ -4151,6 +4231,7 @@ export function DataGrid({
                     showToast(`Platform Fee Updated — from ${Math.round(oldRate * 1000) / 10}% to ${Math.round(rate * 1000) / 10}% (all eBay listings)`);
                   }}
                 />
+                )}
               </div>
             )}
             {isColVisible("adRate") && (
@@ -4250,7 +4331,7 @@ export function DataGrid({
                           <Plus className="h-3.5 w-3.5" strokeWidth={3} />
                         )}
                       </button>
-                    ) : (
+                    ) : !readOnly ? (
                       <button
                         onClick={() => toggleRowSelection(row.id)}
                         className={cn(
@@ -4263,7 +4344,7 @@ export function DataGrid({
                       >
                         {selectedRowIds.has(row.id) && <Check className="h-3 w-3" strokeWidth={3} />}
                       </button>
-                    )}
+                    ) : null}
                     {isChild && (
                       <span className="text-base font-semibold text-emerald-600 dark:text-emerald-400">↳</span>
                     )}
@@ -4272,7 +4353,7 @@ export function DataGrid({
                       {/* Parent + single-SKU: Refresh + Rematch. Child rows: bin only. */}
                       {(isParent || !isChild) && (
                         <>
-                          {(() => {
+                          {!readOnly && (() => {
                             const phase = rowRefreshStates[row.id];
                             const errorMsg = rowRefreshErrors[row.id];
                             return (
@@ -4336,7 +4417,7 @@ export function DataGrid({
                               </div>
                             );
                           })()}
-                          {row.itemNumbers.some((sv) => sv.marketplaceListingId) && (
+                          {!readOnly && row.itemNumbers.some((sv) => sv.marketplaceListingId) && (
                             <button
                               onClick={() => {
                                 const listings = row.itemNumbers.filter((sv) => sv.marketplaceListingId);
@@ -4353,7 +4434,7 @@ export function DataGrid({
                           )}
                         </>
                       )}
-                      {!isParent && (
+                      {!isParent && !hiddenColumnSet.has("sku") && !hiddenColumnSet.has("title") && (
                         <button
                           type="button"
                           onClick={() => {
@@ -4405,8 +4486,8 @@ export function DataGrid({
                           disableLiveFetch={row.isParent && row.id.startsWith("variation-parent:")}
                           stagedUpc={row.stagedUpc}
                           localOnlyPlatforms={row.localOnlyUpcPlatforms}
-                          editable={!row.isParent && (row.upcPushTargets?.length ?? 0) > 0}
-                          canPush={!row.isParent && Boolean(row.hasStagedUpc) && (row.upcPushTargets?.length ?? 0) > 0}
+                          editable={!readOnly && !row.isParent && (row.upcPushTargets?.length ?? 0) > 0}
+                          canPush={!readOnly && !row.isParent && Boolean(row.hasStagedUpc) && (row.upcPushTargets?.length ?? 0) > 0}
                           pushTargets={buildUpcPushChoices(row)}
                           quickPushState={quickPushStates[getUpcQuickPushKey(row.id)]}
                           failedPushTargets={failedPushStates.upcStates[row.id]}
@@ -4591,6 +4672,7 @@ export function DataGrid({
                         includeMissingPlatforms
                         missingLabel={row.isParent ? "See child rows" : "No Listing"}
                         missingPlaceholder={row.isParent ? "defer-to-children" : "absent"}
+                        readOnly={readOnly}
                       />
                     </div>
                   )}
@@ -4610,6 +4692,7 @@ export function DataGrid({
                           value={row.weight}
                           rowId={row.id}
                           onSave={handleWeightSave}
+                          readOnly={readOnly}
                         />
                       )}
                     </div>
@@ -4631,6 +4714,7 @@ export function DataGrid({
                           rowId={row.id}
                           field="supplierCost"
                           onSave={handleCellSave}
+                          readOnly={readOnly}
                         />
                       )}
                     </div>
@@ -4652,6 +4736,7 @@ export function DataGrid({
                           rowId={row.id}
                           field="supplierShipping"
                           onSave={handleCellSave}
+                          readOnly={readOnly}
                         />
                       )}
                     </div>
@@ -4724,6 +4809,7 @@ export function DataGrid({
                             SHOPIFY: "N/A",
                             BIGCOMMERCE: "N/A",
                           }}
+                          readOnly={readOnly}
                         />
                       )}
                     </div>
@@ -4760,7 +4846,7 @@ export function DataGrid({
       )}
 
       {/* Clear All Staged Confirmation */}
-      {clearStagedOpen && (
+      {!readOnly && clearStagedOpen && (
         <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/50">
           <div className="w-full max-w-sm rounded-xl border border-border bg-card p-6 shadow-2xl">
             <h3 className="text-base font-bold text-foreground">Clear All Staged Values</h3>
@@ -4807,7 +4893,7 @@ export function DataGrid({
         </div>
       )}
 
-      {failedPushesOpen && (() => {
+      {!readOnly && failedPushesOpen && (() => {
         const CATEGORY_LABELS: Record<string, string> = {
           "validation": "Validation / Rejected",
           "rate-limit": "Rate Limit",
@@ -4914,7 +5000,7 @@ export function DataGrid({
         );
       })()}
 
-      {bulkUpcOpen && (
+      {!readOnly && bulkUpcOpen && (
         <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/50">
           <div className="flex w-full max-w-5xl flex-col rounded-xl border border-border bg-card p-6 shadow-2xl">
             <div className="flex items-start justify-between gap-4">
@@ -5117,7 +5203,7 @@ export function DataGrid({
       )}
 
       {/* Global Sale Price Update */}
-      {globalPriceOpen && (
+      {!readOnly && globalPriceOpen && (
         <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/50">
           <div className="w-full max-w-md rounded-xl border border-border bg-card p-6 shadow-2xl">
             <h3 className="text-base font-bold text-foreground">Global Sale Price Update</h3>
@@ -5229,7 +5315,7 @@ export function DataGrid({
       )}
 
       {/* Rematch Modal */}
-      {rematchRow && (() => {
+      {!readOnly && rematchRow && (() => {
         const closeRematch = () => {
           setRematchRow(null);
           setRematchError(null);
@@ -5464,7 +5550,7 @@ export function DataGrid({
         );
       })()}
 
-      {bulkEditOpen && (
+      {!readOnly && bulkEditOpen && (
         <BulkEditPanel
           selectedRowIds={selectedRowIds}
           findRow={findRow}
@@ -5475,7 +5561,7 @@ export function DataGrid({
       )}
 
       <PushConfirmModal
-        open={pushModalOpen}
+        open={!readOnly && pushModalOpen}
         onClose={() => {
           setPushModalOpen(false);
           setPushModalItems([]);

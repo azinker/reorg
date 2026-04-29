@@ -9,10 +9,25 @@ import { useDashboardConnection } from "@/contexts/dashboard-connection-context"
 import type { GridRow, Platform } from "@/lib/grid-types";
 import { usePageVisibility } from "@/lib/use-page-visibility";
 import { Loader2, RefreshCw } from "lucide-react";
+import {
+  DEFAULT_CATALOG_PERMISSIONS,
+  type CatalogPermissions,
+} from "@/lib/catalog-permissions";
 
 const VALID_DEEP_LINK_PLATFORMS = new Set<string>(["TPP_EBAY", "TT_EBAY", "BIGCOMMERCE", "SHOPIFY"]);
 
-function CatalogGridArea({ rows }: { rows: GridRow[] }) {
+const FALLBACK_CATALOG_PERMISSIONS: CatalogPermissions = {
+  readOnly: true,
+  hiddenColumns: [],
+};
+
+function CatalogGridArea({
+  rows,
+  catalogPermissions,
+}: {
+  rows: GridRow[];
+  catalogPermissions: CatalogPermissions;
+}) {
   const searchParams = useSearchParams();
   const router = useRouter();
   const itemId = searchParams.get("itemId") ?? searchParams.get("platformItemId");
@@ -31,6 +46,7 @@ function CatalogGridArea({ rows }: { rows: GridRow[] }) {
         deepLinkItemId={itemId}
         deepLinkPlatform={deepLinkPlatform}
         onDeepLinkConsumed={onDeepLinkConsumed}
+        catalogPermissions={catalogPermissions}
       />
     </div>
   );
@@ -128,6 +144,26 @@ async function fetchSchedulerHealth(
   return (json.data?.healthSummary ?? null) as SchedulerHealthPayload["healthSummary"] | null;
 }
 
+async function fetchCatalogPermissions(signal?: AbortSignal): Promise<CatalogPermissions> {
+  try {
+    const res = await fetch("/api/users/me", { cache: "no-store", signal });
+    if (!res.ok) return FALLBACK_CATALOG_PERMISSIONS;
+    const json = await res.json();
+    const permissions = json.data?.catalogPermissions;
+    if (
+      permissions &&
+      typeof permissions === "object" &&
+      typeof permissions.readOnly === "boolean" &&
+      Array.isArray(permissions.hiddenColumns)
+    ) {
+      return permissions as CatalogPermissions;
+    }
+    return DEFAULT_CATALOG_PERMISSIONS;
+  } catch {
+    return FALLBACK_CATALOG_PERMISSIONS;
+  }
+}
+
 function summarizeGrid(rows: GridRow[]) {
   const variationParents = rows.filter((row) => row.isParent).length;
   const standaloneRows = rows.filter((row) => !row.isParent).length;
@@ -169,6 +205,8 @@ export default function CatalogPage() {
   const [rows, setRows] = useState<GridRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [source, setSource] = useState<"db" | "error" | null>(null);
+  const [catalogPermissions, setCatalogPermissions] =
+    useState<CatalogPermissions | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [schedulerHealth, setSchedulerHealth] = useState<SchedulerHealthPayload["healthSummary"] | null>(null);
   const [loadingProgress, setLoadingProgress] = useState(8);
@@ -187,9 +225,10 @@ export default function CatalogPage() {
 
     async function loadInitial() {
       setLoadingProgress(14);
-      const [gridData, version] = await Promise.all([
+      const [gridData, version, permissions] = await Promise.all([
         fetchGridData(ac.signal),
         fetchGridVersion(ac.signal).catch(() => null),
+        fetchCatalogPermissions(ac.signal),
       ]);
       void fetchSchedulerHealth(ac.signal)
         .then((health) => {
@@ -202,6 +241,7 @@ export default function CatalogPage() {
 
       setLoadingProgress(100);
       setRows(gridData.rows);
+      setCatalogPermissions(permissions);
       setSource(gridData.source);
       setError(gridData.error);
       sourceRef.current = gridData.source;
@@ -333,7 +373,7 @@ export default function CatalogPage() {
     return () => setConnectionInfo(null);
   }, [rows, source, error, summary, setConnectionInfo]);
 
-  if (!rows) {
+  if (!rows || !catalogPermissions) {
     return (
       <div className="flex h-full min-h-0 min-w-0 items-center justify-center overflow-hidden">
         <div className="w-full max-w-md px-6">
@@ -412,11 +452,11 @@ export default function CatalogPage() {
       <Suspense
         fallback={
           <div className="min-h-0 min-w-0 flex-1 overflow-hidden">
-            <DataGrid rows={rows} />
+            <DataGrid rows={rows} catalogPermissions={catalogPermissions} />
           </div>
         }
       >
-        <CatalogGridArea rows={rows} />
+        <CatalogGridArea rows={rows} catalogPermissions={catalogPermissions} />
       </Suspense>
       <Suspense fallback={null}>
         <PageTour page="catalog" steps={PAGE_TOUR_STEPS.catalog} ready />
