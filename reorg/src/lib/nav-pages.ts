@@ -103,6 +103,14 @@ export const NAV_PAGES: NavPage[] = [
       "Main marketplace catalog grid with live values, staged changes, and guarded push tools.",
   },
   {
+    key: "help-desk",
+    href: "/help-desk",
+    label: "Help Desk",
+    icon: "LifeBuoy",
+    description:
+      "Buyer-message inbox with tickets, threads, and reply composer.",
+  },
+  {
     key: "catalog-health",
     href: "/catalog-health",
     label: "Catalog Health",
@@ -165,14 +173,6 @@ export const NAV_PAGES: NavPage[] = [
     label: "Auto Responder",
     icon: "MessageSquareText",
     description: "Buyer-message auto-reply rules.",
-  },
-  {
-    key: "help-desk",
-    href: "/help-desk",
-    label: "Help Desk",
-    icon: "LifeBuoy",
-    description:
-      "Buyer-message inbox with tickets, threads, and reply composer.",
   },
   {
     key: "integrations",
