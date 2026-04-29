@@ -122,6 +122,7 @@ export interface HelpdeskTicketSummary {
   isImportant: boolean;
   snoozedUntil: string | null;
   primaryAssignee: HelpdeskUserBadge | null;
+  additionalAssignees: { user: HelpdeskUserBadge }[];
   unreadCount: number;
   lastBuyerMessageAt: string | null;
   lastAgentMessageAt: string | null;
@@ -208,7 +209,6 @@ export interface HelpdeskTicketDetail extends HelpdeskTicketSummary {
   messages: HelpdeskMessageDetail[];
   notes: HelpdeskNoteDetail[];
   pendingOutboundJobs: HelpdeskPendingOutboundJob[];
-  additionalAssignees: { user: HelpdeskUserBadge }[];
   listingInfo: HelpdeskListingInfo | null;
 }
 

@@ -1491,6 +1491,31 @@ function quickBarKey(item: HelpdeskQuickBarItem): string {
   return `${item.kind}:${item.id}`;
 }
 
+function ticketAssigneeUsers(ticket: HelpdeskTicketDetail): AgentOption[] {
+  const seen = new Set<string>();
+  const users: AgentOption[] = [];
+  if (ticket.primaryAssignee) {
+    seen.add(ticket.primaryAssignee.id);
+    users.push(ticket.primaryAssignee);
+  }
+  for (const assignee of ticket.additionalAssignees ?? []) {
+    if (seen.has(assignee.user.id)) continue;
+    seen.add(assignee.user.id);
+    users.push(assignee.user);
+  }
+  return users;
+}
+
+function agentDisplayName(user: AgentOption): string {
+  return user.name ?? user.handle ?? user.email ?? "Agent";
+}
+
+function formatAssigneeLabel(users: AgentOption[]): string {
+  if (users.length === 0) return "Assign";
+  const first = agentDisplayName(users[0]);
+  return users.length === 1 ? first : `${first} +${users.length - 1}`;
+}
+
 function QuickAssignControl({
   ticket,
   disabled,
@@ -1504,12 +1529,14 @@ function QuickAssignControl({
   const [agents, setAgents] = useState<AgentOption[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [assigned, setAssigned] = useState(ticket.primaryAssignee);
+  const [assignedUsers, setAssignedUsers] = useState(() =>
+    ticketAssigneeUsers(ticket),
+  );
   const ref = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    setAssigned(ticket.primaryAssignee);
-  }, [ticket.id, ticket.primaryAssignee]);
+    setAssignedUsers(ticketAssigneeUsers(ticket));
+  }, [ticket]);
 
   useEffect(() => {
     if (!open) return;
@@ -1537,7 +1564,7 @@ function QuickAssignControl({
     }
   }
 
-  async function assign(userId: string | null) {
+  async function assign(userIds: string[]) {
     setSaving(true);
     try {
       const res = await fetch("/api/helpdesk/tickets/batch", {
@@ -1545,22 +1572,31 @@ function QuickAssignControl({
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           ticketIds: [ticket.id],
-          action: "assignPrimary",
-          userId,
+          action: "setAssignees",
+          userIds,
         }),
       });
       if (!res.ok) throw new Error(`assign ${res.status}`);
-      setAssigned(userId ? agents?.find((a) => a.id === userId) ?? null : null);
-      setOpen(false);
+      const knownUsers = new Map(
+        [...assignedUsers, ...(agents ?? [])].map((user) => [user.id, user]),
+      );
+      setAssignedUsers(
+        userIds
+          .map((id) => knownUsers.get(id))
+          .filter((user): user is AgentOption => Boolean(user)),
+      );
       onAssigned();
     } finally {
       setSaving(false);
     }
   }
 
-  const assignedLabel = assigned
-    ? assigned.name ?? assigned.handle ?? assigned.email ?? "Assigned"
-    : "Assign";
+  const assignedIds = new Set(assignedUsers.map((user) => user.id));
+  const assignedLabel = formatAssigneeLabel(assignedUsers);
+  const assignedTitle =
+    assignedUsers.length > 0
+      ? `Assigned to ${assignedUsers.map((user) => agentDisplayName(user)).join(", ")}. Click to edit.`
+      : "Assign agent";
 
   return (
     <div ref={ref} className="relative">
@@ -1571,20 +1607,16 @@ function QuickAssignControl({
           setOpen((v) => !v);
           void loadAgents();
         }}
-        title={
-          assigned
-            ? `Assigned to ${assignedLabel}. Click to reassign.`
-            : "Assign agent"
-        }
+        title={assignedTitle}
         className={cn(
           "inline-flex h-7 max-w-[11rem] items-center gap-1 rounded-md border border-hairline-strong/70 bg-surface px-2 text-[11px] text-foreground/75 transition-colors hover:bg-surface-2 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer",
-          assigned && "border-brand/35 bg-brand-muted/60 text-brand",
+          assignedUsers.length > 0 && "border-brand/35 bg-brand-muted/60 text-brand",
         )}
       >
         {saving ? (
           <Loader2 className="h-3.5 w-3.5 animate-spin" />
-        ) : assigned ? (
-          <SmallAgentAvatar user={assigned} />
+        ) : assignedUsers.length > 0 ? (
+          <SmallAgentAvatar user={assignedUsers[0]} />
         ) : (
           <UserPlus className="h-3.5 w-3.5" />
         )}
@@ -1601,15 +1633,23 @@ function QuickAssignControl({
             </div>
           ) : agents && agents.length > 0 ? (
             agents.map((agent) => {
-              const label = agent.name ?? agent.handle ?? agent.email ?? "Agent";
-              const active = assigned?.id === agent.id;
+              const label = agentDisplayName(agent);
+              const active = assignedIds.has(agent.id);
               return (
                 <button
                   key={agent.id}
                   type="button"
-                  onClick={() => void assign(agent.id)}
+                  disabled={saving}
+                  onClick={() => {
+                    const nextIds = active
+                      ? assignedUsers
+                          .map((user) => user.id)
+                          .filter((id) => id !== agent.id)
+                      : [...assignedUsers.map((user) => user.id), agent.id];
+                    void assign(nextIds);
+                  }}
                   className={cn(
-                    "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-foreground hover:bg-surface-2 cursor-pointer",
+                    "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-foreground hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer",
                     active && "bg-surface-2 font-medium",
                   )}
                 >
@@ -1624,15 +1664,19 @@ function QuickAssignControl({
               No agents available.
             </div>
           )}
-          {assigned ? (
+          {assignedUsers.length > 0 ? (
             <>
               <div className="my-1 h-px bg-hairline" aria-hidden />
               <button
                 type="button"
-                onClick={() => void assign(null)}
-                className="flex w-full items-center rounded-md px-2.5 py-1.5 text-left text-xs text-red-600 hover:bg-surface-2 dark:text-red-300 cursor-pointer"
+                disabled={saving}
+                onClick={() => {
+                  void assign([]);
+                  setOpen(false);
+                }}
+                className="flex w-full items-center rounded-md px-2.5 py-1.5 text-left text-xs text-red-600 hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-50 dark:text-red-300 cursor-pointer"
               >
-                Unassign
+                Clear assignees
               </button>
             </>
           ) : null}

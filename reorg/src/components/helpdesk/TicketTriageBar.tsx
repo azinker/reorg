@@ -92,7 +92,8 @@ const SNOOZE_PRESETS: Array<{ id: string; label: string; minutes: number }> = [
 interface AgentOption {
   id: string;
   name: string | null;
-  email: string;
+  email: string | null;
+  handle?: string | null;
   avatarUrl?: string | null;
 }
 
@@ -350,8 +351,8 @@ export function TicketTriageBar({
         agentsLoading={agentsLoading}
         disabled={disabled}
         onOpen={loadAgents}
-        onPick={(userId) =>
-          runBatch({ action: "assignPrimary", userId }, "assign")
+        onChange={(userIds) =>
+          runBatch({ action: "setAssignees", userIds }, "assign")
         }
       />
 
@@ -786,20 +787,46 @@ function MoreMenu({
 
 // ─── Assign user ────────────────────────────────────────────────────────────
 
+function ticketAssigneeUsers(ticket: HelpdeskTicketDetail | null): AgentOption[] {
+  if (!ticket) return [];
+  const seen = new Set<string>();
+  const users: AgentOption[] = [];
+  if (ticket.primaryAssignee) {
+    seen.add(ticket.primaryAssignee.id);
+    users.push(ticket.primaryAssignee);
+  }
+  for (const assignee of ticket.additionalAssignees ?? []) {
+    if (seen.has(assignee.user.id)) continue;
+    seen.add(assignee.user.id);
+    users.push(assignee.user);
+  }
+  return users;
+}
+
+function agentDisplayName(user: AgentOption): string {
+  return user.name ?? user.handle ?? user.email ?? "Agent";
+}
+
+function formatAssigneeLabel(users: AgentOption[]): string {
+  if (users.length === 0) return "Assign";
+  const first = agentDisplayName(users[0]);
+  return users.length === 1 ? first : `${first} +${users.length - 1}`;
+}
+
 function AssignMenu({
   ticket,
   agents,
   agentsLoading,
   disabled,
   onOpen,
-  onPick,
+  onChange,
 }: {
   ticket: HelpdeskTicketDetail | null;
   agents: AgentOption[] | null;
   agentsLoading: boolean;
   disabled: boolean;
   onOpen: () => void;
-  onPick: (userId: string | null) => void;
+  onChange: (userIds: string[]) => void;
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement | null>(null);
@@ -815,27 +842,44 @@ function AssignMenu({
     return () => window.removeEventListener("mousedown", onClick);
   }, [open]);
 
-  const assigned = ticket?.primaryAssignee ?? null;
-  const assignedId = assigned?.id ?? null;
-  const assignedName =
-    assigned?.name ?? assigned?.handle ?? assigned?.email ?? "Assigned";
+  const serverAssignedUsers = ticketAssigneeUsers(ticket);
+  const serverAssigneeKey = serverAssignedUsers.map((user) => user.id).join("|");
+  const [selectedUsers, setSelectedUsers] = useState<AgentOption[]>(
+    serverAssignedUsers,
+  );
+
+  useEffect(() => {
+    setSelectedUsers(serverAssignedUsers);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- serverAssigneeKey captures the assignee set; the array is recreated per render.
+  }, [ticket?.id, serverAssigneeKey]);
+
+  const assignedUsers = selectedUsers;
+  const assignedIds = new Set(assignedUsers.map((user) => user.id));
+  const assignedLabel = formatAssigneeLabel(assignedUsers);
+  const assignedTitle =
+    assignedUsers.length > 0
+      ? `Assigned to ${assignedUsers.map((user) => agentDisplayName(user)).join(", ")}. Click to edit.`
+      : "Assign to user";
 
   return (
     <div ref={ref} className="relative">
       <IconButton
-        title={assignedId ? `Assigned to ${assignedName}. Click to reassign.` : "Assign to user"}
+        title={assignedTitle}
         disabled={disabled}
-        active={!!assignedId}
+        active={assignedUsers.length > 0}
         accent="brand"
-        label={assignedId ? assignedName : "Assign"}
+        label={assignedLabel}
         onClick={() => {
           if (disabled) return;
           onOpen();
           setOpen((v) => !v);
         }}
       >
-        {assigned ? (
-          <AgentAvatar name={assignedName} url={assigned.avatarUrl ?? null} />
+        {assignedUsers.length > 0 ? (
+          <AgentAvatar
+            name={agentDisplayName(assignedUsers[0])}
+            url={assignedUsers[0].avatarUrl ?? null}
+          />
         ) : (
           <UserPlus className="h-4 w-4" />
         )}
@@ -856,18 +900,23 @@ function AssignMenu({
           {!agentsLoading &&
             agents &&
             agents.map((a) => {
-              const name = a.name ?? a.email;
-              const isCurrent = assignedId === a.id;
+              const name = agentDisplayName(a);
+              const isCurrent = assignedIds.has(a.id);
               return (
                 <button
                   key={a.id}
                   type="button"
+                  disabled={disabled}
                   onClick={() => {
-                    onPick(a.id);
-                    setOpen(false);
+                    const nextUsers = isCurrent
+                      ? assignedUsers
+                          .filter((user) => user.id !== a.id)
+                      : [...assignedUsers, a];
+                    setSelectedUsers(nextUsers);
+                    onChange(nextUsers.map((user) => user.id));
                   }}
                   className={cn(
-                    "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-foreground hover:bg-surface-2 cursor-pointer",
+                    "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-foreground hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer",
                     isCurrent && "bg-surface-2 font-medium",
                   )}
                 >
@@ -877,18 +926,20 @@ function AssignMenu({
                 </button>
               );
             })}
-          {assignedId && (
+          {assignedUsers.length > 0 && (
             <>
               <div className="my-1 h-px bg-hairline" aria-hidden />
               <button
                 type="button"
+                disabled={disabled}
                 onClick={() => {
-                  onPick(null);
+                  setSelectedUsers([]);
+                  onChange([]);
                   setOpen(false);
                 }}
-                className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-xs text-red-600 hover:bg-surface-2 dark:text-red-300 cursor-pointer"
+                className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-xs text-red-600 hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-50 dark:text-red-300 cursor-pointer"
               >
-                Unassign
+                Clear assignees
               </button>
             </>
           )}

@@ -119,6 +119,7 @@ type AuditDetails = Record<string, unknown> & {
   ticketIds?: unknown;
   status?: unknown;
   userId?: unknown;
+  userIds?: unknown;
   type?: unknown;
   isSpam?: unknown;
   isArchived?: unknown;
@@ -177,6 +178,12 @@ function formatHumanType(type: unknown): string | null {
   );
 }
 
+function formatNameList(names: string[]): string {
+  if (names.length <= 1) return names[0] ?? "";
+  if (names.length === 2) return `${names[0]} and ${names[1]}`;
+  return `${names.slice(0, -1).join(", ")}, and ${names[names.length - 1]}`;
+}
+
 function formatSystemEvent(
   action: string,
   details: AuditDetails,
@@ -215,6 +222,19 @@ function formatSystemEvent(
 
     case "HELPDESK_BATCH_ASSIGNPRIMARY":
     case "HELPDESK_TICKET_ASSIGNED": {
+      const rawIds = Array.isArray(details.userIds)
+        ? details.userIds.filter((id): id is string => typeof id === "string")
+        : null;
+      if (rawIds) {
+        if (rawIds.length === 0) {
+          return { kind: "assign", text: `${who} cleared assignees` };
+        }
+        const names = rawIds.map((id) => resolveAssigneeName(id) ?? id);
+        return {
+          kind: "assign",
+          text: `${who} assigned to ${formatNameList(names)}`,
+        };
+      }
       // Resolve the assignee's display name when we can — the audit row
       // only stores the user id but the timeline UI is much more useful
       // when it shows "Cory assigned to Adam" vs the bare "assigned".
@@ -845,6 +865,11 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
       const details = (row.details ?? {}) as AuditDetails;
       if (typeof details.userId === "string") {
         assigneeIds.add(details.userId);
+      }
+      if (Array.isArray(details.userIds)) {
+        for (const id of details.userIds) {
+          if (typeof id === "string") assigneeIds.add(id);
+        }
       }
     }
   }

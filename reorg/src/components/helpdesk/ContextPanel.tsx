@@ -822,7 +822,7 @@ function CustomerCard({
           </div>
         </Row>
         {ticket.additionalAssignees && ticket.additionalAssignees.length > 0 ? (
-          <Row label="Watchers">
+          <Row label="Additional assignees">
             <AvatarStack
               size="sm"
               users={ticket.additionalAssignees.map((a) => a.user)}

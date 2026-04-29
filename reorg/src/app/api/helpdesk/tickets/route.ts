@@ -231,6 +231,13 @@ export async function GET(request: NextRequest) {
       primaryAssignee: {
         select: { id: true, name: true, email: true, avatarUrl: true, handle: true },
       },
+      additionalAssignees: {
+        include: {
+          user: {
+            select: { id: true, name: true, email: true, avatarUrl: true, handle: true },
+          },
+        },
+      },
       tags: { include: { tag: true } },
     },
   });
@@ -347,6 +354,7 @@ export async function GET(request: NextRequest) {
       isImportant: t.isImportant,
       snoozedUntil: t.snoozedUntil,
       primaryAssignee: t.primaryAssignee,
+      additionalAssignees: t.additionalAssignees,
       unreadCount: t.unreadCount,
       lastBuyerMessageAt: t.lastBuyerMessageAt,
       lastAgentMessageAt: t.lastAgentMessageAt,

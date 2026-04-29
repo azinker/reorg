@@ -9,6 +9,7 @@
  *   - removeTags     { tagIds: string[] }    remove tags
  *   - setStatus      { status: HelpdeskTicketStatus }
  *   - assignPrimary  { userId: string | null }  null = unassign
+ *   - setAssignees   { userIds: string[] }   ordered assignee set; first is primary
  *   - markSpam       { isSpam: boolean }
  *   - archive        { isArchived: boolean }
  *   - markRead       { isRead: boolean }     toggles unreadCount (0 / 1)
@@ -51,6 +52,16 @@ const actionSchema = z.discriminatedUnion("action", [
   baseSchema.extend({
     action: z.literal("assignPrimary"),
     userId: z.string().min(1).nullable(),
+  }),
+  baseSchema.extend({
+    action: z.literal("setAssignees"),
+    userIds: z
+      .array(z.string().min(1))
+      .max(25)
+      .refine(
+        (arr) => new Set(arr).size === arr.length,
+        "Duplicate user ids are not allowed",
+      ),
   }),
   baseSchema.extend({
     action: z.literal("markSpam"),
@@ -147,11 +158,72 @@ export async function POST(request: NextRequest) {
       break;
     }
     case "assignPrimary": {
-      const r = await db.helpdeskTicket.updateMany({
-        where: { id: { in: ids } },
-        data: { primaryAssigneeId: action.userId },
+      const r = await db.$transaction(async (tx) => {
+        const updated = await tx.helpdeskTicket.updateMany({
+          where: { id: { in: ids } },
+          data: { primaryAssigneeId: action.userId },
+        });
+        if (action.userId === null) {
+          await tx.helpdeskAssignment.deleteMany({
+            where: { ticketId: { in: ids } },
+          });
+        } else {
+          await tx.helpdeskAssignment.deleteMany({
+            where: { ticketId: { in: ids }, userId: action.userId },
+          });
+        }
+        return updated;
       });
       summary = { count: r.count, userId: action.userId };
+      break;
+    }
+    case "setAssignees": {
+      const uniqueUserIds = Array.from(new Set(action.userIds));
+      if (uniqueUserIds.length > 0) {
+        const users = await db.user.findMany({
+          where: { id: { in: uniqueUserIds } },
+          select: { id: true },
+        });
+        const found = new Set(users.map((user) => user.id));
+        const missing = uniqueUserIds.filter((id) => !found.has(id));
+        if (missing.length > 0) {
+          return NextResponse.json(
+            { error: { message: "One or more assignees were not found." } },
+            { status: 400 },
+          );
+        }
+      }
+
+      const primaryAssigneeId = uniqueUserIds[0] ?? null;
+      const additionalUserIds = uniqueUserIds.slice(1);
+      const r = await db.$transaction(async (tx) => {
+        const updated = await tx.helpdeskTicket.updateMany({
+          where: { id: { in: ids } },
+          data: { primaryAssigneeId },
+        });
+        await tx.helpdeskAssignment.deleteMany({
+          where: additionalUserIds.length
+            ? {
+                ticketId: { in: ids },
+                userId: { notIn: additionalUserIds },
+              }
+            : { ticketId: { in: ids } },
+        });
+        if (additionalUserIds.length > 0) {
+          await tx.helpdeskAssignment.createMany({
+            data: ids.flatMap((ticketId) =>
+              additionalUserIds.map((assignedUserId) => ({
+                ticketId,
+                userId: assignedUserId,
+                role: "ADDITIONAL",
+              })),
+            ),
+            skipDuplicates: true,
+          });
+        }
+        return updated;
+      });
+      summary = { count: r.count, userIds: uniqueUserIds };
       break;
     }
     case "markSpam": {
@@ -342,6 +414,11 @@ function perTicketActionFor(
         action: "HELPDESK_TICKET_ASSIGNED",
         details: { userId: action.userId } satisfies Prisma.InputJsonValue,
       };
+    case "setAssignees":
+      return {
+        action: "HELPDESK_TICKET_ASSIGNED",
+        details: { userIds: action.userIds } satisfies Prisma.InputJsonValue,
+      };
     case "markSpam":
       return {
         action: "HELPDESK_BATCH_MARKSPAM",
@@ -396,4 +473,3 @@ function perTicketActionFor(
       return null;
   }
 }
-

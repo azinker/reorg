@@ -24,7 +24,7 @@ import {
 import type { HelpdeskTicketSummary } from "@/hooks/use-helpdesk";
 import { SLATimer } from "@/components/helpdesk/SLATimer";
 import { useHelpdeskPrefs } from "@/components/helpdesk/HelpdeskSettingsDialog";
-import { Avatar } from "@/components/ui/avatar";
+import { Avatar, AvatarStack } from "@/components/ui/avatar";
 import { TicketTable } from "@/components/helpdesk/TicketTable";
 
 /** Compact agent shape used by the bulk-assign dropdown. */
@@ -34,6 +34,23 @@ interface AgentBadge {
   email: string | null;
   avatarUrl: string | null;
   handle: string | null;
+}
+
+function ticketAssignees(
+  ticket: HelpdeskTicketSummary,
+): NonNullable<HelpdeskTicketSummary["primaryAssignee"]>[] {
+  const seen = new Set<string>();
+  const users: NonNullable<HelpdeskTicketSummary["primaryAssignee"]>[] = [];
+  if (ticket.primaryAssignee) {
+    seen.add(ticket.primaryAssignee.id);
+    users.push(ticket.primaryAssignee);
+  }
+  for (const assignee of ticket.additionalAssignees ?? []) {
+    if (seen.has(assignee.user.id)) continue;
+    seen.add(assignee.user.id);
+    users.push(assignee.user);
+  }
+  return users;
 }
 
 export type BulkAction =
@@ -168,7 +185,7 @@ function workReason(t: HelpdeskTicketSummary): string {
   if (t.unreadCount > 0) return "Buyer replied";
   if (t.status === "WAITING") return "Waiting";
   if (t.status === "RESOLVED") return "Resolved";
-  if (!t.primaryAssignee) return "Unassigned";
+  if (ticketAssignees(t).length === 0) return "Unassigned";
   return "Needs review";
 }
 
@@ -708,6 +725,7 @@ export function TicketList({
               const isActive = selectedId === t.id;
               const isUnread = t.unreadCount > 0;
               const isChecked = selected.has(t.id);
+              const assignees = ticketAssignees(t);
               return (
                 <li
                   key={t.id}
@@ -848,8 +866,8 @@ export function TicketList({
                         firstResponseAt={t.firstResponseAt ?? null}
                       />
                       <div className="ml-auto flex items-center gap-1">
-                        {t.primaryAssignee ? (
-                          <Avatar user={t.primaryAssignee} size="xs" />
+                        {assignees.length > 0 ? (
+                          <AvatarStack users={assignees} size="xs" max={3} />
                         ) : null}
                         {t.unreadCount > 0 && (
                           <span className="rounded-full bg-brand px-1.5 py-0.5 font-bold text-brand-foreground">

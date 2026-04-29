@@ -41,7 +41,7 @@ import {
   X,
 } from "lucide-react";
 import type { HelpdeskTicketSummary } from "@/hooks/use-helpdesk";
-import { Avatar } from "@/components/ui/avatar";
+import { Avatar, AvatarStack } from "@/components/ui/avatar";
 import { cn } from "@/lib/utils";
 import {
   useHelpdeskPrefs,
@@ -337,8 +337,27 @@ function ticketWorkReason(t: HelpdeskTicketSummary): string {
   if (t.unreadCount > 0) return "Buyer replied";
   if (t.status === "WAITING") return "Waiting on buyer";
   if (t.status === "RESOLVED") return "Resolved";
-  if (!t.primaryAssignee) return "Unassigned";
+  if (ticketAssignees(t).length === 0) return "Unassigned";
   return "Needs review";
+}
+
+function ticketAssignees(t: HelpdeskTicketSummary) {
+  const seen = new Set<string>();
+  const users: NonNullable<HelpdeskTicketSummary["primaryAssignee"]>[] = [];
+  if (t.primaryAssignee) {
+    seen.add(t.primaryAssignee.id);
+    users.push(t.primaryAssignee);
+  }
+  for (const assignee of t.additionalAssignees ?? []) {
+    if (seen.has(assignee.user.id)) continue;
+    seen.add(assignee.user.id);
+    users.push(assignee.user);
+  }
+  return users;
+}
+
+function assigneeDisplayName(user: ReturnType<typeof ticketAssignees>[number]): string {
+  return user.name?.split(" ")[0] ?? user.handle ?? user.email ?? "Agent";
 }
 
 function ticketWorkReasonClass(label: string): string {
@@ -392,10 +411,13 @@ function compareTickets(
       return ticketLocationLabel(a).localeCompare(ticketLocationLabel(b));
     case "reason":
       return ticketWorkReason(a).localeCompare(ticketWorkReason(b));
-    case "owner":
-      return (a.primaryAssignee?.name ?? "zzz").localeCompare(
-        b.primaryAssignee?.name ?? "zzz",
+    case "owner": {
+      const aOwner = ticketAssignees(a)[0];
+      const bOwner = ticketAssignees(b)[0];
+      return (aOwner ? assigneeDisplayName(aOwner) : "zzz").localeCompare(
+        bOwner ? assigneeDisplayName(bOwner) : "zzz",
       );
+    }
     case "timeLeft": {
       const ax = computeTimeLeft(a, now).remainingMs ?? Number.POSITIVE_INFINITY;
       const bx = computeTimeLeft(b, now).remainingMs ?? Number.POSITIVE_INFINITY;
@@ -1182,16 +1204,17 @@ function Cell({ column, ticket: t, isUnread, timeLeft, otherViewers }: CellProps
       );
     }
 
-    case "owner":
+    case "owner": {
+      const assignees = ticketAssignees(t);
       return (
         <div className="min-w-0 px-2">
-          {t.primaryAssignee ? (
+          {assignees.length > 0 ? (
             <div className="flex min-w-0 items-center gap-2">
-              <Avatar user={t.primaryAssignee} size="sm" />
+              <AvatarStack users={assignees} size="xs" max={3} />
               <span className="truncate text-sm text-muted-foreground">
-                {t.primaryAssignee.name?.split(" ")[0] ??
-                  t.primaryAssignee.handle ??
-                  "—"}
+                {assignees.length === 1
+                  ? assigneeDisplayName(assignees[0])
+                  : `${assigneeDisplayName(assignees[0])} +${assignees.length - 1}`}
               </span>
             </div>
           ) : (
@@ -1204,6 +1227,7 @@ function Cell({ column, ticket: t, isUnread, timeLeft, otherViewers }: CellProps
           )}
         </div>
       );
+    }
 
     case "timeLeft":
       return (
