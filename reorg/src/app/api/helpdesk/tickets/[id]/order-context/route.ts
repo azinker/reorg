@@ -3,6 +3,7 @@ import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { buildEbayConfig } from "@/lib/services/auto-responder-ebay";
 import { getOrderContextCached } from "@/lib/services/helpdesk-order-context-cache";
+import { getCurrentInventoryBySkus } from "@/lib/services/helpdesk-inventory";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -69,7 +70,26 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
       ticket.ebayOrderNumber,
       { awaitFresh: true },
     );
-    return NextResponse.json({ data: ctx ?? null });
+    if (!ctx) {
+      return NextResponse.json({ data: ctx ?? null });
+    }
+
+    const skus = ctx.lineItems
+      .map((line) => line.sku?.trim())
+      .filter((sku): sku is string => Boolean(sku));
+    const inventoryBySku = await getCurrentInventoryBySkus(skus);
+    const enrichedCtx = {
+      ...ctx,
+      lineItems: ctx.lineItems.map((line) => {
+        const sku = line.sku?.trim();
+        return {
+          ...line,
+          currentInventory: sku ? inventoryBySku.get(sku) ?? null : null,
+        };
+      }),
+    };
+
+    return NextResponse.json({ data: enrichedCtx });
   } catch (err) {
     console.error("[helpdesk/order-context] fetch failed:", err);
     return NextResponse.json(

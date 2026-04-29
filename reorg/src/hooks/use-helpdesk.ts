@@ -203,6 +203,7 @@ export interface HelpdeskListingInfo {
   sku: string | null;
   title: string | null;
   imageUrl: string | null;
+  currentInventory: number | null;
 }
 
 export interface HelpdeskTicketDetail extends HelpdeskTicketSummary {

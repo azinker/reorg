@@ -11,6 +11,7 @@ import {
   envelopeStubBody,
   extractEnvelopePreviewImages,
 } from "@/lib/helpdesk/html-clean";
+import { getCurrentInventoryBySku } from "@/lib/services/helpdesk-inventory";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -574,6 +575,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     sku: string | null;
     title: string | null;
     imageUrl: string | null;
+    currentInventory: number | null;
   } | null = null;
   if (ticket.ebayItemId) {
     const listingSelect = {
@@ -600,11 +602,15 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         select: listingSelect,
       }));
     if (listing) {
+      const currentInventory = listing.sku
+        ? await getCurrentInventoryBySku(listing.sku)
+        : null;
       listingInfo = {
         itemId: listing.platformItemId,
         sku: listing.sku ?? null,
         title: listing.title ?? ticket.ebayItemTitle ?? null,
         imageUrl: listing.imageUrl ?? null,
+        currentInventory,
       };
     } else {
       // No internal MarketplaceListing match (item not in our catalog,
@@ -616,6 +622,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         sku: null,
         title: ticket.ebayItemTitle ?? null,
         imageUrl: null,
+        currentInventory: null,
       };
     }
   }

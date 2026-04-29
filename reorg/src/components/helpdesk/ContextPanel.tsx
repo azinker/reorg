@@ -111,6 +111,7 @@ interface OrderContextLineItem {
   transactionId: string | null;
   title: string;
   sku: string | null;
+  currentInventory: number | null;
   quantity: number;
   unitPriceCents: number | null;
   pictureUrl: string | null;
@@ -893,6 +894,7 @@ function ProductInquirySection({
           {listing.sku ? (
             <div className="mt-1 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
               <span className="truncate">SKU {listing.sku}</span>
+              <InventoryBadge value={listing.currentInventory} />
               <CopyButton value={listing.sku} title="Copy SKU" />
             </div>
           ) : null}
@@ -976,6 +978,8 @@ function OrderInfoSection({
               item.itemId,
             sku: item.sku ?? listing?.sku ?? null,
             pictureUrl: item.pictureUrl ?? listing?.imageUrl ?? null,
+            currentInventory:
+              item.currentInventory ?? listing?.currentInventory ?? null,
           };
         })
       : ticket.ebayItemId
@@ -989,6 +993,7 @@ function OrderInfoSection({
                 fallbackListing?.title ??
                 ticket.ebayItemId,
               sku: fallbackListing?.sku ?? null,
+              currentInventory: fallbackListing?.currentInventory ?? null,
               quantity: 1,
               unitPriceCents: null,
               pictureUrl: fallbackListing?.imageUrl ?? null,
@@ -1267,6 +1272,7 @@ function OrderInfoSection({
                     {item.sku ? (
                       <div className="mt-1 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
                         <span className="truncate">SKU {item.sku}</span>
+                        <InventoryBadge value={item.currentInventory} />
                         <CopyButton value={item.sku} title="Copy SKU" />
                       </div>
                     ) : null}
@@ -1510,6 +1516,19 @@ function CopyButton({ value, title }: { value: string; title: string }) {
         <Copy className="h-3 w-3" />
       )}
     </button>
+  );
+}
+
+function InventoryBadge({ value }: { value: number | null | undefined }) {
+  if (value == null) return null;
+
+  return (
+    <span
+      className="shrink-0 font-mono text-[11px] font-semibold text-emerald-700 dark:text-emerald-300"
+      title={`Current inventory: ${value}`}
+    >
+      [{value}]
+    </span>
   );
 }
 
