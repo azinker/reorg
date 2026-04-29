@@ -539,7 +539,7 @@ export function TicketTable({
   }, []);
 
   // ── Sort state ────────────────────────────────────────────────────────────
-  const [sort, setSort] = useState<SortState>({ key: null, dir: "asc" });
+  const [sort, setSort] = useState<SortState>({ key: "timeLeft", dir: "asc" });
 
   function toggleSort(key: ColumnKey) {
     if (!COLUMN_DEFS[key].sortable) return;

@@ -154,6 +154,20 @@ const querySchema = z.object({
   agentFolderId: z.string().min(1).optional(),
 });
 
+const defaultTicketOrder: Prisma.HelpdeskTicketOrderByWithRelationInput[] = [
+  { isArchived: "asc" },
+  { isSpam: "asc" },
+  // NEW / TO_DO sort ahead of WAITING / closed states, so rows with a live
+  // response clock are returned before rows whose Time Left is not applicable.
+  { status: "asc" },
+  // Time Left decreases as the buyer's last-message timestamp gets older.
+  { lastBuyerMessageAt: { sort: "asc", nulls: "last" } },
+  // Legacy/system rows can lack a buyer timestamp; fall back to creation age.
+  { createdAt: "asc" },
+  { updatedAt: "desc" },
+  { id: "asc" },
+];
+
 export async function GET(request: NextRequest) {
   const session = await auth();
   if (!session?.user?.id) {
@@ -209,7 +223,7 @@ export async function GET(request: NextRequest) {
   // contributing materially to the 10s+ TTFB on this endpoint.
   const tickets = await db.helpdeskTicket.findMany({
     where,
-    orderBy: [{ lastBuyerMessageAt: "desc" }, { updatedAt: "desc" }],
+    orderBy: defaultTicketOrder,
     take: limit + 1,
     ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
     include: {
