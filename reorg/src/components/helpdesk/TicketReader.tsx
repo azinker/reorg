@@ -303,7 +303,7 @@ export function TicketReader({
                   {storeDisplayLabel(ticket)}
                 </span>
                 {ticket.ebayOrderNumber && (
-                  <span className="truncate font-medium">
+                  <span className="truncate font-semibold text-emerald-400">
                     Order #{ticket.ebayOrderNumber}
                   </span>
                 )}
@@ -379,7 +379,7 @@ export function TicketReader({
                   {storeDisplayLabel(ticket)}
                 </span>
                 {ticket.ebayOrderNumber && (
-                  <span className="truncate text-xs font-medium text-muted-foreground">
+                  <span className="truncate text-xs font-semibold text-emerald-400">
                     Order #{ticket.ebayOrderNumber}
                   </span>
                 )}

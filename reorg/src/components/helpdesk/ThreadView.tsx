@@ -968,7 +968,9 @@ export function ThreadView({
               {ticket.ebayOrderNumber && (
                 <>
                   <span className="px-1.5 text-muted-foreground/60">·</span>
-                  Order #{ticket.ebayOrderNumber}
+                  <span className="font-semibold text-emerald-400">
+                    Order #{ticket.ebayOrderNumber}
+                  </span>
                 </>
               )}
             </p>
