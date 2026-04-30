@@ -41,6 +41,7 @@ import {
   buildEbayConfig,
   getEbayAccessToken,
 } from "@/lib/services/helpdesk-ebay";
+import { isEbayAutomatedFeedbackComment } from "@/lib/services/helpdesk-feedback";
 import { recordNetworkTransferSample } from "@/lib/services/network-transfer-samples";
 
 const REST_BASE = "https://api.ebay.com";
@@ -319,33 +320,42 @@ async function listFeedback(args: {
       : pageInfo.TotalNumberOfPages ?? 1
     : 1;
 
-  const entries: EbayFeedbackEntry[] = list.map((row: unknown) => {
-    const r = (row ?? {}) as Record<string, unknown>;
-    const ratingStr = String(r.CommentType ?? "").trim().toUpperCase(); // Positive / Negative / Neutral
-    const kind: HelpdeskFeedbackKind =
-      ratingStr === "NEGATIVE"
-        ? HelpdeskFeedbackKind.NEGATIVE
-        : ratingStr === "NEUTRAL"
-          ? HelpdeskFeedbackKind.NEUTRAL
-          : HelpdeskFeedbackKind.POSITIVE;
-    return {
-      externalId: String(
-        r.FeedbackID ?? r.TransactionID ?? r.OrderLineItemID ?? r.ItemID ?? "",
-      ),
-      kind,
-      starRating: null, // GetFeedback doesn't expose DSR star ratings here
-      comment: r.CommentText != null ? String(r.CommentText) : null,
-      sellerResponse:
-        r.FeedbackResponse != null && String(r.FeedbackResponse).trim()
-          ? String(r.FeedbackResponse)
-          : null,
-      ebayOrderNumber: typeof r.OrderLineItemID === "string" ? null : null,
-      ebayItemId: r.ItemID != null ? String(r.ItemID) : null,
-      buyerUserId: r.CommentingUser != null ? String(r.CommentingUser) : null,
-      leftAt: r.CommentTime ? new Date(String(r.CommentTime)) : new Date(),
-      raw: r,
-    };
-  });
+  const entries: EbayFeedbackEntry[] = list
+    .map((row: unknown) => {
+      const r = (row ?? {}) as Record<string, unknown>;
+      const ratingStr = String(r.CommentType ?? "").trim().toUpperCase(); // Positive / Negative / Neutral
+      const kind: HelpdeskFeedbackKind =
+        ratingStr === "NEGATIVE"
+          ? HelpdeskFeedbackKind.NEGATIVE
+          : ratingStr === "NEUTRAL"
+            ? HelpdeskFeedbackKind.NEUTRAL
+            : HelpdeskFeedbackKind.POSITIVE;
+      const comment = r.CommentText != null ? String(r.CommentText) : null;
+      return {
+        externalId: String(
+          r.FeedbackID ?? r.TransactionID ?? r.OrderLineItemID ?? r.ItemID ?? "",
+        ),
+        kind,
+        starRating: null, // GetFeedback doesn't expose DSR star ratings here
+        comment,
+        sellerResponse:
+          r.FeedbackResponse != null && String(r.FeedbackResponse).trim()
+            ? String(r.FeedbackResponse)
+            : null,
+        ebayOrderNumber: typeof r.OrderLineItemID === "string" ? null : null,
+        ebayItemId: r.ItemID != null ? String(r.ItemID) : null,
+        buyerUserId: r.CommentingUser != null ? String(r.CommentingUser) : null,
+        leftAt: r.CommentTime ? new Date(String(r.CommentTime)) : new Date(),
+        raw: r,
+      };
+    })
+    .filter(
+      (entry) =>
+        !(
+          entry.kind === HelpdeskFeedbackKind.POSITIVE &&
+          isEbayAutomatedFeedbackComment(entry.comment)
+        ),
+    );
   return { entries, hasMore: args.pageNumber < totalPages };
 }
 
@@ -663,12 +673,14 @@ async function syncFeedbackForIntegration(
     if (entries.length === 0) break;
     for (const entry of entries) {
       if (!entry.externalId) continue;
-      const ticketId = await findTicketIdForLinkage({
-        integrationId: integration.id,
-        ebayOrderNumber: entry.ebayOrderNumber,
-        ebayItemId: entry.ebayItemId,
-        buyerUserId: entry.buyerUserId,
-      });
+      const ticketId = entry.ebayOrderNumber
+        ? await findTicketIdForLinkage({
+            integrationId: integration.id,
+            ebayOrderNumber: entry.ebayOrderNumber,
+            ebayItemId: entry.ebayItemId,
+            buyerUserId: entry.buyerUserId,
+          })
+        : null;
       await db.helpdeskFeedback.upsert({
         where: {
           integrationId_externalId: {
@@ -691,7 +703,7 @@ async function syncFeedbackForIntegration(
           rawData: entry.raw as Prisma.InputJsonValue,
         },
         update: {
-          ticketId: ticketId ?? undefined,
+          ticketId: entry.ebayOrderNumber ? ticketId ?? undefined : undefined,
           kind: entry.kind,
           starRating: entry.starRating,
           comment: entry.comment,

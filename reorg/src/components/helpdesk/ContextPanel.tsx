@@ -302,7 +302,11 @@ function ContextPanelInner({ ticket, containerWidth, dividerCls }: InnerProps) {
               // thumbnail + a deep link to the eBay listing.
               <ProductInquirySection listing={ticket.listingInfo} />
             ) : null}
-            <FeedbackSection ticket={ticket} feedback={feedback} />
+            <FeedbackSection
+              ticket={ticket}
+              order={order.data}
+              feedback={feedback}
+            />
             <RelatedSection ticket={ticket} related={related} />
           </>
         )}
@@ -419,10 +423,10 @@ function useOrderContext(ticket: HelpdeskTicketDetail): UseOrderContextResult {
     const cached = orderContextCache.has(ticket.id)
       ? orderContextCache.get(ticket.id) ?? null
       : null;
-    if (cached) setData(cached);
+    setData(cached);
     // Always refresh, but don't show the spinner if we already have something
     // on screen — feels "snappy" rather than "loading".
-    if (!cached) setLoading(true);
+    setLoading(!cached);
     setError(null);
     const ac = new AbortController();
     void (async () => {
@@ -458,8 +462,7 @@ function useFeedbackSummary(
   ticket: HelpdeskTicketDetail,
 ): UseFeedbackSummaryResult {
   const isEbay = ticket.channel === "TPP_EBAY" || ticket.channel === "TT_EBAY";
-  const shouldFetch =
-    isEbay && Boolean(ticket.buyerUserId) && Boolean(ticket.ebayOrderNumber || ticket.ebayItemId);
+  const shouldFetch = isEbay && Boolean(ticket.ebayOrderNumber);
   const cached = feedbackSummaryCache.get(ticket.id) ?? null;
   const [data, setData] = useState<FeedbackSummaryResponse["data"] | null>(cached);
   const [loading, setLoading] = useState(false);
@@ -473,8 +476,9 @@ function useFeedbackSummary(
       return;
     }
     const cachedForTicket = feedbackSummaryCache.get(ticket.id) ?? null;
+    setData(cachedForTicket);
     if (cachedForTicket) {
-      setData(cachedForTicket);
+      setLoading(false);
     } else {
       setLoading(true);
     }
@@ -1338,16 +1342,19 @@ function OrderInfoSection({
 
 function FeedbackSection({
   ticket,
+  order,
   feedback,
 }: {
   ticket: HelpdeskTicketDetail;
+  order: OrderContext | null;
   feedback: UseFeedbackSummaryResult;
 }) {
   const isEbay = ticket.channel === "TPP_EBAY" || ticket.channel === "TT_EBAY";
-  if (!isEbay || (!ticket.ebayOrderNumber && !ticket.ebayItemId)) return null;
+  if (!isEbay || !ticket.ebayOrderNumber) return null;
 
   const first = feedback.data?.items[0] ?? null;
   const state = feedback.data?.state ?? "UNKNOWN";
+  const leaveBy = feedbackLeaveByDate(ticket, order);
 
   return (
     <section className="border-b border-hairline bg-card/40 px-4 py-3">
@@ -1414,9 +1421,18 @@ function FeedbackSection({
           ) : null}
         </div>
       ) : state === "NOT_LEFT" ? (
-        <p className="text-xs text-muted-foreground">
-          Feedback has not been left for this order.
-        </p>
+        <div className="space-y-1 text-xs text-muted-foreground">
+          <p>Feedback has not been left for this order.</p>
+          {leaveBy ? (
+            <p>
+              Buyer can leave feedback until{" "}
+              <span className="font-medium text-foreground">
+                {formatFeedbackDeadline(leaveBy)}
+              </span>
+              .
+            </p>
+          ) : null}
+        </div>
       ) : feedback.loading ? (
         <p className="text-xs text-muted-foreground">Checking eBay feedback...</p>
       ) : (
@@ -1675,6 +1691,47 @@ function formatFeedbackDate(value: string | null | undefined): string {
   } catch {
     return "-";
   }
+}
+
+function validDate(value: string | null | undefined): Date | null {
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isFinite(date.getTime()) ? date : null;
+}
+
+function addDays(date: Date, days: number): Date {
+  return new Date(date.getTime() + days * 86_400_000);
+}
+
+function earliestDate(dates: Array<Date | null>): Date | null {
+  const valid = dates.filter((date): date is Date => Boolean(date));
+  if (valid.length === 0) return null;
+  return valid.reduce((earliest, date) =>
+    date.getTime() < earliest.getTime() ? date : earliest,
+  );
+}
+
+function feedbackLeaveByDate(
+  ticket: HelpdeskTicketDetail,
+  order: OrderContext | null,
+): Date | null {
+  const deliveredOrExpected = earliestDate([
+    validDate(order?.actualDeliveryTime),
+    validDate(order?.estimatedDeliveryMax ?? order?.estimatedDeliveryMin),
+  ]);
+  if (deliveredOrExpected) return addDays(deliveredOrExpected, 60);
+
+  const purchased = validDate(order?.createdTime ?? order?.paidTime ?? ticket.createdAt);
+  return purchased ? addDays(purchased, 90) : null;
+}
+
+function formatFeedbackDeadline(date: Date): string {
+  return date.toLocaleDateString(undefined, {
+    timeZone: EBAY_ORDER_TIME_ZONE,
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
 }
 
 function shortService(service: string): string {

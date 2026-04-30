@@ -11,6 +11,9 @@ const TRADING_API = "https://api.ebay.com/ws/api.dll";
 const COMPAT_LEVEL = "1199";
 const SITE_ID = "0";
 const REQUEST_TIMEOUT_MS = 30_000;
+const EBAY_AUTOMATED_FEEDBACK_COMMENTS = new Set([
+  "order delivered on time with no issues",
+]);
 
 export interface HelpdeskFeedbackSnapshot {
   id: string;
@@ -79,6 +82,29 @@ function mapFeedbackKind(value: unknown): HelpdeskFeedbackKind {
   if (normalized === "NEGATIVE") return HelpdeskFeedbackKind.NEGATIVE;
   if (normalized === "NEUTRAL") return HelpdeskFeedbackKind.NEUTRAL;
   return HelpdeskFeedbackKind.POSITIVE;
+}
+
+function normalizeFeedbackComment(value: string | null | undefined): string {
+  return (value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[.!?]+$/g, "")
+    .replace(/\s+/g, " ");
+}
+
+export function isEbayAutomatedFeedbackComment(
+  value: string | null | undefined,
+): boolean {
+  return EBAY_AUTOMATED_FEEDBACK_COMMENTS.has(normalizeFeedbackComment(value));
+}
+
+export function isEbayAutomatedFeedbackSnapshot(
+  entry: Pick<HelpdeskFeedbackSnapshot, "kind" | "comment">,
+): boolean {
+  return (
+    entry.kind === HelpdeskFeedbackKind.POSITIVE &&
+    isEbayAutomatedFeedbackComment(entry.comment)
+  );
 }
 
 function rowToSnapshot(
@@ -171,9 +197,6 @@ function feedbackFilterXml(line: EbayOrderContextLineItem): string | null {
       `<TransactionID>${escapeXml(line.transactionId)}</TransactionID>`,
     ].join("\n");
   }
-  if (line.itemId) {
-    return `<ItemID>${escapeXml(line.itemId)}</ItemID>`;
-  }
   return null;
 }
 
@@ -235,6 +258,7 @@ async function getFeedbackForLine(args: {
     )
     .filter((entry): entry is HelpdeskFeedbackSnapshot => {
       if (!entry) return false;
+      if (isEbayAutomatedFeedbackSnapshot(entry)) return false;
       if (args.line.itemId && entry.ebayItemId && entry.ebayItemId !== args.line.itemId) {
         return false;
       }

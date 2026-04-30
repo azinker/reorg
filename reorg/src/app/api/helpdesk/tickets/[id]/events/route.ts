@@ -42,6 +42,7 @@ import { getOrderContextCached } from "@/lib/services/helpdesk-order-context-cac
 import {
   feedbackMirrorToSnapshot,
   fetchEbayFeedbackForOrderContext,
+  isEbayAutomatedFeedbackSnapshot,
   type HelpdeskFeedbackSnapshot,
 } from "@/lib/services/helpdesk-feedback";
 
@@ -1133,23 +1134,10 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
             },
           }
         : null;
-    const buyerItemMirrorFilter =
-      exists.integration && exists.buyerUserId && exists.ebayItemId
-        ? {
-            integrationId: exists.integration.id,
-            buyerUserId: {
-              equals: exists.buyerUserId,
-              mode: Prisma.QueryMode.insensitive,
-            },
-            ebayItemId: exists.ebayItemId,
-          }
-        : null;
     const caseMirrorOr: Prisma.HelpdeskCaseWhereInput[] = [
       { ticketId: { in: relatedTicketIds } },
     ];
-    const feedbackMirrorOr: Prisma.HelpdeskFeedbackWhereInput[] = [
-      { ticketId: { in: relatedTicketIds } },
-    ];
+    const feedbackMirrorOr: Prisma.HelpdeskFeedbackWhereInput[] = [];
     const cancellationMirrorOr: Prisma.HelpdeskCancellationWhereInput[] = [
       { ticketId: { in: relatedTicketIds } },
     ];
@@ -1160,11 +1148,7 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
     }
     if (buyerMirrorFilter) {
       caseMirrorOr.push(buyerMirrorFilter);
-      feedbackMirrorOr.push(buyerMirrorFilter);
       cancellationMirrorOr.push(buyerMirrorFilter);
-    }
-    if (buyerItemMirrorFilter) {
-      feedbackMirrorOr.push(buyerItemMirrorFilter);
     }
 
     const [cases, feedback, cancellations] = await Promise.all([
@@ -1173,11 +1157,13 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
         orderBy: { openedAt: "asc" },
         take: 50,
       }),
-      db.helpdeskFeedback.findMany({
-        where: { OR: feedbackMirrorOr },
-        orderBy: { leftAt: "asc" },
-        take: 50,
-      }),
+      feedbackMirrorOr.length > 0
+        ? db.helpdeskFeedback.findMany({
+            where: { OR: feedbackMirrorOr },
+            orderBy: { leftAt: "asc" },
+            take: 50,
+          })
+        : Promise.resolve([]),
       db.helpdeskCancellation.findMany({
         where: { OR: cancellationMirrorOr },
         orderBy: { requestedAt: "asc" },
@@ -1186,7 +1172,7 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
     ]);
     let feedbackSnapshots: HelpdeskFeedbackSnapshot[] = feedback.map(
       feedbackMirrorToSnapshot,
-    );
+    ).filter((entry) => !isEbayAutomatedFeedbackSnapshot(entry));
     if (
       feedbackSnapshots.length === 0 &&
       isEbay &&
