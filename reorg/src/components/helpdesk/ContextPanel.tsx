@@ -892,11 +892,10 @@ function ProductInquirySection({
             {listing.title ?? listing.itemId}
           </p>
           {listing.sku ? (
-            <div className="mt-1 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
-              <span className="truncate">SKU {listing.sku}</span>
-              <InventoryBadge value={listing.currentInventory} />
-              <CopyButton value={listing.sku} title="Copy SKU" />
-            </div>
+            <SkuInventoryLine
+              sku={listing.sku}
+              currentInventory={listing.currentInventory}
+            />
           ) : null}
           <p className="mt-1 inline-flex items-center gap-1 truncate font-mono text-[11px] text-muted-foreground">
             Item #{listing.itemId}
@@ -1270,11 +1269,10 @@ function OrderInfoSection({
                       {item.title}
                     </p>
                     {item.sku ? (
-                      <div className="mt-1 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
-                        <span className="truncate">SKU {item.sku}</span>
-                        <InventoryBadge value={item.currentInventory} />
-                        <CopyButton value={item.sku} title="Copy SKU" />
-                      </div>
+                      <SkuInventoryLine
+                        sku={item.sku}
+                        currentInventory={item.currentInventory}
+                      />
                     ) : null}
                   </div>
                   <div className="shrink-0 text-right text-xs">
@@ -1516,6 +1514,24 @@ function CopyButton({ value, title }: { value: string; title: string }) {
         <Copy className="h-3 w-3" />
       )}
     </button>
+  );
+}
+
+function SkuInventoryLine({
+  sku,
+  currentInventory,
+}: {
+  sku: string;
+  currentInventory: number | null | undefined;
+}) {
+  return (
+    <div className="mt-1 grid min-w-0 grid-cols-[minmax(0,1fr)_auto_auto] items-start gap-x-1.5 gap-y-1 text-xs text-muted-foreground">
+      <span className="min-w-0 whitespace-normal break-all font-mono text-[11px] leading-snug">
+        {sku}
+      </span>
+      <CopyButton value={sku} title="Copy SKU" />
+      <InventoryBadge value={currentInventory} />
+    </div>
   );
 }
 
