@@ -1113,7 +1113,7 @@ function OrderInfoSection({
                     return (
                       <div
                         key={`${carrier}-${entry.number}`}
-                        className="flex min-w-0 items-center gap-1.5 whitespace-nowrap text-foreground"
+                        className="grid min-w-0 grid-cols-[auto_auto_minmax(0,1fr)_auto] items-start gap-x-1.5 gap-y-0.5 text-foreground"
                       >
                         <Truck className="h-3 w-3 shrink-0 text-brand" />
                         <span className="shrink-0 text-xs font-medium">
@@ -1123,19 +1123,18 @@ function OrderInfoSection({
                           href={url}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="min-w-0 flex-1 truncate font-mono text-[11px] font-medium text-brand hover:underline"
+                          className="min-w-0 break-all font-mono text-xs font-semibold leading-tight text-sky-600 hover:underline dark:text-sky-300"
                           title={`Track ${entry.number} on ${carrier}`}
                         >
                           {entry.number}
                         </a>
-                        <span className="shrink-0 text-muted-foreground">-</span>
-                        <span className="shrink-0 tabular-nums text-[10px] text-muted-foreground">
-                          {formatNumericDate(entry.shippedTime ?? ctx?.shippedTime)}
-                        </span>
                         <CopyButton
                           value={entry.number}
                           title={`Copy tracking ${entry.number}`}
                         />
+                        <span className="col-start-3 tabular-nums text-[10px] text-muted-foreground">
+                          Added {formatNumericDate(entry.shippedTime ?? ctx?.shippedTime)}
+                        </span>
                       </div>
                     );
                   })}
