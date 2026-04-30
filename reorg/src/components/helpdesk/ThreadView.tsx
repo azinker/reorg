@@ -359,15 +359,29 @@ function extractInlineImages(
       (typeof obj.mimeType === "string" && obj.mimeType) ||
       (typeof obj.contentType === "string" && obj.contentType) ||
       "";
-    const isImage = mime.toLowerCase().startsWith("image/");
+    const mediaType =
+      (typeof obj.mediaType === "string" && obj.mediaType) ||
+      (typeof obj.MediaType === "string" && obj.MediaType) ||
+      "";
     const url =
       (typeof obj.url === "string" && obj.url) ||
+      (typeof obj.mediaUrl === "string" && obj.mediaUrl) ||
+      (typeof obj.mediaURL === "string" && obj.mediaURL) ||
+      (typeof obj.MediaURL === "string" && obj.MediaURL) ||
+      (typeof obj.imageUrl === "string" && obj.imageUrl) ||
+      (typeof obj.imageURL === "string" && obj.imageURL) ||
       (typeof obj.href === "string" && obj.href) ||
       (typeof obj.downloadUrl === "string" && obj.downloadUrl) ||
       "";
+    const isImage =
+      mime.toLowerCase().startsWith("image/") ||
+      mediaType.toUpperCase() === "IMAGE" ||
+      /\.(png|jpe?g|gif|webp|svg|bmp|tiff?|avif|heic|heif)(?:\?|$)/i.test(url);
     if (isImage && url) {
       const thumb =
-        (typeof obj.thumbnailUrl === "string" && obj.thumbnailUrl) || null;
+        (typeof obj.thumbnailUrl === "string" && obj.thumbnailUrl) ||
+        (typeof obj.thumbnailURL === "string" && obj.thumbnailURL) ||
+        null;
       collected.push({ url, thumb });
     }
     // Recurse into nested arrays/objects (eBay sometimes wraps attachments

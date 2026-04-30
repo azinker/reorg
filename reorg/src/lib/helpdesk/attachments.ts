@@ -33,17 +33,43 @@ export function parseMedia(raw: unknown): ParsedAttachment[] {
     if (typeof item === "string") {
       url = item;
     } else if (item && typeof item === "object") {
+      const row = item as Record<string, unknown>;
       const candidate =
-        (item as Record<string, unknown>).url ??
-        (item as Record<string, unknown>).URL ??
-        (item as Record<string, unknown>).MediaURL;
+        row.url ??
+        row.URL ??
+        row.MediaURL ??
+        row.mediaUrl ??
+        row.mediaURL ??
+        row.imageUrl ??
+        row.imageURL;
       if (typeof candidate === "string") url = candidate;
     }
     if (!url) continue;
     try {
       const u = new URL(url);
       if (u.protocol !== "http:" && u.protocol !== "https:") continue;
-      out.push({ url, isImage: IMAGE_EXTENSIONS.test(u.pathname) });
+      const row = item && typeof item === "object"
+        ? (item as Record<string, unknown>)
+        : null;
+      const mediaType =
+        typeof row?.mediaType === "string"
+          ? row.mediaType
+          : typeof row?.MediaType === "string"
+            ? row.MediaType
+            : "";
+      const mimeType =
+        typeof row?.mimeType === "string"
+          ? row.mimeType
+          : typeof row?.contentType === "string"
+            ? row.contentType
+            : "";
+      out.push({
+        url,
+        isImage:
+          IMAGE_EXTENSIONS.test(u.pathname) ||
+          mediaType.toUpperCase() === "IMAGE" ||
+          mimeType.toLowerCase().startsWith("image/"),
+      });
     } catch {
       // skip invalid URLs
     }

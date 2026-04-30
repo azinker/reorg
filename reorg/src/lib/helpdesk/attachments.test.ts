@@ -30,6 +30,23 @@ test("parseMedia accepts {url}/{URL}/{MediaURL} object shapes", () => {
   for (const a of out) assert.equal(a.isImage, true);
 });
 
+test("parseMedia accepts outbound eBay messageMedia objects", () => {
+  const out = parseMedia([
+    {
+      mediaUrl:
+        "https://i.ebayimg.com/00/s/NTg2WDQzMw==/z/BqAAAeSwh5lp880K/$_1.PNG?set_id=8800005007",
+      mediaName: "return-label.png",
+      mediaType: "IMAGE",
+    },
+  ]);
+  assert.deepEqual(out, [
+    {
+      url: "https://i.ebayimg.com/00/s/NTg2WDQzMw==/z/BqAAAeSwh5lp880K/$_1.PNG?set_id=8800005007",
+      isImage: true,
+    },
+  ]);
+});
+
 test("parseMedia drops non-http(s) protocols", () => {
   const out = parseMedia([
     "javascript:alert(1)",
