@@ -1526,7 +1526,7 @@ function SkuInventoryLine({
 }) {
   return (
     <div className="mt-1 grid min-w-0 grid-cols-[minmax(0,1fr)_auto_auto] items-start gap-x-1.5 gap-y-1 text-xs text-muted-foreground">
-      <span className="min-w-0 whitespace-normal break-all font-mono text-[11px] leading-snug">
+      <span className="min-w-0 whitespace-normal break-all font-mono text-xs font-medium leading-snug text-emerald-700 dark:text-emerald-300">
         {sku}
       </span>
       <CopyButton value={sku} title="Copy SKU" />
