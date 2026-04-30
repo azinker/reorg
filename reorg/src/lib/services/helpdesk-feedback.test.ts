@@ -21,6 +21,13 @@ test("does not treat normal buyer feedback as automated", () => {
   assert.equal(isEbayAutomatedFeedbackComment("Great seller, thanks!"), false);
   assert.equal(
     isEbayAutomatedFeedbackSnapshot({
+      kind: HelpdeskFeedbackKind.POSITIVE,
+      comment: "Great seller, thanks!",
+    }),
+    false,
+  );
+  assert.equal(
+    isEbayAutomatedFeedbackSnapshot({
       kind: HelpdeskFeedbackKind.NEGATIVE,
       comment: "Order delivered on time with no issues",
     }),
@@ -28,3 +35,12 @@ test("does not treat normal buyer feedback as automated", () => {
   );
 });
 
+test("marks positive eBay automated feedback snapshots", () => {
+  assert.equal(
+    isEbayAutomatedFeedbackSnapshot({
+      kind: HelpdeskFeedbackKind.POSITIVE,
+      comment: "Order delivered on time with no issues",
+    }),
+    true,
+  );
+});

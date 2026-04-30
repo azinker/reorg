@@ -6,7 +6,6 @@ import { getOrderContextCached } from "@/lib/services/helpdesk-order-context-cac
 import {
   feedbackMirrorToSnapshot,
   fetchEbayFeedbackForOrderContext,
-  isEbayAutomatedFeedbackSnapshot,
 } from "@/lib/services/helpdesk-feedback";
 
 export const runtime = "nodejs";
@@ -22,8 +21,8 @@ interface RouteParams {
  * Read-only feedback truth for the right rail. We prefer the local
  * HelpdeskFeedback mirror only when it is tied to the exact order. If the
  * mirror is empty/stale, we do one targeted eBay GetFeedback lookup from the
- * order line item. eBay automated feedback is ignored here because the buyer
- * has not actually left feedback yet and can still replace it.
+ * order line item. eBay automated feedback is returned with an explicit
+ * isAutomated flag so the UI can distinguish it from buyer-authored feedback.
  */
 export async function GET(_request: NextRequest, { params }: RouteParams) {
   const session = await auth();
@@ -66,9 +65,7 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
     orderBy: { leftAt: "desc" },
     take: 20,
   });
-  const mirrorSnapshots = mirrorRows
-    .map(feedbackMirrorToSnapshot)
-    .filter((entry) => !isEbayAutomatedFeedbackSnapshot(entry));
+  const mirrorSnapshots = mirrorRows.map(feedbackMirrorToSnapshot);
 
   if (mirrorSnapshots.length > 0) {
     return NextResponse.json({

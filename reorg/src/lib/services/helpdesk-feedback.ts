@@ -27,6 +27,7 @@ export interface HelpdeskFeedbackSnapshot {
   buyerUserId: string | null;
   leftAt: string;
   source: "mirror" | "live";
+  isAutomated: boolean;
 }
 
 function escapeXml(str: string): string {
@@ -120,19 +121,25 @@ function rowToSnapshot(
   if (!externalId || !leftAt) return null;
   const leftAtDate = new Date(leftAt);
   if (!Number.isFinite(leftAtDate.getTime())) return null;
+  const kind = mapFeedbackKind(row.CommentType);
+  const comment = text(row.CommentText);
 
   return {
     id: `live:${externalId}`,
     externalId,
-    kind: mapFeedbackKind(row.CommentType),
+    kind,
     starRating: null,
-    comment: text(row.CommentText),
+    comment,
     sellerResponse: text(row.FeedbackResponse),
     ebayOrderNumber: null,
     ebayItemId: text(row.ItemID),
     buyerUserId: text(row.CommentingUser),
     leftAt: leftAtDate.toISOString(),
     source: "live",
+    isAutomated: isEbayAutomatedFeedbackSnapshot({
+      kind,
+      comment,
+    }),
   };
 }
 
@@ -184,6 +191,7 @@ export function feedbackMirrorToSnapshot(
     buyerUserId: row.buyerUserId,
     leftAt: row.leftAt.toISOString(),
     source: "mirror",
+    isAutomated: isEbayAutomatedFeedbackSnapshot(row),
   };
 }
 
@@ -258,7 +266,6 @@ async function getFeedbackForLine(args: {
     )
     .filter((entry): entry is HelpdeskFeedbackSnapshot => {
       if (!entry) return false;
-      if (isEbayAutomatedFeedbackSnapshot(entry)) return false;
       if (args.line.itemId && entry.ebayItemId && entry.ebayItemId !== args.line.itemId) {
         return false;
       }

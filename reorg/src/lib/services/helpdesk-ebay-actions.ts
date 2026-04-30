@@ -41,7 +41,6 @@ import {
   buildEbayConfig,
   getEbayAccessToken,
 } from "@/lib/services/helpdesk-ebay";
-import { isEbayAutomatedFeedbackComment } from "@/lib/services/helpdesk-feedback";
 import { recordNetworkTransferSample } from "@/lib/services/network-transfer-samples";
 
 const REST_BASE = "https://api.ebay.com";
@@ -320,8 +319,7 @@ async function listFeedback(args: {
       : pageInfo.TotalNumberOfPages ?? 1
     : 1;
 
-  const entries: EbayFeedbackEntry[] = list
-    .map((row: unknown) => {
+  const entries: EbayFeedbackEntry[] = list.map((row: unknown) => {
       const r = (row ?? {}) as Record<string, unknown>;
       const ratingStr = String(r.CommentType ?? "").trim().toUpperCase(); // Positive / Negative / Neutral
       const kind: HelpdeskFeedbackKind =
@@ -348,14 +346,7 @@ async function listFeedback(args: {
         leftAt: r.CommentTime ? new Date(String(r.CommentTime)) : new Date(),
         raw: r,
       };
-    })
-    .filter(
-      (entry) =>
-        !(
-          entry.kind === HelpdeskFeedbackKind.POSITIVE &&
-          isEbayAutomatedFeedbackComment(entry.comment)
-        ),
-    );
+    });
   return { entries, hasMore: args.pageNumber < totalPages };
 }
 

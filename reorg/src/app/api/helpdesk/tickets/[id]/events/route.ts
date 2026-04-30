@@ -42,7 +42,6 @@ import { getOrderContextCached } from "@/lib/services/helpdesk-order-context-cac
 import {
   feedbackMirrorToSnapshot,
   fetchEbayFeedbackForOrderContext,
-  isEbayAutomatedFeedbackSnapshot,
   type HelpdeskFeedbackSnapshot,
 } from "@/lib/services/helpdesk-feedback";
 
@@ -1172,7 +1171,7 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
     ]);
     let feedbackSnapshots: HelpdeskFeedbackSnapshot[] = feedback.map(
       feedbackMirrorToSnapshot,
-    ).filter((entry) => !isEbayAutomatedFeedbackSnapshot(entry));
+    );
     if (
       feedbackSnapshots.length === 0 &&
       isEbay &&
@@ -1271,6 +1270,7 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
           : f.kind === "NEGATIVE"
             ? "negative feedback"
             : "neutral feedback";
+      const actorLabel = f.isAutomated ? "eBay automated" : "Buyer left";
       const stars =
         typeof f.starRating === "number" && f.starRating > 0
           ? ` (${f.starRating}★)`
@@ -1280,9 +1280,11 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
         type: "system" as const,
         action: "EBAY_FEEDBACK_LEFT",
         kind: "feedback" as const,
-        text: `Buyer left ${ratingLabel}${stars}${f.comment ? `: "${f.comment.slice(0, 120)}"` : ""}`,
+        text: `${actorLabel} ${ratingLabel}${stars}${f.comment ? `: "${f.comment.slice(0, 120)}"` : ""}`,
         shortText:
-          f.kind === "POSITIVE"
+          f.isAutomated
+            ? "Automated Feedback"
+            : f.kind === "POSITIVE"
             ? "Positive Feedback"
             : f.kind === "NEGATIVE"
               ? "Negative Feedback"

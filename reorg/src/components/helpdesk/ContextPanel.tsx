@@ -175,6 +175,7 @@ interface FeedbackSummaryItem {
   buyerUserId: string | null;
   leftAt: string;
   source: "mirror" | "live";
+  isAutomated: boolean;
 }
 
 interface FeedbackSummaryResponse {
@@ -1387,19 +1388,26 @@ function FeedbackSection({
             <span
               className={cn(
                 "rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider",
-                first.kind === "POSITIVE"
+                first.isAutomated
+                  ? "bg-sky-500/15 text-sky-700 dark:text-sky-300"
+                  : first.kind === "POSITIVE"
                   ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
                   : first.kind === "NEGATIVE"
                     ? "bg-red-500/15 text-red-700 dark:text-red-300"
                     : "bg-amber-500/15 text-amber-700 dark:text-amber-300",
               )}
             >
-              {first.kind.toLowerCase()}
+              {first.isAutomated ? "automated" : first.kind.toLowerCase()}
             </span>
             <span className="text-[10px] text-muted-foreground">
               {formatFeedbackDate(first.leftAt)}
             </span>
           </div>
+          {first.isAutomated ? (
+            <p className="mt-1 text-xs font-medium text-foreground">
+              eBay automated {first.kind.toLowerCase()} feedback
+            </p>
+          ) : null}
           {typeof first.starRating === "number" && first.starRating > 0 ? (
             <p className="mt-1 text-xs text-foreground">
               Rating: {first.starRating}/5
@@ -1417,6 +1425,15 @@ function FeedbackSection({
           {first.sellerResponse ? (
             <p className="mt-1 line-clamp-3 text-[11px] leading-relaxed text-muted-foreground">
               Seller response: {first.sellerResponse}
+            </p>
+          ) : null}
+          {first.isAutomated && leaveBy ? (
+            <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
+              Buyer can still leave their own feedback until{" "}
+              <span className="font-medium text-foreground">
+                {formatFeedbackDeadline(leaveBy)}
+              </span>
+              .
             </p>
           ) : null}
         </div>
