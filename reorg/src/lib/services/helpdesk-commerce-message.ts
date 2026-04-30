@@ -49,6 +49,7 @@ import type { EbayMessageMediaInput } from "@/lib/helpdesk/outbound-attachments"
 
 const BASE = "https://api.ebay.com/commerce/message/v1";
 const MEDIA_BASE = "https://apim.ebay.com/commerce/media/v1_beta";
+export const EBAY_MEDIA_CREATE_IMAGE_FROM_FILE_URL = `${MEDIA_BASE}/image/create_image_from_file`;
 const REQUEST_TIMEOUT_MS = 20_000;
 const MARKETPLACE_ID = "EBAY_US";
 const READ_RETRY_DELAYS_MS = [400, 1200];
@@ -349,7 +350,7 @@ export async function uploadImageToEbayMedia(
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   try {
-    const response = await fetch(`${MEDIA_BASE}/image`, {
+    const response = await fetch(EBAY_MEDIA_CREATE_IMAGE_FROM_FILE_URL, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${accessToken}`,

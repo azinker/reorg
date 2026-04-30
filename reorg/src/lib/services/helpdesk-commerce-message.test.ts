@@ -1,7 +1,17 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { parseCommerceMessageMedia } from "./helpdesk-commerce-message";
+import {
+  EBAY_MEDIA_CREATE_IMAGE_FROM_FILE_URL,
+  parseCommerceMessageMedia,
+} from "./helpdesk-commerce-message";
+
+test("uses eBay's createImageFromFile Media API endpoint", () => {
+  assert.equal(
+    EBAY_MEDIA_CREATE_IMAGE_FROM_FILE_URL,
+    "https://apim.ebay.com/commerce/media/v1_beta/image/create_image_from_file",
+  );
+});
 
 test("parseCommerceMessageMedia extracts eBay messageMedia image URLs", () => {
   const media = parseCommerceMessageMedia({
