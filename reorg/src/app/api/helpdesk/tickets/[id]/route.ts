@@ -644,6 +644,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       kind: ticket.kind,
       type: ticket.type,
       typeOverridden: ticket.typeOverridden,
+      systemMessageType: ticket.systemMessageType,
       status: ticket.status,
       isSpam: ticket.isSpam,
       isArchived: ticket.isArchived,
@@ -665,6 +666,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       reopenCount: ticket.reopenCount,
       messageCount: finalMessages.length,
       noteCount: ticket.notes.length,
+      agentFolderId: ticket.agentFolderId,
       tags: ticket.tags.map((tt) => ({
         id: tt.tag.id,
         name: tt.tag.name,

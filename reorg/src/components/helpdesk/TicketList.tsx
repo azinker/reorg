@@ -17,7 +17,7 @@ import {
   ExternalLink,
   Clock,
   Star,
-  Tag as TagIcon,
+  Flag,
   ChevronLeft,
   ChevronRight,
 } from "lucide-react";
@@ -59,7 +59,9 @@ export type BulkAction =
   | { kind: "markSpam"; isSpam: boolean }
   | { kind: "assign"; userId: string | null }
   | { kind: "markRead"; isRead: boolean }
-  | { kind: "moveToFolder"; agentFolderId: string | null };
+  | { kind: "moveToFolder"; agentFolderId: string | null }
+  | { kind: "setFavorite"; isFavorite: boolean }
+  | { kind: "setImportant"; isImportant: boolean };
 
 interface TicketListProps {
   tickets: HelpdeskTicketSummary[];
@@ -105,6 +107,7 @@ interface TicketListProps {
   pageSize?: number;
   hasNextPage?: boolean;
   hasPrevPage?: boolean;
+  totalPages?: number;
   paging?: boolean;
   onPrevPage?: () => void;
   onNextPage?: () => void;
@@ -214,6 +217,7 @@ export function TicketList({
   pageSize = 50,
   hasNextPage = false,
   hasPrevPage = false,
+  totalPages,
   paging = false,
   onPrevPage,
   onNextPage,
@@ -380,14 +384,18 @@ export function TicketList({
     e.preventDefault();
     // Clamp to viewport so we never spawn off-screen.
     const margin = 8;
-    const menuW = 220;
-    const menuH = 320;
+    const menuW = 260;
+    const menuH = 560;
     const x = Math.min(e.clientX, window.innerWidth - menuW - margin);
     const y = Math.min(e.clientY, window.innerHeight - menuH - margin);
     setContextMenu({ ticketId, x, y });
   }
 
   const containerWidth = widthClassName ?? "w-[360px] shrink-0";
+  const displayedTotalPages = Math.max(
+    1,
+    totalPages ?? (hasNextPage ? pageIndex + 2 : pageIndex + 1),
+  );
 
   return (
     <div
@@ -912,24 +920,24 @@ export function TicketList({
               type="button"
               onClick={onPrevPage}
               disabled={!hasPrevPage || paging}
-              className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-hairline bg-surface text-foreground transition-colors hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-40 cursor-pointer"
+              className="inline-flex h-8 min-w-11 items-center justify-center rounded-md border border-hairline bg-surface px-3 text-foreground transition-colors hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-40 cursor-pointer"
               title="Previous page"
               aria-label="Previous page"
             >
               <ChevronLeft className="h-3.5 w-3.5" />
             </button>
-            <span className="px-1.5 text-[11px] font-medium text-foreground">
+            <span className="inline-flex min-w-[5.75rem] items-center justify-center px-1.5 text-[11px] font-semibold text-foreground">
               {paging ? (
                 <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
               ) : (
-                `Page ${pageIndex + 1}`
+                `Page ${pageIndex + 1}/${displayedTotalPages}`
               )}
             </span>
             <button
               type="button"
               onClick={onNextPage}
               disabled={!hasNextPage || paging}
-              className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-hairline bg-surface text-foreground transition-colors hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-40 cursor-pointer"
+              className="inline-flex h-8 min-w-11 items-center justify-center rounded-md border border-hairline bg-surface px-3 text-foreground transition-colors hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-40 cursor-pointer"
               title="Next page"
               aria-label="Next page"
             >
@@ -1133,12 +1141,13 @@ export function TicketList({
           const ticket = tickets.find((t) => t.id === contextMenu.ticketId);
           if (!ticket) return null;
           const isUnread = ticket.unreadCount > 0;
+          const assignees = ticketAssignees(ticket);
           return (
             <div
               ref={contextMenuRef}
               role="menu"
               aria-label="Ticket actions"
-              className="fixed z-50 w-56 rounded-md border border-hairline bg-popover py-1 text-[12px] text-popover-foreground shadow-2xl shadow-black/40"
+              className="fixed z-50 max-h-[calc(100vh-1rem)] w-64 overflow-y-auto rounded-md border border-hairline bg-popover py-1 text-[12px] text-popover-foreground shadow-2xl shadow-black/40"
               style={{ left: contextMenu.x, top: contextMenu.y }}
             >
               <ContextMenuItem
@@ -1159,6 +1168,16 @@ export function TicketList({
                 }
               />
               <ContextMenuItem
+                icon={Inbox}
+                label="Move to To Do"
+                onClick={() =>
+                  runContextAction(
+                    { kind: "setStatus", status: "TO_DO" },
+                    ticket.id,
+                  )
+                }
+              />
+              <ContextMenuItem
                 icon={Clock}
                 label="Move to Waiting"
                 onClick={() =>
@@ -1168,6 +1187,87 @@ export function TicketList({
                   )
                 }
               />
+              <ContextMenuItem
+                icon={Star}
+                label={ticket.isFavorite ? "Remove favorite" : "Add favorite"}
+                onClick={() =>
+                  runContextAction(
+                    { kind: "setFavorite", isFavorite: !ticket.isFavorite },
+                    ticket.id,
+                  )
+                }
+              />
+              <ContextMenuItem
+                icon={Flag}
+                label={ticket.isImportant ? "Clear important" : "Mark important"}
+                onClick={() =>
+                  runContextAction(
+                    { kind: "setImportant", isImportant: !ticket.isImportant },
+                    ticket.id,
+                  )
+                }
+              />
+              <div className="my-1 border-t border-hairline" />
+              <ContextMenuSectionLabel label="Assign" />
+              {agents.length > 0 ? (
+                agents.map((a) => {
+                  const assigned = assignees.some((user) => user.id === a.id);
+                  return (
+                    <ContextMenuItem
+                      key={a.id}
+                      icon={UserPlus}
+                      label={`${assigned ? "Assigned to " : "Assign to "}${
+                        a.name ?? a.handle ?? a.email ?? "Agent"
+                      }`}
+                      onClick={() =>
+                        runContextAction({ kind: "assign", userId: a.id }, ticket.id)
+                      }
+                    />
+                  );
+                })
+              ) : (
+                <ContextMenuMutedLabel label="No agents loaded" />
+              )}
+              {assignees.length > 0 ? (
+                <ContextMenuItem
+                  icon={UserPlus}
+                  label="Unassign"
+                  onClick={() =>
+                    runContextAction({ kind: "assign", userId: null }, ticket.id)
+                  }
+                />
+              ) : null}
+              <div className="my-1 border-t border-hairline" />
+              <ContextMenuSectionLabel label="Folder" />
+              {agentFolders.length > 0 ? (
+                agentFolders.map((folder) => (
+                  <ContextMenuItem
+                    key={folder.id}
+                    icon={Inbox}
+                    label={`Move to ${folder.name}`}
+                    onClick={() =>
+                      runContextAction(
+                        { kind: "moveToFolder", agentFolderId: folder.id },
+                        ticket.id,
+                      )
+                    }
+                  />
+                ))
+              ) : (
+                <ContextMenuMutedLabel label="No agent folders" />
+              )}
+              {ticket.agentFolderId ? (
+                <ContextMenuItem
+                  icon={X}
+                  label="Remove from folder"
+                  onClick={() =>
+                    runContextAction(
+                      { kind: "moveToFolder", agentFolderId: null },
+                      ticket.id,
+                    )
+                  }
+                />
+              ) : null}
               <div className="my-1 border-t border-hairline" />
               <ContextMenuItem
                 icon={Archive}
@@ -1278,6 +1378,18 @@ function ContextMenuItem({ icon: Icon, label, onClick }: ContextMenuItemProps) {
       <span className="truncate">{label}</span>
     </button>
   );
+}
+
+function ContextMenuSectionLabel({ label }: { label: string }) {
+  return (
+    <div className="px-3 pb-1 pt-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+      {label}
+    </div>
+  );
+}
+
+function ContextMenuMutedLabel({ label }: { label: string }) {
+  return <div className="px-3 py-1.5 text-[11px] text-muted-foreground">{label}</div>;
 }
 
 interface FilterChipProps {

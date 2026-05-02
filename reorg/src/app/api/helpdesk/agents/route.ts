@@ -11,6 +11,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
+import { buildAssignedAgentWhere } from "@/lib/helpdesk/folders";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -35,5 +36,16 @@ export async function GET() {
     orderBy: [{ role: "asc" }, { name: "asc" }],
   });
 
-  return NextResponse.json({ data: users });
+  const assignedCounts = await Promise.all(
+    users.map((user) =>
+      db.helpdeskTicket.count({ where: buildAssignedAgentWhere(user.id) }),
+    ),
+  );
+
+  return NextResponse.json({
+    data: users.map((user, index) => ({
+      ...user,
+      assignedTicketCount: assignedCounts[index] ?? 0,
+    })),
+  });
 }

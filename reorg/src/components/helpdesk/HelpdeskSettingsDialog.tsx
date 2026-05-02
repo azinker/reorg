@@ -416,13 +416,13 @@ export function HelpdeskSettingsDialog({ open, onClose }: HelpdeskSettingsDialog
       role="dialog"
       aria-modal="true"
       onClick={onClose}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+      className="fixed inset-0 z-[220] flex items-center justify-center bg-black/60 p-4"
     >
       <div
         onClick={(e) => e.stopPropagation()}
         onKeyDown={(e) => e.stopPropagation()}
         role="presentation"
-        className="w-full max-w-md rounded-lg border border-hairline bg-card p-5 shadow-xl"
+        className="max-h-[calc(100vh-2rem)] w-full max-w-md overflow-y-auto rounded-lg border border-hairline bg-card p-5 shadow-xl"
       >
         <div className="mb-4 flex items-center justify-between">
           <div className="flex items-center gap-2">

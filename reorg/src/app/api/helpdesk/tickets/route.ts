@@ -3,6 +3,7 @@ import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import {
+  buildAssignedAgentWhere,
   buildFolderWhere,
   type HelpdeskFolderKey,
 } from "@/lib/helpdesk/folders";
@@ -152,6 +153,7 @@ const querySchema = z.object({
   // RETURN_APPROVED, ITEM_DELIVERED). Ignored on every other folder.
   systemMessageType: z.string().trim().min(1).max(64).optional(),
   agentFolderId: z.string().min(1).optional(),
+  assignedUserId: z.string().min(1).optional(),
 });
 
 const defaultTicketOrder: Prisma.HelpdeskTicketOrderByWithRelationInput[] = [
@@ -183,7 +185,16 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  const { folder, channel, search, cursor, limit, systemMessageType, agentFolderId } = parsed.data;
+  const {
+    folder,
+    channel,
+    search,
+    cursor,
+    limit,
+    systemMessageType,
+    agentFolderId,
+    assignedUserId,
+  } = parsed.data;
   // When a global search is active we deliberately ignore the folder filter
   // so the agent can find resolved / spam / archived tickets too — this is
   // how eDesk behaves and matches user expectation ("search the whole
@@ -191,6 +202,8 @@ export async function GET(request: NextRequest) {
   // (separate endpoint), so the UX remains coherent.
   const where: Prisma.HelpdeskTicketWhereInput = agentFolderId
     ? { agentFolderId }
+    : assignedUserId
+      ? buildAssignedAgentWhere(assignedUserId)
     : search
       ? {}
       : {
@@ -221,26 +234,29 @@ export async function GET(request: NextRequest) {
   // type, never in JSX) and they each issue an extra correlated subquery per
   // row. With `limit=50` that meant 100 extra subqueries per inbox load,
   // contributing materially to the 10s+ TTFB on this endpoint.
-  const tickets = await db.helpdeskTicket.findMany({
-    where,
-    orderBy: defaultTicketOrder,
-    take: limit + 1,
-    ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
-    include: {
-      integration: { select: { label: true, platform: true } },
-      primaryAssignee: {
-        select: { id: true, name: true, email: true, avatarUrl: true, handle: true },
-      },
-      additionalAssignees: {
-        include: {
-          user: {
-            select: { id: true, name: true, email: true, avatarUrl: true, handle: true },
+  const [totalCount, tickets] = await Promise.all([
+    db.helpdeskTicket.count({ where }),
+    db.helpdeskTicket.findMany({
+      where,
+      orderBy: defaultTicketOrder,
+      take: limit + 1,
+      ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+      include: {
+        integration: { select: { label: true, platform: true } },
+        primaryAssignee: {
+          select: { id: true, name: true, email: true, avatarUrl: true, handle: true },
+        },
+        additionalAssignees: {
+          include: {
+            user: {
+              select: { id: true, name: true, email: true, avatarUrl: true, handle: true },
+            },
           },
         },
+        tags: { include: { tag: true } },
       },
-      tags: { include: { tag: true } },
-    },
-  });
+    }),
+  ]);
 
   const hasMore = tickets.length > limit;
   const page = hasMore ? tickets.slice(0, limit) : tickets;
@@ -360,6 +376,7 @@ export async function GET(request: NextRequest) {
       lastAgentMessageAt: t.lastAgentMessageAt,
       firstResponseAt: t.firstResponseAt,
       reopenCount: t.reopenCount,
+      agentFolderId: t.agentFolderId,
       // messageCount / noteCount intentionally omitted; not rendered.
       tags: t.tags.map((tt) => ({
         id: tt.tag.id,
@@ -370,5 +387,7 @@ export async function GET(request: NextRequest) {
       updatedAt: t.updatedAt,
     })),
     nextCursor: hasMore ? page[page.length - 1].id : null,
+    totalCount,
+    totalPages: Math.max(1, Math.ceil(totalCount / limit)),
   });
 }

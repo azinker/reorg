@@ -10,7 +10,11 @@ import {
 } from "@/hooks/use-helpdesk";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { HelpdeskHeader } from "@/components/helpdesk/HelpdeskHeader";
-import { FolderSidebar, type AgentFolderData } from "@/components/helpdesk/FolderSidebar";
+import {
+  FolderSidebar,
+  type AgentFolderData,
+  type AssignedAgentFolderData,
+} from "@/components/helpdesk/FolderSidebar";
 import { TicketList } from "@/components/helpdesk/TicketList";
 import { TicketReader } from "@/components/helpdesk/TicketReader";
 import {
@@ -116,6 +120,8 @@ export default function HelpDeskClient() {
   // ─── Agent folders state ─────────────────────────────────────────────────────
   const [agentFolders, setAgentFolders] = useState<AgentFolderData[]>([]);
   const [activeAgentFolderId, setActiveAgentFolderId] = useState<string | null>(null);
+  const [agentRoster, setAgentRoster] = useState<AssignedAgentFolderData[]>([]);
+  const [activeAssignedAgentId, setActiveAssignedAgentId] = useState<string | null>(null);
 
   const fetchAgentFolders = useCallback(async () => {
     try {
@@ -126,7 +132,17 @@ export default function HelpDeskClient() {
     } catch { /* best-effort */ }
   }, []);
 
+  const fetchAgentRoster = useCallback(async () => {
+    try {
+      const res = await fetch("/api/helpdesk/agents", { cache: "no-store" });
+      if (!res.ok) return;
+      const j = (await res.json()) as { data?: AssignedAgentFolderData[] };
+      setAgentRoster(j.data ?? []);
+    } catch { /* best-effort */ }
+  }, []);
+
   useEffect(() => { void fetchAgentFolders(); }, [fetchAgentFolders]);
+  useEffect(() => { void fetchAgentRoster(); }, [fetchAgentRoster]);
 
   const clearActiveSearch = useCallback(() => {
     setSearch("");
@@ -141,7 +157,16 @@ export default function HelpDeskClient() {
 
   const handleAgentFolderSelect = useCallback((folderId: string) => {
     clearActiveSearch();
+    setActiveAssignedAgentId(null);
     setActiveAgentFolderId(folderId);
+  }, [clearActiveSearch]);
+
+  const handleAssignedAgentSelect = useCallback((agentId: string) => {
+    clearActiveSearch();
+    setActiveAgentFolderId(null);
+    setActiveAssignedAgentId(agentId);
+    setFolder("all_tickets");
+    setSystemMessageType(null);
   }, [clearActiveSearch]);
 
   const handleAgentFolderCreate = useCallback(async (name: string, color: string) => {
@@ -183,6 +208,7 @@ export default function HelpDeskClient() {
   const handleSystemFolderChange = useCallback((f: HelpdeskFolderKey) => {
     clearActiveSearch();
     setActiveAgentFolderId(null);
+    setActiveAssignedAgentId(null);
     setFolder(f);
     if (f !== "from_ebay") setSystemMessageType(null);
   }, [clearActiveSearch]);
@@ -227,6 +253,7 @@ export default function HelpDeskClient() {
     pageSize,
     hasNextPage,
     hasPrevPage,
+    totalPages,
     goNextPage,
     goPrevPage,
     error,
@@ -245,7 +272,14 @@ export default function HelpDeskClient() {
     search: searchArg,
     systemMessageType: folder === "from_ebay" ? systemMessageType : null,
     agentFolderId: activeAgentFolderId,
+    assignedUserId: activeAssignedAgentId,
   });
+
+  const refreshAfterTicketMutation = useCallback(() => {
+    refresh();
+    void fetchAgentFolders();
+    void fetchAgentRoster();
+  }, [fetchAgentFolders, fetchAgentRoster, refresh]);
 
   // Honor ?q=... → seed search field. We compare against a ref so we
   // don't fight ourselves when the user types after navigation. On a
@@ -484,7 +518,9 @@ export default function HelpDeskClient() {
       | { kind: "markSpam"; isSpam: boolean }
       | { kind: "assign"; userId: string | null }
       | { kind: "markRead"; isRead: boolean }
-      | { kind: "moveToFolder"; agentFolderId: string | null },
+      | { kind: "moveToFolder"; agentFolderId: string | null }
+      | { kind: "setFavorite"; isFavorite: boolean }
+      | { kind: "setImportant"; isImportant: boolean },
     ticketIds: string[],
   ) {
     let body: Record<string, unknown>;
@@ -507,6 +543,12 @@ export default function HelpDeskClient() {
       case "moveToFolder":
         body = { action: "moveToFolder", ticketIds, agentFolderId: action.agentFolderId };
         break;
+      case "setFavorite":
+        body = { action: "setFavorite", ticketIds, isFavorite: action.isFavorite };
+        break;
+      case "setImportant":
+        body = { action: "setImportant", ticketIds, isImportant: action.isImportant };
+        break;
     }
     const res = await fetch("/api/helpdesk/tickets/batch", {
       method: "POST",
@@ -517,8 +559,7 @@ export default function HelpDeskClient() {
       const j = await res.json().catch(() => ({}));
       alert(`Batch action failed: ${j.error?.message ?? res.status}`);
     }
-    refresh();
-    if (action.kind === "moveToFolder") void fetchAgentFolders();
+    refreshAfterTicketMutation();
   }
 
   return (
@@ -558,6 +599,12 @@ export default function HelpDeskClient() {
           isAdmin={isAdmin}
           agentFolders={agentFolders}
           activeAgentFolderId={activeAgentFolderId}
+          agents={agentRoster}
+          activeAssignedAgentId={activeAssignedAgentId}
+          onAssignedAgentSelect={(id) => {
+            handleAssignedAgentSelect(id);
+            selectTicket(null);
+          }}
           onAgentFolderSelect={(id) => {
             handleAgentFolderSelect(id);
             selectTicket(null);
@@ -611,6 +658,7 @@ export default function HelpDeskClient() {
                 pageSize={pageSize}
                 hasNextPage={hasNextPage}
                 hasPrevPage={hasPrevPage}
+                totalPages={totalPages}
                 paging={paging}
                 onPrevPage={goPrevPage}
                 onNextPage={goNextPage}
@@ -660,7 +708,7 @@ export default function HelpDeskClient() {
                   hasNext={!!nextTicketId}
                   prevTicket={prevTicket}
                   nextTicket={nextTicket}
-                  onSent={refresh}
+                  onSent={refreshAfterTicketMutation}
                   agentFolders={agentFolders}
                 />
               </div>
@@ -694,6 +742,7 @@ export default function HelpDeskClient() {
                 pageSize={pageSize}
                 hasNextPage={hasNextPage}
                 hasPrevPage={hasPrevPage}
+                totalPages={totalPages}
                 paging={paging}
                 onPrevPage={goPrevPage}
                 onNextPage={goNextPage}
@@ -721,7 +770,7 @@ export default function HelpDeskClient() {
                 hasNext={!!nextTicketId}
                 prevTicket={prevTicket}
                 nextTicket={nextTicket}
-                onSent={refresh}
+                onSent={refreshAfterTicketMutation}
                 agentFolders={agentFolders}
               />
             }

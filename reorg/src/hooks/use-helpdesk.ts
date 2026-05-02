@@ -258,6 +258,8 @@ interface UseHelpdeskArgs {
   systemMessageType?: string | null;
   /** When set, fetches tickets belonging to this agent folder instead of the system folder. */
   agentFolderId?: string | null;
+  /** When set, fetches tickets assigned to this user instead of the system folder. */
+  assignedUserId?: string | null;
 }
 
 interface UseHelpdeskReturn {
@@ -272,6 +274,10 @@ interface UseHelpdeskReturn {
   hasNextPage: boolean;
   /** True if `pageIndex > 0` (we've stepped forward at least once). */
   hasPrevPage: boolean;
+  /** Total matching tickets for the active filter. */
+  totalCount: number;
+  /** Total pages for the active filter. Always at least 1. */
+  totalPages: number;
   goNextPage: () => void;
   goPrevPage: () => void;
   /** Number of tickets per page (constant). Useful for "showing X-Y" labels. */
@@ -312,20 +318,30 @@ function emptySnapshot(): InboxPageSnapshot {
     startCursors: [null],
     tickets: [],
     nextCursor: null,
+    totalCount: 0,
+    totalPages: 1,
     fetchedAt: 0,
   };
 }
 
 export function useHelpdesk(args: UseHelpdeskArgs): UseHelpdeskReturn {
-  const { folder, channel, search, systemMessageType, agentFolderId } = args;
+  const { folder, channel, search, systemMessageType, agentFolderId, assignedUserId } = args;
 
   // Stable cache key that drives hydration on mount and on filter change.
   // The systemMessageType chip is included so each chip selection on the
   // From eBay folder gets its own cached page (otherwise switching chips
   // would briefly flash stale ticket lists from a different chip).
   const filterKey = useMemo(
-    () => buildFilterKey({ folder, channel, search, systemMessageType, agentFolderId }),
-    [folder, channel, search, systemMessageType, agentFolderId],
+    () =>
+      buildFilterKey({
+        folder,
+        channel,
+        search,
+        systemMessageType,
+        agentFolderId,
+        assignedUserId,
+      }),
+    [folder, channel, search, systemMessageType, agentFolderId, assignedUserId],
   );
 
   // Hydrate state synchronously from the module-level cache (if present) so
@@ -429,6 +445,7 @@ export function useHelpdesk(args: UseHelpdeskArgs): UseHelpdeskReturn {
         if (search) params.set("search", search);
         if (systemMessageType) params.set("systemMessageType", systemMessageType);
         if (agentFolderId) params.set("agentFolderId", agentFolderId);
+        if (assignedUserId) params.set("assignedUserId", assignedUserId);
 
         // Tickets is the only thing that depends on the current filter
         // (folder/channel/search/cursor). Counts and sync-status are global
@@ -445,6 +462,8 @@ export function useHelpdesk(args: UseHelpdeskArgs): UseHelpdeskReturn {
         const ticketsJson = (await ticketsRes.json()) as {
           data: HelpdeskTicketSummary[];
           nextCursor: string | null;
+          totalCount?: number;
+          totalPages?: number;
         };
         if (requestId !== inflightRequestIdRef.current) return;
 
@@ -458,6 +477,8 @@ export function useHelpdesk(args: UseHelpdeskArgs): UseHelpdeskReturn {
             startCursors,
             tickets: ticketsJson.data ?? [],
             nextCursor: ticketsJson.nextCursor ?? null,
+            totalCount: ticketsJson.totalCount ?? 0,
+            totalPages: Math.max(1, ticketsJson.totalPages ?? 1),
             fetchedAt: Date.now(),
           };
           setInbox(filterKey, next);
@@ -484,7 +505,15 @@ export function useHelpdesk(args: UseHelpdeskArgs): UseHelpdeskReturn {
         }
       }
     },
-    [folder, channel, search, filterKey],
+    [
+      folder,
+      channel,
+      search,
+      systemMessageType,
+      agentFolderId,
+      assignedUserId,
+      filterKey,
+    ],
   );
 
   const goNextPage = useCallback(() => {
@@ -742,6 +771,8 @@ export function useHelpdesk(args: UseHelpdeskArgs): UseHelpdeskReturn {
     pageIndex: snapshot.pageIndex,
     hasNextPage: snapshot.nextCursor !== null,
     hasPrevPage: snapshot.pageIndex > 0,
+    totalCount: snapshot.totalCount,
+    totalPages: snapshot.totalPages,
     goNextPage,
     goPrevPage,
     pageSize: PAGE_SIZE,

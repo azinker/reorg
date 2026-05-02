@@ -64,6 +64,7 @@ import {
   Folder,
   FileText,
   Pencil,
+  Settings as SettingsIcon,
   Trash2,
   X,
 } from "lucide-react";
@@ -76,6 +77,12 @@ export interface AgentFolderData {
   color: string;
   ticketCount: number;
   createdBy: { id: string; name: string | null; email: string };
+}
+
+export interface AssignedAgentFolderData extends AvatarUser {
+  assignedTicketCount?: number | null;
+  title?: string | null;
+  role?: string | null;
 }
 
 interface FolderRow {
@@ -296,6 +303,7 @@ const TAGS_GROUP: FolderRow[] = [
 // All Tickets is intentionally NOT collapsible — eDesk shows New / To Do /
 // Waiting permanently underneath, so we do too.
 const TAGS_OPEN_KEY = "helpdesk.sidebar.tagsOpen";
+const SETTINGS_OPEN_KEY = "helpdesk.sidebar.settingsOpen";
 
 function readBool(key: string, fallback: boolean): boolean {
   if (typeof window === "undefined") return fallback;
@@ -326,6 +334,9 @@ interface FolderSidebarProps {
   isAdmin?: boolean;
   agentFolders: AgentFolderData[];
   activeAgentFolderId: string | null;
+  agents?: AssignedAgentFolderData[];
+  activeAssignedAgentId: string | null;
+  onAssignedAgentSelect: (agentId: string) => void;
   onAgentFolderSelect: (folderId: string) => void;
   onAgentFolderCreate: (name: string, color: string) => Promise<void>;
   onAgentFolderDelete: (folderId: string) => Promise<void>;
@@ -342,6 +353,9 @@ export function FolderSidebar({
   isAdmin = false,
   agentFolders,
   activeAgentFolderId,
+  agents = [],
+  activeAssignedAgentId,
+  onAssignedAgentSelect,
   onAgentFolderSelect,
   onAgentFolderCreate,
   onAgentFolderDelete,
@@ -350,12 +364,14 @@ export function FolderSidebar({
 }: FolderSidebarProps) {
   const [tagsOpen, setTagsOpen] = useState(true);
   const [agentFoldersOpen, setAgentFoldersOpen] = useState(true);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   // Hydrate persisted collapse state on mount. We do this in an effect to
   // avoid SSR/CSR markup mismatches (localStorage is client-only).
   useEffect(() => {
     setTagsOpen(readBool(TAGS_OPEN_KEY, true));
     setAgentFoldersOpen(readBool("helpdesk.sidebar.agentFoldersOpen", true));
+    setSettingsOpen(readBool(SETTINGS_OPEN_KEY, false));
   }, []);
 
   function toggleTags() {
@@ -374,15 +390,18 @@ export function FolderSidebar({
     });
   }
 
+  function toggleSettings() {
+    setSettingsOpen((prev) => {
+      const next = !prev;
+      writeBool(SETTINGS_OPEN_KEY, next);
+      return next;
+    });
+  }
+
+  const otherAgents = agents.filter((a) => a.id !== agent?.id);
+
   return (
     <div className="flex h-full w-56 shrink-0 flex-col border-r border-hairline bg-card/95">
-      <div className="border-b border-hairline bg-card/80 px-4 py-3">
-        <h2 className="text-sm font-semibold text-foreground">Help Desk</h2>
-        <p className="mt-0.5 text-[11px] text-muted-foreground">
-          eBay member messages
-        </p>
-      </div>
-
       <div className="border-b border-hairline bg-surface/25 px-3 py-2">
         <div className="mb-1.5 flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-muted-foreground">
           <Tags className="h-3 w-3" /> Channel
@@ -427,10 +446,20 @@ export function FolderSidebar({
             <FolderItem
               key={f.key}
               row={f}
-              active={active === f.key && !activeAgentFolderId}
+              active={
+                active === f.key && !activeAgentFolderId && !activeAssignedAgentId
+              }
               count={counts[f.key] ?? 0}
               onSelect={onChange}
               agent={agent}
+            />
+          ))}
+          {otherAgents.map((a) => (
+            <AssignedAgentItem
+              key={a.id}
+              agent={a}
+              active={activeAssignedAgentId === a.id}
+              onSelect={onAssignedAgentSelect}
             />
           ))}
         </ul>
@@ -446,7 +475,11 @@ export function FolderSidebar({
         <ul className="mt-2 space-y-0.5">
           <FolderItem
             row={ALL_PARENT}
-            active={active === ALL_PARENT.key && !activeAgentFolderId}
+            active={
+              active === ALL_PARENT.key &&
+              !activeAgentFolderId &&
+              !activeAssignedAgentId
+            }
             count={counts[ALL_PARENT.key] ?? 0}
             onSelect={onChange}
           />
@@ -454,7 +487,7 @@ export function FolderSidebar({
             <FolderItem
               key={f.key}
               row={f}
-              active={active === f.key && !activeAgentFolderId}
+              active={active === f.key && !activeAgentFolderId && !activeAssignedAgentId}
               count={counts[f.key] ?? 0}
               onSelect={onChange}
             />
@@ -467,7 +500,7 @@ export function FolderSidebar({
             <FolderItem
               key={f.key}
               row={f}
-              active={active === f.key && !activeAgentFolderId}
+              active={active === f.key && !activeAgentFolderId && !activeAssignedAgentId}
               count={counts[f.key] ?? 0}
               onSelect={onChange}
             />
@@ -488,7 +521,7 @@ export function FolderSidebar({
                 <FolderItem
                   key={f.key}
                   row={f}
-                  active={active === f.key && !activeAgentFolderId}
+                  active={active === f.key && !activeAgentFolderId && !activeAssignedAgentId}
                   count={counts[f.key] ?? 0}
                   onSelect={(k) => { onChange(k); }}
                 />
@@ -519,6 +552,13 @@ export function FolderSidebar({
       </nav>
 
       <div className="mt-auto border-t border-hairline bg-card/80 p-2 text-sm">
+        <SectionDisclosure
+          label="Settings"
+          icon={SettingsIcon}
+          open={settingsOpen}
+          onToggle={toggleSettings}
+        />
+        <div className={cn("mt-1 space-y-0.5", !settingsOpen && "hidden")}>
         <Link
           href="/help-desk/filters"
           className="flex items-center gap-2 rounded-md px-2 py-1.5 text-foreground transition-colors hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/30"
@@ -553,6 +593,7 @@ export function FolderSidebar({
             <span>Global Settings</span>
           </Link>
         ) : null}
+        </div>
       </div>
     </div>
   );
@@ -566,6 +607,53 @@ interface FolderItemProps {
   count: number;
   onSelect: (key: HelpdeskFolderKey) => void;
   agent?: AvatarUser | null;
+}
+
+function assignedAgentName(agent: AssignedAgentFolderData): string {
+  return agent.name ?? agent.handle ?? agent.email ?? "Agent";
+}
+
+function AssignedAgentItem({
+  agent,
+  active,
+  onSelect,
+}: {
+  agent: AssignedAgentFolderData;
+  active: boolean;
+  onSelect: (id: string) => void;
+}) {
+  const count = agent.assignedTicketCount ?? 0;
+  const name = assignedAgentName(agent);
+  return (
+    <li className="group/folder relative">
+      <button
+        type="button"
+        onClick={() => onSelect(agent.id)}
+        title={`Tickets assigned to ${name}`}
+        className={cn(
+          "flex w-full items-center gap-2 rounded-md py-1.5 pl-7 pr-2 text-left text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/30 cursor-pointer",
+          active
+            ? "bg-brand-muted text-brand shadow-[inset_2px_0_0_var(--color-brand)]"
+            : "text-foreground hover:bg-surface-2",
+        )}
+      >
+        <Avatar user={agent} size="xs" />
+        <span className="flex-1 truncate">{name}</span>
+        {count > 0 ? (
+          <span
+            className={cn(
+              "rounded-full px-1.5 py-0.5 text-[10px] font-semibold",
+              active
+                ? "bg-brand/20 text-brand"
+                : "bg-surface-2 text-muted-foreground group-hover/folder:bg-surface",
+            )}
+          >
+            {count}
+          </span>
+        ) : null}
+      </button>
+    </li>
+  );
 }
 
 function FolderItem({ row, active, count, onSelect, agent }: FolderItemProps) {
@@ -880,16 +968,17 @@ function AgentFoldersSection({
                 >
                   <Folder className={cn("h-3.5 w-3.5 shrink-0", isActive ? "text-brand" : colorCls)} />
                   <span className="flex-1 truncate">{f.name}</span>
-                  {f.ticketCount > 0 ? (
-                    <span
-                      className={cn(
-                        "text-[11px] tabular-nums",
-                        isActive ? "text-brand" : "text-muted-foreground",
-                      )}
-                    >
-                      {f.ticketCount}
-                    </span>
-                  ) : null}
+                  <span
+                    className={cn(
+                      "min-w-5 shrink-0 rounded-full px-1.5 py-0.5 text-center text-[10px] font-semibold tabular-nums",
+                      isActive
+                        ? "bg-brand/15 text-brand"
+                        : "bg-surface-2 text-muted-foreground group-hover/agfolder:bg-surface",
+                    )}
+                    title={`${f.ticketCount} ticket${f.ticketCount === 1 ? "" : "s"} in ${f.name}`}
+                  >
+                    {f.ticketCount}
+                  </span>
                   <span className="hidden items-center gap-0.5 group-hover/agfolder:flex">
                     <span
                       role="button"

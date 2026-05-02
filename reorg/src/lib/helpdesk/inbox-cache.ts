@@ -70,6 +70,10 @@ export interface InboxPageSnapshot {
   tickets: HelpdeskTicketSummary[];
   /** Cursor to pass to fetch the next page; `null` means we're at the end. */
   nextCursor: string | null;
+  /** Total matching tickets across all pages for the active filter. */
+  totalCount: number;
+  /** Total pages for the active filter. Always at least 1. */
+  totalPages: number;
   /** Wall-clock ms when this snapshot was last refreshed. */
   fetchedAt: number;
 }
@@ -105,10 +109,11 @@ export function buildFilterKey(opts: {
   search?: string;
   systemMessageType?: string | null;
   agentFolderId?: string | null;
+  assignedUserId?: string | null;
 }): string {
   return `${opts.folder}|${opts.channel ?? "ALL"}|${opts.search ?? ""}|${
     opts.systemMessageType ?? ""
-  }|${opts.agentFolderId ?? ""}`;
+  }|${opts.agentFolderId ?? ""}|${opts.assignedUserId ?? ""}`;
 }
 
 export function getInbox(key: string): InboxPageSnapshot | undefined {

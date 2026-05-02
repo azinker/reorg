@@ -225,19 +225,19 @@ export function TicketReader({
           <button
             type="button"
             onClick={onBack}
-            className="inline-flex h-9 items-center gap-1.5 rounded-md border border-hairline bg-surface px-3 text-[13px] font-medium text-muted-foreground shadow-sm transition-colors hover:border-brand/35 hover:bg-surface-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/30 cursor-pointer"
+            className="inline-flex h-9 items-center gap-1.5 rounded-md border border-orange-500/40 bg-orange-500/10 px-3 text-[13px] font-semibold text-orange-700 shadow-sm transition-colors hover:border-orange-400/70 hover:bg-orange-500/15 hover:text-orange-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-500/30 dark:text-orange-300 dark:hover:text-orange-200 cursor-pointer"
             title="Back to inbox (Esc)"
           >
             <ArrowLeft className="h-4 w-4" />
             Back
           </button>
         )}
-        <div className="inline-flex h-9 items-center rounded-md border border-hairline bg-surface shadow-sm">
+        <div className="inline-flex h-9 items-center rounded-md border border-sky-500/35 bg-sky-500/10 text-sky-700 shadow-sm dark:text-sky-300">
           <button
             type="button"
             onClick={onPrev}
             disabled={!onPrev || !hasPrev}
-            className="inline-flex h-full w-9 items-center justify-center rounded-l-md text-muted-foreground transition-colors hover:bg-surface-2 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40 cursor-pointer"
+            className="inline-flex h-full w-9 items-center justify-center rounded-l-md transition-colors hover:bg-sky-500/15 hover:text-sky-800 disabled:cursor-not-allowed disabled:opacity-40 dark:hover:text-sky-200 cursor-pointer"
             title="Previous ticket (↑)"
             aria-label="Previous ticket"
           >
@@ -248,7 +248,7 @@ export function TicketReader({
             type="button"
             onClick={onNext}
             disabled={!onNext || !hasNext}
-            className="inline-flex h-full w-9 items-center justify-center rounded-r-md text-muted-foreground transition-colors hover:bg-surface-2 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40 cursor-pointer"
+            className="inline-flex h-full w-9 items-center justify-center rounded-r-md transition-colors hover:bg-sky-500/15 hover:text-sky-800 disabled:cursor-not-allowed disabled:opacity-40 dark:hover:text-sky-200 cursor-pointer"
             title="Next ticket (↓)"
             aria-label="Next ticket"
           >

@@ -279,6 +279,46 @@ export function buildFolderWhere(
   }
 }
 
+/**
+ * Assigned-agent queue used by the sidebar's "other agent" folders. It mirrors
+ * `my_tickets` exactly, except the user id is supplied by the clicked agent row.
+ */
+export function buildAssignedAgentWhere(
+  userId: string,
+): Prisma.HelpdeskTicketWhereInput {
+  const now = new Date();
+  const openStatuses: HelpdeskTicketStatus[] = [
+    HelpdeskTicketStatus.NEW,
+    HelpdeskTicketStatus.TO_DO,
+    HelpdeskTicketStatus.WAITING,
+  ];
+
+  return {
+    AND: [
+      {
+        status: { in: openStatuses },
+        isArchived: false,
+        isSpam: false,
+      },
+      { OR: [{ snoozedUntil: null }, { snoozedUntil: { lte: now } }] },
+      {
+        NOT: {
+          tags: {
+            some: { tag: { name: BUYER_CANCELLATION_TAG_NAME } },
+          },
+        },
+      },
+      { type: { not: HelpdeskTicketType.SYSTEM } },
+      {
+        OR: [
+          { primaryAssigneeId: userId },
+          { additionalAssignees: { some: { userId } } },
+        ],
+      },
+    ],
+  };
+}
+
 export const FOLDER_LABELS: Record<HelpdeskFolderKey, string> = {
   pre_sales: "Pre-sales",
   my_tickets: "My Tickets",
