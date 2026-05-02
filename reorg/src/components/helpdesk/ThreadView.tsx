@@ -1631,12 +1631,12 @@ function TimelineItem({
     const n = row.data;
     return (
       <div
-        className="rounded-md border border-amber-400/40 bg-amber-100 px-3 py-2 shadow-sm dark:bg-amber-950/30"
+        className="rounded-md border border-amber-300 bg-amber-100 px-3 py-2 text-amber-950 shadow-sm shadow-amber-950/10 dark:border-amber-300 dark:bg-amber-100 dark:text-amber-950"
         // Slight tilt + paper-edge shadow give the note that "post-it"
         // affordance the user asked for. Kept very subtle so it doesn't
         // feel cartoonish in the rest of a clean dashboard.
       >
-        <div className="mb-1 flex items-center gap-2 text-[10px] uppercase tracking-wider text-amber-800 dark:text-amber-200">
+        <div className="mb-1 flex items-center gap-2 text-[10px] uppercase tracking-wider text-amber-800 dark:text-amber-800">
           <Avatar user={n.author} size="xs" />
           <StickyNote className="h-3 w-3" />
           <span>
@@ -1647,7 +1647,7 @@ function TimelineItem({
           </span>
           {n.editedAt && <span className="opacity-60">(edited)</span>}
         </div>
-        <p className="whitespace-pre-wrap text-[13px] text-amber-950 dark:text-amber-50">
+        <p className="whitespace-pre-wrap text-[13px] text-amber-950 dark:text-amber-950">
           {n.bodyText}
         </p>
       </div>
