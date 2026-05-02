@@ -570,6 +570,24 @@ function extractEbayCaseUrl(bodyText: string | null | undefined): string | null 
   }
 }
 
+function canonicalEbayCaseUrl(args: {
+  caseId: string | null;
+  isInr: boolean;
+  isReturn: boolean;
+  bodyText: string | null | undefined;
+}): string | null {
+  if (args.caseId) {
+    const encoded = encodeURIComponent(args.caseId);
+    if (args.isReturn) {
+      return `https://www.ebay.com/rtn/Return/ReturnsDetail?returnId=${encoded}`;
+    }
+    if (args.isInr) {
+      return `https://www.ebay.com/ItemNotReceived/${encoded}`;
+    }
+  }
+  return extractEbayCaseUrl(args.bodyText);
+}
+
 function extractEbayRequestContext(args: {
   subject: string | null;
   bodyText: string | null;
@@ -592,15 +610,13 @@ function extractEbayRequestContext(args: {
     /Return\s+(\d{6,})/i.exec(subject)?.[1] ??
     /Request\s+#\s*:?\s*(\d{6,})/i.exec(haystack)?.[1] ??
     /Request\s+#(\d{6,})/i.exec(haystack)?.[1] ??
+    /Request\s+(\d{6,})/i.exec(haystack)?.[1] ??
     /Case\s+ID\s*:?\s*(\d{6,})/i.exec(haystack)?.[1] ??
     null;
   const openedDate =
     /(?:Request|Case)\s+opened:?\s+([A-Za-z]{3}\s+\d{1,2},\s+\d{4})/i.exec(
       haystack,
     )?.[1] ?? null;
-  const href =
-    extractEbayCaseUrl(args.bodyText) ??
-    (caseId ? `https://www.ebay.com/res/ItemNotReceived/ViewRequest?id=${caseId}` : null);
   const isInr =
     /ItemNotReceived/i.test(args.bodyText ?? "") ||
     /item\s+not\s+received|not\s+received\s+request|hasn'?t\s+arrived/i.test(haystack) ||
@@ -611,6 +627,12 @@ function extractEbayRequestContext(args: {
       /return\s+(case|request)|buyer\s+opened\s+a\s+return|new\s+return\s+request/i.test(
         haystack,
       ));
+  const href = canonicalEbayCaseUrl({
+    caseId,
+    isInr,
+    isReturn,
+    bodyText: args.bodyText,
+  });
   const isDeliveredUpdate =
     /buyer'?s\s+item\s+arrived|shipping\s+status\s+shows.*delivered|item\s+has\s+arrived/i.test(
       haystack,
@@ -657,7 +679,7 @@ function systemTicketTimelineEvents(args: {
     args.bodyText,
   )}`;
   const isOpenNotice =
-    Boolean(ctx.openedAt) ||
+    (!ctx.isClosed && Boolean(ctx.openedAt)) ||
     (!ctx.isClosed &&
       !ctx.isDeliveredUpdate &&
       /opened|item\s+not\s+received\s+request|hasn'?t\s+arrived/i.test(

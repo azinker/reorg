@@ -199,7 +199,8 @@ function isTimelineStoryEvent(event: SystemEvent): boolean {
     event.action === "EBAY_CASE_OPENED" ||
     event.action === "EBAY_ITEM_NOT_RECEIVED_CASE" ||
     event.action === "EBAY_RETURN_OPENED" ||
-    /buyer opened|opened .*case|opened .*claim|opened .*return/i.test(
+    event.action === "EBAY_CASE_CLOSED" ||
+    /buyer opened|opened .*case|opened .*claim|opened .*return|buyer closed|closed .*case|closed .*claim|closed .*return/i.test(
       `${event.shortText ?? ""} ${event.text}`,
     )
   );
