@@ -88,7 +88,8 @@ type SystemEventKind =
   | "folder"
   // Synthesized from eBay order context (not from AuditLog).
   | "order_received"
-  | "order_shipped";
+  | "order_shipped"
+  | "order_tracking_added";
 
 interface FormattedEvent {
   kind: SystemEventKind;
@@ -764,6 +765,41 @@ function nonEmptyString(value: unknown): string | null {
     : null;
 }
 
+function trackingUrl(carrier: string | null | undefined, trackingNumber: string): string | null {
+  const clean = trackingNumber.trim();
+  if (!clean) return null;
+  const compactCarrier = (carrier ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
+  const encoded = encodeURIComponent(clean);
+  if (compactCarrier.includes("usps")) {
+    return `https://tools.usps.com/go/TrackConfirmAction?tLabels=${encoded}`;
+  }
+  if (compactCarrier.includes("ups")) {
+    return `https://www.ups.com/track?tracknum=${encoded}`;
+  }
+  if (compactCarrier.includes("fedex")) {
+    return `https://www.fedex.com/fedextrack/?trknbr=${encoded}`;
+  }
+  if (compactCarrier.includes("dhl")) {
+    return `https://www.dhl.com/us-en/home/tracking/tracking-express.html?submit=1&tracking-id=${encoded}`;
+  }
+  if (compactCarrier.includes("uniuni")) {
+    return `https://www.uniuni.com/tracking/?no=${encoded}`;
+  }
+  if (/^9\d{18,}$/.test(clean.replace(/\s+/g, ""))) {
+    return `https://tools.usps.com/go/TrackConfirmAction?tLabels=${encoded}`;
+  }
+  if (/^1Z[0-9A-Z]{16}$/i.test(clean.replace(/\s+/g, ""))) {
+    return `https://www.ups.com/track?tracknum=${encoded}`;
+  }
+  return null;
+}
+
+function ordinalTrackingLabel(index: number): string {
+  if (index === 1) return "2nd Tracking Uploaded";
+  if (index === 2) return "3rd Tracking Uploaded";
+  return `${index + 1}th Tracking Uploaded`;
+}
+
 function crossListingTimelineEvent(message: {
   id: string;
   sentAt: Date;
@@ -985,18 +1021,54 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
           });
         }
         if (ctx.shippedTime) {
+          const shippedAt = ctx.shippedTime;
+          const trackingRows = (ctx.trackingNumbers ?? []).filter(
+            (tracking) => tracking.number?.trim(),
+          );
+          const primaryTracking = trackingRows[0] ?? {
+            number: ctx.trackingNumber,
+            carrier: ctx.trackingCarrier,
+            shippedTime: shippedAt,
+          };
+          const primaryNumber = primaryTracking.number?.trim() || null;
           events.push({
             id: `order-shipped-${exists.ebayOrderNumber}`,
             type: "system" as const,
             action: "EBAY_ORDER_SHIPPED",
             kind: "order_shipped",
-            text:
-              ctx.trackingCarrier && ctx.trackingNumber
-                ? `Order shipped via ${ctx.trackingCarrier}`
-                : "Order shipped",
+            text: primaryNumber
+              ? `Order Shipped - ${primaryNumber}`
+              : "Order Shipped",
             shortText: "Order Shipped",
+            href: primaryNumber
+              ? trackingUrl(primaryTracking.carrier, primaryNumber)
+              : null,
+            externalId: primaryNumber,
             actor: null,
-            at: ctx.shippedTime,
+            at: shippedAt,
+          });
+          const seenTrackingNumbers = new Set(
+            primaryNumber ? [primaryNumber.toLowerCase()] : [],
+          );
+          trackingRows.slice(1).forEach((tracking, offset) => {
+            const number = tracking.number?.trim();
+            if (!number) return;
+            const key = number.toLowerCase();
+            if (seenTrackingNumbers.has(key)) return;
+            seenTrackingNumbers.add(key);
+            const label = ordinalTrackingLabel(offset + 1);
+            events.push({
+              id: `order-tracking-${exists.ebayOrderNumber}-${number}`,
+              type: "system" as const,
+              action: "EBAY_ORDER_TRACKING_ADDED",
+              kind: "order_tracking_added",
+              text: `${label} - ${number}`,
+              shortText: label,
+              href: trackingUrl(tracking.carrier, number),
+              externalId: number,
+              actor: null,
+              at: tracking.shippedTime ?? shippedAt,
+            });
           });
         }
       }

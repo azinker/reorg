@@ -112,7 +112,8 @@ type SystemEventKind =
   | "cross_listing"
   | "folder"
   | "order_received"
-  | "order_shipped";
+  | "order_shipped"
+  | "order_tracking_added";
 
 interface SystemEvent {
   id: string;
@@ -168,10 +169,9 @@ function formatDateTime(iso: string): string {
 
 function formatTimelineEventDate(iso: string): string {
   return new Date(iso).toLocaleString("en-US", {
-    month: "short",
+    month: "numeric",
     day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
+    year: "2-digit",
   });
 }
 
@@ -187,6 +187,7 @@ function isTimelineStoryEvent(event: SystemEvent): boolean {
   if (
     event.kind === "order_received" ||
     event.kind === "order_shipped" ||
+    event.kind === "order_tracking_added" ||
     event.kind === "feedback" ||
     event.kind === "refund" ||
     event.kind === "cancel"
@@ -247,6 +248,7 @@ const SYSTEM_ICON: Record<SystemEventKind, typeof Eye> = {
   folder: FilterIcon,
   order_received: ShoppingCart,
   order_shipped: Truck,
+  order_tracking_added: Truck,
 };
 
 /**
@@ -270,6 +272,7 @@ function classForEventKind(kind: SystemEventKind): string {
       return "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300";
     case "order_received":
     case "order_shipped":
+    case "order_tracking_added":
     case "cross_listing":
       return "border-brand/40 bg-brand-muted text-foreground";
     case "type":
@@ -1236,13 +1239,13 @@ function TimelineStoryStrip({
 
   return (
     <div className="shrink-0 border-b border-hairline bg-card/70 px-4 py-1.5 text-[11px] text-muted-foreground">
-      <div className="mx-auto flex w-full max-w-6xl items-center gap-2">
+      <div className="flex w-full flex-wrap items-center gap-2">
         <span className="inline-flex shrink-0 items-center gap-1.5 font-semibold text-foreground">
           <Star className="h-3.5 w-3.5 text-brand" />
           Timeline
         </span>
         <ChevronRight className="h-3.5 w-3.5 shrink-0 text-sky-500 dark:text-sky-300" />
-        <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto py-0.5">
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5 py-0.5">
           {ordered.map((event, index) => {
             const EventIcon = SYSTEM_ICON[event.kind] ?? CircleDashed;
             const label = event.shortText ?? event.text;
@@ -1577,6 +1580,10 @@ function TimelineItem({
   if (row.kind === "system") {
     const ev = row.data;
     const Icon = SYSTEM_ICON[ev.kind] ?? CircleDashed;
+    const hrefTitle =
+      ev.kind === "order_shipped" || ev.kind === "order_tracking_added"
+        ? "open tracking"
+        : "open on eBay";
     if (ev.href) {
       return (
         <div className="my-1 flex items-center justify-center gap-3">
@@ -1589,7 +1596,7 @@ function TimelineItem({
               "inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-[11px] shadow-sm transition-colors hover:border-brand/60 hover:text-foreground cursor-pointer",
               classForEventKind(ev.kind),
             )}
-            title={`${formatRelativeTime(ev.at)} - open on eBay`}
+            title={`${formatRelativeTime(ev.at)} - ${hrefTitle}`}
           >
             <Icon className="h-3 w-3" />
             <span className="font-medium">{ev.text}</span>
