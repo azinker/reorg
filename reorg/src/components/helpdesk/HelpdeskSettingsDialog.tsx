@@ -20,6 +20,7 @@
  */
 
 import { startTransition, useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { Settings, X } from "lucide-react";
 
 const STORAGE_KEY = "helpdesk:prefs:v1";
@@ -398,7 +399,7 @@ export function HelpdeskSettingsDialog({ open, onClose }: HelpdeskSettingsDialog
     return () => window.removeEventListener("keydown", onKey);
   }, [open, onClose]);
 
-  if (!open) return null;
+  if (!open || typeof document === "undefined") return null;
 
   function update<K extends keyof HelpdeskPrefs>(key: K, value: HelpdeskPrefs[K]) {
     const next = { ...prefs, [key]: value };
@@ -411,18 +412,18 @@ export function HelpdeskSettingsDialog({ open, onClose }: HelpdeskSettingsDialog
     }
   }
 
-  return (
+  return createPortal(
     <div
       role="dialog"
       aria-modal="true"
       onClick={onClose}
-      className="fixed inset-0 z-[220] flex items-center justify-center bg-black/60 p-4"
+      className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm"
     >
       <div
         onClick={(e) => e.stopPropagation()}
         onKeyDown={(e) => e.stopPropagation()}
         role="presentation"
-        className="max-h-[calc(100vh-2rem)] w-full max-w-md overflow-y-auto rounded-lg border border-hairline bg-card p-5 shadow-xl"
+        className="relative z-10 max-h-[calc(100vh-2rem)] w-full max-w-md overflow-y-auto rounded-lg border border-hairline bg-card p-5 shadow-2xl"
       >
         <div className="mb-4 flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -611,7 +612,8 @@ export function HelpdeskSettingsDialog({ open, onClose }: HelpdeskSettingsDialog
           Default Send action is saved across browsers.
         </p>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 

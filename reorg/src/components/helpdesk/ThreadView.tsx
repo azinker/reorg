@@ -166,6 +166,44 @@ function formatDateTime(iso: string): string {
   });
 }
 
+function formatTimelineEventDate(iso: string): string {
+  return new Date(iso).toLocaleString("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+function timelineRowDomId(rowKey: string): string {
+  return `helpdesk-timeline-row-${rowKey.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
+}
+
+function timelineRowKeyForEvent(event: SystemEvent): string {
+  return `sys-${event.id}`;
+}
+
+function isTimelineStoryEvent(event: SystemEvent): boolean {
+  if (
+    event.kind === "order_received" ||
+    event.kind === "order_shipped" ||
+    event.kind === "feedback" ||
+    event.kind === "refund" ||
+    event.kind === "cancel"
+  ) {
+    return true;
+  }
+  if (event.kind !== "case") return false;
+  return (
+    event.action === "EBAY_CASE_OPENED" ||
+    event.action === "EBAY_ITEM_NOT_RECEIVED_CASE" ||
+    event.action === "EBAY_RETURN_OPENED" ||
+    /buyer opened|opened .*case|opened .*claim|opened .*return/i.test(
+      `${event.shortText ?? ""} ${event.text}`,
+    )
+  );
+}
+
 function formatDayLabel(iso: string, now: Date = new Date()): string {
   const d = new Date(iso);
   const startOfDay = (x: Date) =>
@@ -596,6 +634,8 @@ export function ThreadView({
   const ticketId = ticket?.id ?? null;
   const [events, setEvents] = useState<SystemEvent[]>([]);
   const [eventsLoading, setEventsLoading] = useState(false);
+  const [highlightedTimelineKey, setHighlightedTimelineKey] = useState<string | null>(null);
+  const highlightTimeoutRef = useRef<number | null>(null);
 
   // ── Image lightbox ─────────────────────────────────────────────
   // A single Lightbox instance lives at the ThreadView root. Clicking
@@ -706,12 +746,21 @@ export function ThreadView({
   }, [ticketId]);
 
   const notableEvents = useMemo(
-    () =>
-      events.filter((e) =>
-        ["case", "cancel", "refund", "feedback", "order_received", "order_shipped"].includes(e.kind),
-      ),
+    () => events.filter(isTimelineStoryEvent),
     [events],
   );
+
+  useEffect(() => {
+    setHighlightedTimelineKey(null);
+  }, [ticketId]);
+
+  useEffect(() => {
+    return () => {
+      if (highlightTimeoutRef.current != null) {
+        window.clearTimeout(highlightTimeoutRef.current);
+      }
+    };
+  }, []);
 
   const [optimisticOutboundJobs, setOptimisticOutboundJobs] = useState<
     HelpdeskPendingOutboundJob[]
@@ -934,6 +983,34 @@ export function ThreadView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ticketId, rows.length, rowsSignature, useVirtualTimeline]);
 
+  const jumpToTimelineEvent = useCallback(
+    (event: SystemEvent) => {
+      const rowKey = timelineRowKeyForEvent(event);
+      const rowIndex = rows.findIndex((row) => row.key === rowKey);
+      if (rowIndex < 0) return;
+
+      setHighlightedTimelineKey(rowKey);
+      if (highlightTimeoutRef.current != null) {
+        window.clearTimeout(highlightTimeoutRef.current);
+      }
+      highlightTimeoutRef.current = window.setTimeout(() => {
+        setHighlightedTimelineKey((current) =>
+          current === rowKey ? null : current,
+        );
+      }, 1800);
+
+      if (useVirtualTimeline) {
+        virtualizer.scrollToIndex(rowIndex, { align: "center" });
+        return;
+      }
+
+      document
+        .getElementById(timelineRowDomId(rowKey))
+        ?.scrollIntoView({ block: "center", behavior: "smooth" });
+    },
+    [rows, useVirtualTimeline, virtualizer],
+  );
+
   if (loading && !ticket) {
     return <ThreadSkeleton />;
   }
@@ -993,7 +1070,10 @@ export function ThreadView({
       )}
 
       {notableEvents.length > 0 ? (
-        <TimelineStoryStrip events={notableEvents} />
+        <TimelineStoryStrip
+          events={notableEvents}
+          onSelect={jumpToTimelineEvent}
+        />
       ) : null}
 
       <div
@@ -1012,9 +1092,14 @@ export function ThreadView({
               return (
                 <div
                   key={vr.key}
+                  id={timelineRowDomId(row.key)}
                   data-index={vr.index}
                   ref={virtualizer.measureElement}
-                  className="absolute left-0 top-0 w-full pb-4"
+                  className={cn(
+                    "absolute left-0 top-0 w-full rounded-lg pb-4 transition-shadow duration-300 scroll-mt-20",
+                    highlightedTimelineKey === row.key &&
+                      "ring-2 ring-brand/60 ring-offset-2 ring-offset-background",
+                  )}
                   style={{ transform: `translateY(${vr.start}px)` }}
                 >
                   <TimelineItem
@@ -1033,16 +1118,25 @@ export function ThreadView({
         ) : (
           <div className="mx-auto flex w-full max-w-3xl flex-col gap-4">
             {rows.map((row) => (
-              <TimelineItem
+              <div
                 key={row.key}
-                row={row}
-                buyerInitial={buyerInitial}
-                agentAccent={agentAccent}
-                messageFontSizePx={prefs.messageFontSizePx}
-                onImageClick={openLightbox}
-                onRetryOutbound={retryOutboundJob}
-                retryingJobIds={retryingJobIds}
-              />
+                id={timelineRowDomId(row.key)}
+                className={cn(
+                  "rounded-lg transition-shadow duration-300 scroll-mt-20",
+                  highlightedTimelineKey === row.key &&
+                    "ring-2 ring-brand/60 ring-offset-2 ring-offset-background",
+                )}
+              >
+                <TimelineItem
+                  row={row}
+                  buyerInitial={buyerInitial}
+                  agentAccent={agentAccent}
+                  messageFontSizePx={prefs.messageFontSizePx}
+                  onImageClick={openLightbox}
+                  onRetryOutbound={retryOutboundJob}
+                  retryingJobIds={retryingJobIds}
+                />
+              </div>
             ))}
           </div>
         )}
@@ -1125,54 +1219,55 @@ function ThreadEmptyState({ eventsLoading }: { eventsLoading: boolean }) {
   );
 }
 
-function TimelineStoryStrip({ events }: { events: SystemEvent[] }) {
-  const latest = events
+function TimelineStoryStrip({
+  events,
+  onSelect,
+}: {
+  events: SystemEvent[];
+  onSelect: (event: SystemEvent) => void;
+}) {
+  const ordered = events
+    .slice()
+    .sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime());
+  const latest = ordered
     .slice()
     .sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime())[0];
   if (!latest) return null;
-  const visible = events.slice(-4);
-  const Icon = SYSTEM_ICON[latest.kind] ?? CircleDashed;
 
   return (
     <div className="shrink-0 border-b border-hairline bg-card/70 px-4 py-1.5 text-[11px] text-muted-foreground">
-      <div className="mx-auto flex max-w-3xl items-center gap-2">
+      <div className="mx-auto flex w-full max-w-6xl items-center gap-2">
         <span className="inline-flex shrink-0 items-center gap-1.5 font-semibold text-foreground">
-          <Icon className="h-3.5 w-3.5 text-brand" />
+          <Star className="h-3.5 w-3.5 text-brand" />
           Timeline
         </span>
-        <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden">
-          {visible.map((event) => {
+        <ChevronRight className="h-3.5 w-3.5 shrink-0 text-sky-500 dark:text-sky-300" />
+        <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto py-0.5">
+          {ordered.map((event, index) => {
             const EventIcon = SYSTEM_ICON[event.kind] ?? CircleDashed;
             const label = event.shortText ?? event.text;
-            if (event.href) {
-              return (
-                <a
-                  key={event.id}
-                  href={event.href}
-                  target="_blank"
-                  rel="noopener noreferrer"
+            return (
+              <span key={event.id} className="contents">
+                {index > 0 ? (
+                  <ChevronRight className="h-3.5 w-3.5 shrink-0 text-sky-500 dark:text-sky-300" />
+                ) : null}
+                <button
+                  type="button"
+                  onClick={() => onSelect(event)}
                   className={cn(
-                    "inline-flex max-w-[14rem] shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 transition-colors hover:border-brand/60 hover:text-foreground cursor-pointer",
+                    "inline-flex max-w-[18rem] shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 transition-colors hover:border-brand/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/30 cursor-pointer",
                     classForEventKind(event.kind),
                   )}
-                  title={`${event.text} - ${formatDateTime(event.at)}`}
+                  title={`${event.text} - ${formatDateTime(event.at)}. Jump to this event in the thread.`}
+                  aria-label={`Jump to ${label} in the thread`}
                 >
                   <EventIcon className="h-3 w-3 shrink-0" />
                   <span className="truncate">{label}</span>
-                </a>
-              );
-            }
-            return (
-              <span
-                key={event.id}
-                className={cn(
-                  "inline-flex max-w-[12rem] shrink-0 items-center gap-1 rounded-full border px-2 py-0.5",
-                  classForEventKind(event.kind),
-                )}
-                title={`${event.text} - ${formatDateTime(event.at)}`}
-              >
-                <EventIcon className="h-3 w-3 shrink-0" />
-                <span className="truncate">{label}</span>
+                  <span className="opacity-55">-</span>
+                  <span className="shrink-0 tabular-nums opacity-80">
+                    {formatTimelineEventDate(event.at)}
+                  </span>
+                </button>
               </span>
             );
           })}
@@ -1607,13 +1702,14 @@ function TimelineItem({
           </div>
           <div
             className={cn(
-              "rounded-md border border-dashed px-3 py-2 text-[13px] leading-[1.5] opacity-90 shadow-sm",
+              "rounded-md border border-dashed px-3 py-2 leading-[1.5] opacity-90 shadow-sm",
               meta.tone === "red"
                 ? "border-red-500/50 bg-red-50 text-foreground dark:bg-red-950/20"
                 : blocked
                 ? "border-amber-500/50 bg-amber-50 text-foreground dark:bg-amber-950/20"
                 : agentAccent.bubble,
             )}
+            style={{ fontSize: `${messageFontSizePx}px` }}
           >
             <p className="whitespace-pre-wrap">{j.bodyText}</p>
             {blocked ? (
@@ -1647,7 +1743,10 @@ function TimelineItem({
           </span>
           {n.editedAt && <span className="opacity-60">(edited)</span>}
         </div>
-        <p className="whitespace-pre-wrap text-[13px] text-amber-950 dark:text-amber-950">
+        <p
+          className="whitespace-pre-wrap text-amber-950 dark:text-amber-950"
+          style={{ fontSize: `${messageFontSizePx}px` }}
+        >
           {n.bodyText}
         </p>
       </div>

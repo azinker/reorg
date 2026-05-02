@@ -652,8 +652,18 @@ function systemTicketTimelineEvents(args: {
   });
   const events: TimelineEvent[] = [];
   const baseId = args.messageId ?? args.ticketId;
+  const openNoticeHaystack = `${args.subject ?? ""} ${stripHtmlToPlainText(
+    args.bodyText,
+  )}`;
+  const isOpenNotice =
+    Boolean(ctx.openedAt) ||
+    (!ctx.isClosed &&
+      !ctx.isDeliveredUpdate &&
+      /opened|item\s+not\s+received\s+request|hasn'?t\s+arrived/i.test(
+        openNoticeHaystack,
+      ));
 
-  if (ctx.caseId && ctx.openedAt) {
+  if (ctx.caseId && isOpenNotice) {
     events.push({
       id: `related-case-opened-${baseId}-${ctx.caseId}`,
       type: "system",
@@ -664,7 +674,7 @@ function systemTicketTimelineEvents(args: {
       href: ctx.href,
       externalId: ctx.caseId,
       actor: null,
-      at: ctx.openedAt,
+      at: args.at,
     });
   }
 
@@ -958,7 +968,7 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
         exists.integration.id,
         config,
         exists.ebayOrderNumber,
-        { awaitFresh: false },
+        { awaitFresh: true },
       );
       orderCtxForEvents = ctx;
       if (ctx) {

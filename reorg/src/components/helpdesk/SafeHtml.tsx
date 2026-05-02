@@ -926,7 +926,7 @@ export function SafeHtml({
     const cleaned = stripEbayPlainText(decoded);
     return (
       <div className={className} style={style}>
-        <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground/90">
+        <p className="whitespace-pre-wrap leading-relaxed text-foreground/90" style={style}>
           {cleaned ? (
             renderLinkifiedText(cleaned)
           ) : (

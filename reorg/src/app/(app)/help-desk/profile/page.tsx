@@ -21,7 +21,11 @@ import { Avatar } from "@/components/ui/avatar";
 import {
   useHelpdeskPrefs,
   updateHelpdeskPrefs,
+  agentBubbleClasses,
+  persistDefaultSendStatusToServer,
   type HelpdeskPrefs,
+  type HelpdeskAgentBubbleAccent,
+  type HelpdeskDefaultSendStatus,
 } from "@/components/helpdesk/HelpdeskSettingsDialog";
 
 interface MeProfile {
@@ -53,6 +57,9 @@ export default function HelpdeskProfilePage() {
   const prefs = useHelpdeskPrefs();
   function patchPrefs<K extends keyof HelpdeskPrefs>(key: K, value: HelpdeskPrefs[K]) {
     updateHelpdeskPrefs({ [key]: value } as Partial<HelpdeskPrefs>);
+    if (key === "defaultSendStatus") {
+      persistDefaultSendStatusToServer(value as HelpdeskDefaultSendStatus);
+    }
   }
   const isAdmin = me?.role === "ADMIN";
 
@@ -391,6 +398,24 @@ export default function HelpdeskProfilePage() {
             </div>
           </PrefRow>
           <PrefRow
+            label="Message font size"
+            hint="Text size for message content in the conversation pane."
+          >
+            <div className="flex items-center gap-2">
+              <input
+                type="range"
+                min={12}
+                max={18}
+                value={prefs.messageFontSizePx}
+                onChange={(e) => patchPrefs("messageFontSizePx", Number(e.target.value))}
+                className="w-40 cursor-pointer accent-brand"
+              />
+              <span className="w-12 text-right text-sm text-foreground">
+                {prefs.messageFontSizePx}px
+              </span>
+            </div>
+          </PrefRow>
+          <PrefRow
             label="Auto-mark read"
             hint="Clear the unread badge as soon as you open a ticket."
           >
@@ -424,9 +449,68 @@ export default function HelpdeskProfilePage() {
               <option value="list">List</option>
             </select>
           </PrefRow>
+          <PrefRow
+            label="Default Send action"
+            hint="What the composer does after its primary Send button succeeds."
+          >
+            <select
+              value={prefs.defaultSendStatus}
+              onChange={(e) =>
+                patchPrefs(
+                  "defaultSendStatus",
+                  e.target.value as HelpdeskDefaultSendStatus,
+                )
+              }
+              className="h-8 rounded-md border border-hairline bg-surface px-2 text-sm text-foreground"
+            >
+              <option value="RESOLVED">Send + Resolve</option>
+              <option value="WAITING">Send + Mark Waiting</option>
+              <option value="NONE">Send only</option>
+            </select>
+          </PrefRow>
+          <PrefRow
+            label="Agent message color"
+            hint="Background color of your outgoing messages in the thread."
+          >
+            <div className="flex items-center gap-1.5">
+              {(
+                [
+                  { value: "purple", label: "Purple" },
+                  { value: "blue", label: "Blue" },
+                  { value: "emerald", label: "Green" },
+                  { value: "amber", label: "Amber" },
+                  { value: "red", label: "Red" },
+                ] as const
+              ).map((opt) => {
+                const cls = agentBubbleClasses(opt.value);
+                const active = prefs.agentBubbleAccent === opt.value;
+                return (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    onClick={() =>
+                      patchPrefs("agentBubbleAccent", opt.value as HelpdeskAgentBubbleAccent)
+                    }
+                    title={opt.label}
+                    aria-label={opt.label}
+                    aria-pressed={active}
+                    className={
+                      "relative h-6 w-6 rounded-full border-2 transition-all cursor-pointer " +
+                      cls.swatch +
+                      " " +
+                      (active
+                        ? "scale-110 border-foreground shadow-md"
+                        : "border-transparent hover:scale-105")
+                    }
+                  />
+                );
+              })}
+            </div>
+          </PrefRow>
         </div>
         <p className="mt-4 text-[11px] text-muted-foreground">
-          Stored locally in this browser. Settings sync per-device, not per-account.
+          Layout, density, separator widths, font size, quick bar, and accent color are saved on this browser per agent.
+          Default Send action is saved across browsers.
         </p>
       </section>
 
