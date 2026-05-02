@@ -254,28 +254,30 @@ const SYSTEM_ICON: Record<SystemEventKind, typeof Eye> = {
   order_tracking_added: Truck,
 };
 
-/**
- * Tone classes per event kind. Three buckets:
- *   - urgent (red-ish)  for negative buyer escalations
- *   - brand   (purple)  for marketplace-positive events (orders, feedback+)
- *   - neutral (gray)    for everything else
- *
- * Returning the className inline (instead of via a separate stylesheet)
- * keeps the per-event customisation co-located with the event vocabulary.
- */
-function classForEventKind(kind: SystemEventKind): string {
-  switch (kind) {
+function classForEvent(event: Pick<SystemEvent, "action" | "kind" | "shortText" | "text">): string {
+  const label = `${event.shortText ?? ""} ${event.text} ${event.action}`.toLowerCase();
+
+  switch (event.kind) {
     case "case":
+      return "border-amber-500/45 bg-amber-500/10 text-amber-900 dark:text-amber-200";
+    case "feedback":
+      if (label.includes("negative")) {
+        return "border-red-500/45 bg-red-500/10 text-red-800 dark:text-red-200";
+      }
+      if (label.includes("positive")) {
+        return "border-emerald-500/45 bg-emerald-500/10 text-emerald-800 dark:text-emerald-200";
+      }
+      return "border-amber-500/45 bg-amber-500/10 text-amber-900 dark:text-amber-200";
     case "cancel":
     case "spam":
       return "border-rose-500/40 bg-rose-500/10 text-rose-700 dark:text-rose-300";
-    case "feedback":
-      return "border-amber-500/40 bg-amber-500/10 text-amber-800 dark:text-amber-200";
     case "refund":
       return "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300";
     case "order_received":
+      return "border-sky-500/45 bg-sky-500/10 text-sky-800 dark:text-sky-200";
     case "order_shipped":
     case "order_tracking_added":
+      return "border-cyan-500/45 bg-cyan-500/10 text-cyan-800 dark:text-cyan-200";
     case "cross_listing":
       return "border-brand/40 bg-brand-muted text-foreground";
     case "type":
@@ -1329,7 +1331,7 @@ function TimelineStoryStrip({
                   onClick={() => onSelect(event)}
                   className={cn(
                     "inline-flex max-w-[18rem] shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 transition-colors hover:border-brand/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/30 cursor-pointer",
-                    classForEventKind(event.kind),
+                    classForEvent(event),
                   )}
                   title={`${event.text} - ${formatDateTime(event.at)}. Jump to this event in the thread.`}
                   aria-label={`Jump to ${label} in the thread`}
@@ -1664,7 +1666,7 @@ function TimelineItem({
             rel="noopener noreferrer"
             className={cn(
               "inline-flex max-w-full flex-wrap items-center justify-center gap-1.5 rounded-full border px-3 py-1 text-[11px] shadow-sm transition-colors hover:border-brand/60 hover:text-foreground cursor-pointer",
-              classForEventKind(ev.kind),
+              classForEvent(ev),
             )}
             title={`${formatRelativeTime(ev.at)} - ${hrefTitle}`}
           >
@@ -1680,7 +1682,7 @@ function TimelineItem({
         <span
           className={cn(
             "inline-flex max-w-full flex-wrap items-center justify-center gap-1.5 rounded-full border px-3 py-1 text-[11px] shadow-sm",
-            classForEventKind(ev.kind),
+            classForEvent(ev),
           )}
           title={formatRelativeTime(ev.at)}
         >
