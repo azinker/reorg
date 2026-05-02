@@ -303,9 +303,15 @@ export function TicketReader({
                   {storeDisplayLabel(ticket)}
                 </span>
                 {ticket.ebayOrderNumber && (
-                  <span className="truncate font-semibold text-emerald-400">
+                  <a
+                    href={`https://www.ebay.com/mesh/ord/details?orderid=${ticket.ebayOrderNumber}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex h-6 max-w-[18rem] shrink-0 truncate items-center rounded-md border border-emerald-500/45 bg-emerald-500/10 px-2 text-[12px] font-bold text-emerald-700 shadow-sm transition-colors hover:border-emerald-400 hover:bg-emerald-500/15 hover:text-emerald-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/30 dark:text-emerald-300 dark:hover:text-emerald-200 cursor-pointer"
+                    title="Open this order on eBay in a new tab"
+                  >
                     Order #{ticket.ebayOrderNumber}
-                  </span>
+                  </a>
                 )}
               </div>
             </>
@@ -331,7 +337,7 @@ export function TicketReader({
               className="inline-flex h-7 items-center gap-1 rounded-md border border-brand/30 bg-surface px-2 text-[11px] text-muted-foreground shadow-sm transition-colors hover:border-brand/60 hover:bg-brand/10 hover:text-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/30 cursor-pointer"
               title="Open this message thread on eBay in a new tab"
             >
-              <ExternalLink className="h-3 w-3" /> View message
+              <ExternalLink className="h-3 w-3" /> View Message
             </a>
           )}
 
@@ -343,7 +349,7 @@ export function TicketReader({
               className="inline-flex h-7 items-center gap-1 rounded-md border border-hairline bg-surface px-2 text-[11px] text-muted-foreground shadow-sm transition-colors hover:border-brand/35 hover:bg-surface-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/30 cursor-pointer"
               title="Open this item on eBay in a new tab"
             >
-              <ExternalLink className="h-3 w-3" /> View item
+              <ExternalLink className="h-3 w-3" /> View Item
             </a>
           )}
         </div>
@@ -379,9 +385,15 @@ export function TicketReader({
                   {storeDisplayLabel(ticket)}
                 </span>
                 {ticket.ebayOrderNumber && (
-                  <span className="truncate text-xs font-semibold text-emerald-400">
+                  <a
+                    href={`https://www.ebay.com/mesh/ord/details?orderid=${ticket.ebayOrderNumber}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex h-6 max-w-[18rem] shrink-0 truncate items-center rounded-md border border-emerald-500/45 bg-emerald-500/10 px-2 text-[12px] font-bold text-emerald-700 shadow-sm transition-colors hover:border-emerald-400 hover:bg-emerald-500/15 hover:text-emerald-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/30 dark:text-emerald-300 dark:hover:text-emerald-200 cursor-pointer"
+                    title="Open this order on eBay in a new tab"
+                  >
                     Order #{ticket.ebayOrderNumber}
-                  </span>
+                  </a>
                 )}
               </div>
             </>
@@ -400,7 +412,7 @@ export function TicketReader({
             className="hidden h-8 items-center gap-1 rounded-md border border-brand/30 bg-surface px-2.5 text-[11px] text-muted-foreground shadow-sm transition-colors hover:border-brand/60 hover:bg-brand/10 hover:text-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/30 cursor-pointer sm:inline-flex"
             title="Open this message thread on eBay in a new tab"
           >
-            <ExternalLink className="h-3 w-3" /> View message
+            <ExternalLink className="h-3 w-3" /> View Message
           </a>
         )}
 
@@ -412,7 +424,7 @@ export function TicketReader({
             className="hidden h-8 items-center gap-1 rounded-md border border-hairline bg-surface px-2.5 text-[11px] text-muted-foreground shadow-sm transition-colors hover:border-brand/35 hover:bg-surface-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/30 cursor-pointer sm:inline-flex"
             title="Open this item on eBay in a new tab"
           >
-            <ExternalLink className="h-3 w-3" /> View item
+            <ExternalLink className="h-3 w-3" /> View Item
           </a>
         )}
       </div>

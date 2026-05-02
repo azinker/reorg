@@ -858,7 +858,7 @@ export function Composer({
           title="After Send + Resolve, jump to the next ticket"
           aria-pressed={prefs.autoAdvance}
         >
-          Auto-advance {prefs.autoAdvance ? "On" : "Off"}
+          Auto-Advance {prefs.autoAdvance ? "On" : "Off"}
         </button>
         <span className="hidden text-[10px] text-foreground/60 lg:inline">
           Plain text only · Markdown is not rendered
@@ -1095,7 +1095,7 @@ export function Composer({
                 onChange={(e) => updateSendDelaySeconds(Number(e.target.value))}
                 disabled={sendDelayOverride != null || !!pending}
                 className="h-5 w-9 rounded border border-hairline bg-card px-1 text-center text-[11px] text-foreground outline-none focus:border-brand/50 disabled:opacity-50"
-                aria-label="Send delay seconds"
+                aria-label="Send Delay Seconds"
               />
               <span>s</span>
             </label>

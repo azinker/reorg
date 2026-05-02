@@ -444,7 +444,7 @@ export function HelpdeskSettingsDialog({ open, onClose }: HelpdeskSettingsDialog
 
         <div className="space-y-4 text-sm">
           <Field
-            label="Send delay"
+            label="Send Delay"
             description="Seconds the composer waits before actually sending. Use 0 to send immediately."
           >
             <div className="flex items-center gap-2">
@@ -463,7 +463,7 @@ export function HelpdeskSettingsDialog({ open, onClose }: HelpdeskSettingsDialog
           </Field>
 
           <Field
-            label="Auto-advance"
+            label="Auto-Advance"
             description="After resolving a ticket, jump to the next one in the list."
           >
             <Toggle
@@ -473,7 +473,7 @@ export function HelpdeskSettingsDialog({ open, onClose }: HelpdeskSettingsDialog
           </Field>
 
           <Field
-            label="Sticky composer"
+            label="Sticky Composer"
             description="Keep the composer expanded when switching tickets."
           >
             <Toggle
@@ -483,7 +483,7 @@ export function HelpdeskSettingsDialog({ open, onClose }: HelpdeskSettingsDialog
           </Field>
 
           <Field
-            label="Composer height"
+            label="Composer Height"
             description="Default message box height. You can also drag the composer handle."
           >
             <div className="flex items-center gap-2">
@@ -503,7 +503,7 @@ export function HelpdeskSettingsDialog({ open, onClose }: HelpdeskSettingsDialog
           </Field>
 
           <Field
-            label="Message font size"
+            label="Message Font Size"
             description="Text size for message content in the conversation pane."
           >
             <div className="flex items-center gap-2">
@@ -522,7 +522,7 @@ export function HelpdeskSettingsDialog({ open, onClose }: HelpdeskSettingsDialog
           </Field>
 
           <Field
-            label="Auto-mark read"
+            label="Auto-Mark Read"
             description="Clear the unread badge as soon as you open a ticket."
           >
             <Toggle
@@ -549,7 +549,7 @@ export function HelpdeskSettingsDialog({ open, onClose }: HelpdeskSettingsDialog
           </Field>
 
           <Field
-            label="Default Send action"
+            label="Default Send Action"
             description="What happens to the ticket when you press the composer's primary Send button."
           >
             <select
@@ -569,7 +569,7 @@ export function HelpdeskSettingsDialog({ open, onClose }: HelpdeskSettingsDialog
           </Field>
 
           <Field
-            label="Agent message color"
+            label="Agent Message Color"
             description="Background color of your outgoing messages in the thread."
           >
             <div className="flex items-center gap-1.5">
@@ -609,7 +609,7 @@ export function HelpdeskSettingsDialog({ open, onClose }: HelpdeskSettingsDialog
 
         <p className="mt-5 text-[10px] text-muted-foreground">
           Layout, density, separator widths, font size, quick bar, and accent color are saved on this browser per agent.
-          Default Send action is saved across browsers.
+          Default Send Action is saved across browsers.
         </p>
       </div>
     </div>,

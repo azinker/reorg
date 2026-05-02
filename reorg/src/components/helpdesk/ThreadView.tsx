@@ -401,31 +401,31 @@ function summarizeEbaySystemMessage(
 
   let label: string;
   if (/buyer\s+opened\s+a\s+return|new\s+return\s+request|return\s+request/i.test(haystack)) {
-    label = "Buyer opened a return case";
+    label = "Buyer Opened a Return Case";
   } else if (/return\s+approved|you\s+accepted\s+(a|the)\s+return/i.test(haystack)) {
-    label = "Return approved";
+    label = "Return Approved";
   } else if (/return\s+closed/i.test(haystack)) {
-    label = "Return closed";
+    label = "Return Closed";
   } else if (/item\s+not\s+received|inr\s+claim/i.test(haystack)) {
-    label = "Buyer opened an Item Not Received claim";
+    label = "Buyer Opened an Item Not Received Claim";
   } else if (/refund\s+issued/i.test(haystack)) {
-    label = "Refund issued";
+    label = "Refund Issued";
   } else if (/buyer\s+wants?\s+to\s+cancel|cancellation\s+request/i.test(haystack)) {
-    label = "Buyer requested cancellation";
+    label = "Buyer Requested Cancellation";
   } else if (/order\s+(was|has\s+been)\s+cancel(l?)ed|you\s+successfully\s+cancel/i.test(haystack)) {
-    label = "Order canceled";
+    label = "Order Canceled";
   } else if (/case\s+(is\s+now\s+)?closed|is\s+now\s+closed/i.test(haystack)) {
-    label = "Case closed";
+    label = "Case Closed";
   } else if (/case\s+is\s+on\s+hold/i.test(haystack)) {
-    label = "Case on hold";
+    label = "Case On Hold";
   } else if (/item\s+delivered/i.test(haystack)) {
-    label = "Item delivered";
+    label = "Item Delivered";
   } else if (/feedback\s+removal/i.test(haystack)) {
-    label = "Feedback removal update";
+    label = "Feedback Removal Update";
   } else if (subjectText.trim()) {
     label = subjectText.trim().slice(0, 80);
   } else {
-    label = "System notification";
+    label = "System Notification";
   }
   return { label, returnId };
 }
@@ -1126,9 +1126,15 @@ export function ThreadView({
               {ticket.ebayOrderNumber && (
                 <>
                   <span className="px-1.5 text-muted-foreground/60">·</span>
-                  <span className="font-semibold text-emerald-400">
+                  <a
+                    href={`https://www.ebay.com/mesh/ord/details?orderid=${ticket.ebayOrderNumber}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex h-6 max-w-[18rem] shrink-0 truncate items-center rounded-md border border-emerald-500/45 bg-emerald-500/10 px-2 text-[12px] font-bold text-emerald-700 shadow-sm transition-colors hover:border-emerald-400 hover:bg-emerald-500/15 hover:text-emerald-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/30 dark:text-emerald-300 dark:hover:text-emerald-200 cursor-pointer"
+                    title="Open this order on eBay in a new tab"
+                  >
                     Order #{ticket.ebayOrderNumber}
-                  </span>
+                  </a>
                 </>
               )}
             </p>

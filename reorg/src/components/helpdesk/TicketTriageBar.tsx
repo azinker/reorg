@@ -732,7 +732,7 @@ function MoreMenu({
   return (
     <div ref={ref} className="relative">
       <IconButton
-        title="More actions"
+        title="More Actions"
         disabled={disabled}
         active={open}
         accent="violet"
@@ -777,7 +777,7 @@ function MoreMenu({
                   : "text-muted-foreground",
               )}
             />
-            {ticket?.isImportant ? "Clear important" : "Mark important"}
+            {ticket?.isImportant ? "Clear Important" : "Mark Important"}
           </button>
         </div>
       )}
@@ -1073,7 +1073,7 @@ function MoveToFolderMenu({
                 className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-xs text-red-600 hover:bg-surface-2 dark:text-red-300 cursor-pointer"
               >
                 <X className="h-3.5 w-3.5" />
-                Remove from folder
+                Remove from Folder
               </button>
             </>
           )}

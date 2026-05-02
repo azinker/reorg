@@ -652,7 +652,7 @@ function CustomerCard({
       : attentionLevel === "medium"
         ? openRelatedCount > 0
           ? `${openRelatedCount} other open ticket${openRelatedCount === 1 ? "" : "s"}`
-          : "Waiting on buyer"
+          : "Waiting on Buyer"
         : "No special risk signals";
 
   return (
@@ -1397,7 +1397,9 @@ function FeedbackSection({
                     : "bg-amber-500/15 text-amber-700 dark:text-amber-300",
               )}
             >
-              {first.isAutomated ? "automated" : first.kind.toLowerCase()}
+              {first.isAutomated
+                ? "Automated"
+                : first.kind.charAt(0) + first.kind.slice(1).toLowerCase()}
             </span>
             <span className="text-[10px] text-muted-foreground">
               {formatFeedbackDate(first.leftAt)}
@@ -1405,7 +1407,8 @@ function FeedbackSection({
           </div>
           {first.isAutomated ? (
             <p className="mt-1 text-xs font-medium text-foreground">
-              eBay automated {first.kind.toLowerCase()} feedback
+              eBay Automated{" "}
+              {first.kind.charAt(0) + first.kind.slice(1).toLowerCase()} Feedback
             </p>
           ) : null}
           {typeof first.starRating === "number" && first.starRating > 0 ? (

@@ -64,7 +64,7 @@ export function FromEbayChips({ active, onChange }: FromEbayChipsProps) {
       role="tablist"
       aria-label="Filter From eBay messages by type"
     >
-      <span className="shrink-0 text-muted-foreground">eBay event</span>
+      <span className="shrink-0 text-muted-foreground">eBay Event</span>
       <Chip
         active={active === null}
         onClick={() => onChange(null)}

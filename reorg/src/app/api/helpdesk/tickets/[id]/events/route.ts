@@ -346,10 +346,10 @@ function formatSystemEvent(
     case "HELPDESK_EBAY_CASE_OPENED":
       return {
         kind: "case",
-        text: `Buyer opened a${typeof details.caseType === "string" ? ` ${details.caseType}` : "n eBay"} case`,
+        text: `Buyer Opened a${typeof details.caseType === "string" ? ` ${details.caseType}` : "n eBay"} Case`,
       };
     case "HELPDESK_EBAY_RETURN_OPENED":
-      return { kind: "case", text: "Buyer opened a return on eBay" };
+      return { kind: "case", text: "Buyer Opened a Return on eBay" };
     case "HELPDESK_TICKET_REOPENED":
       return { kind: "status", text: `${who} reopened the ticket` };
     default:
@@ -379,7 +379,7 @@ function systemTicketTimelineText(args: {
   const haystack = `${subject ?? ""} ${body}`.toLowerCase();
   const label = isKnownSystemMessageType(type)
     ? SYSTEM_MESSAGE_TYPE_LABELS[type]
-    : subject ?? "eBay notification";
+    : subject ?? "eBay Notification";
 
   switch (type) {
     case SYSTEM_MESSAGE_TYPES.ITEM_NOT_RECEIVED:
@@ -469,7 +469,7 @@ function systemTicketTimelineText(args: {
     default:
       return {
         action: "EBAY_SYSTEM_NOTIFICATION",
-        text: `eBay notification: ${label}`,
+        text: `eBay Notification: ${label}`,
       };
   }
 }
@@ -1061,7 +1061,7 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
             type: "system" as const,
             action: "EBAY_ORDER_RECEIVED",
             kind: "order_received",
-            text: "Order received",
+            text: "Order Received",
             shortText: "Order Received",
             actor: null,
             at: ctx.createdTime,
@@ -1401,11 +1401,11 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
     for (const f of feedbackSnapshots) {
       const ratingLabel =
         f.kind === "POSITIVE"
-          ? "positive feedback"
+          ? "Positive Feedback"
           : f.kind === "NEGATIVE"
-            ? "negative feedback"
-            : "neutral feedback";
-      const actorLabel = f.isAutomated ? "eBay automated" : "Buyer left";
+            ? "Negative Feedback"
+            : "Neutral Feedback";
+      const actorLabel = f.isAutomated ? "eBay Automated" : "Buyer Left";
       const stars =
         typeof f.starRating === "number" && f.starRating > 0
           ? ` (${f.starRating}★)`
@@ -1435,7 +1435,7 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
         type: "system" as const,
         action: "EBAY_CANCEL_REQUESTED",
         kind: "cancel" as const,
-        text: `Buyer requested cancellation${cn.reason ? ` — ${cn.reason.toLowerCase()}` : ""}`,
+        text: `Buyer Requested Cancellation${cn.reason ? ` — ${cn.reason.toLowerCase()}` : ""}`,
         shortText: "Cancel Requested",
         actor: null,
         at: cn.requestedAt,
@@ -1448,14 +1448,14 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
         //   CANCELLED_BY_BUYER  — buyer revoked their own request
         const decided =
           cn.status === "APPROVED"
-            ? "approved"
+            ? "Approved"
             : cn.status === "REJECTED"
-              ? "denied"
+              ? "Denied"
               : cn.status === "COMPLETED"
-                ? "completed"
+                ? "Completed"
                 : cn.status === "CANCELLED_BY_BUYER"
-                  ? "withdrawn by buyer"
-                  : "closed";
+                  ? "Withdrawn by Buyer"
+                  : "Closed";
         events.push({
           id: `cancel-res-${cn.id}`,
           type: "system" as const,

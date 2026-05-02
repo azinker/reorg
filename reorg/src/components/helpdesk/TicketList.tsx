@@ -179,17 +179,17 @@ function isNewTabClick(e: React.MouseEvent): boolean {
 }
 
 function workReason(t: HelpdeskTicketSummary): string {
-  if (t.isSpam || t.status === "SPAM") return "Spam review";
+  if (t.isSpam || t.status === "SPAM") return "Spam Review";
   if (t.isArchived || t.status === "ARCHIVED") return "Archived";
   if (t.snoozedUntil && new Date(t.snoozedUntil).getTime() > Date.now()) {
     return "Snoozed";
   }
-  if (t.type === "SYSTEM" || t.systemMessageType) return "eBay update";
-  if (t.unreadCount > 0) return "Buyer replied";
+  if (t.type === "SYSTEM" || t.systemMessageType) return "eBay Update";
+  if (t.unreadCount > 0) return "Buyer Replied";
   if (t.status === "WAITING") return "Waiting";
   if (t.status === "RESOLVED") return "Resolved";
   if (ticketAssignees(t).length === 0) return "Unassigned";
-  return "Needs review";
+  return "Needs Review";
 }
 
 interface ContextMenuState {
@@ -664,7 +664,7 @@ export function TicketList({
                         }
                         className="flex w-full items-center gap-2 px-2 py-1.5 text-left text-muted-foreground hover:bg-surface-2 disabled:opacity-50 cursor-pointer"
                       >
-                        Remove from folder
+                        Remove from Folder
                       </button>
                     </div>
                   ) : null}
@@ -1019,25 +1019,25 @@ export function TicketList({
               disabled={busy}
               onClick={() => runAction({ kind: "markRead", isRead: true })}
               className="inline-flex items-center gap-1 rounded-md border border-hairline bg-surface px-2 py-1 text-[11px] text-foreground hover:bg-surface-2 disabled:opacity-50 cursor-pointer"
-              title="Mark as read"
+              title="Mark as Read"
             >
-              <MailOpen className="h-3 w-3" /> Mark read
+              <MailOpen className="h-3 w-3" /> Mark Read
             </button>
             <button
               type="button"
               disabled={busy}
               onClick={() => runAction({ kind: "markRead", isRead: false })}
               className="inline-flex items-center gap-1 rounded-md border border-hairline bg-surface px-2 py-1 text-[11px] text-foreground hover:bg-surface-2 disabled:opacity-50 cursor-pointer"
-              title="Mark as unread"
+              title="Mark as Unread"
             >
-              <MailMinus className="h-3 w-3" /> Mark unread
+              <MailMinus className="h-3 w-3" /> Mark Unread
             </button>
             <button
               type="button"
               disabled={busy}
               onClick={() => runAction({ kind: "setStatus", status: "RESOLVED" })}
               className="inline-flex items-center gap-1 rounded-md border border-hairline bg-surface px-2 py-1 text-[11px] text-foreground hover:bg-surface-2 disabled:opacity-50 cursor-pointer"
-              title="Mark resolved"
+              title="Mark Resolved"
             >
               <CheckCircle2 className="h-3 w-3" /> Resolve
             </button>
@@ -1055,7 +1055,7 @@ export function TicketList({
               disabled={busy}
               onClick={() => runAction({ kind: "archive", archived: false })}
               className="inline-flex items-center gap-1 rounded-md border border-hairline bg-surface px-2 py-1 text-[11px] text-foreground hover:bg-surface-2 disabled:opacity-50 cursor-pointer"
-              title="Move back to inbox"
+              title="Move Back to Inbox"
             >
               <Inbox className="h-3 w-3" /> Inbox
             </button>
@@ -1064,7 +1064,7 @@ export function TicketList({
               disabled={busy}
               onClick={() => runAction({ kind: "markSpam", isSpam: true })}
               className="inline-flex items-center gap-1 rounded-md border border-hairline bg-surface px-2 py-1 text-[11px] text-foreground hover:bg-surface-2 disabled:opacity-50 cursor-pointer"
-              title="Mark spam"
+              title="Mark Spam"
             >
               <AlertOctagon className="h-3 w-3" /> Spam
             </button>
@@ -1107,7 +1107,7 @@ export function TicketList({
                       }}
                       className="flex w-full items-center gap-2 px-2 py-1.5 text-left text-muted-foreground hover:bg-surface-2 disabled:opacity-50 cursor-pointer"
                     >
-                      Remove from folder
+                      Remove from Folder
                     </button>
                   </div>
                 ) : null}
@@ -1152,14 +1152,14 @@ export function TicketList({
             >
               <ContextMenuItem
                 icon={isUnread ? MailOpen : MailMinus}
-                label={isUnread ? "Mark as read" : "Mark as unread"}
+                label={isUnread ? "Mark as Read" : "Mark as Unread"}
                 onClick={() =>
                   runContextAction({ kind: "markRead", isRead: isUnread }, ticket.id)
                 }
               />
               <ContextMenuItem
                 icon={CheckCircle2}
-                label="Mark resolved"
+                label="Mark Resolved"
                 onClick={() =>
                   runContextAction(
                     { kind: "setStatus", status: "RESOLVED" },
@@ -1189,7 +1189,7 @@ export function TicketList({
               />
               <ContextMenuItem
                 icon={Star}
-                label={ticket.isFavorite ? "Remove favorite" : "Add favorite"}
+                label={ticket.isFavorite ? "Remove Favorite" : "Add Favorite"}
                 onClick={() =>
                   runContextAction(
                     { kind: "setFavorite", isFavorite: !ticket.isFavorite },
@@ -1199,7 +1199,7 @@ export function TicketList({
               />
               <ContextMenuItem
                 icon={Flag}
-                label={ticket.isImportant ? "Clear important" : "Mark important"}
+                label={ticket.isImportant ? "Clear Important" : "Mark Important"}
                 onClick={() =>
                   runContextAction(
                     { kind: "setImportant", isImportant: !ticket.isImportant },
@@ -1259,7 +1259,7 @@ export function TicketList({
               {ticket.agentFolderId ? (
                 <ContextMenuItem
                   icon={X}
-                  label="Remove from folder"
+                  label="Remove from Folder"
                   onClick={() =>
                     runContextAction(
                       { kind: "moveToFolder", agentFolderId: null },
@@ -1271,7 +1271,7 @@ export function TicketList({
               <div className="my-1 border-t border-hairline" />
               <ContextMenuItem
                 icon={Archive}
-                label={ticket.isArchived ? "Move back to inbox" : "Archive"}
+                label={ticket.isArchived ? "Move Back to Inbox" : "Archive"}
                 onClick={() =>
                   runContextAction(
                     { kind: "archive", archived: !ticket.isArchived },
@@ -1281,7 +1281,7 @@ export function TicketList({
               />
               <ContextMenuItem
                 icon={AlertOctagon}
-                label={ticket.isSpam ? "Not spam" : "Mark spam"}
+                label={ticket.isSpam ? "Not Spam" : "Mark Spam"}
                 onClick={() =>
                   runContextAction(
                     { kind: "markSpam", isSpam: !ticket.isSpam },
@@ -1292,7 +1292,7 @@ export function TicketList({
               <div className="my-1 border-t border-hairline" />
               <ContextMenuItem
                 icon={ExternalLink}
-                label="Open in new tab"
+                label="Open in New Tab"
                 onClick={() => {
                   window.open(`/help-desk?ticket=${ticket.id}`, "_blank");
                   setContextMenu(null);

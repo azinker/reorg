@@ -328,17 +328,17 @@ function ticketLocationClass(label: string): string {
 }
 
 function ticketWorkReason(t: HelpdeskTicketSummary): string {
-  if (t.isSpam || t.status === "SPAM") return "Spam review";
+  if (t.isSpam || t.status === "SPAM") return "Spam Review";
   if (t.isArchived || t.status === "ARCHIVED") return "Archived";
   if (t.snoozedUntil && new Date(t.snoozedUntil).getTime() > Date.now()) {
     return "Snoozed";
   }
-  if (t.type === "SYSTEM" || t.systemMessageType) return "eBay update";
-  if (t.unreadCount > 0) return "Buyer replied";
-  if (t.status === "WAITING") return "Waiting on buyer";
+  if (t.type === "SYSTEM" || t.systemMessageType) return "eBay Update";
+  if (t.unreadCount > 0) return "Buyer Replied";
+  if (t.status === "WAITING") return "Waiting on Buyer";
   if (t.status === "RESOLVED") return "Resolved";
   if (ticketAssignees(t).length === 0) return "Unassigned";
-  return "Needs review";
+  return "Needs Review";
 }
 
 function ticketAssignees(t: HelpdeskTicketSummary) {
@@ -362,18 +362,18 @@ function assigneeDisplayName(user: ReturnType<typeof ticketAssignees>[number]): 
 
 function ticketWorkReasonClass(label: string): string {
   switch (label) {
-    case "Buyer replied":
+    case "Buyer Replied":
       return "border-brand/40 bg-brand-muted text-brand";
-    case "eBay update":
+    case "eBay Update":
       return "border-blue-500/30 bg-blue-500/10 text-blue-700 dark:text-blue-300";
-    case "Waiting on buyer":
+    case "Waiting on Buyer":
       return "border-violet-500/30 bg-violet-500/10 text-violet-700 dark:text-violet-300";
     case "Resolved":
       return "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300";
     case "Snoozed":
     case "Archived":
       return "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300";
-    case "Spam review":
+    case "Spam Review":
       return "border-red-500/30 bg-red-500/10 text-red-700 dark:text-red-300";
     default:
       return "border-hairline bg-surface text-muted-foreground";
