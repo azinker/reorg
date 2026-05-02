@@ -124,6 +124,8 @@ interface SystemEvent {
   shortText?: string | null;
   href?: string | null;
   externalId?: string | null;
+  trackingNumber?: string | null;
+  estimatedDeliveryText?: string | null;
   actor: {
     id: string;
     name: string | null;
@@ -284,6 +286,67 @@ function classForEventKind(kind: SystemEventKind): string {
     default:
       return "border-hairline bg-surface text-muted-foreground";
   }
+}
+
+// ─── System event presentation ──────────────────────────────────────────────
+
+function trackingDisplayForEvent(event: SystemEvent): {
+  label: string;
+  trackingNumber: string;
+  estimatedDeliveryText: string | null;
+} | null {
+  if (event.kind !== "order_shipped" && event.kind !== "order_tracking_added") {
+    return null;
+  }
+
+  const trackingNumber =
+    event.trackingNumber?.trim() || event.externalId?.trim() || null;
+  if (!trackingNumber) return null;
+
+  return {
+    label: event.shortText ?? event.text.replace(/\s+-\s+.+$/, ""),
+    trackingNumber,
+    estimatedDeliveryText:
+      event.kind === "order_shipped"
+        ? (event.estimatedDeliveryText?.trim() ?? null)
+        : null,
+  };
+}
+
+function SystemEventPillContent({
+  event,
+  Icon,
+}: {
+  event: SystemEvent;
+  Icon: typeof Eye;
+}) {
+  const tracking = trackingDisplayForEvent(event);
+  return (
+    <>
+      <Icon className="h-3 w-3 shrink-0" />
+      {tracking ? (
+        <>
+          <span className="font-medium">{tracking.label}</span>
+          <span className="opacity-60">-</span>
+          <span className="font-mono text-[11px] font-semibold leading-tight text-sky-600 dark:text-sky-300">
+            {tracking.trackingNumber}
+          </span>
+          {tracking.estimatedDeliveryText ? (
+            <>
+              <span className="opacity-60">-</span>
+              <span className="tabular-nums font-semibold text-sky-700 dark:text-sky-200">
+                {tracking.estimatedDeliveryText}
+              </span>
+            </>
+          ) : null}
+        </>
+      ) : (
+        <span className="font-medium">{event.text}</span>
+      )}
+      <span className="opacity-60">-</span>
+      <span className="tabular-nums opacity-80">{formatDateTime(event.at)}</span>
+    </>
+  );
 }
 
 // ─── Image extraction from message media ────────────────────────────────────
@@ -1594,17 +1657,12 @@ function TimelineItem({
             target="_blank"
             rel="noopener noreferrer"
             className={cn(
-              "inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-[11px] shadow-sm transition-colors hover:border-brand/60 hover:text-foreground cursor-pointer",
+              "inline-flex max-w-full flex-wrap items-center justify-center gap-1.5 rounded-full border px-3 py-1 text-[11px] shadow-sm transition-colors hover:border-brand/60 hover:text-foreground cursor-pointer",
               classForEventKind(ev.kind),
             )}
             title={`${formatRelativeTime(ev.at)} - ${hrefTitle}`}
           >
-            <Icon className="h-3 w-3" />
-            <span className="font-medium">{ev.text}</span>
-            <span className="opacity-60">-</span>
-            <span className="tabular-nums opacity-80">
-              {formatDateTime(ev.at)}
-            </span>
+            <SystemEventPillContent event={ev} Icon={Icon} />
           </a>
           <span className="h-px flex-1 max-w-[18%] bg-hairline" />
         </div>
@@ -1615,17 +1673,12 @@ function TimelineItem({
         <span className="h-px flex-1 max-w-[18%] bg-hairline" />
         <span
           className={cn(
-            "inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-[11px] shadow-sm",
+            "inline-flex max-w-full flex-wrap items-center justify-center gap-1.5 rounded-full border px-3 py-1 text-[11px] shadow-sm",
             classForEventKind(ev.kind),
           )}
           title={formatRelativeTime(ev.at)}
         >
-          <Icon className="h-3 w-3" />
-          <span className="font-medium">{ev.text}</span>
-          <span className="opacity-60">-</span>
-          <span className="tabular-nums opacity-80">
-            {formatDateTime(ev.at)}
-          </span>
+          <SystemEventPillContent event={ev} Icon={Icon} />
         </span>
         <span className="h-px flex-1 max-w-[18%] bg-hairline" />
       </div>

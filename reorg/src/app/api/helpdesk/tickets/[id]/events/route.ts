@@ -106,6 +106,8 @@ interface TimelineEvent {
   shortText?: string | null;
   href?: string | null;
   externalId?: string | null;
+  trackingNumber?: string | null;
+  estimatedDeliveryText?: string | null;
   actor: {
     id: string;
     name: string | null;
@@ -816,6 +818,29 @@ function trackingUrl(carrier: string | null | undefined, trackingNumber: string)
   return null;
 }
 
+function formatNumericEbayDate(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toLocaleDateString("en-US", {
+    timeZone: "America/Los_Angeles",
+    month: "numeric",
+    day: "numeric",
+    year: "2-digit",
+  });
+}
+
+function formatEstimatedDeliveryText(
+  min: string | null | undefined,
+  max: string | null | undefined,
+): string | null {
+  const start = formatNumericEbayDate(min);
+  const end = formatNumericEbayDate(max);
+  if (start && end && start !== end) return `Est. Delivery ${start} - ${end}`;
+  const single = start ?? end;
+  return single ? `Est. Delivery ${single}` : null;
+}
+
 function ordinalTrackingLabel(index: number): string {
   if (index === 1) return "2nd Tracking Uploaded";
   if (index === 2) return "3rd Tracking Uploaded";
@@ -1066,6 +1091,11 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
               ? trackingUrl(primaryTracking.carrier, primaryNumber)
               : null,
             externalId: primaryNumber,
+            trackingNumber: primaryNumber,
+            estimatedDeliveryText: formatEstimatedDeliveryText(
+              ctx.estimatedDeliveryMin,
+              ctx.estimatedDeliveryMax,
+            ),
             actor: null,
             at: shippedAt,
           });
@@ -1088,6 +1118,7 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
               shortText: label,
               href: trackingUrl(tracking.carrier, number),
               externalId: number,
+              trackingNumber: number,
               actor: null,
               at: tracking.shippedTime ?? shippedAt,
             });
