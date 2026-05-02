@@ -59,6 +59,7 @@ import {
   validateEbayImageAttachment,
 } from "@/lib/helpdesk/outbound-attachments";
 import {
+  HELPDESK_QUICK_BAR_MAX_ITEMS,
   type HelpdeskQuickBarItem,
   updateHelpdeskPrefs,
   useHelpdeskPrefs,
@@ -1343,7 +1344,7 @@ function QuickBar({
       onChange(items.filter((existing) => quickBarKey(existing) !== key));
       return;
     }
-    onChange([...items, item].slice(0, 8));
+    onChange([...items, item].slice(0, HELPDESK_QUICK_BAR_MAX_ITEMS));
   }
 
   return (
@@ -1360,11 +1361,11 @@ function QuickBar({
             if (!entry.body) return;
             onPick(fillTemplate(entry.body, ctx));
           }}
-          className="inline-flex h-6 items-center gap-1 rounded-full border border-hairline-strong/70 bg-surface px-2.5 text-[11px] font-medium text-foreground/80 shadow-sm transition-colors hover:border-brand/45 hover:bg-surface-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/30 disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"
+          className="inline-flex h-6 max-w-[16rem] items-center gap-1 rounded-full border border-hairline-strong/70 bg-surface px-2.5 text-[11px] font-medium text-foreground/80 shadow-sm transition-colors hover:border-brand/45 hover:bg-surface-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/30 disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"
           title={entry.available ? entry.label : "Loading template"}
         >
           <Zap className="h-3 w-3 text-brand/80" />
-          {entry.label}
+          <span className="min-w-0 truncate">{entry.label}</span>
         </button>
       ))}
       <button
@@ -1388,7 +1389,7 @@ function QuickBar({
               Quick bar
             </p>
             <span className="text-[10px] text-muted-foreground">
-              {items.length}/8
+              {items.length}/{HELPDESK_QUICK_BAR_MAX_ITEMS}
             </span>
           </div>
           <div className="mb-2">

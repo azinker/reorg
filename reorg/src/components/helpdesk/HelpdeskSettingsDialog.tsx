@@ -23,6 +23,7 @@ import { startTransition, useEffect, useState } from "react";
 import { Settings, X } from "lucide-react";
 
 const STORAGE_KEY = "helpdesk:prefs:v1";
+export const HELPDESK_QUICK_BAR_MAX_ITEMS = 12;
 
 export type HelpdeskLayout = "split" | "list";
 
@@ -169,7 +170,7 @@ function parseQuickBarItems(value: unknown): HelpdeskQuickBarItem[] {
       return null;
     })
     .filter((item): item is HelpdeskQuickBarItem => item !== null)
-    .slice(0, 8);
+    .slice(0, HELPDESK_QUICK_BAR_MAX_ITEMS);
 }
 
 /** Imperative setter for prefs (used by header layout toggle, drag-handle persist). */

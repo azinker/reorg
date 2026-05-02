@@ -150,7 +150,7 @@ export function TemplatePicker({ ctx, onPick, disabled }: TemplatePickerProps) {
       </button>
 
       {open && (
-        <div className="absolute bottom-full left-0 z-30 mb-1 w-[min(42rem,calc(100vw-2rem))] overflow-hidden rounded-md border border-hairline bg-popover text-popover-foreground shadow-2xl shadow-black/30">
+        <div className="absolute bottom-full left-0 z-30 mb-1 w-[min(56rem,calc(100vw-2rem))] overflow-hidden rounded-md border border-hairline bg-popover text-popover-foreground shadow-2xl shadow-black/30">
           <div className="flex items-center gap-2 border-b border-hairline px-2 py-1.5">
             <Search className="h-3 w-3 text-foreground/55" />
             <input
@@ -162,78 +162,83 @@ export function TemplatePicker({ ctx, onPick, disabled }: TemplatePickerProps) {
               className="flex-1 bg-transparent text-xs text-foreground placeholder:text-foreground/55 focus:outline-none"
             />
           </div>
-          <div className="grid max-h-80 grid-cols-[minmax(0,1fr)_16rem] overflow-hidden">
-            <div className="min-h-0 overflow-y-auto py-1">
+          <div
+            className="grid grid-cols-[minmax(0,1fr)_18rem] overflow-hidden"
+            style={{ height: "min(32rem, calc(100vh - 9rem))" }}
+          >
+            <div className="min-h-0 overflow-y-auto overscroll-contain py-1">
               {loading && (
-              <div className="flex items-center justify-center py-6">
-                <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-              </div>
-            )}
-            {!loading && error && (
-              <div className="px-3 py-2 text-xs text-red-700 dark:text-red-300">{error}</div>
-            )}
-            {!loading && !error && filtered.length === 0 && (
-              <div className="px-3 py-3 text-center text-xs text-muted-foreground">
-                {search
-                  ? "No templates match."
+                <div className="flex items-center justify-center py-6">
+                  <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                </div>
+              )}
+              {!loading && error && (
+                <div className="px-3 py-2 text-xs text-red-700 dark:text-red-300">{error}</div>
+              )}
+              {!loading && !error && filtered.length === 0 && (
+                <div className="px-3 py-3 text-center text-xs text-muted-foreground">
+                  {search
+                    ? "No templates match."
                   : "No templates yet — add one in Settings."}
-              </div>
-            )}
-            {!loading &&
-              filtered.map((t) => (
-                <button
-                  key={t.id}
-                  type="button"
-                  onMouseEnter={() => setActiveId(t.id)}
-                  onFocus={() => setActiveId(t.id)}
-                  onClick={() => pickTemplate(t)}
-                  className={cn(
-                    "flex w-full items-start gap-2 px-3 py-2 text-left transition-colors hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand/30 cursor-pointer",
-                    activeTemplate?.id === t.id && "bg-surface-2/80",
-                  )}
-                >
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className="truncate text-xs font-medium text-foreground">
-                        {t.name}
-                      </span>
+                </div>
+              )}
+              {!loading &&
+                filtered.map((t) => (
+                  <button
+                    key={t.id}
+                    type="button"
+                    onMouseEnter={() => setActiveId(t.id)}
+                    onFocus={() => setActiveId(t.id)}
+                    onClick={() => pickTemplate(t)}
+                    className={cn(
+                      "flex w-full items-start gap-2 px-3 py-2.5 text-left transition-colors hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand/30 cursor-pointer",
+                      activeTemplate?.id === t.id && "bg-surface-2/80",
+                    )}
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-start gap-2">
+                        <span className="min-w-0 flex-1 break-words text-[13px] font-semibold leading-4 text-foreground">
+                          {t.name}
+                        </span>
+                        {t.shortcut && (
+                          <code className="shrink-0 rounded bg-surface-2 px-1.5 py-0.5 text-[10px] text-foreground/70">
+                            {t.shortcut}
+                          </code>
+                        )}
+                    </div>
+                    <div className="mt-1 flex flex-wrap items-center gap-1">
                       {t.isShared ? (
-                        <span className="rounded bg-blue-500/20 px-1 text-[9px] uppercase tracking-wider text-blue-700 dark:text-blue-300">
+                        <span className="rounded bg-blue-500/20 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-blue-700 dark:text-blue-300">
                           Shared
                         </span>
                       ) : (
-                        <span className="rounded bg-emerald-500/20 px-1 text-[9px] uppercase tracking-wider text-emerald-700 dark:text-emerald-300">
+                        <span className="rounded bg-emerald-500/20 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-emerald-700 dark:text-emerald-300">
                           Mine
                         </span>
                       )}
                       {t.language && (
-                        <span className="rounded bg-surface-2 px-1 text-[9px] uppercase tracking-wider text-foreground/60">
+                        <span className="rounded bg-surface-2 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-foreground/60">
                           {t.language}
                         </span>
                       )}
                     </div>
-                    <p className="mt-0.5 line-clamp-2 text-[11px] text-foreground/75">
+                    <p className="mt-1 line-clamp-2 text-[11px] leading-4 text-foreground/75">
                       {t.bodyText.slice(0, 120)}
                     </p>
                   </div>
-                  {t.shortcut && (
-                    <code className="shrink-0 rounded bg-surface-2 px-1.5 py-0.5 text-[10px] text-foreground/70">
-                      {t.shortcut}
-                    </code>
-                  )}
                 </button>
               ))}
             </div>
-            <div className="min-h-0 border-l border-hairline bg-card/70 p-3">
+            <div className="flex min-h-0 flex-col border-l border-hairline bg-card/70 p-3">
               <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
                 Preview
               </p>
               {activeTemplate ? (
                 <>
-                  <p className="mt-1 truncate text-xs font-semibold text-foreground">
+                  <p className="mt-1 text-sm font-semibold leading-5 text-foreground">
                     {activeTemplate.name}
                   </p>
-                  <div className="mt-2 max-h-40 overflow-y-auto whitespace-pre-wrap rounded-md border border-hairline bg-surface px-2 py-2 text-[11px] leading-5 text-foreground">
+                  <div className="mt-2 min-h-0 flex-1 overflow-y-auto whitespace-pre-wrap rounded-md border border-hairline bg-surface px-2 py-2 text-[11px] leading-5 text-foreground">
                     {activePreview}
                   </div>
                   {missingSnippets.length > 0 ? (
