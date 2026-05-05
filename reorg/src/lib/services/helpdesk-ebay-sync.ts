@@ -1475,7 +1475,14 @@ async function reconcileMessages(args: ReconcileArgs): Promise<ReconcileResult> 
             // (same digest, same position) or any other row with the
             // same body hash on this ticket (covers cross-digest dupes).
             if (existingExternalIds.has(sub.externalId)) continue;
-            if (existingHashes.has(sub.bodyHash)) continue;
+            // Historical digest subs duplicate earlier turns inside cumulative
+            // envelopes — dedupe by body hash vs rows already on the ticket.
+            // Live subs (`suffix=""` in eBay HTML) are THIS notification's
+            // newest turn and must ALWAYS insert: buyers often repeat short
+            // replies ("Thanks", "Ok", "A+") so hash dedupe would skip them,
+            // leaving only a stripped envelope stub that GET /tickets/[id]
+            // hides — invisible buyer mail.
+            if (!sub.isLive && existingHashes.has(sub.bodyHash)) continue;
 
             const subDirection =
               sub.direction === "inbound"
