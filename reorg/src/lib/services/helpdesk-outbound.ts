@@ -770,15 +770,7 @@ async function sendExternalEmail(
       lastAgentMessageAt: sentAt,
     };
     if (!job.ticket.firstResponseAt) ticketUpdate.firstResponseAt = sentAt;
-    if (job.setStatus) {
-      ticketUpdate.status = job.setStatus;
-      if (job.setStatus === HelpdeskTicketStatus.RESOLVED) {
-        ticketUpdate.resolvedAt = sentAt;
-        ticketUpdate.resolvedById = job.authorUserId;
-      }
-    } else {
-      ticketUpdate.status = HelpdeskTicketStatus.WAITING;
-    }
+    // External email must not bump workflow status (no default WAITING, no resolve).
     await tx.helpdeskTicket.update({
       where: { id: job.ticketId },
       data: ticketUpdate,

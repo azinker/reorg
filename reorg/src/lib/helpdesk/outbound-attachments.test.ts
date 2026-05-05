@@ -3,9 +3,11 @@ import test from "node:test";
 
 import {
   inferEbayImageMimeType,
+  inferOutboundAttachmentMimeType,
   normalizeAttachmentFileName,
   readQueuedHelpdeskAttachments,
   validateEbayImageAttachment,
+  validateOutboundAttachment,
 } from "./outbound-attachments";
 
 test("validateEbayImageAttachment accepts eBay-supported image formats by extension", () => {
@@ -36,6 +38,42 @@ test("validateEbayImageAttachment rejects non-image and oversize files", () => {
       sizeBytes: 13 * 1024 * 1024,
     }) ?? "",
     /too large/,
+  );
+});
+
+test("validateOutboundAttachment accepts PDF only for EXTERNAL mode", () => {
+  assert.equal(
+    validateOutboundAttachment({
+      fileName: "invoice.pdf",
+      mimeType: "application/pdf",
+      sizeBytes: 1024,
+      mode: "EXTERNAL",
+    }),
+    null,
+  );
+  assert.match(
+    validateOutboundAttachment({
+      fileName: "invoice.pdf",
+      mimeType: "application/pdf",
+      sizeBytes: 1024,
+      mode: "REPLY",
+    }) ?? "",
+    /not an eBay-supported image type/,
+  );
+});
+
+test("inferOutboundAttachmentMimeType recognizes PDF when allowed", () => {
+  assert.equal(
+    inferOutboundAttachmentMimeType("doc.pdf", "application/octet-stream", {
+      allowPdf: true,
+    }),
+    "application/pdf",
+  );
+  assert.equal(
+    inferOutboundAttachmentMimeType("doc.pdf", "application/octet-stream", {
+      allowPdf: false,
+    }),
+    "application/octet-stream",
   );
 });
 

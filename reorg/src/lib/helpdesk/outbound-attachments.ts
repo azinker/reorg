@@ -28,6 +28,9 @@ export const EBAY_IMAGE_ATTACHMENT_EXTENSIONS = [
 export const EBAY_IMAGE_ATTACHMENT_ACCEPT =
   "image/jpeg,image/png,image/gif,image/bmp,image/tiff,image/avif,image/heic,image/heif,image/webp,.jpg,.jpeg,.png,.gif,.bmp,.tif,.tiff,.avif,.heic,.heif,.webp";
 
+/** External (Resend) email: images plus PDF; eBay replies stay images-only. */
+export const EXTERNAL_EMAIL_ATTACHMENT_ACCEPT = `${EBAY_IMAGE_ATTACHMENT_ACCEPT},application/pdf,.pdf`;
+
 export const MAX_EBAY_IMAGE_ATTACHMENTS = 5;
 export const MAX_EBAY_IMAGE_ATTACHMENT_BYTES = 12 * 1024 * 1024;
 const EBAY_IMAGE_MIME_SET = new Set<string>(EBAY_IMAGE_ATTACHMENT_MIME_TYPES);
@@ -56,7 +59,7 @@ export function normalizeAttachmentFileName(fileName: string): string {
     .replace(/[\\/:*?"<>|]+/g, "-")
     .replace(/\s+/g, " ")
     .trim();
-  return cleaned.slice(0, 100) || "image";
+  return cleaned.slice(0, 100) || "attachment";
 }
 
 export function inferEbayImageMimeType(fileName: string, declared: string): string {
@@ -108,6 +111,50 @@ export function validateEbayImageAttachment(input: {
     return `${input.fileName} is not an eBay-supported image type. Use JPG, GIF, PNG, BMP, TIFF, AVIF, HEIC, or WEBP.`;
   }
   return null;
+}
+
+export type HelpdeskOutboundAttachmentMode = "REPLY" | "EXTERNAL";
+
+export function inferOutboundAttachmentMimeType(
+  fileName: string,
+  declared: string,
+  options: { allowPdf: boolean },
+): string {
+  if (options.allowPdf) {
+    if (extensionOf(fileName) === ".pdf") return "application/pdf";
+    const normalized = declared.trim().toLowerCase();
+    if (normalized === "application/pdf") return "application/pdf";
+  }
+  return inferEbayImageMimeType(fileName, declared);
+}
+
+/** REPLY: images only (eBay). EXTERNAL: images + PDF for Resend. */
+export function validateOutboundAttachment(input: {
+  fileName: string;
+  mimeType: string;
+  sizeBytes: number;
+  mode: HelpdeskOutboundAttachmentMode;
+}): string | null {
+  const allowPdf = input.mode === "EXTERNAL";
+  const mimeType = inferOutboundAttachmentMimeType(input.fileName, input.mimeType, {
+    allowPdf,
+  });
+  if (allowPdf && mimeType === "application/pdf") {
+    if (input.sizeBytes <= 0) return `${input.fileName} is empty.`;
+    if (input.sizeBytes > MAX_EBAY_IMAGE_ATTACHMENT_BYTES) {
+      return `${input.fileName} is too large. Attachments must be 12 MB or smaller.`;
+    }
+    const ext = extensionOf(input.fileName);
+    if (ext !== ".pdf" && input.mimeType.trim().toLowerCase() !== "application/pdf") {
+      return `${input.fileName} is not a PDF.`;
+    }
+    return null;
+  }
+  return validateEbayImageAttachment({
+    fileName: input.fileName,
+    mimeType,
+    sizeBytes: input.sizeBytes,
+  });
 }
 
 export function isQueuedHelpdeskAttachment(

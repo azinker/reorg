@@ -6,7 +6,8 @@
  * Three modes:
  *   - REPLY    → eBay member message (requires existing buyer thread)
  *   - NOTE     → internal note, never sent externally
- *   - EXTERNAL → email via Resend (agent enters recipient fields)
+ *   - EXTERNAL → email via Resend (agent enters recipient fields); PDF and
+ *     image attachments allowed; sends never change ticket workflow status.
  *
  * Send pipeline:
  *   1. POST /api/helpdesk/tickets/[id]/messages → returns jobId + scheduledAt
@@ -54,9 +55,11 @@ import { QuickActionMenu, QUICK_ACTIONS } from "@/components/helpdesk/QuickActio
 import { fillTemplate, type TemplateContext } from "@/lib/helpdesk/template-fill";
 import {
   EBAY_IMAGE_ATTACHMENT_ACCEPT,
+  EXTERNAL_EMAIL_ATTACHMENT_ACCEPT,
   MAX_EBAY_IMAGE_ATTACHMENTS,
-  inferEbayImageMimeType,
-  validateEbayImageAttachment,
+  inferOutboundAttachmentMimeType,
+  normalizeAttachmentFileName,
+  validateOutboundAttachment,
 } from "@/lib/helpdesk/outbound-attachments";
 import {
   HELPDESK_QUICK_BAR_MAX_ITEMS,
@@ -221,6 +224,10 @@ export function Composer({
   useEffect(() => {
     sendDelaySecondsRef.current = sendDelaySeconds;
   }, [sendDelaySeconds]);
+
+  useEffect(() => {
+    if (mode === "EXTERNAL") setStatusChoice("NONE");
+  }, [mode, ticket.id]);
 
   function updateSendDelaySeconds(value: number) {
     const next = clampNumber(value, SEND_DELAY_MIN, SEND_DELAY_MAX);
@@ -545,21 +552,26 @@ export function Composer({
   function handleAttachmentFiles(fileList: FileList | null) {
     if (!fileList || fileList.length === 0) return;
     if (!canAttachImages) {
-      setError("Image attachments are disabled.");
+      setError("Attachments are disabled.");
       return;
     }
     const incoming = Array.from(fileList);
     if (attachments.length + incoming.length > MAX_EBAY_IMAGE_ATTACHMENTS) {
-      setError(`You can attach up to ${MAX_EBAY_IMAGE_ATTACHMENTS} images.`);
+      setError(`You can attach up to ${MAX_EBAY_IMAGE_ATTACHMENTS} files.`);
       return;
     }
+    const attachmentMode = mode === "EXTERNAL" ? "EXTERNAL" : "REPLY";
     const next: ComposerAttachment[] = [];
     for (const file of incoming) {
-      const mimeType = inferEbayImageMimeType(file.name, file.type);
-      const validation = validateEbayImageAttachment({
-        fileName: file.name,
-        mimeType,
+      const fileName = normalizeAttachmentFileName(file.name);
+      const mimeType = inferOutboundAttachmentMimeType(fileName, file.type, {
+        allowPdf: mode === "EXTERNAL",
+      });
+      const validation = validateOutboundAttachment({
+        fileName,
+        mimeType: file.type,
         sizeBytes: file.size,
+        mode: attachmentMode,
       });
       if (validation) {
         for (const attachment of next) URL.revokeObjectURL(attachment.previewUrl);
@@ -569,7 +581,7 @@ export function Composer({
       next.push({
         id: makeClientId(),
         file,
-        fileName: file.name,
+        fileName,
         mimeType,
         sizeBytes: file.size,
         previewUrl: URL.createObjectURL(file),
@@ -593,7 +605,9 @@ export function Composer({
         bodyText: draftBody,
         sendDelaySeconds: effectiveSendDelaySeconds,
         setStatus:
-          mode === "NOTE" || statusChoice === "NONE" ? undefined : statusChoice,
+          mode === "NOTE" || mode === "EXTERNAL" || statusChoice === "NONE"
+            ? undefined
+            : statusChoice,
         externalTo: mode === "EXTERNAL" ? externalTo : undefined,
         externalCc: mode === "EXTERNAL" ? externalCc : undefined,
         externalBcc: mode === "EXTERNAL" ? externalBcc : undefined,
@@ -680,8 +694,9 @@ export function Composer({
     <div className="mx-5 mt-3 flex items-center gap-2 rounded-md border border-hairline bg-surface px-3 py-2 text-xs text-muted-foreground">
       <AlertTriangle className="h-4 w-4 shrink-0" />
       <span>
-        Archived ticket — sending a reply will un-archive it and move it to
-        Waiting. Notes leave the archive state alone.
+        {mode === "EXTERNAL"
+          ? "Archived ticket — sending external email brings it back to the inbox without changing ticket status."
+          : "Archived ticket — sending a reply will un-archive it and move it to Waiting. Notes leave the archive state alone."}
       </span>
     </div>
   ) : null;
@@ -968,7 +983,7 @@ export function Composer({
         />
       )}
 
-      {/* Textarea */}
+      {/* Draft body */}
       <textarea
         ref={textareaRef}
         value={body}
@@ -992,39 +1007,76 @@ export function Composer({
         className="block w-full resize-none border-0 bg-transparent px-4 py-2 text-sm leading-6 text-foreground placeholder:text-foreground/55 transition-colors focus:bg-background/20 focus:outline-none focus:ring-0 disabled:opacity-50"
       />
 
-      {attachments.length > 0 && (
-        <div className="flex flex-wrap gap-2 border-t border-hairline bg-surface/35 px-4 py-2">
-          {attachments.map((attachment) => (
-            <div
-              key={attachment.id}
-              className="group relative flex items-center gap-2 rounded-md border border-hairline bg-card px-2 py-1.5 text-xs shadow-sm"
-            >
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={attachment.previewUrl}
-                alt=""
-                className="h-9 w-9 rounded border border-hairline object-cover"
-              />
-              <div className="min-w-0 max-w-[12rem]">
-                <p className="truncate font-medium text-foreground">
-                  {attachment.fileName}
-                </p>
-                <p className="text-[10px] text-muted-foreground">
-                  {formatBytes(attachment.sizeBytes)}
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => removeAttachment(attachment.id)}
-                className="inline-flex h-5 w-5 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-surface-2 hover:text-foreground cursor-pointer"
-                title="Remove image"
+      {attachments.some((a) => a.mimeType === "application/pdf") ? (
+        <div className="space-y-2 border-t border-hairline bg-surface/25 px-4 py-3">
+          {attachments
+            .filter((a) => a.mimeType === "application/pdf")
+            .map((attachment) => (
+              <div
+                key={attachment.id}
+                className="overflow-hidden rounded-md border border-hairline bg-card shadow-sm"
               >
-                <X className="h-3 w-3" />
-              </button>
-            </div>
-          ))}
+                <div className="flex items-center gap-2 border-b border-hairline bg-surface/40 px-2 py-1.5">
+                  <span className="min-w-0 flex-1 truncate text-[11px] font-medium text-foreground">
+                    {attachment.fileName}
+                  </span>
+                  <span className="shrink-0 text-[10px] text-muted-foreground">
+                    {formatBytes(attachment.sizeBytes)}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => removeAttachment(attachment.id)}
+                    className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-surface-2 hover:text-foreground cursor-pointer"
+                    title="Remove PDF"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </div>
+                <iframe
+                  title={attachment.fileName}
+                  src={`${attachment.previewUrl}#toolbar=0`}
+                  className="h-52 w-full bg-muted/20"
+                />
+              </div>
+            ))}
         </div>
-      )}
+      ) : null}
+
+      {attachments.some((a) => a.mimeType !== "application/pdf") ? (
+        <div className="flex flex-wrap gap-2 border-t border-hairline bg-surface/35 px-4 py-2">
+          {attachments
+            .filter((a) => a.mimeType !== "application/pdf")
+            .map((attachment) => (
+              <div
+                key={attachment.id}
+                className="group relative flex items-center gap-2 rounded-md border border-hairline bg-card px-2 py-1.5 text-xs shadow-sm"
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={attachment.previewUrl}
+                  alt=""
+                  className="h-9 w-9 rounded border border-hairline object-cover"
+                />
+                <div className="min-w-0 max-w-[12rem]">
+                  <p className="truncate font-medium text-foreground">
+                    {attachment.fileName}
+                  </p>
+                  <p className="text-[10px] text-muted-foreground">
+                    {formatBytes(attachment.sizeBytes)}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => removeAttachment(attachment.id)}
+                  className="inline-flex h-5 w-5 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-surface-2 hover:text-foreground cursor-pointer"
+                  title="Remove image"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </div>
+            ))}
+        </div>
+      ) : null}
 
       {/* Footer: template picker + status selector + send button */}
       <div className="flex flex-wrap items-center gap-2 border-t border-hairline bg-card/80 px-3 py-1.5 text-xs">
@@ -1045,7 +1097,11 @@ export function Composer({
                 <input
                   ref={fileInputRef}
                   type="file"
-                  accept={EBAY_IMAGE_ATTACHMENT_ACCEPT}
+                  accept={
+                    mode === "EXTERNAL"
+                      ? EXTERNAL_EMAIL_ATTACHMENT_ACCEPT
+                      : EBAY_IMAGE_ATTACHMENT_ACCEPT
+                  }
                   multiple
                   className="hidden"
                   onChange={(e) => handleAttachmentFiles(e.currentTarget.files)}
@@ -1059,15 +1115,19 @@ export function Composer({
                   aria-disabled={!attachmentFlagEnabled}
                   onClick={() => {
                     if (!attachmentFlagEnabled) {
-                      setError("Image attachments are disabled in Help Desk Global Settings.");
+                      setError(
+                        "Attachments are disabled in Help Desk Global Settings.",
+                      );
                       return;
                     }
                     fileInputRef.current?.click();
                   }}
                   title={
                     attachmentFlagEnabled
-                      ? "Attach supported images"
-                      : "Outbound image attachments are disabled in Global Settings."
+                      ? mode === "EXTERNAL"
+                        ? "Attach images or PDF"
+                        : "Attach supported images"
+                      : "Outbound attachments are disabled in Global Settings."
                   }
                   className={cn(
                     "inline-flex h-7 items-center gap-1 rounded-md border border-hairline bg-surface px-2 text-xs text-foreground shadow-sm transition-colors hover:border-brand/35 hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer",
@@ -1075,7 +1135,7 @@ export function Composer({
                   )}
                 >
                   <Paperclip className="h-3.5 w-3.5" />
-                  Image
+                  {mode === "EXTERNAL" ? "Attach" : "Image"}
                 </button>
               </>
             )}
@@ -1132,9 +1192,29 @@ export function Composer({
             )}
             Add note
           </button>
+        ) : mode === "EXTERNAL" ? (
+          <button
+            type="button"
+            onClick={handleSubmit}
+            disabled={!canSubmit || modeMeta.disabled}
+            className={cn(
+              "inline-flex h-9 min-w-[10rem] items-center justify-center gap-1.5 rounded-md border border-brand px-5 text-sm font-semibold transition-colors cursor-pointer",
+              canSubmit && !modeMeta.disabled
+                ? "bg-brand text-brand-foreground hover:opacity-90"
+                : "border-hairline bg-surface-2 text-muted-foreground",
+            )}
+            title="Send external email without changing ticket status"
+          >
+            {submitting ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Send className="h-3.5 w-3.5" />
+            )}
+            Send email
+          </button>
         ) : (
           /*
-            Split-button send.
+            Split-button send (eBay reply only).
               - Primary face does the agent's preferred action (defaultSendStatus
                 from prefs, or whatever they picked from the dropdown for THIS
                 send). Default for new accounts is RESOLVED.

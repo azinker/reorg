@@ -1,14 +1,16 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeftRight,
   CheckCircle2,
   ExternalLink,
   FileSearch,
   Loader2,
+  Search,
   Send,
   Store,
+  X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -19,6 +21,8 @@ const PLATFORM_LABEL: Record<EbayPlatform, string> = {
   TT_EBAY: "TT eBay",
 };
 
+const MAX_BATCH = 12;
+
 const STEPS = [
   { id: 1, label: "Route & source", icon: ArrowLeftRight },
   { id: 2, label: "Verify preview", icon: FileSearch },
@@ -26,26 +30,63 @@ const STEPS = [
   { id: 4, label: "Result", icon: CheckCircle2 },
 ] as const;
 
+type SearchHit = {
+  marketplaceListingId: string;
+  masterRowId: string;
+  platformItemId: string;
+  sku: string;
+  title: string | null;
+};
+
+type SelectedListing = SearchHit;
+
+type Summary = {
+  title: string;
+  sourceItemId: string;
+  pictureUrlCount: number;
+  listingSpecificRowCount: number;
+  hasVariations: boolean;
+  variationCount: number;
+};
+
 type PreviewPayload = {
   ok: boolean;
   ack: string;
   errors: string[];
   fees?: unknown;
-  summary: {
-    title: string;
-    sourceItemId: string;
-    pictureUrlCount: number;
-    listingSpecificRowCount: number;
-    hasVariations: boolean;
-    variationCount: number;
-  };
+  summary: Summary;
 };
 
+type PreviewItemRow = {
+  sourceItemId: string;
+  ok: boolean;
+  preview?: PreviewPayload;
+  error?: string;
+};
+
+type ExecuteItemRow = {
+  sourceItemId: string;
+  ok: boolean;
+  result?: { newItemId?: string; summary?: Summary; errors?: string[] };
+  error?: string;
+};
+
+function truncate(s: string, n: number): string {
+  if (s.length <= n) return s;
+  return `${s.slice(0, n - 1)}…`;
+}
+
 export default function ListingClonePage() {
+  const pickerRef = useRef<HTMLDivElement>(null);
   const [currentStep, setCurrentStep] = useState(1);
   const [sourcePlatform, setSourcePlatform] = useState<EbayPlatform>("TPP_EBAY");
   const [targetPlatform, setTargetPlatform] = useState<EbayPlatform>("TT_EBAY");
-  const [sourceItemId, setSourceItemId] = useState("");
+  const [selectedListings, setSelectedListings] = useState<SelectedListing[]>([]);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [searchHits, setSearchHits] = useState<SearchHit[]>([]);
+
   const [skipPictureUpload, setSkipPictureUpload] = useState(false);
   const [itemTypeAspect, setItemTypeAspect] = useState("");
   const [policySourceItemId, setPolicySourceItemId] = useState("");
@@ -55,13 +96,13 @@ export default function ListingClonePage() {
   const [advancedOpen, setAdvancedOpen] = useState(false);
 
   const [previewLoading, setPreviewLoading] = useState(false);
-  const [previewResult, setPreviewResult] = useState<PreviewPayload | null>(null);
+  const [previewItems, setPreviewItems] = useState<PreviewItemRow[] | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
 
   const [executeLoading, setExecuteLoading] = useState(false);
   const [executeError, setExecuteError] = useState<string | null>(null);
   const [confirmedLive, setConfirmedLive] = useState(false);
-  const [newItemId, setNewItemId] = useState<string | null>(null);
+  const [executeItems, setExecuteItems] = useState<ExecuteItemRow[] | null>(null);
 
   const ebayPairsEnabled = true;
 
@@ -74,6 +115,11 @@ export default function ListingClonePage() {
         setTargetPlatform(value);
         setSourcePlatform((prev) => (prev === value ? (value === "TPP_EBAY" ? "TT_EBAY" : "TPP_EBAY") : prev));
       }
+      setSelectedListings([]);
+      setSearchQuery("");
+      setSearchHits([]);
+      setPreviewItems(null);
+      setExecuteItems(null);
     },
     [],
   );
@@ -81,28 +127,79 @@ export default function ListingClonePage() {
   function swapRoute() {
     setSourcePlatform(targetPlatform);
     setTargetPlatform(sourcePlatform);
-    setPreviewResult(null);
+    setSelectedListings([]);
+    setSearchQuery("");
+    setSearchHits([]);
+    setPreviewItems(null);
     setPreviewError(null);
     setExecuteError(null);
-    setNewItemId(null);
+    setExecuteItems(null);
     setConfirmedLive(false);
   }
 
-  const feesSnippet = useMemo(() => {
-    if (!previewResult?.fees) return null;
-    try {
-      return JSON.stringify(previewResult.fees).slice(0, 1400);
-    } catch {
-      return String(previewResult.fees);
+  useEffect(() => {
+    function onPointerDown(e: PointerEvent) {
+      if (!pickerRef.current?.contains(e.target as Node)) {
+        setSearchOpen(false);
+      }
     }
-  }, [previewResult]);
+    document.addEventListener("pointerdown", onPointerDown);
+    return () => document.removeEventListener("pointerdown", onPointerDown);
+  }, []);
+
+  useEffect(() => {
+    const q = searchQuery.trim();
+    if (q.length < 2) {
+      setSearchHits([]);
+      setSearchLoading(false);
+      return;
+    }
+
+    const t = window.setTimeout(async () => {
+      setSearchLoading(true);
+      try {
+        const res = await fetch(
+          `/api/listing-clone/search?q=${encodeURIComponent(q)}&platform=${encodeURIComponent(sourcePlatform)}`,
+        );
+        const json = await res.json().catch(() => ({ data: [] }));
+        setSearchHits(Array.isArray(json.data) ? json.data : []);
+      } catch {
+        setSearchHits([]);
+      } finally {
+        setSearchLoading(false);
+      }
+    }, 320);
+
+    return () => window.clearTimeout(t);
+  }, [searchQuery, sourcePlatform]);
+
+  function toggleHit(hit: SearchHit) {
+    setSelectedListings((prev) => {
+      const exists = prev.some((p) => p.platformItemId === hit.platformItemId);
+      if (exists) {
+        return prev.filter((p) => p.platformItemId !== hit.platformItemId);
+      }
+      if (prev.length >= MAX_BATCH) return prev;
+      return [...prev, hit];
+    });
+  }
+
+  function removeSelected(platformItemId: string) {
+    setSelectedListings((prev) => prev.filter((p) => p.platformItemId !== platformItemId));
+  }
+
+  const publishablePreviewRows = useMemo(
+    () => previewItems?.filter((r) => r.ok) ?? [],
+    [previewItems],
+  );
 
   async function runPreview() {
+    const ids = selectedListings.map((s) => s.platformItemId);
     setPreviewLoading(true);
     setPreviewError(null);
-    setPreviewResult(null);
+    setPreviewItems(null);
     setExecuteError(null);
-    setNewItemId(null);
+    setExecuteItems(null);
     setConfirmedLive(false);
     try {
       const res = await fetch("/api/listing-clone/preview", {
@@ -111,7 +208,7 @@ export default function ListingClonePage() {
         body: JSON.stringify({
           sourcePlatform,
           targetPlatform,
-          sourceItemId: sourceItemId.trim(),
+          sourceItemIds: ids,
           skipPictureUpload,
           itemTypeAspect: itemTypeAspect.trim() || undefined,
           policySourceItemId: policySourceItemId.trim() || undefined,
@@ -124,8 +221,9 @@ export default function ListingClonePage() {
       if (!res.ok) {
         throw new Error(typeof json.error === "string" ? json.error : "Preview failed.");
       }
-      if (!json.data) throw new Error("Invalid preview response.");
-      setPreviewResult(json.data as PreviewPayload);
+      const items = json.data?.items as PreviewItemRow[] | undefined;
+      if (!Array.isArray(items)) throw new Error("Invalid preview response.");
+      setPreviewItems(items);
       setCurrentStep(2);
     } catch (e) {
       setPreviewError(e instanceof Error ? e.message : "Preview failed.");
@@ -136,9 +234,12 @@ export default function ListingClonePage() {
 
   async function runExecute() {
     if (!confirmedLive) return;
+    const ids = publishablePreviewRows.map((r) => r.sourceItemId);
+    if (ids.length === 0) return;
+
     setExecuteLoading(true);
     setExecuteError(null);
-    setNewItemId(null);
+    setExecuteItems(null);
     try {
       const res = await fetch("/api/listing-clone/execute", {
         method: "POST",
@@ -146,7 +247,7 @@ export default function ListingClonePage() {
         body: JSON.stringify({
           sourcePlatform,
           targetPlatform,
-          sourceItemId: sourceItemId.trim(),
+          sourceItemIds: ids,
           confirmedLivePush: true,
           skipPictureUpload,
           itemTypeAspect: itemTypeAspect.trim() || undefined,
@@ -160,8 +261,8 @@ export default function ListingClonePage() {
       if (!res.ok) {
         throw new Error(typeof json.error === "string" ? json.error : "Publish failed.");
       }
-      const itemId = json.data?.newItemId as string | undefined;
-      setNewItemId(itemId ?? null);
+      const items = json.data?.items as ExecuteItemRow[] | undefined;
+      setExecuteItems(Array.isArray(items) ? items : []);
       setCurrentStep(4);
     } catch (e) {
       setExecuteError(e instanceof Error ? e.message : "Publish failed.");
@@ -170,10 +271,8 @@ export default function ListingClonePage() {
     }
   }
 
-  const listingUrl =
-    newItemId != null && newItemId !== ""
-      ? `https://www.ebay.com/itm/${newItemId}`
-      : null;
+  const previewFailCount = previewItems ? previewItems.filter((r) => !r.ok).length : 0;
+  const previewOkCount = previewItems ? previewItems.filter((r) => r.ok).length : 0;
 
   return (
     <div className="p-4 sm:p-6">
@@ -188,9 +287,10 @@ export default function ListingClonePage() {
         className="mb-6 rounded-lg border border-amber-500/35 bg-amber-500/10 px-4 py-3 text-sm text-amber-100"
         role="status"
       >
-        This creates a <strong className="font-semibold text-foreground">new listing</strong> on the
-        destination account (insertion fees may apply). It never deletes or modifies the source
-        listing. Publishing respects global and per-store write locks, staging blocks, and the same{" "}
+        This creates <strong className="font-semibold text-foreground">new listings</strong> on the
+        destination account (insertion fees may apply). It never deletes or modifies source listings.
+        Batch runs process up to {MAX_BATCH} parent listings sequentially (large batches may take
+        several minutes). Publishing respects global and per-store write locks and the same{" "}
         <strong className="font-semibold text-foreground">live push</strong> gate as Catalog.
       </div>
 
@@ -343,26 +443,109 @@ export default function ListingClonePage() {
 
         {currentStep === 1 && (
           <div className="space-y-6">
-            <div>
-              <label htmlFor="source-item-id" className="text-sm font-medium text-foreground">
-                Source Item ID
+            <div ref={pickerRef} className="relative max-w-xl space-y-3">
+              <label htmlFor="listing-search" className="text-sm font-medium text-foreground">
+                Source listings ({PLATFORM_LABEL[sourcePlatform]})
               </label>
-              <input
-                id="source-item-id"
-                type="text"
-                inputMode="numeric"
-                pattern="\d*"
-                placeholder="e.g. 204226527330"
-                value={sourceItemId}
-                onChange={(e) => setSourceItemId(e.target.value.replace(/\D/g, ""))}
-                className={cn(
-                  "mt-2 w-full max-w-md rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground",
-                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                )}
-              />
-              <p className="mt-1 text-xs text-muted-foreground">
-                Numeric eBay Item ID from <strong>{PLATFORM_LABEL[sourcePlatform]}</strong>.
+              <div className="relative">
+                <Search
+                  className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
+                  aria-hidden
+                />
+                <input
+                  id="listing-search"
+                  type="search"
+                  autoComplete="off"
+                  placeholder="Search SKU, title, or Item ID (multi-word narrows results)"
+                  value={searchQuery}
+                  onChange={(e) => {
+                    setSearchQuery(e.target.value);
+                    setSearchOpen(true);
+                  }}
+                  onFocus={() => setSearchOpen(true)}
+                  className={cn(
+                    "w-full rounded-lg border border-border bg-background py-2.5 pl-10 pr-3 text-sm text-foreground",
+                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                  )}
+                />
+              </div>
+
+              {searchOpen && (searchLoading || searchHits.length > 0 || searchQuery.trim().length >= 2) && (
+                <div
+                  className={cn(
+                    "absolute left-0 right-0 top-full z-50 mt-1 max-h-56 overflow-auto rounded-md border border-border bg-popover shadow-md",
+                  )}
+                  role="listbox"
+                  aria-label="Matching listings"
+                >
+                  {searchLoading && (
+                    <div className="flex items-center gap-2 px-3 py-2 text-xs text-muted-foreground">
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+                      Searching…
+                    </div>
+                  )}
+                  {!searchLoading &&
+                    searchHits.length === 0 &&
+                    searchQuery.trim().length >= 2 && (
+                      <div className="px-3 py-2 text-xs text-muted-foreground">No matches.</div>
+                    )}
+                  {!searchLoading &&
+                    searchHits.map((hit) => {
+                      const selected = selectedListings.some(
+                        (s) => s.platformItemId === hit.platformItemId,
+                      );
+                      return (
+                        <button
+                          key={hit.marketplaceListingId}
+                          type="button"
+                          role="option"
+                          aria-selected={selected}
+                          onClick={() => toggleHit(hit)}
+                          className={cn(
+                            "flex w-full cursor-pointer flex-col gap-0.5 border-b border-border px-3 py-2 text-left text-sm last:border-b-0",
+                            "hover:bg-muted/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+                            selected && "bg-primary/15",
+                          )}
+                        >
+                          <span className="font-medium text-foreground">
+                            {truncate(hit.title ?? "(no title)", 72)}
+                          </span>
+                          <span className="text-xs text-muted-foreground">
+                            SKU {hit.sku} · Item {hit.platformItemId}
+                          </span>
+                        </button>
+                      );
+                    })}
+                </div>
+              )}
+
+              <p className="text-xs text-muted-foreground">
+                Pick one or many parent listings (max {MAX_BATCH}). Words are treated as AND filters
+                across SKU, title, and Item ID.
               </p>
+
+              {selectedListings.length > 0 && (
+                <div className="flex flex-wrap gap-2 pt-1">
+                  {selectedListings.map((s) => (
+                    <span
+                      key={s.platformItemId}
+                      className="inline-flex max-w-full items-center gap-1 rounded-full border border-border bg-muted/50 px-2.5 py-1 text-xs text-foreground"
+                    >
+                      <span className="truncate" title={`${s.sku} · ${s.title ?? ""}`}>
+                        {s.sku}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => removeSelected(s.platformItemId)}
+                        className="cursor-pointer rounded p-0.5 text-muted-foreground hover:text-foreground"
+                        aria-label={`Remove ${s.sku}`}
+                      >
+                        <X className="h-3.5 w-3.5" aria-hidden />
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              )}
             </div>
 
             <label className="flex cursor-pointer items-center gap-2 text-sm text-foreground">
@@ -474,24 +657,24 @@ export default function ListingClonePage() {
             <div className="flex flex-wrap gap-3">
               <button
                 type="button"
-                disabled={previewLoading || sourceItemId.trim().length < 10}
+                disabled={previewLoading || selectedListings.length === 0}
                 onClick={() => void runPreview()}
                 className={cn(
                   "inline-flex cursor-pointer items-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground",
                   "hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
-                  (previewLoading || sourceItemId.trim().length < 10) &&
+                  (previewLoading || selectedListings.length === 0) &&
                     "cursor-not-allowed opacity-50",
                 )}
               >
                 {previewLoading ? (
                   <>
                     <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
-                    Running verify…
+                    Running verify ({selectedListings.length})…
                   </>
                 ) : (
                   <>
                     <FileSearch className="h-4 w-4" aria-hidden />
-                    Run verify preview
+                    Run verify preview ({selectedListings.length})
                   </>
                 )}
               </button>
@@ -501,59 +684,60 @@ export default function ListingClonePage() {
 
         {currentStep === 2 && (
           <div className="space-y-4">
-            {!previewResult ? (
+            {!previewItems ? (
               <p className="text-sm text-muted-foreground">
                 No preview yet. Go back to step 1 and run verify.
               </p>
             ) : (
               <>
-                <div className="rounded-lg border border-green-500/30 bg-green-500/10 px-4 py-3 text-sm text-green-100">
-                  VerifyAck: <strong className="text-foreground">{previewResult.ack}</strong>
+                <div
+                  className={cn(
+                    "rounded-lg border px-4 py-3 text-sm",
+                    previewFailCount === 0
+                      ? "border-green-500/30 bg-green-500/10 text-green-100"
+                      : "border-amber-500/35 bg-amber-500/10 text-amber-100",
+                  )}
+                >
+                  {previewOkCount} passed
+                  {previewFailCount > 0 ? ` · ${previewFailCount} failed` : ""}.
+                  {previewFailCount > 0 &&
+                    " Only listings that passed verify can be published; adjust selection and re-run preview if needed."}
                 </div>
-                <dl className="grid gap-2 text-sm">
-                  <div className="flex flex-wrap gap-2">
-                    <dt className="text-muted-foreground">Title</dt>
-                    <dd className="font-medium text-foreground">{previewResult.summary.title}</dd>
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    <dt className="text-muted-foreground">Variations</dt>
-                    <dd className="text-foreground">
-                      {previewResult.summary.hasVariations
-                        ? `${previewResult.summary.variationCount} SKU(s)`
-                        : "Single SKU"}
-                    </dd>
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    <dt className="text-muted-foreground">Pictures</dt>
-                    <dd className="text-foreground">{previewResult.summary.pictureUrlCount}</dd>
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    <dt className="text-muted-foreground">Listing specifics rows</dt>
-                    <dd className="text-foreground">
-                      {previewResult.summary.listingSpecificRowCount}
-                    </dd>
-                  </div>
-                </dl>
-                {previewResult.errors.length > 0 && (
-                  <div className="rounded-md border border-amber-500/35 bg-amber-500/10 px-4 py-3 text-sm">
-                    <p className="font-medium text-foreground">Warnings / messages</p>
-                    <ul className="mt-2 list-disc space-y-1 pl-5 text-muted-foreground">
-                      {previewResult.errors.map((msg, i) => (
-                        <li key={i}>{msg}</li>
+
+                <div className="overflow-x-auto rounded-md border border-border">
+                  <table className="w-full min-w-[520px] text-left text-sm">
+                    <thead className="border-b border-border bg-muted/40 text-xs uppercase text-muted-foreground">
+                      <tr>
+                        <th className="px-3 py-2 font-medium">Item ID</th>
+                        <th className="px-3 py-2 font-medium">Title</th>
+                        <th className="px-3 py-2 font-medium">Status</th>
+                        <th className="px-3 py-2 font-medium">Ack</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {previewItems.map((row) => (
+                        <tr key={row.sourceItemId} className="border-b border-border last:border-b-0">
+                          <td className="whitespace-nowrap px-3 py-2 font-mono text-xs">
+                            {row.sourceItemId}
+                          </td>
+                          <td className="max-w-[240px] px-3 py-2 text-muted-foreground">
+                            {truncate(row.preview?.summary.title ?? "—", 64)}
+                          </td>
+                          <td className="px-3 py-2">
+                            {row.ok ? (
+                              <span className="text-green-600 dark:text-green-400">OK</span>
+                            ) : (
+                              <span className="text-red-400">Failed</span>
+                            )}
+                          </td>
+                          <td className="px-3 py-2 text-xs text-muted-foreground">
+                            {row.ok ? row.preview?.ack : row.error ?? "—"}
+                          </td>
+                        </tr>
                       ))}
-                    </ul>
-                  </div>
-                )}
-                {feesSnippet && (
-                  <details className="rounded-md border border-border bg-muted/30 px-4 py-3 text-xs">
-                    <summary className="cursor-pointer font-medium text-foreground">
-                      Fees snippet (truncated)
-                    </summary>
-                    <pre className="mt-2 overflow-x-auto whitespace-pre-wrap text-muted-foreground">
-                      {feesSnippet}
-                    </pre>
-                  </details>
-                )}
+                    </tbody>
+                  </table>
+                </div>
               </>
             )}
             <div className="flex flex-wrap gap-3 pt-4">
@@ -569,15 +753,16 @@ export default function ListingClonePage() {
               </button>
               <button
                 type="button"
-                disabled={!previewResult}
+                disabled={!previewItems || publishablePreviewRows.length === 0}
                 onClick={() => setCurrentStep(3)}
                 className={cn(
                   "cursor-pointer rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90",
                   "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                  !previewResult && "cursor-not-allowed opacity-50",
+                  (!previewItems || publishablePreviewRows.length === 0) &&
+                    "cursor-not-allowed opacity-50",
                 )}
               >
-                Continue to publish
+                Continue to publish ({publishablePreviewRows.length})
               </button>
             </div>
           </div>
@@ -585,154 +770,187 @@ export default function ListingClonePage() {
 
         {currentStep === 3 && (
           <div className="space-y-6">
-            {!previewResult ? (
+            {!previewItems || publishablePreviewRows.length === 0 ? (
               <p className="text-sm text-muted-foreground">
-                No verify preview loaded. Use step 1 to run verify, then continue from step 2.
+                No verified listings to publish. Go back and fix preview failures or pick different
+                listings.
               </p>
             ) : (
               <>
-            <div className="rounded-lg border border-border bg-muted/30 px-4 py-4 text-sm text-muted-foreground">
-              <p className="font-medium text-foreground">Summary</p>
-              <ul className="mt-2 list-disc space-y-1 pl-5">
-                <li>
-                  Copy from{" "}
-                  <strong className="text-foreground">{PLATFORM_LABEL[sourcePlatform]}</strong> Item{" "}
-                  <strong className="text-foreground">{sourceItemId.trim() || "—"}</strong>
-                </li>
-                <li>
-                  Publish on{" "}
-                  <strong className="text-foreground">{PLATFORM_LABEL[targetPlatform]}</strong>
-                </li>
-                <li>
-                  Title preview:{" "}
-                  <strong className="text-foreground">{previewResult.summary.title}</strong>
-                </li>
-              </ul>
-            </div>
+                <div className="rounded-lg border border-border bg-muted/30 px-4 py-4 text-sm text-muted-foreground">
+                  <p className="font-medium text-foreground">Summary</p>
+                  <ul className="mt-2 list-disc space-y-1 pl-5">
+                    <li>
+                      Publish{" "}
+                      <strong className="text-foreground">{publishablePreviewRows.length}</strong>{" "}
+                      listing(s) from{" "}
+                      <strong className="text-foreground">{PLATFORM_LABEL[sourcePlatform]}</strong>{" "}
+                      →{" "}
+                      <strong className="text-foreground">{PLATFORM_LABEL[targetPlatform]}</strong>
+                    </li>
+                    {previewFailCount > 0 && (
+                      <li className="text-amber-200">
+                        Skipping {previewFailCount} listing(s) that did not pass verify.
+                      </li>
+                    )}
+                  </ul>
+                </div>
 
-            <label className="flex cursor-pointer items-start gap-3 text-sm text-foreground">
-              <input
-                type="checkbox"
-                checked={confirmedLive}
-                onChange={(e) => setConfirmedLive(e.target.checked)}
-                className="mt-1 cursor-pointer rounded border-border"
-              />
-              <span>
-                I confirm I want to create this listing live on{" "}
-                <strong>{PLATFORM_LABEL[targetPlatform]}</strong>. I understand insertion fees may
-                apply, and that this uses the same live-push approval gate as Catalog changes.
-              </span>
-            </label>
+                <label className="flex cursor-pointer items-start gap-3 text-sm text-foreground">
+                  <input
+                    type="checkbox"
+                    checked={confirmedLive}
+                    onChange={(e) => setConfirmedLive(e.target.checked)}
+                    className="mt-1 cursor-pointer rounded border-border"
+                  />
+                  <span>
+                    I confirm I want to create these <strong>{publishablePreviewRows.length}</strong>{" "}
+                    listing(s) live on <strong>{PLATFORM_LABEL[targetPlatform]}</strong>. I understand
+                    insertion fees may apply, and that this uses the same live-push approval gate as
+                    Catalog changes.
+                  </span>
+                </label>
 
-            {executeError && (
-              <div className="rounded-md border border-red-500/40 bg-red-500/10 px-4 py-3 text-sm text-red-200">
-                {executeError}
-              </div>
-            )}
+                {executeError && (
+                  <div className="rounded-md border border-red-500/40 bg-red-500/10 px-4 py-3 text-sm text-red-200">
+                    {executeError}
+                  </div>
+                )}
 
-            <div className="flex flex-wrap gap-3">
-              <button
-                type="button"
-                onClick={() => setCurrentStep(2)}
-                className={cn(
-                  "cursor-pointer rounded-lg border border-border px-4 py-2 text-sm font-medium hover:bg-muted",
-                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                )}
-              >
-                Back
-              </button>
-              <button
-                type="button"
-                disabled={executeLoading || !confirmedLive || !previewResult}
-                onClick={() => void runExecute()}
-                className={cn(
-                  "inline-flex cursor-pointer items-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground",
-                  "hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                  (executeLoading || !confirmedLive || !previewResult) &&
-                    "cursor-not-allowed opacity-50",
-                )}
-              >
-                {executeLoading ? (
-                  <>
-                    <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
-                    Publishing…
-                  </>
-                ) : (
-                  <>
-                    <Send className="h-4 w-4" aria-hidden />
-                    Publish listing
-                  </>
-                )}
-              </button>
-            </div>
+                <div className="flex flex-wrap gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setCurrentStep(2)}
+                    className={cn(
+                      "cursor-pointer rounded-lg border border-border px-4 py-2 text-sm font-medium hover:bg-muted",
+                      "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                    )}
+                  >
+                    Back
+                  </button>
+                  <button
+                    type="button"
+                    disabled={
+                      executeLoading || !confirmedLive || publishablePreviewRows.length === 0
+                    }
+                    onClick={() => void runExecute()}
+                    className={cn(
+                      "inline-flex cursor-pointer items-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground",
+                      "hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                      (executeLoading ||
+                        !confirmedLive ||
+                        publishablePreviewRows.length === 0) &&
+                        "cursor-not-allowed opacity-50",
+                    )}
+                  >
+                    {executeLoading ? (
+                      <>
+                        <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+                        Publishing…
+                      </>
+                    ) : (
+                      <>
+                        <Send className="h-4 w-4" aria-hidden />
+                        Publish {publishablePreviewRows.length} listing(s)
+                      </>
+                    )}
+                  </button>
+                </div>
               </>
             )}
           </div>
         )}
 
-        {currentStep === 4 && (
+        {currentStep === 4 && executeItems && (
           <div className="space-y-4">
             <div className="rounded-lg border border-green-500/35 bg-green-500/10 px-4 py-4 text-sm text-green-100">
-              Listing publish finished.
-              {newItemId ? (
+              Batch publish finished:{" "}
+              <strong className="text-foreground">
+                {executeItems.filter((i) => i.ok).length}
+              </strong>{" "}
+              succeeded
+              {executeItems.some((i) => !i.ok) && (
                 <>
-                  {" "}
-                  New Item ID:{" "}
-                  <strong className="font-mono text-foreground">{newItemId}</strong>
+                  ,{" "}
+                  <strong className="text-foreground">
+                    {executeItems.filter((i) => !i.ok).length}
+                  </strong>{" "}
+                  failed
                 </>
-              ) : (
-                <span className="text-muted-foreground"> Item ID not returned — check audit logs.</span>
               )}
+              .
             </div>
-            {listingUrl && (
-              <div className="flex flex-wrap gap-3">
-                <a
-                  href={listingUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className={cn(
-                    "inline-flex cursor-pointer items-center gap-2 rounded-lg border border-border px-4 py-2 text-sm font-medium text-foreground hover:bg-muted",
-                  )}
-                >
-                  <ExternalLink className="h-4 w-4" aria-hidden />
-                  Open on eBay
-                </a>
-                <button
-                  type="button"
-                  onClick={() =>
-                    newItemId &&
-                    void navigator.clipboard.writeText(newItemId).catch(() => {})
-                  }
-                  disabled={!newItemId}
-                  className={cn(
-                    "cursor-pointer rounded-lg border border-border px-4 py-2 text-sm font-medium hover:bg-muted",
-                    !newItemId && "cursor-not-allowed opacity-50",
-                  )}
-                >
-                  Copy Item ID
-                </button>
-              </div>
-            )}
+
+            <div className="overflow-x-auto rounded-md border border-border">
+              <table className="w-full min-w-[560px] text-left text-sm">
+                <thead className="border-b border-border bg-muted/40 text-xs uppercase text-muted-foreground">
+                  <tr>
+                    <th className="px-3 py-2 font-medium">Source Item ID</th>
+                    <th className="px-3 py-2 font-medium">
+                      New listing ({PLATFORM_LABEL[targetPlatform]})
+                    </th>
+                    <th className="px-3 py-2 font-medium">Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {executeItems.map((row) => (
+                    <tr key={row.sourceItemId} className="border-b border-border last:border-b-0">
+                      <td className="whitespace-nowrap px-3 py-2 font-mono text-xs">
+                        {row.sourceItemId}
+                      </td>
+                      <td className="px-3 py-2">
+                        {row.ok && row.result?.newItemId ? (
+                          <a
+                            href={`https://www.ebay.com/itm/${row.result.newItemId}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex cursor-pointer items-center gap-1 font-mono text-xs text-primary underline-offset-4 hover:underline"
+                          >
+                            {row.result.newItemId}
+                            <ExternalLink className="h-3 w-3 shrink-0" aria-hidden />
+                          </a>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">
+                            {row.error ?? "—"}
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-3 py-2 text-xs">
+                        {row.ok ? (
+                          <span className="text-green-600 dark:text-green-400">OK</span>
+                        ) : (
+                          <span className="text-red-400">Failed</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
             <p className="text-sm text-muted-foreground">
               Run <strong className="text-foreground">Sync</strong> for{" "}
-              {PLATFORM_LABEL[targetPlatform]} when you want this listing in the main catalog grid.
+              {PLATFORM_LABEL[targetPlatform]} when you want these listings in the main catalog grid.
             </p>
             <button
               type="button"
               onClick={() => {
                 setCurrentStep(1);
-                setPreviewResult(null);
+                setPreviewItems(null);
                 setPreviewError(null);
                 setExecuteError(null);
+                setExecuteItems(null);
                 setConfirmedLive(false);
-                setNewItemId(null);
+                setSelectedListings([]);
+                setSearchQuery("");
+                setSearchHits([]);
               }}
               className={cn(
                 "cursor-pointer rounded-lg bg-muted px-4 py-2 text-sm font-medium text-foreground hover:bg-muted/80",
                 "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
               )}
             >
-              Clone another
+              Clone another batch
             </button>
           </div>
         )}

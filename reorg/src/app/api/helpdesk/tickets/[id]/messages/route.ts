@@ -27,9 +27,9 @@ import {
 } from "@/lib/helpdesk/mentions";
 import {
   MAX_EBAY_IMAGE_ATTACHMENTS,
-  inferEbayImageMimeType,
+  inferOutboundAttachmentMimeType,
   normalizeAttachmentFileName,
-  validateEbayImageAttachment,
+  validateOutboundAttachment,
   type QueuedHelpdeskAttachment,
 } from "@/lib/helpdesk/outbound-attachments";
 import {
@@ -136,16 +136,15 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     ticket.isArchived &&
     parsed.data.composerMode !== HelpdeskComposerMode.NOTE;
   if (wasArchived) {
-    // Default to WAITING when the agent didn't pick a status explicitly.
-    // The typical archived outbound path is "I want to send the buyer a
-    // proactive message" — we're now waiting on the buyer to reply, which
-    // is exactly WAITING. If the agent explicitly picks RESOLVED we honor
-    // that; the worker will re-apply setStatus after the send succeeds but
-    // writing it now makes the inbox reflect the change immediately.
+    // External email never moves workflow status — only clear archive so the
+    // ticket is visible again. eBay replies default to WAITING when the agent
+    // didn't pick an explicit status (REPLY-only behaviour).
     const unarchiveStatus =
-      parsed.data.setStatus === "RESOLVED"
-        ? HelpdeskTicketStatus.RESOLVED
-        : HelpdeskTicketStatus.WAITING;
+      parsed.data.composerMode === HelpdeskComposerMode.EXTERNAL
+        ? ticket.status
+        : parsed.data.setStatus === "RESOLVED"
+          ? HelpdeskTicketStatus.RESOLVED
+          : HelpdeskTicketStatus.WAITING;
     await db.helpdeskTicket.update({
       where: { id },
       data: {
@@ -218,11 +217,13 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
   // Outbound paths: enqueue with send delay.
   const scheduledAt = new Date(Date.now() + parsed.data.sendDelaySeconds * 1000);
   const setStatus =
-    parsed.data.setStatus === "RESOLVED"
-      ? HelpdeskTicketStatus.RESOLVED
-      : parsed.data.setStatus === "WAITING"
-        ? HelpdeskTicketStatus.WAITING
-        : null;
+    parsed.data.composerMode === HelpdeskComposerMode.EXTERNAL
+      ? null
+      : parsed.data.setStatus === "RESOLVED"
+        ? HelpdeskTicketStatus.RESOLVED
+        : parsed.data.setStatus === "WAITING"
+          ? HelpdeskTicketStatus.WAITING
+          : null;
 
   // Pre-flight visibility for the agent: if a feature flag is off we still
   // accept the job (the worker will mark it CANCELED) — the response includes
@@ -335,18 +336,22 @@ async function queueAttachmentsOrResponse(args: {
   }
   if (args.files.length > MAX_EBAY_IMAGE_ATTACHMENTS) {
     return NextResponse.json(
-      { error: `You can attach up to ${MAX_EBAY_IMAGE_ATTACHMENTS} images.` },
+      { error: `You can attach up to ${MAX_EBAY_IMAGE_ATTACHMENTS} files.` },
       { status: 400 },
     );
   }
 
+  const attachmentMode = args.composerMode === "EXTERNAL" ? "EXTERNAL" : "REPLY";
   const validated = args.files.map((file) => {
     const fileName = normalizeAttachmentFileName(file.name);
-    const mimeType = inferEbayImageMimeType(fileName, file.type);
-    const validation = validateEbayImageAttachment({
+    const mimeType = inferOutboundAttachmentMimeType(fileName, file.type, {
+      allowPdf: attachmentMode === "EXTERNAL",
+    });
+    const validation = validateOutboundAttachment({
       fileName,
-      mimeType,
+      mimeType: file.type,
       sizeBytes: file.size,
+      mode: attachmentMode,
     });
     return { file, fileName, mimeType, validation };
   });
