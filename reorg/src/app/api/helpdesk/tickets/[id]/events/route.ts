@@ -397,8 +397,8 @@ function systemTicketTimelineText(args: {
     case SYSTEM_MESSAGE_TYPES.CASE_ON_HOLD:
       return {
         action: "EBAY_CASE_ON_HOLD",
-        text: "eBay Placed Case On Hold",
-        shortText: "Case On Hold",
+        text: "eBay Put Case On Hold",
+        shortText: "Case Put On Hold",
       };
     case SYSTEM_MESSAGE_TYPES.CASE_CLOSED:
       return {
@@ -481,7 +481,7 @@ function compactTimelineLabel(action: string, text: string): string {
     case "EBAY_CASE_OPENED":
       return /return/i.test(text) ? "Buyer Opened Return" : "Buyer Opened Case";
     case "EBAY_CASE_ON_HOLD":
-      return "Case On Hold";
+      return "Case Put On Hold";
     case "EBAY_CASE_CLOSED":
       return /buyer/i.test(text) ? "Buyer Closed Case" : "Case Closed";
     case "EBAY_RETURN_OPENED":
@@ -541,9 +541,9 @@ const EBAY_DATE_MONTHS: Record<string, number> = {
 
 function parseEbayDateOnly(value: string | null | undefined): string | null {
   if (!value) return null;
-  const match = /^([A-Za-z]{3})\s+(\d{1,2}),\s+(\d{4})$/.exec(value.trim());
+  const match = /^([A-Za-z]+)\s+(\d{1,2}),\s+(\d{4})$/.exec(value.trim());
   if (!match) return null;
-  const month = EBAY_DATE_MONTHS[match[1]!.toLowerCase()];
+  const month = EBAY_DATE_MONTHS[match[1]!.slice(0, 3).toLowerCase()];
   if (month == null) return null;
   const day = Number(match[2]);
   const year = Number(match[3]);
@@ -599,6 +599,8 @@ function extractEbayRequestContext(args: {
   longCaseLabel: string;
   shortCaseLabel: string;
   openedAt: string | null;
+  holdUntil: string | null;
+  isOnHold: boolean;
   isDeliveredUpdate: boolean;
   isClosed: boolean;
   closedByBuyer: boolean;
@@ -619,6 +621,14 @@ function extractEbayRequestContext(args: {
     /(?:Request|Case)\s+opened:?\s+([A-Za-z]{3}\s+\d{1,2},\s+\d{4})/i.exec(
       haystack,
     )?.[1] ?? null;
+  const isOnHold =
+    /case\s+(?:is|was)\s+(?:placed\s+)?on\s+hold|placed\s+on\s+hold\s+temporarily|on\s+hold\s+temporarily/i.test(
+      haystack,
+    );
+  const holdUntil =
+    /on\s+hold\s+until\s+([A-Za-z]+\s+\d{1,2},\s+\d{4})/i.exec(haystack)?.[1] ??
+    /update\s+by\s+([A-Za-z]+\s+\d{1,2},\s+\d{4})/i.exec(haystack)?.[1] ??
+    null;
   const isInr =
     /ItemNotReceived/i.test(args.bodyText ?? "") ||
     /item\s+not\s+received|not\s+received\s+request|hasn'?t\s+arrived/i.test(haystack) ||
@@ -644,8 +654,9 @@ function extractEbayRequestContext(args: {
       haystack,
     );
   const isClosed =
-    closedByBuyer ||
-    /case\s+closed|case\s+is\s+now\s+closed|request\s+was\s+closed/i.test(haystack);
+    !isOnHold &&
+    (closedByBuyer ||
+      /case\s+closed|case\s+is\s+now\s+closed|request\s+was\s+closed/i.test(haystack));
 
   return {
     caseId,
@@ -657,6 +668,8 @@ function extractEbayRequestContext(args: {
         : "Case",
     shortCaseLabel: isInr ? "INR Case" : isReturn ? "Return Case" : "Case",
     openedAt: parseEbayDateOnly(openedDate),
+    holdUntil: parseEbayDateOnly(holdUntil),
+    isOnHold,
     isDeliveredUpdate,
     isClosed,
     closedByBuyer,
@@ -681,12 +694,28 @@ function systemTicketTimelineEvents(args: {
     args.bodyText,
   )}`;
   const isOpenNotice =
-    (!ctx.isClosed && Boolean(ctx.openedAt)) ||
+    (!ctx.isClosed && !ctx.isOnHold && Boolean(ctx.openedAt)) ||
     (!ctx.isClosed &&
+      !ctx.isOnHold &&
       !ctx.isDeliveredUpdate &&
       /opened|item\s+not\s+received\s+request|hasn'?t\s+arrived/i.test(
         openNoticeHaystack,
       ));
+
+  if (ctx.caseId && ctx.isOnHold) {
+    events.push({
+      id: `related-case-hold-${baseId}-${ctx.caseId}`,
+      type: "system",
+      action: "EBAY_CASE_ON_HOLD",
+      kind: "case",
+      text: `eBay Put ${ctx.longCaseLabel} #${ctx.caseId} On Hold`,
+      shortText: "Case Put On Hold",
+      href: ctx.href,
+      externalId: ctx.caseId,
+      actor: null,
+      at: args.at,
+    });
+  }
 
   if (ctx.caseId && isOpenNotice) {
     events.push({
@@ -699,7 +728,7 @@ function systemTicketTimelineEvents(args: {
       href: ctx.href,
       externalId: ctx.caseId,
       actor: null,
-      at: args.at,
+      at: ctx.openedAt ?? args.at,
     });
   }
 
@@ -767,9 +796,16 @@ function dedupeTimelineEvents(events: TimelineEvent[]): TimelineEvent[] {
     const day = Number.isFinite(atMs)
       ? new Date(atMs).toISOString().slice(0, 10)
       : "unknown-day";
-    const key = event.externalId
-      ? `${event.kind}|${event.action}|${event.externalId}|${day}`
-      : `${event.kind}|${event.action}|${event.text}|${minute}`;
+    const isCaseOpen =
+      event.externalId &&
+      (event.action === "EBAY_CASE_OPENED" ||
+        event.action === "EBAY_ITEM_NOT_RECEIVED_CASE" ||
+        event.action === "EBAY_RETURN_OPENED");
+    const key = isCaseOpen
+      ? `${event.kind}|case-open|${event.externalId}`
+      : event.externalId
+        ? `${event.kind}|${event.action}|${event.externalId}|${day}`
+        : `${event.kind}|${event.action}|${event.text}|${minute}`;
     if (seen.has(key)) continue;
     seen.add(key);
     out.push(event);

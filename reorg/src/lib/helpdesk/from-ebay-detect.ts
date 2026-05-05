@@ -86,7 +86,7 @@ export const SYSTEM_MESSAGE_TYPE_LABELS: Record<SystemMessageType, string> = {
   REFUND_ISSUED: "Refund Issued",
   REFUND_REQUESTED: "Refund Requested",
   CASE_OPENED: "Case Opened",
-  CASE_ON_HOLD: "Case On Hold",
+  CASE_ON_HOLD: "Case Put On Hold",
   CASE_CLOSED: "Case Closed",
   PAYOUT_SENT: "Payout Sent",
   FUNDS_ON_HOLD: "Funds On Hold",
@@ -130,6 +130,15 @@ const SUBJECT_PATTERNS: Array<{ pattern: RegExp; type: SystemMessageType }> = [
   { pattern: /return\s+closed/i, type: SYSTEM_MESSAGE_TYPES.RETURN_CLOSED },
   { pattern: /(new\s+return\s+request|return\s+request|buyer\s+(opened|requested)\s+a\s+return)/i, type: SYSTEM_MESSAGE_TYPES.RETURN_REQUEST },
 
+  // Cases
+  { pattern: /your\s+case\s+is\s+on\s+hold/i, type: SYSTEM_MESSAGE_TYPES.CASE_ON_HOLD },
+  { pattern: /case\s*#?\s*\d+\s*:\s*buyer\s+contacted\s+customer\s+service/i, type: SYSTEM_MESSAGE_TYPES.CASE_OPENED },
+  { pattern: /buyer\s+contacted\s+customer\s+service/i, type: SYSTEM_MESSAGE_TYPES.CASE_OPENED },
+  { pattern: /request\s+#?\d+\s+was\s+closed\s+by\s+the\s+buyer/i, type: SYSTEM_MESSAGE_TYPES.CASE_CLOSED },
+  { pattern: /(this\s+)?case\s+(is\s+now\s+)?(has\s+been\s+)?closed/i, type: SYSTEM_MESSAGE_TYPES.CASE_CLOSED },
+  { pattern: /\bis\s+now\s+closed\b/i, type: SYSTEM_MESSAGE_TYPES.CASE_CLOSED },
+  { pattern: /thanks\s+for\s+reporting\s+an\s+issue\s+with\s+a\s+buyer/i, type: SYSTEM_MESSAGE_TYPES.CASE_OPENED },
+
   // INR
   { pattern: /(item\s+not\s+received|opened\s+an?\s+item\s+not\s+received|inr\s+claim)/i, type: SYSTEM_MESSAGE_TYPES.ITEM_NOT_RECEIVED },
   { pattern: /(item\s+hasn'?t\s+arrived|item\s+has\s+not\s+arrived|not\s+received\s+request)/i, type: SYSTEM_MESSAGE_TYPES.ITEM_NOT_RECEIVED },
@@ -145,15 +154,6 @@ const SUBJECT_PATTERNS: Array<{ pattern: RegExp; type: SystemMessageType }> = [
   { pattern: /refund\s+issued/i, type: SYSTEM_MESSAGE_TYPES.REFUND_ISSUED },
   { pattern: /(processing|hang\s+tight).*refund\s+request/i, type: SYSTEM_MESSAGE_TYPES.REFUND_REQUESTED },
   { pattern: /issue\s+refund/i, type: SYSTEM_MESSAGE_TYPES.REFUND_REQUESTED },
-
-  // Cases
-  { pattern: /case\s*#?\s*\d+\s*:\s*buyer\s+contacted\s+customer\s+service/i, type: SYSTEM_MESSAGE_TYPES.CASE_OPENED },
-  { pattern: /buyer\s+contacted\s+customer\s+service/i, type: SYSTEM_MESSAGE_TYPES.CASE_OPENED },
-  { pattern: /your\s+case\s+is\s+on\s+hold/i, type: SYSTEM_MESSAGE_TYPES.CASE_ON_HOLD },
-  { pattern: /request\s+#?\d+\s+was\s+closed\s+by\s+the\s+buyer/i, type: SYSTEM_MESSAGE_TYPES.CASE_CLOSED },
-  { pattern: /(this\s+)?case\s+(is\s+now\s+)?(has\s+been\s+)?closed/i, type: SYSTEM_MESSAGE_TYPES.CASE_CLOSED },
-  { pattern: /\bis\s+now\s+closed\b/i, type: SYSTEM_MESSAGE_TYPES.CASE_CLOSED },
-  { pattern: /thanks\s+for\s+reporting\s+an\s+issue\s+with\s+a\s+buyer/i, type: SYSTEM_MESSAGE_TYPES.CASE_OPENED },
 
   // Money movement
   { pattern: /we\s+sent\s+your\s+payout/i, type: SYSTEM_MESSAGE_TYPES.PAYOUT_SENT },

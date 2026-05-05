@@ -202,8 +202,9 @@ function isTimelineStoryEvent(event: SystemEvent): boolean {
     event.action === "EBAY_CASE_OPENED" ||
     event.action === "EBAY_ITEM_NOT_RECEIVED_CASE" ||
     event.action === "EBAY_RETURN_OPENED" ||
+    event.action === "EBAY_CASE_ON_HOLD" ||
     event.action === "EBAY_CASE_CLOSED" ||
-    /buyer opened|opened .*case|opened .*claim|opened .*return|buyer closed|closed .*case|closed .*claim|closed .*return/i.test(
+    /buyer opened|opened .*case|opened .*claim|opened .*return|put .*on hold|case .*on hold|buyer closed|closed .*case|closed .*claim|closed .*return/i.test(
       `${event.shortText ?? ""} ${event.text}`,
     )
   );
@@ -388,7 +389,7 @@ interface InlineImage {
 function summarizeEbaySystemMessage(
   subject: string | null,
   bodyText: string,
-): { label: string; returnId: string | null } {
+): { label: string; returnId: string | null; caseId: string | null; holdUntil: string | null } {
   const subjectText = subject ?? "";
   const bodyHead = (bodyText ?? "").replace(/<[^>]+>/g, " ").slice(0, 600);
   const haystack = `${subjectText}\n${bodyHead}`;
@@ -401,16 +402,26 @@ function summarizeEbaySystemMessage(
     /\/mesh\/returns\/(\d{6,})/i.exec(bodyText ?? "") ??
     /return\s+case[^\d]*?(\d{6,})/i.exec(bodyHead);
   const returnId = returnIdMatch ? returnIdMatch[1] : null;
+  const caseIdMatch =
+    /Case\s*#\s*(\d{6,})/i.exec(subjectText) ??
+    /Request\s+(\d{6,})/i.exec(subjectText) ??
+    /Case\s+ID\s+(\d{6,})/i.exec(bodyHead) ??
+    /Request\s+ID\s*:?\s*(\d{6,})/i.exec(bodyHead);
+  const caseId = caseIdMatch ? caseIdMatch[1] : null;
+  const holdUntilMatch =
+    /on\s+hold\s+until\s+([A-Za-z]+\s+\d{1,2},\s+\d{4})/i.exec(haystack) ??
+    /update\s+by\s+([A-Za-z]+\s+\d{1,2},\s+\d{4})/i.exec(haystack);
+  const holdUntil = holdUntilMatch ? holdUntilMatch[1] : null;
 
   let label: string;
-  if (/buyer\s+opened\s+a\s+return|new\s+return\s+request|return\s+request/i.test(haystack)) {
+  if (/case\s+(?:is|was)\s+(?:placed\s+)?on\s+hold|placed\s+on\s+hold\s+temporarily|on\s+hold\s+temporarily/i.test(haystack)) {
+    label = "Case Put On Hold";
+  } else if (/buyer\s+opened\s+a\s+return|new\s+return\s+request|return\s+request/i.test(haystack)) {
     label = "Buyer Opened a Return Case";
   } else if (/return\s+approved|you\s+accepted\s+(a|the)\s+return/i.test(haystack)) {
     label = "Return Approved";
   } else if (/return\s+closed/i.test(haystack)) {
     label = "Return Closed";
-  } else if (/item\s+not\s+received|inr\s+claim/i.test(haystack)) {
-    label = "Buyer Opened an Item Not Received Claim";
   } else if (/refund\s+issued/i.test(haystack)) {
     label = "Refund Issued";
   } else if (/buyer\s+wants?\s+to\s+cancel|cancellation\s+request/i.test(haystack)) {
@@ -419,8 +430,8 @@ function summarizeEbaySystemMessage(
     label = "Order Canceled";
   } else if (/case\s+(is\s+now\s+)?closed|is\s+now\s+closed/i.test(haystack)) {
     label = "Case Closed";
-  } else if (/case\s+is\s+on\s+hold/i.test(haystack)) {
-    label = "Case On Hold";
+  } else if (/item\s+not\s+received|inr\s+claim/i.test(haystack)) {
+    label = "Buyer Opened an Item Not Received Claim";
   } else if (/item\s+delivered/i.test(haystack)) {
     label = "Item Delivered";
   } else if (/feedback\s+removal/i.test(haystack)) {
@@ -430,7 +441,7 @@ function summarizeEbaySystemMessage(
   } else {
     label = "System Notification";
   }
-  return { label, returnId };
+  return { label, returnId, caseId, holdUntil };
 }
 
 function upgradeEbayImageUrl(url: string): string {
@@ -1899,6 +1910,27 @@ function TimelineItem({
               >
                 Return #{info.returnId}
               </a>
+            </>
+          )}
+          {!info.returnId && info.caseId && (
+            <>
+              <span className="opacity-50">-</span>
+              <a
+                href={`https://www.ebay.com/ItemNotReceived/${info.caseId}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="font-mono text-brand underline-offset-2 hover:underline"
+              >
+                Case #{info.caseId}
+              </a>
+            </>
+          )}
+          {info.holdUntil && (
+            <>
+              <span className="opacity-50">-</span>
+              <span className="font-semibold text-amber-700 dark:text-amber-200">
+                Hold until {info.holdUntil}
+              </span>
             </>
           )}
           <span
