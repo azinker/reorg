@@ -401,6 +401,10 @@ const orderContextCache = new Map<string, OrderContext | null>();
 const relatedCache = new Map<string, RelatedResponse>();
 const feedbackSummaryCache = new Map<string, FeedbackSummaryResponse["data"]>();
 
+function orderContextCacheKey(ticket: HelpdeskTicketDetail): string {
+  return `${ticket.id}|${ticket.ebayOrderNumber ?? ""}`;
+}
+
 /**
  * Fetches the live eBay order context once per ticket and exposes it to
  * children of ContextPanel. Lives at the panel level so the CustomerCard and
@@ -408,23 +412,29 @@ const feedbackSummaryCache = new Map<string, FeedbackSummaryResponse["data"]>();
  */
 function useOrderContext(ticket: HelpdeskTicketDetail): UseOrderContextResult {
   // Hydrate synchronously from cache so re-opens paint with the previous
-  // order context instantly.
-  const initial = orderContextCache.has(ticket.id) ? orderContextCache.get(ticket.id) ?? null : null;
-  const [data, setData] = useState<OrderContext | null>(initial);
+  // order context for this exact ticket/order instantly. The key in state
+  // prevents a ticket switch from showing the prior ticket's line items while
+  // React waits for this effect to run.
+  const cacheKey = orderContextCacheKey(ticket);
+  const cachedForCurrent = orderContextCache.get(cacheKey) ?? null;
+  const [state, setState] = useState<{
+    cacheKey: string;
+    data: OrderContext | null;
+  }>(() => ({ cacheKey, data: cachedForCurrent }));
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const data = state.cacheKey === cacheKey ? state.data : cachedForCurrent;
 
   useEffect(() => {
+    const nextCacheKey = orderContextCacheKey(ticket);
     if (!ticket.ebayOrderNumber) {
-      setData(null);
+      setState({ cacheKey: nextCacheKey, data: null });
       setError(null);
       setLoading(false);
       return;
     }
-    const cached = orderContextCache.has(ticket.id)
-      ? orderContextCache.get(ticket.id) ?? null
-      : null;
-    setData(cached);
+    const cached = orderContextCache.get(nextCacheKey) ?? null;
+    setState({ cacheKey: nextCacheKey, data: cached });
     // Always refresh, but don't show the spinner if we already have something
     // on screen — feels "snappy" rather than "loading".
     setLoading(!cached);
@@ -439,8 +449,8 @@ function useOrderContext(ticket: HelpdeskTicketDetail): UseOrderContextResult {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const j = (await res.json()) as OrderContextResponse;
         if (ac.signal.aborted) return;
-        setData(j.data);
-        orderContextCache.set(ticket.id, j.data);
+        setState({ cacheKey: nextCacheKey, data: j.data });
+        orderContextCache.set(nextCacheKey, j.data);
         if (!j.data && j.reason) setError(j.reason);
       } catch (err) {
         if (ac.signal.aborted) return;

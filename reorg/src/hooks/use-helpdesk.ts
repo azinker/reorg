@@ -395,6 +395,8 @@ export function useHelpdesk(args: UseHelpdeskArgs): UseHelpdeskReturn {
   const ticketsFetchAbortRef = useRef<AbortController | null>(null);
   /** Same idea for the lighter counts/sync-status fetches. */
   const auxFetchAbortRef = useRef<AbortController | null>(null);
+  const selectedFetchAbortRef = useRef<AbortController | null>(null);
+  const selectedRequestIdRef = useRef(0);
   const selectedTicketIdRef = useRef<string | null>(null);
   selectedTicketIdRef.current = selectedTicketId;
 
@@ -543,8 +545,11 @@ export function useHelpdesk(args: UseHelpdeskArgs): UseHelpdeskReturn {
   const loadSelected = useCallback(
     async (id: string | null, opts: { silent?: boolean } = {}) => {
       const { silent = false } = opts;
+      const requestId = ++selectedRequestIdRef.current;
+      selectedFetchAbortRef.current?.abort();
       if (!id) {
         setSelectedTicket(null);
+        setSelectedLoading(false);
         return;
       }
       const cached = getDetail(id);
@@ -556,13 +561,22 @@ export function useHelpdesk(args: UseHelpdeskArgs): UseHelpdeskReturn {
         // doesn't yet contain the new note/job) won out forever and the
         // thread never updated until the user clicked away and back.
         setSelectedTicket(cached.data);
+        setSelectedLoading(false);
       } else if (!silent) {
+        setSelectedTicket(null);
         setSelectedLoading(true);
       }
+      const ac = new AbortController();
+      selectedFetchAbortRef.current = ac;
       try {
-        const res = await fetch(`/api/helpdesk/tickets/${id}`, { cache: "no-store" });
+        const res = await fetch(`/api/helpdesk/tickets/${id}`, {
+          cache: "no-store",
+          signal: ac.signal,
+        });
+        if (requestId !== selectedRequestIdRef.current) return;
         if (!res.ok) throw new Error(`Ticket ${res.status}`);
         const json = (await res.json()) as { data: HelpdeskTicketDetail };
+        if (requestId !== selectedRequestIdRef.current) return;
         setSelectedTicket(json.data);
         setDetail(id, json.data);
 
@@ -604,8 +618,17 @@ export function useHelpdesk(args: UseHelpdeskArgs): UseHelpdeskReturn {
           }).catch(() => {});
         }
       } catch (err) {
+        if (
+          ac.signal.aborted ||
+          (err instanceof DOMException && err.name === "AbortError") ||
+          (err instanceof Error && /aborted/i.test(err.message))
+        ) {
+          return;
+        }
+        if (requestId !== selectedRequestIdRef.current) return;
         setError(err instanceof Error ? err.message : String(err));
       } finally {
+        if (requestId !== selectedRequestIdRef.current) return;
         if (!silent && !cached) setSelectedLoading(false);
       }
     },
@@ -745,6 +768,7 @@ export function useHelpdesk(args: UseHelpdeskArgs): UseHelpdeskReturn {
     return () => {
       ticketsFetchAbortRef.current?.abort();
       auxFetchAbortRef.current?.abort();
+      selectedFetchAbortRef.current?.abort();
     };
   }, []);
 

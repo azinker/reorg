@@ -695,6 +695,8 @@ export default function HelpDeskClient() {
                   ticket={
                     selectedTicket && selectedTicket.id === selectedTicketId
                       ? selectedTicket
+                      : selectedTicketId
+                        ? null
                       : retainedTicket
                   }
                   loading={selectedLoading}
@@ -759,7 +761,11 @@ export default function HelpDeskClient() {
             }
             right={
               <TicketReader
-                ticket={selectedTicket}
+                ticket={
+                  selectedTicket && selectedTicket.id === selectedTicketId
+                    ? selectedTicket
+                    : null
+                }
                 loading={selectedLoading}
                 safeMode={safeMode}
                 syncStatus={syncStatus}
