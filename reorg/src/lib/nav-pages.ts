@@ -39,6 +39,7 @@ export type PageKey =
   | "errors"
   | "unmatched"
   | "import"
+  | "listingClone"
   | "shipping-rates"
   | "backups"
   | "chrome-extension"
@@ -72,6 +73,7 @@ export interface NavPage {
     | "AlertTriangle"
     | "Unlink"
     | "Upload"
+    | "Copy"
     | "Weight"
     | "Database"
     | "Puzzle"
@@ -216,6 +218,15 @@ export const NAV_PAGES: NavPage[] = [
     label: "Import",
     icon: "Upload",
     description: "Spreadsheet import wizard.",
+  },
+  {
+    key: "listingClone",
+    href: "/listing-clone",
+    label: "Listing Clone",
+    icon: "Copy",
+    adminOnly: true,
+    description:
+      "Clone fixed-price eBay listings between TPP and TT with verify-first workflow.",
   },
   {
     key: "shipping-rates",

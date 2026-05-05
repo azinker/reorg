@@ -23,6 +23,9 @@ reorg/.env.local
 reorg/.env.*.local
 .vercel
 
+# Ephemeral local scratch (agents, temp exports)
+reorg/.tmp/
+
 # Local dev/test artifacts (Playwright runs, ad-hoc patches, snapshot dumps)
 .playwright-cli/
 reorg/.playwright-cli/
