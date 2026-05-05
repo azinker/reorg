@@ -155,6 +155,12 @@ export interface HelpdeskMessageDetail {
     bcc: string[];
     replyTo: string | null;
   } | null;
+  /** Outbound external email files (PDF/images); downloadHref is cookie-auth GET. */
+  externalAttachments?: Array<{
+    fileName: string;
+    mimeType: string;
+    downloadHref: string;
+  }>;
   sentAt: string;
   author: HelpdeskUserBadge | null;
 }

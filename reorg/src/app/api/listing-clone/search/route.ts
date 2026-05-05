@@ -101,6 +101,7 @@ export async function GET(request: NextRequest) {
         sku: true,
         title: true,
         masterRowId: true,
+        imageUrl: true,
       },
       orderBy: { lastSyncedAt: "desc" },
       take: 80,
@@ -119,6 +120,7 @@ export async function GET(request: NextRequest) {
         platformItemId: row.platformItemId,
         sku: row.sku,
         title: row.title,
+        imageUrl: row.imageUrl ?? null,
       }));
 
     return NextResponse.json({ data: ranked });

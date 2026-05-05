@@ -38,6 +38,59 @@ function stringArray(value: unknown): string[] {
     .filter(Boolean);
 }
 
+function sanitizeOutboundAttachmentsForClient(
+  rawData: Prisma.JsonValue,
+): Prisma.JsonValue {
+  const raw = asRecord(rawData);
+  if (!raw || !Array.isArray(raw.outboundAttachments)) return rawData;
+  const redacted = raw.outboundAttachments.map((entry: unknown) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) return entry;
+    const o = entry as Record<string, unknown>;
+    const { storageKey: _sk, ...rest } = o;
+    return rest;
+  });
+  return { ...raw, outboundAttachments: redacted } as unknown as Prisma.JsonValue;
+}
+
+function externalAttachmentsForClient(
+  ticketId: string,
+  message: {
+    id: string;
+    source: string;
+    direction: string;
+    rawData: Prisma.JsonValue;
+  },
+): Array<{ fileName: string; mimeType: string; downloadHref: string }> | undefined {
+  if (message.source !== "EXTERNAL_EMAIL" || message.direction !== "OUTBOUND") {
+    return undefined;
+  }
+  const raw = asRecord(message.rawData);
+  const arr = raw?.outboundAttachments;
+  if (!Array.isArray(arr) || arr.length === 0) return undefined;
+  const out: Array<{ fileName: string; mimeType: string; downloadHref: string }> =
+    [];
+  for (let i = 0; i < arr.length; i++) {
+    const row = arr[i];
+    if (!row || typeof row !== "object" || Array.isArray(row)) continue;
+    const o = row as Record<string, unknown>;
+    const storageKey =
+      typeof o.storageKey === "string" ? o.storageKey.trim() : "";
+    if (!storageKey.startsWith("helpdesk/outbound/")) continue;
+    out.push({
+      fileName:
+        typeof o.fileName === "string" && o.fileName.trim()
+          ? o.fileName.trim()
+          : `attachment-${i + 1}`,
+      mimeType:
+        typeof o.mimeType === "string" && o.mimeType.trim()
+          ? o.mimeType.trim()
+          : "application/octet-stream",
+      downloadHref: `/api/helpdesk/tickets/${ticketId}/messages/${message.id}/attachments/${i}`,
+    });
+  }
+  return out.length > 0 ? out : undefined;
+}
+
 function externalEmailMetaForMessage(message: {
   source: string;
   fromIdentifier: string | null;
@@ -676,6 +729,8 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       updatedAt: ticket.updatedAt,
       messages: finalMessages.map((message) => ({
         ...message,
+        rawData: sanitizeOutboundAttachmentsForClient(message.rawData),
+        externalAttachments: externalAttachmentsForClient(id, message),
         externalEmail: externalEmailMetaForMessage(message),
       })),
       notes: ticket.notes,

@@ -1,11 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ArrowLeftRight,
   CheckCircle2,
   ExternalLink,
   FileSearch,
+  ImageOff,
   Loader2,
   Search,
   Send,
@@ -36,6 +37,7 @@ type SearchHit = {
   platformItemId: string;
   sku: string;
   title: string | null;
+  imageUrl: string | null;
 };
 
 type SelectedListing = SearchHit;
@@ -77,13 +79,11 @@ function truncate(s: string, n: number): string {
 }
 
 export default function ListingClonePage() {
-  const pickerRef = useRef<HTMLDivElement>(null);
   const [currentStep, setCurrentStep] = useState(1);
   const [sourcePlatform, setSourcePlatform] = useState<EbayPlatform>("TPP_EBAY");
   const [targetPlatform, setTargetPlatform] = useState<EbayPlatform>("TT_EBAY");
   const [selectedListings, setSelectedListings] = useState<SelectedListing[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
-  const [searchOpen, setSearchOpen] = useState(false);
   const [searchLoading, setSearchLoading] = useState(false);
   const [searchHits, setSearchHits] = useState<SearchHit[]>([]);
 
@@ -136,16 +136,6 @@ export default function ListingClonePage() {
     setExecuteItems(null);
     setConfirmedLive(false);
   }
-
-  useEffect(() => {
-    function onPointerDown(e: PointerEvent) {
-      if (!pickerRef.current?.contains(e.target as Node)) {
-        setSearchOpen(false);
-      }
-    }
-    document.addEventListener("pointerdown", onPointerDown);
-    return () => document.removeEventListener("pointerdown", onPointerDown);
-  }, []);
 
   useEffect(() => {
     const q = searchQuery.trim();
@@ -443,10 +433,18 @@ export default function ListingClonePage() {
 
         {currentStep === 1 && (
           <div className="space-y-6">
-            <div ref={pickerRef} className="relative max-w-xl space-y-3">
-              <label htmlFor="listing-search" className="text-sm font-medium text-foreground">
-                Source listings ({PLATFORM_LABEL[sourcePlatform]})
-              </label>
+            <div className="space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <label htmlFor="listing-search" className="text-sm font-medium text-foreground">
+                  Listing picker — {PLATFORM_LABEL[sourcePlatform]}
+                </label>
+                <span className="text-xs tabular-nums text-muted-foreground">
+                  {selectedListings.length} selected · max {MAX_BATCH}
+                </span>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Search SKU, title, or Item ID (multi-word AND). Check rows to queue them for verify.
+              </p>
               <div className="relative">
                 <Search
                   className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
@@ -456,13 +454,9 @@ export default function ListingClonePage() {
                   id="listing-search"
                   type="search"
                   autoComplete="off"
-                  placeholder="Search SKU, title, or Item ID (multi-word narrows results)"
+                  placeholder="Search catalog…"
                   value={searchQuery}
-                  onChange={(e) => {
-                    setSearchQuery(e.target.value);
-                    setSearchOpen(true);
-                  }}
-                  onFocus={() => setSearchOpen(true)}
+                  onChange={(e) => setSearchQuery(e.target.value)}
                   className={cn(
                     "w-full rounded-lg border border-border bg-background py-2.5 pl-10 pr-3 text-sm text-foreground",
                     "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
@@ -470,82 +464,119 @@ export default function ListingClonePage() {
                 />
               </div>
 
-              {searchOpen && (searchLoading || searchHits.length > 0 || searchQuery.trim().length >= 2) && (
-                <div
-                  className={cn(
-                    "absolute left-0 right-0 top-full z-50 mt-1 max-h-56 overflow-auto rounded-md border border-border bg-popover shadow-md",
-                  )}
-                  role="listbox"
-                  aria-label="Matching listings"
-                >
-                  {searchLoading && (
-                    <div className="flex items-center gap-2 px-3 py-2 text-xs text-muted-foreground">
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
-                      Searching…
-                    </div>
-                  )}
-                  {!searchLoading &&
-                    searchHits.length === 0 &&
-                    searchQuery.trim().length >= 2 && (
-                      <div className="px-3 py-2 text-xs text-muted-foreground">No matches.</div>
-                    )}
-                  {!searchLoading &&
-                    searchHits.map((hit) => {
+              <div
+                className={cn(
+                  "min-h-[320px] max-h-[min(520px,55vh)] overflow-auto rounded-xl border border-border bg-muted/15",
+                )}
+                aria-label="Search results"
+              >
+                {searchQuery.trim().length < 2 ? (
+                  <div className="flex h-[280px] flex-col items-center justify-center gap-2 px-6 text-center text-sm text-muted-foreground">
+                    <Search className="h-10 w-10 opacity-40" aria-hidden />
+                    <p>Type at least 2 characters to load listings from the master store.</p>
+                  </div>
+                ) : searchLoading ? (
+                  <div className="flex items-center gap-2 px-4 py-6 text-sm text-muted-foreground">
+                    <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+                    Searching catalog…
+                  </div>
+                ) : searchHits.length === 0 ? (
+                  <div className="flex h-[280px] flex-col items-center justify-center gap-2 px-6 text-center text-sm text-muted-foreground">
+                    <ImageOff className="h-10 w-10 opacity-40" aria-hidden />
+                    <p>No active parent listings match this search.</p>
+                  </div>
+                ) : (
+                  <ul className="divide-y divide-border">
+                    {searchHits.map((hit) => {
                       const selected = selectedListings.some(
                         (s) => s.platformItemId === hit.platformItemId,
                       );
+                      const atCap = selectedListings.length >= MAX_BATCH && !selected;
                       return (
-                        <button
-                          key={hit.marketplaceListingId}
-                          type="button"
-                          role="option"
-                          aria-selected={selected}
-                          onClick={() => toggleHit(hit)}
-                          className={cn(
-                            "flex w-full cursor-pointer flex-col gap-0.5 border-b border-border px-3 py-2 text-left text-sm last:border-b-0",
-                            "hover:bg-muted/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
-                            selected && "bg-primary/15",
-                          )}
-                        >
-                          <span className="font-medium text-foreground">
-                            {truncate(hit.title ?? "(no title)", 72)}
-                          </span>
-                          <span className="text-xs text-muted-foreground">
-                            SKU {hit.sku} · Item {hit.platformItemId}
-                          </span>
-                        </button>
+                        <li key={hit.marketplaceListingId}>
+                          <button
+                            type="button"
+                            disabled={atCap}
+                            onClick={() => toggleHit(hit)}
+                            aria-pressed={selected}
+                            className={cn(
+                              "flex w-full cursor-pointer items-start gap-3 px-3 py-3 text-left transition-colors",
+                              "hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+                              selected && "bg-primary/12",
+                              atCap && "cursor-not-allowed opacity-50",
+                            )}
+                          >
+                            <span
+                              className={cn(
+                                "mt-1 flex h-5 w-5 shrink-0 items-center justify-center rounded border-2 border-border",
+                                selected && "border-primary bg-primary text-primary-foreground",
+                              )}
+                              aria-hidden
+                            >
+                              {selected ? (
+                                <CheckCircle2 className="h-3.5 w-3.5" aria-hidden />
+                              ) : null}
+                            </span>
+                            <div className="relative h-14 w-14 shrink-0 overflow-hidden rounded-md border border-border bg-background">
+                              {hit.imageUrl ? (
+                                // eslint-disable-next-line @next/next/no-img-element
+                                <img
+                                  src={hit.imageUrl}
+                                  alt=""
+                                  className="h-full w-full object-cover"
+                                  loading="lazy"
+                                />
+                              ) : (
+                                <div className="flex h-full w-full items-center justify-center bg-muted/40">
+                                  <ImageOff className="h-6 w-6 text-muted-foreground/50" aria-hidden />
+                                </div>
+                              )}
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <p className="line-clamp-2 text-sm font-medium leading-snug text-foreground">
+                                {hit.title ?? "(no title)"}
+                              </p>
+                              <p className="mt-1 font-mono text-[11px] text-muted-foreground">
+                                SKU <span className="text-foreground/90">{hit.sku}</span>
+                                {" · "}
+                                Item <span className="text-foreground/90">{hit.platformItemId}</span>
+                              </p>
+                            </div>
+                          </button>
+                        </li>
                       );
                     })}
-                </div>
-              )}
+                  </ul>
+                )}
+              </div>
 
-              <p className="text-xs text-muted-foreground">
-                Pick one or many parent listings (max {MAX_BATCH}). Words are treated as AND filters
-                across SKU, title, and Item ID.
-              </p>
-
-              {selectedListings.length > 0 && (
-                <div className="flex flex-wrap gap-2 pt-1">
-                  {selectedListings.map((s) => (
-                    <span
-                      key={s.platformItemId}
-                      className="inline-flex max-w-full items-center gap-1 rounded-full border border-border bg-muted/50 px-2.5 py-1 text-xs text-foreground"
-                    >
-                      <span className="truncate" title={`${s.sku} · ${s.title ?? ""}`}>
-                        {s.sku}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => removeSelected(s.platformItemId)}
-                        className="cursor-pointer rounded p-0.5 text-muted-foreground hover:text-foreground"
-                        aria-label={`Remove ${s.sku}`}
+              {selectedListings.length > 0 ? (
+                <div className="rounded-lg border border-border bg-muted/25 px-3 py-2">
+                  <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                    Selected for clone
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    {selectedListings.map((s) => (
+                      <span
+                        key={s.platformItemId}
+                        className="inline-flex max-w-full items-center gap-1 rounded-full border border-border bg-background px-2.5 py-1 text-xs text-foreground"
                       >
-                        <X className="h-3.5 w-3.5" aria-hidden />
-                      </button>
-                    </span>
-                  ))}
+                        <span className="truncate font-mono" title={`${s.sku} · ${s.title ?? ""}`}>
+                          {s.sku}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => removeSelected(s.platformItemId)}
+                          className="cursor-pointer rounded p-0.5 text-muted-foreground hover:text-foreground"
+                          aria-label={`Remove ${s.sku}`}
+                        >
+                          <X className="h-3.5 w-3.5" aria-hidden />
+                        </button>
+                      </span>
+                    ))}
+                  </div>
                 </div>
-              )}
+              ) : null}
             </div>
 
             <label className="flex cursor-pointer items-center gap-2 text-sm text-foreground">

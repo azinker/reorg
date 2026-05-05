@@ -64,6 +64,7 @@ import {
   ChevronRight,
   X as XIcon,
   Download,
+  FileText,
   Languages,
   RefreshCw,
   Mail,
@@ -442,6 +443,23 @@ function upgradeEbayImageUrl(url: string): string {
   return legacy;
 }
 
+/** Stable key so s-l500 / s-l1600 / thumb URLs dedupe to one tile. */
+function ebayImageDedupeKey(url: string): string {
+  try {
+    const u = new URL(url);
+    const host = u.hostname.toLowerCase();
+    if (host.includes("ebayimg.com")) {
+      let path = u.pathname;
+      path = path.replace(/\/s-l\d+(?=\.[a-z0-9]+$)/i, "/s-l__");
+      path = path.replace(/\/\$_\d+(?=\.[a-z0-9]+$)/i, "/$___");
+      return `${host}${path}`;
+    }
+    return `${host}${u.pathname}`.toLowerCase();
+  } catch {
+    return url.split("?")[0]!.toLowerCase();
+  }
+}
+
 /**
  * eBay's media payloads are heterogeneous (REST attachments, Trading-API
  * inline base64, and our own outbound envelope). Walk the structure and
@@ -511,12 +529,14 @@ function extractInlineImages(
     }
   }
 
-  // Dedupe by URL so deeply-nested payloads + body scrapes don't render
-  // the same image multiple times.
+  // Dedupe by canonical identity so nested payloads + `<img>` scrapes don't
+  // repeat the same photo when eBay uses different CDN size tokens (s-l500 vs
+  // s-l1600) for one attachment.
   const seen = new Set<string>();
   return collected.filter((img) => {
-    if (seen.has(img.url)) return false;
-    seen.add(img.url);
+    const key = ebayImageDedupeKey(img.url);
+    if (seen.has(key)) return false;
+    seen.add(key);
     return true;
   });
 }
@@ -724,7 +744,7 @@ export function ThreadView({
     const images: InlineImage[] = [];
     for (const message of ticket.messages) {
       for (const img of extractInlineImages(message.rawMedia, message.bodyText)) {
-        const key = upgradeEbayImageUrl(img.url);
+        const key = ebayImageDedupeKey(img.url);
         if (seen.has(key)) continue;
         seen.add(key);
         images.push(img);
@@ -738,9 +758,9 @@ export function ThreadView({
       if (images.length === 0) return;
       const clicked = images[index];
       const gallery = ticketImageGallery.length > 0 ? ticketImageGallery : images;
-      const clickedKey = clicked ? upgradeEbayImageUrl(clicked.url) : null;
+      const clickedKey = clicked ? ebayImageDedupeKey(clicked.url) : null;
       const galleryIndex = clickedKey
-        ? gallery.findIndex((img) => upgradeEbayImageUrl(img.url) === clickedKey)
+        ? gallery.findIndex((img) => ebayImageDedupeKey(img.url) === clickedKey)
         : -1;
       const nextIndex = galleryIndex >= 0 ? galleryIndex : index;
       setLightbox({
@@ -2082,7 +2102,7 @@ function TimelineItem({
             <div className="mt-2 flex flex-wrap gap-2">
               {inlineImages.map((img, idx) => (
                 <button
-                  key={img.url}
+                  key={`${idx}-${ebayImageDedupeKey(img.url)}`}
                   type="button"
                   onClick={() => onImageClick?.(inlineImages, idx)}
                   className="block cursor-pointer overflow-hidden rounded border border-hairline bg-surface transition-opacity hover:opacity-90 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand"
@@ -2100,6 +2120,54 @@ function TimelineItem({
               ))}
             </div>
           )}
+
+          {!isInbound &&
+            isExternalEmail &&
+            m.externalAttachments &&
+            m.externalAttachments.length > 0 && (
+              <div className="mt-2 flex flex-wrap gap-2">
+                {m.externalAttachments.map((att) => {
+                  const isPdf =
+                    att.mimeType.toLowerCase().includes("pdf") ||
+                    /\.pdf$/i.test(att.fileName);
+                  const isImage = att.mimeType.toLowerCase().startsWith("image/");
+                  return (
+                    <a
+                      key={`${att.downloadHref}:${att.fileName}`}
+                      href={att.downloadHref}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className={cn(
+                        "inline-flex max-w-full cursor-pointer items-center gap-2 rounded-md border border-hairline bg-surface px-3 py-2 text-xs font-medium text-foreground shadow-sm transition-colors hover:border-brand/40 hover:bg-surface-2",
+                      )}
+                      title={`Download ${att.fileName}`}
+                    >
+                      {isPdf ? (
+                        <FileText
+                          className="h-9 w-9 shrink-0 text-red-600 dark:text-red-400"
+                          aria-hidden
+                        />
+                      ) : isImage ? (
+                        // Same-origin cookie auth — browser sends session on img GET.
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={att.downloadHref}
+                          alt=""
+                          className="h-12 w-12 shrink-0 rounded border border-hairline object-cover"
+                          loading="lazy"
+                        />
+                      ) : (
+                        <Download
+                          className="h-8 w-8 shrink-0 text-muted-foreground"
+                          aria-hidden
+                        />
+                      )}
+                      <span className="min-w-0 flex-1 truncate">{att.fileName}</span>
+                    </a>
+                  );
+                })}
+              </div>
+            )}
 
           {/* Non-image attachments (PDFs, zips, etc.) still surface
               through the existing Attachments component — keeps the

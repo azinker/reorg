@@ -762,6 +762,11 @@ async function sendExternalEmail(
           replyDomain,
           outboundJobId: job.id,
           attachmentCount: queuedAttachments.length,
+          outboundAttachments: queuedAttachments.map((a) => ({
+            fileName: a.fileName,
+            mimeType: a.mimeType,
+            storageKey: a.storageKey,
+          })),
         },
       },
     });
