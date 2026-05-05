@@ -1366,6 +1366,9 @@ function FeedbackSection({
   const first = feedback.data?.items[0] ?? null;
   const state = feedback.data?.state ?? "UNKNOWN";
   const leaveBy = feedbackLeaveByDate(ticket, order);
+  const feedbackKindLabel = first
+    ? first.kind.charAt(0) + first.kind.slice(1).toLowerCase()
+    : "";
 
   return (
     <section className="border-b border-hairline bg-card/40 px-4 py-3">
@@ -1408,8 +1411,8 @@ function FeedbackSection({
               )}
             >
               {first.isAutomated
-                ? "Automated"
-                : first.kind.charAt(0) + first.kind.slice(1).toLowerCase()}
+                ? "Automated by eBay"
+                : `Buyer ${feedbackKindLabel}`}
             </span>
             <span className="text-[10px] text-muted-foreground">
               {formatFeedbackDate(first.leftAt)}
@@ -1417,10 +1420,25 @@ function FeedbackSection({
           </div>
           {first.isAutomated ? (
             <p className="mt-1 text-xs font-medium text-foreground">
-              eBay Automated{" "}
-              {first.kind.charAt(0) + first.kind.slice(1).toLowerCase()} Feedback
+              Automated eBay {feedbackKindLabel} Feedback
             </p>
-          ) : null}
+          ) : (
+            <p className="mt-1 text-xs font-medium text-foreground">
+              Buyer-authored {feedbackKindLabel} Feedback
+            </p>
+          )}
+          <p
+            className={cn(
+              "mt-1 rounded border px-2 py-1.5 text-[11px] leading-relaxed",
+              first.isAutomated
+                ? "border-sky-500/25 bg-sky-500/10 text-sky-700 dark:text-sky-200"
+                : "border-emerald-500/20 bg-emerald-500/10 text-emerald-700 dark:text-emerald-200",
+            )}
+          >
+            {first.isAutomated
+              ? "This positive feedback was left by the automated eBay feedback rule, not directly by the buyer. The buyer may still replace it with their own feedback."
+              : "This feedback was left directly by the buyer, not the automated eBay feedback rule."}
+          </p>
           {typeof first.starRating === "number" && first.starRating > 0 ? (
             <p className="mt-1 text-xs text-foreground">
               Rating: {first.starRating}/5
@@ -1442,7 +1460,7 @@ function FeedbackSection({
           ) : null}
           {first.isAutomated && leaveBy ? (
             <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
-              Buyer can still leave their own feedback until{" "}
+              Buyer can still change this by leaving their own feedback until{" "}
               <span className="font-medium text-foreground">
                 {formatFeedbackDeadline(leaveBy)}
               </span>
