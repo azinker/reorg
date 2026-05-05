@@ -86,6 +86,8 @@ interface RelatedTicket {
   id: string;
   subject: string | null;
   status: string;
+  type: string;
+  systemMessageType: string | null;
   ebayOrderNumber: string | null;
   lastMessageAt: string | null;
   unreadCount: number;
@@ -1523,11 +1525,26 @@ function RelatedSection({
                 href={`/help-desk?ticket=${t.id}`}
                 className="block rounded-md border border-hairline bg-surface px-2.5 py-2 shadow-sm transition-colors hover:border-brand/30 hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/30"
               >
-                <p className="line-clamp-1 text-sm text-foreground">
-                  {t.subject ?? t.ebayItemTitle ?? "Untitled"}
-                </p>
+                <div className="flex min-w-0 items-start gap-2">
+                  <p className="line-clamp-1 min-w-0 flex-1 text-sm text-foreground">
+                    {t.subject ?? t.ebayItemTitle ?? "Untitled"}
+                  </p>
+                  {t.type === "SYSTEM" || t.systemMessageType ? (
+                    <span
+                      className="inline-flex shrink-0 items-center rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-200"
+                      title="This related ticket is an eBay system message, not a buyer-authored conversation."
+                    >
+                      System
+                    </span>
+                  ) : null}
+                </div>
                 <div className="mt-0.5 flex items-center gap-2 text-xs text-muted-foreground">
                   <span>{t.status.replace("_", " ").toLowerCase()}</span>
+                  {t.type === "SYSTEM" || t.systemMessageType ? (
+                    <span className="font-semibold text-amber-700 dark:text-amber-300">
+                      eBay system message
+                    </span>
+                  ) : null}
                   {t.ebayOrderNumber ? (
                     <span className="font-mono">{t.ebayOrderNumber}</span>
                   ) : null}

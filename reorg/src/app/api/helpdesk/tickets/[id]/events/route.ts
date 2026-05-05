@@ -389,6 +389,13 @@ function systemTicketTimelineText(args: {
         shortText: "Buyer Opened INR Case",
       };
     case SYSTEM_MESSAGE_TYPES.CASE_OPENED:
+      if (/buyer\s+contacted\s+customer\s+service|asked\s+ebay\s+customer\s+service\s+to\s+review/i.test(haystack)) {
+        return {
+          action: "EBAY_CASE_ESCALATED",
+          text: "Buyer Escalated Case to eBay",
+          shortText: "Buyer Escalated Case to eBay",
+        };
+      }
       return {
         action: "EBAY_CASE_OPENED",
         text: "Buyer Opened Case on eBay",
@@ -480,6 +487,8 @@ function compactTimelineLabel(action: string, text: string): string {
       return "Buyer Opened INR Case";
     case "EBAY_CASE_OPENED":
       return /return/i.test(text) ? "Buyer Opened Return" : "Buyer Opened Case";
+    case "EBAY_CASE_ESCALATED":
+      return "Buyer Escalated Case to eBay";
     case "EBAY_CASE_ON_HOLD":
       return "Case Put On Hold";
     case "EBAY_CASE_CLOSED":
@@ -600,6 +609,7 @@ function extractEbayRequestContext(args: {
   shortCaseLabel: string;
   openedAt: string | null;
   holdUntil: string | null;
+  isEscalated: boolean;
   isOnHold: boolean;
   isDeliveredUpdate: boolean;
   isClosed: boolean;
@@ -612,6 +622,7 @@ function extractEbayRequestContext(args: {
     /ViewRequest\?id=(\d{6,})/i.exec(args.bodyText ?? "")?.[1] ??
     /\/mesh\/returns\/(\d{6,})/i.exec(args.bodyText ?? "")?.[1] ??
     /Return\s+(\d{6,})/i.exec(subject)?.[1] ??
+    /Case\s*#\s*:?\s*(\d{6,})/i.exec(haystack)?.[1] ??
     /Request\s+#\s*:?\s*(\d{6,})/i.exec(haystack)?.[1] ??
     /Request\s+#(\d{6,})/i.exec(haystack)?.[1] ??
     /Request\s+(\d{6,})/i.exec(haystack)?.[1] ??
@@ -623,6 +634,11 @@ function extractEbayRequestContext(args: {
     )?.[1] ?? null;
   const isOnHold =
     /case\s+(?:is|was)\s+(?:placed\s+)?on\s+hold|placed\s+on\s+hold\s+temporarily|on\s+hold\s+temporarily/i.test(
+      haystack,
+    );
+  const isEscalated =
+    !isOnHold &&
+    /buyer\s+contacted\s+customer\s+service|buyer\s+has\s+asked\s+ebay\s+customer\s+service\s+to\s+review|asked\s+ebay\s+customer\s+service\s+to\s+review/i.test(
       haystack,
     );
   const holdUntil =
@@ -669,6 +685,7 @@ function extractEbayRequestContext(args: {
     shortCaseLabel: isInr ? "INR Case" : isReturn ? "Return Case" : "Case",
     openedAt: parseEbayDateOnly(openedDate),
     holdUntil: parseEbayDateOnly(holdUntil),
+    isEscalated,
     isOnHold,
     isDeliveredUpdate,
     isClosed,
@@ -694,13 +711,29 @@ function systemTicketTimelineEvents(args: {
     args.bodyText,
   )}`;
   const isOpenNotice =
-    (!ctx.isClosed && !ctx.isOnHold && Boolean(ctx.openedAt)) ||
+    (!ctx.isClosed && !ctx.isOnHold && !ctx.isEscalated && Boolean(ctx.openedAt)) ||
     (!ctx.isClosed &&
       !ctx.isOnHold &&
+      !ctx.isEscalated &&
       !ctx.isDeliveredUpdate &&
       /opened|item\s+not\s+received\s+request|hasn'?t\s+arrived/i.test(
         openNoticeHaystack,
       ));
+
+  if (ctx.caseId && ctx.isEscalated) {
+    events.push({
+      id: `related-case-escalated-${baseId}-${ctx.caseId}`,
+      type: "system",
+      action: "EBAY_CASE_ESCALATED",
+      kind: "case",
+      text: `Buyer Escalated ${ctx.longCaseLabel} #${ctx.caseId} to eBay`,
+      shortText: "Buyer Escalated Case to eBay",
+      href: ctx.href,
+      externalId: ctx.caseId,
+      actor: null,
+      at: args.at,
+    });
+  }
 
   if (ctx.caseId && ctx.isOnHold) {
     events.push({

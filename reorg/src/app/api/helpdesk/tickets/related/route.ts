@@ -77,6 +77,8 @@ export async function GET(request: NextRequest) {
         id: true,
         subject: true,
         status: true,
+        type: true,
+        systemMessageType: true,
         ebayOrderNumber: true,
         lastBuyerMessageAt: true,
         lastAgentMessageAt: true,
@@ -94,6 +96,8 @@ export async function GET(request: NextRequest) {
     id: r.id,
     subject: r.subject,
     status: r.status,
+    type: r.type,
+    systemMessageType: r.systemMessageType,
     ebayOrderNumber: r.ebayOrderNumber,
     lastMessageAt:
       pickLatest(r.lastAgentMessageAt, r.lastBuyerMessageAt, r.updatedAt) ??

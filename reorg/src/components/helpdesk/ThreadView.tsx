@@ -202,9 +202,10 @@ function isTimelineStoryEvent(event: SystemEvent): boolean {
     event.action === "EBAY_CASE_OPENED" ||
     event.action === "EBAY_ITEM_NOT_RECEIVED_CASE" ||
     event.action === "EBAY_RETURN_OPENED" ||
+    event.action === "EBAY_CASE_ESCALATED" ||
     event.action === "EBAY_CASE_ON_HOLD" ||
     event.action === "EBAY_CASE_CLOSED" ||
-    /buyer opened|opened .*case|opened .*claim|opened .*return|put .*on hold|case .*on hold|buyer closed|closed .*case|closed .*claim|closed .*return/i.test(
+    /buyer opened|opened .*case|opened .*claim|opened .*return|escalated .*case|escalated .*claim|put .*on hold|case .*on hold|buyer closed|closed .*case|closed .*claim|closed .*return/i.test(
       `${event.shortText ?? ""} ${event.text}`,
     )
   );
@@ -424,6 +425,8 @@ function summarizeEbaySystemMessage(
     label = "Return Closed";
   } else if (/refund\s+issued/i.test(haystack)) {
     label = "Refund Issued";
+  } else if (/buyer\s+contacted\s+customer\s+service|asked\s+ebay\s+customer\s+service\s+to\s+review/i.test(haystack)) {
+    label = "Buyer Escalated Case to eBay";
   } else if (/buyer\s+wants?\s+to\s+cancel|cancellation\s+request/i.test(haystack)) {
     label = "Buyer Requested Cancellation";
   } else if (/order\s+(was|has\s+been)\s+cancel(l?)ed|you\s+successfully\s+cancel/i.test(haystack)) {
