@@ -125,6 +125,8 @@ interface SystemEvent {
   shortText?: string | null;
   href?: string | null;
   externalId?: string | null;
+  deadlineAt?: string | null;
+  deadlineLabel?: string | null;
   trackingNumber?: string | null;
   estimatedDeliveryText?: string | null;
   actor: {
@@ -205,6 +207,10 @@ function isTimelineStoryEvent(event: SystemEvent): boolean {
     event.action === "EBAY_CASE_ESCALATED" ||
     event.action === "EBAY_CASE_ON_HOLD" ||
     event.action === "EBAY_CASE_CLOSED" ||
+    event.action === "EBAY_RETURN_BUYER_SHIPPED" ||
+    event.action === "EBAY_RETURN_DELIVERED" ||
+    event.action === "EBAY_RETURN_REFUND_DUE" ||
+    event.action === "EBAY_RETURN_REFUNDED" ||
     /buyer opened|opened .*case|opened .*claim|opened .*return|escalated .*case|escalated .*claim|put .*on hold|case .*on hold|buyer closed|closed .*case|closed .*claim|closed .*return/i.test(
       `${event.shortText ?? ""} ${event.text}`,
     )
@@ -420,11 +426,21 @@ function summarizeEbaySystemMessage(
   } else if (/buyer\s+opened\s+a\s+return|new\s+return\s+request|return\s+request/i.test(haystack)) {
     label = "Buyer Opened a Return Case";
   } else if (/return\s+approved|you\s+accepted\s+(a|the)\s+return/i.test(haystack)) {
-    label = "Return Approved";
+    label = "Return Started";
   } else if (/return\s+closed/i.test(haystack)) {
     label = "Return Closed";
   } else if (/refund\s+issued/i.test(haystack)) {
     label = "Refund Issued";
+  } else if (/buyer\s+shipped\s+item|started\s+shipping\s+your\s+item\s+back/i.test(haystack)) {
+    label = "Buyer Shipped Item Back";
+  } else if (/^Return\s+\d+:\s+Item\s+delivered/i.test(subjectText) || /now\s+that\s+you\s+have\s+the\s+item\s+back/i.test(haystack)) {
+    label = "Returned Item Delivered";
+  } else if (/^Return\s+\d+:\s+Issue\s+refund/i.test(subjectText) || /issue\s+a\s+refund\s+by\s+[A-Za-z]+/i.test(haystack)) {
+    const due =
+      /issue\s+a\s+refund\s+by\s+([A-Za-z]+\.?\s+\d{1,2})/i.exec(haystack)?.[1] ??
+      /refund\s+the\s+buyer\s+by\s+([A-Za-z]+\.?\s+\d{1,2})/i.exec(haystack)?.[1] ??
+      null;
+    label = due ? `Refund Due by ${due}` : "Refund Due";
   } else if (/buyer\s+contacted\s+customer\s+service|asked\s+ebay\s+customer\s+service\s+to\s+review/i.test(haystack)) {
     label = "Buyer Escalated Case to eBay";
   } else if (/buyer\s+wants?\s+to\s+cancel|cancellation\s+request/i.test(haystack)) {

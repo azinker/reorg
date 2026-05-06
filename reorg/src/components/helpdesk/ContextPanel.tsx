@@ -960,6 +960,7 @@ function CaseStatusSection({
     );
 
   if (!summary && !error && (!loading || !likelyCaseTicket)) return null;
+  const isReturnCase = summary?.title === "Return Case";
 
   return (
     <section className="border-b border-hairline bg-card/40 px-4 py-3">
@@ -1022,18 +1023,42 @@ function CaseStatusSection({
                 )
               ) : null}
             </div>
-            <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1.5 text-[11px]">
-              <CaseStatusDatum label="Opened" value={formatHelpdeskDate(summary.openedAt)} />
-              <CaseStatusDatum
-                label="Escalated"
-                value={formatHelpdeskDate(summary.escalatedAt)}
-              />
-              <CaseStatusDatum label="Hold Started" value={formatHelpdeskDate(summary.holdAt)} />
-              <CaseStatusDatum label="Hold Expires" value={summary.holdUntil ?? "-"} />
-              {summary.closedAt ? (
-                <CaseStatusDatum label="Closed" value={formatHelpdeskDate(summary.closedAt)} />
-              ) : null}
-            </dl>
+            {isReturnCase ? (
+              <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1.5 text-[11px]">
+                <CaseStatusDatum
+                  label="Return Started"
+                  value={formatHelpdeskDate(summary.openedAt)}
+                />
+                <CaseStatusDatum
+                  label="Buyer Shipped"
+                  value={formatHelpdeskDate(summary.returnShippedAt)}
+                />
+                <CaseStatusDatum
+                  label="Item Returned"
+                  value={formatHelpdeskDate(summary.returnDeliveredAt)}
+                />
+                <CaseStatusDatum
+                  label="Refund Due"
+                  value={formatHelpdeskDate(summary.refundDueAt)}
+                />
+                {summary.closedAt ? (
+                  <CaseStatusDatum label="Closed" value={formatHelpdeskDate(summary.closedAt)} />
+                ) : null}
+              </dl>
+            ) : (
+              <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1.5 text-[11px]">
+                <CaseStatusDatum label="Opened" value={formatHelpdeskDate(summary.openedAt)} />
+                <CaseStatusDatum
+                  label="Escalated"
+                  value={formatHelpdeskDate(summary.escalatedAt)}
+                />
+                <CaseStatusDatum label="Hold Started" value={formatHelpdeskDate(summary.holdAt)} />
+                <CaseStatusDatum label="Hold Expires" value={summary.holdUntil ?? "-"} />
+                {summary.closedAt ? (
+                  <CaseStatusDatum label="Closed" value={formatHelpdeskDate(summary.closedAt)} />
+                ) : null}
+              </dl>
+            )}
             {summary.latestEventText ? (
               <p className="mt-2 line-clamp-2 text-[11px] text-muted-foreground">
                 Latest: {summary.latestEventText}

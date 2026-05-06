@@ -104,6 +104,60 @@ test("buildConversationSummary includes order, case, buyer, and agent context", 
   assert.ok(lines.some((line) => line.includes("Latest agent reply")));
 });
 
+test("buildCaseStatusSummary fills return lifecycle fields", () => {
+  const summary = buildCaseStatusSummary([
+    event(
+      "return-started",
+      "EBAY_RETURN_OPENED",
+      "case",
+      "Return Started #5318063312 on eBay",
+      "2026-04-24T21:24:34.000Z",
+      {
+        externalId: "5318063312",
+        href: "https://www.ebay.com/rtn/Return/ReturnsDetail?returnId=5318063312",
+      },
+    ),
+    event(
+      "return-shipped",
+      "EBAY_RETURN_BUYER_SHIPPED",
+      "case",
+      "Buyer Shipped Item Back",
+      "2026-04-30T16:01:30.000Z",
+      { externalId: "5318063312" },
+    ),
+    event(
+      "return-delivered",
+      "EBAY_RETURN_DELIVERED",
+      "case",
+      "Returned Item Delivered for Return #5318063312 on eBay",
+      "2026-05-04T18:25:48.000Z",
+      { externalId: "5318063312" },
+    ),
+    event(
+      "refund-due",
+      "EBAY_RETURN_REFUND_DUE",
+      "case",
+      "Refund Due for Return #5318063312 on eBay",
+      "2026-05-06T07:18:05.000Z",
+      {
+        externalId: "5318063312",
+        deadlineAt: "2026-05-06T16:00:00.000Z",
+        deadlineLabel: "Refund Due",
+      },
+    ),
+  ]);
+
+  assert.ok(summary);
+  assert.equal(summary.title, "Return Case");
+  assert.equal(summary.caseId, "5318063312");
+  assert.equal(summary.status, "Awaiting Refund");
+  assert.equal(summary.openedAt, "2026-04-24T21:24:34.000Z");
+  assert.equal(summary.returnShippedAt, "2026-04-30T16:01:30.000Z");
+  assert.equal(summary.returnDeliveredAt, "2026-05-04T18:25:48.000Z");
+  assert.equal(summary.refundDueAt, "2026-05-06T16:00:00.000Z");
+  assert.match(summary.agentNote, /Refund is due by May 6/);
+});
+
 function event(
   id: string,
   action: string,

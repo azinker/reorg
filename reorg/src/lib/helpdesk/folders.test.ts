@@ -98,8 +98,13 @@ test("buildFolderWhere(all_to_do) accepts both NEW and TO_DO so legacy rows stil
 });
 
 test("buildFolderWhere(all_new) is a back-compat alias for all_to_do (v2)", () => {
-  const a = JSON.stringify(buildFolderWhere("all_new", ctx));
-  const b = JSON.stringify(buildFolderWhere("all_to_do", ctx));
+  const normalize = (value: unknown) =>
+    JSON.stringify(value).replace(
+      /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z/g,
+      "<now>",
+    );
+  const a = normalize(buildFolderWhere("all_new", ctx));
+  const b = normalize(buildFolderWhere("all_to_do", ctx));
   assert.equal(a, b);
 });
 

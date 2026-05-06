@@ -107,6 +107,8 @@ interface TimelineEvent {
   href?: string | null;
   externalId?: string | null;
   holdUntil?: string | null;
+  deadlineAt?: string | null;
+  deadlineLabel?: string | null;
   trackingNumber?: string | null;
   estimatedDeliveryText?: string | null;
   actor: {
@@ -428,9 +430,9 @@ function systemTicketTimelineText(args: {
       };
     case SYSTEM_MESSAGE_TYPES.RETURN_APPROVED:
       return {
-        action: "EBAY_RETURN_APPROVED",
-        text: "Return Approved on eBay",
-        shortText: "Return Approved",
+        action: "EBAY_RETURN_OPENED",
+        text: "Return Started on eBay",
+        shortText: "Return Started",
       };
     case SYSTEM_MESSAGE_TYPES.RETURN_CLOSED:
       return {
@@ -470,9 +472,9 @@ function systemTicketTimelineText(args: {
       };
     case SYSTEM_MESSAGE_TYPES.BUYER_SHIPPED:
       return {
-        action: "EBAY_BUYER_SHIPPED",
+        action: "EBAY_RETURN_BUYER_SHIPPED",
         text: "Buyer Shipped Item Back",
-        shortText: "Buyer Shipped Item",
+        shortText: "Buyer Shipped Item Back",
       };
     default:
       return {
@@ -498,6 +500,14 @@ function compactTimelineLabel(action: string, text: string): string {
       return "Buyer Opened Return";
     case "EBAY_RETURN_APPROVED":
       return "Return Approved";
+    case "EBAY_RETURN_DELIVERED":
+      return "Returned Item Delivered";
+    case "EBAY_RETURN_REFUND_DUE":
+      return "Refund Due";
+    case "EBAY_RETURN_REFUNDED":
+      return "Refund Issued";
+    case "EBAY_RETURN_BUYER_SHIPPED":
+      return "Buyer Shipped Item Back";
     case "EBAY_RETURN_CLOSED":
       return "Return Closed";
     case "EBAY_CANCEL_REQUESTED":
@@ -564,6 +574,22 @@ function parseEbayDateOnly(value: string | null | undefined): string | null {
   return new Date(Date.UTC(year, month, day, 16, 0, 0)).toISOString();
 }
 
+function parseEbayMonthDayWithReference(
+  value: string | null | undefined,
+  reference: Date | string,
+): string | null {
+  if (!value) return null;
+  const match = /^([A-Za-z]+)\s+(\d{1,2})$/.exec(value.trim());
+  if (!match) return parseEbayDateOnly(value);
+  const month = EBAY_DATE_MONTHS[match[1]!.slice(0, 3).toLowerCase()];
+  if (month == null) return null;
+  const day = Number(match[2]);
+  const ref = new Date(reference);
+  const year = Number.isFinite(ref.getTime()) ? ref.getUTCFullYear() : new Date().getUTCFullYear();
+  if (!Number.isFinite(day) || !Number.isFinite(year)) return null;
+  return new Date(Date.UTC(year, month, day, 16, 0, 0)).toISOString();
+}
+
 function extractEbayCaseUrl(bodyText: string | null | undefined): string | null {
   const raw = (bodyText ?? "").replace(/&amp;/gi, "&");
   const direct =
@@ -610,6 +636,9 @@ function extractEbayRequestContext(args: {
   shortCaseLabel: string;
   openedAt: string | null;
   holdUntil: string | null;
+  labelDueAt: string | null;
+  refundDueAt: string | null;
+  isReturn: boolean;
   isEscalated: boolean;
   isOnHold: boolean;
   isDeliveredUpdate: boolean;
@@ -646,6 +675,14 @@ function extractEbayRequestContext(args: {
     /on\s+hold\s+until\s+([A-Za-z]+\s+\d{1,2},\s+\d{4})/i.exec(haystack)?.[1] ??
     /update\s+by\s+([A-Za-z]+\s+\d{1,2},\s+\d{4})/i.exec(haystack)?.[1] ??
     null;
+  const labelDue =
+    /(?:provide|send|upload)\s+(?:a\s+)?return\s+shipping\s+label\s+by\s+([A-Za-z]+\.?\s+\d{1,2}(?:,\s+\d{4})?)/i.exec(
+      haystack,
+    )?.[1] ?? null;
+  const refundDue =
+    /(?:issue\s+a\s+refund|issue\s+your\s+buyer\s+a\s+refund|refund\s+the\s+buyer|refund\s+your\s+buyer|refund\s+by)\s+(?:within\s+\d+\s+days\s+of\s+item\s+being\s+delivered|by\s+)?([A-Za-z]+\.?\s+\d{1,2}(?:,\s+\d{4})?)/i.exec(
+      haystack,
+    )?.[1] ?? null;
   const isInr =
     /ItemNotReceived/i.test(args.bodyText ?? "") ||
     /item\s+not\s+received|not\s+received\s+request|hasn'?t\s+arrived/i.test(haystack) ||
@@ -686,6 +723,9 @@ function extractEbayRequestContext(args: {
     shortCaseLabel: isInr ? "INR Case" : isReturn ? "Return Case" : "Case",
     openedAt: parseEbayDateOnly(openedDate),
     holdUntil: parseEbayDateOnly(holdUntil),
+    labelDueAt: labelDue,
+    refundDueAt: refundDue,
+    isReturn,
     isEscalated,
     isOnHold,
     isDeliveredUpdate,
@@ -808,14 +848,64 @@ function systemTicketTimelineEvents(args: {
     subject: args.subject,
     bodyText: args.bodyText,
   });
+  const isReturnSystem = Boolean(ctx.caseId && ctx.isReturn);
+  const labelDueAt = parseEbayMonthDayWithReference(ctx.labelDueAt, args.at);
+  const refundDueAt = parseEbayMonthDayWithReference(ctx.refundDueAt, args.at);
+  const returnAdjusted =
+    isReturnSystem && formatted.action === "EBAY_ITEM_DELIVERED"
+      ? {
+          action: "EBAY_RETURN_DELIVERED",
+          text: `Returned Item Delivered for Return #${ctx.caseId} on eBay`,
+          shortText: "Returned Item Delivered",
+          deadlineAt: refundDueAt,
+          deadlineLabel: refundDueAt ? "Refund Due" : null,
+        }
+      : isReturnSystem && formatted.action === "EBAY_REFUND_REQUESTED"
+        ? {
+            action: "EBAY_RETURN_REFUND_DUE",
+            text: `Refund Due for Return #${ctx.caseId} on eBay`,
+            shortText: "Refund Due",
+            deadlineAt: refundDueAt,
+            deadlineLabel: refundDueAt ? "Refund Due" : null,
+          }
+        : isReturnSystem && formatted.action === "EBAY_REFUND_ISSUED"
+          ? {
+              action: "EBAY_RETURN_REFUNDED",
+              text: `Refund Issued for Return #${ctx.caseId} on eBay`,
+              shortText: "Refund Issued",
+              deadlineAt: null,
+              deadlineLabel: null,
+            }
+        : null;
+  const action = returnAdjusted?.action ?? formatted.action;
+  const text =
+    returnAdjusted?.text ??
+    (isReturnSystem && formatted.action === "EBAY_RETURN_OPENED"
+      ? `Return Started #${ctx.caseId} on eBay`
+      : formatted.text);
+  const shortText =
+    returnAdjusted?.shortText ??
+    (isReturnSystem && formatted.action === "EBAY_RETURN_OPENED"
+      ? "Return Started"
+      : formatted.shortText ?? compactTimelineLabel(formatted.action, formatted.text));
   return [
     {
       id: `related-system-${baseId}`,
       type: "system",
-      action: formatted.action,
+      action,
       kind: "case",
-      text: formatted.text,
-      shortText: formatted.shortText ?? compactTimelineLabel(formatted.action, formatted.text),
+      text,
+      shortText,
+      href: ctx.href,
+      externalId: ctx.caseId,
+      deadlineAt:
+        returnAdjusted?.deadlineAt ??
+        (isReturnSystem && formatted.action === "EBAY_RETURN_OPENED" ? labelDueAt : null),
+      deadlineLabel:
+        returnAdjusted?.deadlineLabel ??
+        (isReturnSystem && formatted.action === "EBAY_RETURN_OPENED" && labelDueAt
+          ? "Label Due"
+          : null),
       actor: null,
       at: args.at,
     },

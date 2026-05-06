@@ -10,6 +10,8 @@ export interface HelpdeskTimelineEvent {
   href?: string | null;
   externalId?: string | null;
   holdUntil?: string | null;
+  deadlineAt?: string | null;
+  deadlineLabel?: string | null;
   trackingNumber?: string | null;
   estimatedDeliveryText?: string | null;
   actor?: unknown;
@@ -41,9 +43,12 @@ export interface CaseStatusSummary {
   title: string;
   caseId: string | null;
   caseUrl: string | null;
-  status: "Open" | "Escalated to eBay" | "On Hold" | "Closed";
+  status: "Open" | "In Transit Back" | "Awaiting Refund" | "Escalated to eBay" | "On Hold" | "Closed";
   tone: "amber" | "sky" | "emerald" | "neutral";
   openedAt: string | null;
+  returnShippedAt: string | null;
+  returnDeliveredAt: string | null;
+  refundDueAt: string | null;
   escalatedAt: string | null;
   holdAt: string | null;
   holdUntil: string | null;
@@ -64,9 +69,17 @@ export function buildCaseStatusSummary(
   if (caseEvents.length === 0) return null;
 
   const opened = caseEvents.find(isOpenCaseEvent) ?? null;
+  const returnShipped = last(caseEvents.filter(isReturnShippedEvent));
+  const returnDelivered = last(caseEvents.filter(isReturnDeliveredEvent));
+  const refundDue = last(caseEvents.filter(isRefundDueEvent));
   const escalated = last(caseEvents.filter(isEscalatedCaseEvent));
   const hold = last(caseEvents.filter(isHoldCaseEvent));
-  const closed = last(caseEvents.filter(isClosedCaseEvent));
+  const refunded = last(caseEvents.filter(isReturnRefundedEvent));
+  const closed = last(
+    [...caseEvents.filter(isClosedCaseEvent), ...(refunded ? [refunded] : [])].sort(
+      (a, b) => dateMs(a.at) - dateMs(b.at),
+    ),
+  );
   const latest = last(caseEvents);
   const holdUntil = findHoldUntil(events, messages);
   const linkedCaseEvent =
@@ -81,6 +94,12 @@ export function buildCaseStatusSummary(
   } else if (hold) {
     status = "On Hold";
     tone = "sky";
+  } else if (refundDue || returnDelivered) {
+    status = "Awaiting Refund";
+    tone = "amber";
+  } else if (returnShipped) {
+    status = "In Transit Back";
+    tone = "amber";
   } else if (escalated) {
     status = "Escalated to eBay";
     tone = "amber";
@@ -91,7 +110,13 @@ export function buildCaseStatusSummary(
       ? holdUntil
         ? `eBay has the case on hold until ${holdUntil}. Monitor delivery and be ready before that date.`
         : "eBay has the case on hold. Monitor delivery and watch for the next case update."
-      : status === "Escalated to eBay"
+      : status === "Awaiting Refund"
+        ? findDeadlineLabel(refundDue, "Refund Due")
+          ? `The returned item is back. Refund is due by ${findDeadlineLabel(refundDue, "Refund Due")}.`
+          : "The returned item is back. Inspect it and issue the refund if everything checks out."
+        : status === "In Transit Back"
+          ? "The buyer shipped the return back. Wait for delivery, then inspect the item before refunding."
+          : status === "Escalated to eBay"
         ? "The buyer escalated this to eBay. Keep replies factual and align next steps with the case state."
         : status === "Closed"
           ? "The case appears closed. Confirm the outcome before promising any additional resolution."
@@ -104,6 +129,9 @@ export function buildCaseStatusSummary(
     status,
     tone,
     openedAt: opened?.at ?? null,
+    returnShippedAt: returnShipped?.at ?? null,
+    returnDeliveredAt: returnDelivered?.at ?? null,
+    refundDueAt: refundDue?.deadlineAt ?? null,
     escalatedAt: escalated?.at ?? null,
     holdAt: hold?.at ?? null,
     holdUntil,
@@ -159,6 +187,15 @@ export function buildConversationSummary(
     const caseLineParts = [
       `${caseSummary.title}: ${caseSummary.status.toLowerCase()}`,
       caseSummary.openedAt ? `opened ${formatHelpdeskDate(caseSummary.openedAt)}` : null,
+      caseSummary.returnShippedAt
+        ? `buyer shipped back ${formatHelpdeskDate(caseSummary.returnShippedAt)}`
+        : null,
+      caseSummary.returnDeliveredAt
+        ? `returned item delivered ${formatHelpdeskDate(caseSummary.returnDeliveredAt)}`
+        : null,
+      caseSummary.refundDueAt
+        ? `refund due ${formatHelpdeskDate(caseSummary.refundDueAt)}`
+        : null,
       caseSummary.escalatedAt
         ? `escalated ${formatHelpdeskDate(caseSummary.escalatedAt)}`
         : null,
@@ -231,6 +268,22 @@ function isEscalatedCaseEvent(event: HelpdeskTimelineEvent): boolean {
   return event.action === "EBAY_CASE_ESCALATED" || /escalated|opened case on ebay/i.test(event.text);
 }
 
+function isReturnShippedEvent(event: HelpdeskTimelineEvent): boolean {
+  return event.action === "EBAY_RETURN_BUYER_SHIPPED" || /buyer shipped item back/i.test(event.text);
+}
+
+function isReturnDeliveredEvent(event: HelpdeskTimelineEvent): boolean {
+  return event.action === "EBAY_RETURN_DELIVERED" || /returned item delivered/i.test(event.text);
+}
+
+function isRefundDueEvent(event: HelpdeskTimelineEvent): boolean {
+  return event.action === "EBAY_RETURN_REFUND_DUE" || /refund due/i.test(event.text);
+}
+
+function isReturnRefundedEvent(event: HelpdeskTimelineEvent): boolean {
+  return event.action === "EBAY_RETURN_REFUNDED" || /refund issued for return/i.test(event.text);
+}
+
 function isHoldCaseEvent(event: HelpdeskTimelineEvent): boolean {
   return event.action === "EBAY_CASE_ON_HOLD" || /on hold|put .*hold/i.test(event.text);
 }
@@ -291,6 +344,15 @@ function normalizeHoldUntil(value: string): string | null {
     day: "numeric",
     year: "numeric",
   });
+}
+
+function findDeadlineLabel(
+  event: HelpdeskTimelineEvent | null,
+  label: string,
+): string | null {
+  if (!event?.deadlineAt) return null;
+  if (event.deadlineLabel && event.deadlineLabel !== label) return null;
+  return formatHelpdeskDate(event.deadlineAt);
 }
 
 function firstEventByActions(
