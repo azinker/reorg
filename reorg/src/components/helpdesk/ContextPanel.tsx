@@ -52,10 +52,12 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import {
   AlertTriangle,
+  CalendarClock,
   Check,
   ChevronDown,
   Copy,
   ExternalLink,
+  FileWarning,
   Loader2,
   MapPin,
   Package,
@@ -68,6 +70,12 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { HelpdeskTicketDetail } from "@/hooks/use-helpdesk";
+import { useHelpdeskTimelineEvents } from "@/hooks/use-helpdesk-timeline-events";
+import {
+  buildCaseStatusSummary,
+  formatHelpdeskDate,
+  type HelpdeskTimelineEvent,
+} from "@/lib/helpdesk/conversation-summary";
 import { Avatar, AvatarStack } from "@/components/ui/avatar";
 
 interface ContextPanelProps {
@@ -268,6 +276,7 @@ function ContextPanelInner({ ticket, containerWidth, dividerCls }: InnerProps) {
   const order = useOrderContext(ticket);
   const related = useRelatedTickets(ticket);
   const feedback = useFeedbackSummary(ticket);
+  const timeline = useHelpdeskTimelineEvents(ticket.id);
 
   return (
     // h-full + min-h-0 so flex-1 inside us actually scrolls instead of growing
@@ -295,6 +304,12 @@ function ContextPanelInner({ ticket, containerWidth, dividerCls }: InnerProps) {
         {tab === "details" && (
           <>
             <CustomerCard ticket={ticket} order={order.data} related={related.summary} />
+            <CaseStatusSection
+              events={timeline.data}
+              loading={timeline.loading}
+              error={timeline.error}
+              ticket={ticket}
+            />
             {ticket.kind === "POST_SALES" || !!ticket.ebayOrderNumber ? (
               <OrderInfoSection ticket={ticket} order={order} />
             ) : ticket.listingInfo ? (
@@ -925,6 +940,115 @@ function ProductInquirySection({
 }
 
 // ── Order info ─────────────────────────────────────────────────────────────
+
+function CaseStatusSection({
+  ticket,
+  events,
+  loading,
+  error,
+}: {
+  ticket: HelpdeskTicketDetail;
+  events: HelpdeskTimelineEvent[];
+  loading: boolean;
+  error: string | null;
+}) {
+  const summary = buildCaseStatusSummary(events, ticket.messages);
+  const likelyCaseTicket =
+    /RETURN|ITEM_NOT_RECEIVED|REFUND|CANCELLATION|SYSTEM/.test(ticket.type) ||
+    /case|claim|return|refund|cancel|item not received|INR/i.test(
+      `${ticket.subject ?? ""} ${ticket.latestPreview ?? ""}`,
+    );
+
+  if (!summary && !error && (!loading || !likelyCaseTicket)) return null;
+
+  return (
+    <section className="border-b border-hairline bg-card/40 px-4 py-3">
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <FileWarning className="h-3.5 w-3.5 text-amber-600 dark:text-amber-300" />
+          <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+            Case Status
+          </h3>
+        </div>
+        {loading ? (
+          <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground">
+            <Loader2 className="h-3 w-3 animate-spin" />
+            Checking
+          </span>
+        ) : summary ? (
+          <span
+            className={cn(
+              "rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider",
+              summary.tone === "sky" &&
+                "bg-sky-500/15 text-sky-700 dark:text-sky-300",
+              summary.tone === "amber" &&
+                "bg-amber-500/15 text-amber-700 dark:text-amber-300",
+              summary.tone === "emerald" &&
+                "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300",
+              summary.tone === "neutral" &&
+                "bg-surface-2 text-muted-foreground",
+            )}
+          >
+            {summary.status}
+          </span>
+        ) : null}
+      </div>
+
+      {error ? (
+        <p className="text-xs text-amber-700 dark:text-amber-300">
+          Case lookup unavailable.
+        </p>
+      ) : summary ? (
+        <div className="space-y-2">
+          <div className="rounded-md border border-hairline bg-surface/50 p-2">
+            <p className="text-xs font-semibold text-foreground">{summary.title}</p>
+            <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1.5 text-[11px]">
+              <CaseStatusDatum label="Opened" value={formatHelpdeskDate(summary.openedAt)} />
+              <CaseStatusDatum
+                label="Escalated"
+                value={formatHelpdeskDate(summary.escalatedAt)}
+              />
+              <CaseStatusDatum label="Hold Started" value={formatHelpdeskDate(summary.holdAt)} />
+              <CaseStatusDatum label="Hold Expires" value={summary.holdUntil ?? "-"} />
+              {summary.closedAt ? (
+                <CaseStatusDatum label="Closed" value={formatHelpdeskDate(summary.closedAt)} />
+              ) : null}
+            </dl>
+            {summary.latestEventText ? (
+              <p className="mt-2 line-clamp-2 text-[11px] text-muted-foreground">
+                Latest: {summary.latestEventText}
+              </p>
+            ) : null}
+          </div>
+          <p
+            className={cn(
+              "flex gap-2 rounded-md border px-2 py-1.5 text-[11px] leading-relaxed",
+              summary.status === "On Hold"
+                ? "border-sky-500/25 bg-sky-500/10 text-sky-700 dark:text-sky-200"
+                : "border-amber-500/25 bg-amber-500/10 text-amber-700 dark:text-amber-200",
+            )}
+          >
+            <CalendarClock className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            <span>{summary.agentNote}</span>
+          </p>
+        </div>
+      ) : (
+        <p className="text-xs text-muted-foreground">Checking case timeline...</p>
+      )}
+    </section>
+  );
+}
+
+function CaseStatusDatum({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <dt className="text-[10px] uppercase tracking-wider text-muted-foreground">
+        {label}
+      </dt>
+      <dd className="mt-0.5 font-medium text-foreground">{value}</dd>
+    </div>
+  );
+}
 
 function OrderInfoSection({
   ticket,

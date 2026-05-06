@@ -37,6 +37,7 @@ import {
   Zap,
   ChevronDown,
   Check,
+  FileText,
   GripHorizontal,
   Pin,
   PinOff,
@@ -68,6 +69,8 @@ import {
   useHelpdeskPrefs,
 } from "@/components/helpdesk/HelpdeskSettingsDialog";
 import { normalizeExternalEmailDraft } from "@/lib/helpdesk/external-email-fields";
+import { useHelpdeskTimelineEvents } from "@/hooks/use-helpdesk-timeline-events";
+import { buildConversationSummary } from "@/lib/helpdesk/conversation-summary";
 
 type ComposerMode = "REPLY" | "NOTE" | "EXTERNAL";
 type StatusChoice = "WAITING" | "RESOLVED" | "NONE";
@@ -181,6 +184,7 @@ export function Composer({
     text: string;
     tone: "success" | "info";
   } | null>(null);
+  const [summaryOpen, setSummaryOpen] = useState(false);
   /**
    * eDesk-style behaviour: the composer collapses to a single-line "Reply…"
    * pill until an agent clicks it. Keeps the conversation pane breathing
@@ -208,6 +212,7 @@ export function Composer({
 
   const flags = syncStatus?.flags;
   const safeMode = flags?.safeMode ?? true;
+  const timeline = useHelpdeskTimelineEvents(ticket.id);
 
   useEffect(() => {
     attachmentsRef.current = attachments;
@@ -246,6 +251,7 @@ export function Composer({
     setStatusChoice(prefs.defaultSendStatus);
     setStatusOverridden(false);
     setExpanded(prefs.composerSticky);
+    setSummaryOpen(false);
     setStatusMenuOpen(false);
     setExternalTo("");
     setExternalCc("");
@@ -430,6 +436,10 @@ export function Composer({
   const templateCtx = useMemo(
     () => ticketToContext(ticket, orderTracking),
     [ticket, orderTracking],
+  );
+  const conversationSummary = useMemo(
+    () => buildConversationSummary(ticket, timeline.data),
+    [ticket, timeline.data],
   );
 
   function appendBodyText(text: string) {
@@ -863,6 +873,21 @@ export function Composer({
         </button>
         <button
           type="button"
+          onClick={() => setSummaryOpen((open) => !open)}
+          className={cn(
+            "inline-flex h-6 items-center gap-1 rounded-md border px-2 text-[10px] font-medium transition-colors cursor-pointer",
+            summaryOpen
+              ? "border-sky-500/40 bg-sky-500/10 text-sky-700 dark:text-sky-300"
+              : "border-hairline-strong/70 bg-surface text-foreground/70 hover:bg-surface-2 hover:text-foreground",
+          )}
+          title="Show a compact summary of this conversation"
+          aria-pressed={summaryOpen}
+        >
+          <FileText className="h-3 w-3" />
+          Summary
+        </button>
+        <button
+          type="button"
           onClick={() => updateHelpdeskPrefs({ autoAdvance: !prefs.autoAdvance })}
           className={cn(
             "inline-flex h-6 items-center rounded-md border px-2 text-[10px] font-medium transition-colors cursor-pointer",
@@ -889,6 +914,48 @@ export function Composer({
           </button>
         )}
       </div>
+
+      {summaryOpen && (
+        <div className="border-b border-sky-500/20 bg-sky-500/10 px-4 py-2 text-xs text-sky-900 dark:text-sky-100">
+          <div className="mb-1.5 flex items-center justify-between gap-2">
+            <div className="flex items-center gap-1.5 font-semibold">
+              <FileText className="h-3.5 w-3.5" />
+              Conversation Summary
+              {timeline.loading ? (
+                <Loader2 className="h-3 w-3 animate-spin text-sky-700/80 dark:text-sky-200/80" />
+              ) : null}
+            </div>
+            <button
+              type="button"
+              onClick={() => setSummaryOpen(false)}
+              className="inline-flex h-6 w-6 items-center justify-center rounded-md text-sky-900/70 transition-colors hover:bg-sky-500/15 hover:text-sky-950 dark:text-sky-100/70 dark:hover:text-white cursor-pointer"
+              title="Hide conversation summary"
+              aria-label="Hide conversation summary"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+          {timeline.error ? (
+            <p className="text-[11px] text-amber-700 dark:text-amber-200">
+              Timeline lookup unavailable, so this summary may be incomplete.
+            </p>
+          ) : null}
+          {conversationSummary.length > 0 ? (
+            <ul className="grid gap-1 sm:grid-cols-2">
+              {conversationSummary.map((line) => (
+                <li key={line} className="flex min-w-0 gap-1.5 leading-relaxed">
+                  <span className="mt-[0.45rem] h-1 w-1 shrink-0 rounded-full bg-sky-600 dark:bg-sky-300" />
+                  <span>{line}</span>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="text-[11px] leading-relaxed text-sky-900/75 dark:text-sky-100/75">
+              No timeline or message summary is available yet for this ticket.
+            </p>
+          )}
+        </div>
+      )}
 
       {/* Composer status toast */}
       {!pending && composerNotice && Date.now() - composerNotice.at < 4000 && (
