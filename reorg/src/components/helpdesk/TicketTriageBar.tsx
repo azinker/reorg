@@ -106,6 +106,7 @@ interface AgentFolderOption {
 interface TicketTriageBarProps {
   ticket: HelpdeskTicketDetail | null;
   onMutated: () => void;
+  onResolveAdvanceChoice?: (ticketId: string, advance: boolean) => void;
   agentFolders?: AgentFolderOption[];
   embedded?: boolean;
   className?: string;
@@ -114,6 +115,7 @@ interface TicketTriageBarProps {
 export function TicketTriageBar({
   ticket,
   onMutated,
+  onResolveAdvanceChoice,
   agentFolders = [],
   embedded = false,
   className,
@@ -246,7 +248,7 @@ export function TicketTriageBar({
       {(() => {
         const isResolved = ticket?.status === "RESOLVED";
         const justResolved = justDone === "resolve";
-        return (
+        return isResolved ? (
           <IconButton
             title={
               isResolved
@@ -274,6 +276,22 @@ export function TicketTriageBar({
               <CircleCheck className="h-4 w-4" />
             )}
           </IconButton>
+        ) : (
+          <ResolveMenu
+            ticketId={ticket?.id ?? null}
+            disabled={disabled}
+            success={justResolved}
+            onResolve={(advance) => {
+              if (ticket?.id) onResolveAdvanceChoice?.(ticket.id, advance);
+              void runBatch(
+                {
+                  action: "setStatus",
+                  status: "RESOLVED",
+                },
+                "resolve",
+              );
+            }}
+          />
         );
       })()}
 
@@ -1107,6 +1125,91 @@ function MoveToFolderMenu({
  *   • base    — colored border tint at rest, kept very faint (≤25% alpha)
  *               so the toolbar still looks calm, not Christmas-tree-y.
  */
+function ResolveMenu({
+  ticketId,
+  disabled,
+  success,
+  onResolve,
+}: {
+  ticketId: string | null;
+  disabled?: boolean;
+  success?: boolean;
+  onResolve: (advance: boolean) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function onClick(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    }
+    window.addEventListener("mousedown", onClick);
+    return () => window.removeEventListener("mousedown", onClick);
+  }, [open]);
+
+  const isDisabled = disabled || !ticketId;
+  const title =
+    "Resolve this ticket. Choose whether to stay here or advance to the next ticket.";
+
+  return (
+    <div ref={ref} className="relative inline-flex h-8">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        disabled={isDisabled}
+        title={title}
+        aria-label={title}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        className={cn(
+          "inline-flex h-8 items-center justify-center gap-1.5 rounded-md border bg-surface px-2.5 text-[12px] font-medium text-muted-foreground shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/30 disabled:cursor-not-allowed disabled:opacity-40 cursor-pointer",
+          ACCENT_BASE.emerald,
+          success &&
+            "border-emerald-500/60 bg-emerald-500/15 text-emerald-600 ring-2 ring-emerald-500/30 dark:text-emerald-300",
+        )}
+      >
+        {success ? <Check className="h-4 w-4" /> : <CircleCheck className="h-4 w-4" />}
+        <span className="max-w-[9rem] truncate">Resolve</span>
+        <ChevronDown className="h-3.5 w-3.5 opacity-70" />
+      </button>
+      {open && (
+        <div
+          role="menu"
+          className="absolute right-0 top-full z-[120] mt-1 w-48 rounded-md border border-hairline bg-popover p-1 text-popover-foreground shadow-xl"
+        >
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              onResolve(true);
+              setOpen(false);
+            }}
+            className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-xs text-foreground hover:bg-surface-2 cursor-pointer"
+          >
+            <CircleCheck className="h-3.5 w-3.5 text-emerald-500" />
+            <span className="min-w-0 flex-1">Resolve + Advance</span>
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              onResolve(false);
+              setOpen(false);
+            }}
+            className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-xs text-foreground hover:bg-surface-2 cursor-pointer"
+          >
+            <Check className="h-3.5 w-3.5 text-emerald-500" />
+            <span className="min-w-0 flex-1">Resolve</span>
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 type IconAccent = "brand" | "amber" | "emerald" | "violet" | "red";
 
 const ACCENT_BASE: Record<IconAccent, string> = {

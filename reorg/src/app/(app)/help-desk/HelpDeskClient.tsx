@@ -280,6 +280,10 @@ export default function HelpDeskClient() {
     void fetchAgentFolders();
     void fetchAgentRoster();
   }, [fetchAgentFolders, fetchAgentRoster, refresh]);
+  const pendingResolveAdvanceRef = useRef<Map<string, boolean>>(new Map());
+  const onResolveAdvanceChoice = useCallback((ticketId: string, advance: boolean) => {
+    pendingResolveAdvanceRef.current.set(ticketId, advance);
+  }, []);
 
   // Honor ?q=... → seed search field. We compare against a ref so we
   // don't fight ourselves when the user types after navigation. On a
@@ -424,6 +428,9 @@ export default function HelpDeskClient() {
     if (previous.id !== selectedTicket.id) return;
     if (previous.status == null || previous.status === current.status) return;
     if (current.status !== "RESOLVED") return;
+    const explicitAdvance = pendingResolveAdvanceRef.current.get(selectedTicket.id);
+    pendingResolveAdvanceRef.current.delete(selectedTicket.id);
+    if (!(explicitAdvance ?? prefs.autoAdvance)) return;
     const idx = tickets.findIndex((t) => t.id === selectedTicket.id);
     const anchorIdx = idx >= 0 ? idx : lastSelectedListIndexRef.current;
     if (anchorIdx < 0) return;
@@ -711,6 +718,7 @@ export default function HelpDeskClient() {
                   prevTicket={prevTicket}
                   nextTicket={nextTicket}
                   onSent={refreshAfterTicketMutation}
+                  onResolveAdvanceChoice={onResolveAdvanceChoice}
                   agentFolders={agentFolders}
                 />
               </div>
@@ -777,6 +785,7 @@ export default function HelpDeskClient() {
                 prevTicket={prevTicket}
                 nextTicket={nextTicket}
                 onSent={refreshAfterTicketMutation}
+                onResolveAdvanceChoice={onResolveAdvanceChoice}
                 agentFolders={agentFolders}
               />
             }

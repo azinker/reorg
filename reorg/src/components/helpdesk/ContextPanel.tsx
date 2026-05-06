@@ -1052,7 +1052,7 @@ function OrderInfoSection({
                   href={`https://www.ebay.com/mesh/ord/details?orderid=${encodeURIComponent(ticket.ebayOrderNumber)}`}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 break-all font-mono text-sm text-brand hover:underline"
+                  className="inline-flex h-6 max-w-full items-center gap-1 truncate rounded-md border border-emerald-500/45 bg-emerald-500/10 px-2 font-mono text-[12px] font-bold text-emerald-700 shadow-sm transition-colors hover:border-emerald-400 hover:bg-emerald-500/15 hover:text-emerald-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/30 dark:text-emerald-300 dark:hover:text-emerald-200 cursor-pointer"
                   title="Open this order on eBay (new tab)"
                 >
                   {ticket.ebayOrderNumber}

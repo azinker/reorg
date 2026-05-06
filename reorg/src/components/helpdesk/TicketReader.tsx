@@ -20,8 +20,8 @@
  *     is the "back" affordance there). The host decides via `showBack`.
  */
 
-import { ArrowLeft, ChevronLeft, ChevronRight, ExternalLink } from "lucide-react";
-import { useEffect } from "react";
+import { ArrowLeft, Check, ChevronLeft, ChevronRight, Copy, ExternalLink } from "lucide-react";
+import { useEffect, useState } from "react";
 import { ThreadView } from "@/components/helpdesk/ThreadView";
 import { ContextPanel } from "@/components/helpdesk/ContextPanel";
 import { HelpdeskSplit } from "@/components/helpdesk/HelpdeskSplit";
@@ -83,6 +83,7 @@ interface TicketReaderProps {
   prevTicket?: HelpdeskTicketSummary | null;
   nextTicket?: HelpdeskTicketSummary | null;
   onSent: () => void;
+  onResolveAdvanceChoice?: (ticketId: string, advance: boolean) => void;
   agentFolders?: { id: string; name: string; color: string }[];
 }
 
@@ -100,6 +101,7 @@ export function TicketReader({
   prevTicket = null,
   nextTicket = null,
   onSent,
+  onResolveAdvanceChoice,
   agentFolders = [],
 }: TicketReaderProps) {
   const prefs = useHelpdeskPrefs();
@@ -303,15 +305,7 @@ export function TicketReader({
                   {storeDisplayLabel(ticket)}
                 </span>
                 {ticket.ebayOrderNumber && (
-                  <a
-                    href={`https://www.ebay.com/mesh/ord/details?orderid=${ticket.ebayOrderNumber}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex h-6 max-w-[18rem] shrink-0 truncate items-center rounded-md border border-emerald-500/45 bg-emerald-500/10 px-2 text-[12px] font-bold text-emerald-700 shadow-sm transition-colors hover:border-emerald-400 hover:bg-emerald-500/15 hover:text-emerald-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/30 dark:text-emerald-300 dark:hover:text-emerald-200 cursor-pointer"
-                    title="Open this order on eBay in a new tab"
-                  >
-                    Order #{ticket.ebayOrderNumber}
-                  </a>
+                  <HeaderOrderLink orderNumber={ticket.ebayOrderNumber} />
                 )}
               </div>
             </>
@@ -324,6 +318,7 @@ export function TicketReader({
         <TicketTriageBar
           ticket={ticket}
           onMutated={onSent}
+          onResolveAdvanceChoice={onResolveAdvanceChoice}
           agentFolders={agentFolders}
           embedded
           className="hidden xl:flex"
@@ -385,15 +380,7 @@ export function TicketReader({
                   {storeDisplayLabel(ticket)}
                 </span>
                 {ticket.ebayOrderNumber && (
-                  <a
-                    href={`https://www.ebay.com/mesh/ord/details?orderid=${ticket.ebayOrderNumber}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex h-6 max-w-[18rem] shrink-0 truncate items-center rounded-md border border-emerald-500/45 bg-emerald-500/10 px-2 text-[12px] font-bold text-emerald-700 shadow-sm transition-colors hover:border-emerald-400 hover:bg-emerald-500/15 hover:text-emerald-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/30 dark:text-emerald-300 dark:hover:text-emerald-200 cursor-pointer"
-                    title="Open this order on eBay in a new tab"
-                  >
-                    Order #{ticket.ebayOrderNumber}
-                  </a>
+                  <HeaderOrderLink orderNumber={ticket.ebayOrderNumber} />
                 )}
               </div>
             </>
@@ -438,6 +425,7 @@ export function TicketReader({
       <TicketTriageBar
         ticket={ticket}
         onMutated={onSent}
+        onResolveAdvanceChoice={onResolveAdvanceChoice}
         agentFolders={agentFolders}
         className="xl:hidden"
       />
@@ -465,5 +453,43 @@ export function TicketReader({
         />
       </div>
     </div>
+  );
+}
+
+function HeaderOrderLink({ orderNumber }: { orderNumber: string }) {
+  const [copied, setCopied] = useState(false);
+  const orderUrl = `https://www.ebay.com/mesh/ord/details?orderid=${encodeURIComponent(orderNumber)}`;
+
+  async function copyOrder() {
+    try {
+      await navigator.clipboard.writeText(orderNumber);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1200);
+    } catch {
+      setCopied(false);
+    }
+  }
+
+  return (
+    <span className="inline-flex h-6 shrink-0 items-center">
+      <a
+        href={orderUrl}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="inline-flex h-6 max-w-[18rem] truncate items-center rounded-l-md border border-emerald-500/45 bg-emerald-500/10 px-2 text-[12px] font-bold text-emerald-700 shadow-sm transition-colors hover:border-emerald-400 hover:bg-emerald-500/15 hover:text-emerald-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/30 dark:text-emerald-300 dark:hover:text-emerald-200 cursor-pointer"
+        title="Open this order on eBay in a new tab"
+      >
+        Order #{orderNumber}
+      </a>
+      <button
+        type="button"
+        onClick={copyOrder}
+        className="inline-flex h-6 w-6 items-center justify-center rounded-r-md border-y border-r border-emerald-500/45 bg-emerald-500/10 text-emerald-700 shadow-sm transition-colors hover:border-emerald-400 hover:bg-emerald-500/15 hover:text-emerald-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/30 dark:text-emerald-300 dark:hover:text-emerald-200 cursor-pointer"
+        title="Copy order number"
+        aria-label="Copy order number"
+      >
+        {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+      </button>
+    </span>
   );
 }
