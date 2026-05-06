@@ -689,7 +689,8 @@ function extractEbayRequestContext(args: {
     /buyer'?s\s+item\s+arrived|shipping\s+status\s+shows.*delivered/i.test(haystack);
   const isReturn =
     !isInr &&
-    (/\/mesh\/returns\//i.test(args.bodyText ?? "") ||
+    (/^Return\s+\d{6,}\b/i.test(subject) ||
+      /\/mesh\/returns\//i.test(args.bodyText ?? "") ||
       /return\s+(case|request)|buyer\s+opened\s+a\s+return|new\s+return\s+request/i.test(
         haystack,
       ));
@@ -859,9 +860,6 @@ function systemTicketTimelineEvents(args: {
   const isReturnSystem = Boolean(ctx.caseId && ctx.isReturn);
   const labelDueAt = parseEbayMonthDayWithReference(ctx.labelDueAt, args.at);
   const refundDueAt = parseEbayMonthDayWithReference(ctx.refundDueAt, args.at);
-  if (isReturnSystem && formatted.action === "EBAY_REFUND_REQUESTED") {
-    return [];
-  }
   const returnAdjusted =
     isReturnSystem && formatted.action === "EBAY_ITEM_DELIVERED"
       ? {
@@ -871,6 +869,14 @@ function systemTicketTimelineEvents(args: {
           deadlineAt: refundDueAt,
           deadlineLabel: refundDueAt ? "Refund Due" : null,
         }
+      : isReturnSystem && formatted.action === "EBAY_REFUND_REQUESTED"
+        ? {
+            action: "EBAY_RETURN_REFUND_DUE",
+            text: "Pending Refund for Returned Item",
+            shortText: "Pending Refund",
+            deadlineAt: refundDueAt,
+            deadlineLabel: refundDueAt ? "Refund Due" : null,
+          }
       : isReturnSystem && formatted.action === "EBAY_REFUND_ISSUED"
           ? {
               action: "EBAY_RETURN_REFUNDED",

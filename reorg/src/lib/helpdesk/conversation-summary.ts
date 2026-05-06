@@ -75,24 +75,41 @@ export function buildCaseStatusSummary(
 
   if (caseEvents.length === 0) return null;
 
+  const title = inferCaseTitle(caseEvents, messages);
+  const isReturnCase = title === "Return Case";
   const opened = caseEvents.find(isOpenCaseEvent) ?? null;
-  const returnShipped = last(caseEvents.filter(isReturnShippedEvent));
-  const returnDelivered = last(caseEvents.filter(isReturnDeliveredEvent));
+  const returnShipped = last(caseEvents.filter((event) => isReturnShippedEvent(event)));
+  const returnDelivered = last(
+    caseEvents.filter(
+      (event) =>
+        isReturnDeliveredEvent(event) ||
+        (isReturnCase &&
+          event.action === "EBAY_ITEM_DELIVERED" &&
+          /delivered/i.test(event.text)),
+    ),
+  );
   const refundDue = last(caseEvents.filter(isRefundDueEvent));
   const escalated = last(caseEvents.filter(isEscalatedCaseEvent));
   const hold = last(caseEvents.filter(isHoldCaseEvent));
-  const refunded = last(caseEvents.filter(isReturnRefundedEvent));
+  const refunded = last(
+    caseEvents.filter(
+      (event) =>
+        isReturnRefundedEvent(event) ||
+        (isReturnCase &&
+          event.action === "EBAY_REFUND_ISSUED" &&
+          /refund issued/i.test(event.text)),
+    ),
+  );
   const refundDueAt = refundDue?.deadlineAt ?? returnDelivered?.deadlineAt ?? null;
   const closed = last(
     [...caseEvents.filter(isClosedCaseEvent), ...(refunded ? [refunded] : [])].sort(
       (a, b) => dateMs(a.at) - dateMs(b.at),
     ),
   );
-  const latest = last(caseEvents);
   const holdUntil = findHoldUntil(events, messages);
   const linkedCaseEvent =
     caseEvents.find((event) => event.externalId || event.href) ?? null;
-  const title = inferCaseTitle(caseEvents, messages);
+  const latest = refunded ?? last(caseEvents);
 
   let status: CaseStatusSummary["status"] = "Open";
   let tone: CaseStatusSummary["tone"] = "amber";
@@ -151,7 +168,7 @@ export function buildCaseStatusSummary(
     holdAt: hold?.at ?? null,
     holdUntil,
     closedAt: closed?.at ?? null,
-    latestEventText: latest?.shortText ?? latest?.text ?? null,
+    latestEventText: refunded ? "Refunded" : latest?.shortText ?? latest?.text ?? null,
     agentNote,
   };
 }

@@ -200,6 +200,75 @@ test("buildCaseStatusSummary marks a completed return as refunded", () => {
   assert.equal(summary.closedAt, "2026-05-06T18:19:07.000Z");
 });
 
+test("buildCaseStatusSummary treats legacy return delivery and refund labels as current", () => {
+  const summary = buildCaseStatusSummary(
+    [
+      event(
+        "return-started",
+        "EBAY_RETURN_OPENED",
+        "case",
+        "Return Started on eBay",
+        "2026-04-24T21:24:34.000Z",
+        { externalId: "5318063312" },
+      ),
+      event(
+        "return-shipped",
+        "EBAY_RETURN_BUYER_SHIPPED",
+        "case",
+        "Buyer Shipped Item Back",
+        "2026-04-30T16:01:30.000Z",
+        { externalId: "5318063312" },
+      ),
+      event(
+        "legacy-delivered",
+        "EBAY_ITEM_DELIVERED",
+        "case",
+        "eBay Marked Item Delivered",
+        "2026-05-04T18:25:48.000Z",
+        {
+          externalId: "5318063312",
+          deadlineAt: "2026-05-06T16:00:00.000Z",
+          deadlineLabel: "Refund Due",
+        },
+      ),
+      event(
+        "pending-refund",
+        "EBAY_RETURN_REFUND_DUE",
+        "case",
+        "Pending Refund for Returned Item",
+        "2026-05-06T07:18:05.000Z",
+        { externalId: "5318063312" },
+      ),
+      event(
+        "legacy-refunded",
+        "EBAY_REFUND_ISSUED",
+        "case",
+        "Refund Issued on eBay",
+        "2026-05-06T18:19:07.000Z",
+        { externalId: "5318063312" },
+      ),
+    ],
+    [
+      {
+        direction: "INBOUND",
+        source: "SYSTEM",
+        subject: "Return 5318063312: Refund issued",
+        bodyText: "The return is closed. You issued a refund.",
+        sentAt: "2026-05-06T18:19:07.000Z",
+        fromName: "eBay",
+        fromIdentifier: null,
+      },
+    ],
+  );
+
+  assert.ok(summary);
+  assert.equal(summary.title, "Return Case");
+  assert.equal(summary.status, "Refunded");
+  assert.equal(summary.returnDeliveredAt, "2026-05-04T18:25:48.000Z");
+  assert.equal(summary.refundDueAt, "2026-05-06T16:00:00.000Z");
+  assert.equal(summary.latestEventText, "Refunded");
+});
+
 function event(
   id: string,
   action: string,

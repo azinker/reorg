@@ -190,6 +190,14 @@ function timelineRowKeyForEvent(event: SystemEvent): string {
 
 function isTimelineStoryEvent(event: SystemEvent): boolean {
   if (
+    event.action === "EBAY_RETURN_REFUND_DUE" ||
+    /pending refund for returned item|refund requested|refund due/i.test(
+      `${event.shortText ?? ""} ${event.text}`,
+    )
+  ) {
+    return false;
+  }
+  if (
     event.kind === "order_received" ||
     event.kind === "order_shipped" ||
     event.kind === "order_tracking_added" ||
@@ -209,9 +217,10 @@ function isTimelineStoryEvent(event: SystemEvent): boolean {
     event.action === "EBAY_CASE_CLOSED" ||
     event.action === "EBAY_RETURN_BUYER_SHIPPED" ||
     event.action === "EBAY_RETURN_DELIVERED" ||
-    event.action === "EBAY_RETURN_REFUND_DUE" ||
     event.action === "EBAY_RETURN_REFUNDED" ||
-    /buyer opened|opened .*case|opened .*claim|opened .*return|escalated .*case|escalated .*claim|put .*on hold|case .*on hold|buyer closed|closed .*case|closed .*claim|closed .*return/i.test(
+    event.action === "EBAY_ITEM_DELIVERED" ||
+    event.action === "EBAY_REFUND_ISSUED" ||
+    /buyer opened|opened .*case|opened .*claim|opened .*return|escalated .*case|escalated .*claim|put .*on hold|case .*on hold|buyer closed|closed .*case|closed .*claim|closed .*return|returned item delivered|marked item delivered|refund issued|refunded/i.test(
       `${event.shortText ?? ""} ${event.text}`,
     )
   );
@@ -329,12 +338,6 @@ function caseDisplayForEvent(event: SystemEvent): string | null {
   if (!id) return null;
   const visibleText = `${event.text} ${event.shortText ?? ""}`;
   if (visibleText.includes(id)) return null;
-  if (/RETURN/i.test(event.action) || /return/i.test(visibleText)) {
-    return `Return Case #${id}`;
-  }
-  if (/ITEM_NOT_RECEIVED|INR/i.test(event.action) || /item not received|inr/i.test(visibleText)) {
-    return `Item Not Received Case #${id}`;
-  }
   if (event.kind === "case" || event.kind === "refund") {
     return `Case #${id}`;
   }
@@ -375,7 +378,7 @@ function SystemEventPillContent({
       {caseDisplay ? (
         <>
           <span className="opacity-60">-</span>
-          <span className="font-mono text-[11px] font-semibold leading-tight opacity-90">
+          <span className="font-medium">
             {caseDisplay}
           </span>
         </>
