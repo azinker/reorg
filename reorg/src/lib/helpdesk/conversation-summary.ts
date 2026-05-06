@@ -43,7 +43,14 @@ export interface CaseStatusSummary {
   title: string;
   caseId: string | null;
   caseUrl: string | null;
-  status: "Open" | "In Transit Back" | "Awaiting Refund" | "Escalated to eBay" | "On Hold" | "Closed";
+  status:
+    | "Open"
+    | "In Transit Back"
+    | "Awaiting Refund"
+    | "Refunded"
+    | "Escalated to eBay"
+    | "On Hold"
+    | "Closed";
   tone: "amber" | "sky" | "emerald" | "neutral";
   openedAt: string | null;
   returnShippedAt: string | null;
@@ -75,6 +82,7 @@ export function buildCaseStatusSummary(
   const escalated = last(caseEvents.filter(isEscalatedCaseEvent));
   const hold = last(caseEvents.filter(isHoldCaseEvent));
   const refunded = last(caseEvents.filter(isReturnRefundedEvent));
+  const refundDueAt = refundDue?.deadlineAt ?? returnDelivered?.deadlineAt ?? null;
   const closed = last(
     [...caseEvents.filter(isClosedCaseEvent), ...(refunded ? [refunded] : [])].sort(
       (a, b) => dateMs(a.at) - dateMs(b.at),
@@ -88,7 +96,10 @@ export function buildCaseStatusSummary(
 
   let status: CaseStatusSummary["status"] = "Open";
   let tone: CaseStatusSummary["tone"] = "amber";
-  if (closed && (!hold || dateMs(closed.at) >= dateMs(hold.at))) {
+  if (refunded && (!hold || dateMs(refunded.at) >= dateMs(hold.at))) {
+    status = "Refunded";
+    tone = "emerald";
+  } else if (closed && (!hold || dateMs(closed.at) >= dateMs(hold.at))) {
     status = "Closed";
     tone = "emerald";
   } else if (hold) {
@@ -113,11 +124,15 @@ export function buildCaseStatusSummary(
       : status === "Awaiting Refund"
         ? findDeadlineLabel(refundDue, "Refund Due")
           ? `The returned item is back. Refund is due by ${findDeadlineLabel(refundDue, "Refund Due")}.`
+          : refundDueAt
+            ? `The returned item is back. Refund is due by ${formatHelpdeskDate(refundDueAt)}.`
           : "The returned item is back. Inspect it and issue the refund if everything checks out."
         : status === "In Transit Back"
           ? "The buyer shipped the return back. Wait for delivery, then inspect the item before refunding."
           : status === "Escalated to eBay"
         ? "The buyer escalated this to eBay. Keep replies factual and align next steps with the case state."
+        : status === "Refunded"
+          ? "The return case is refunded. Confirm no follow-up from the buyer is still waiting before closing related work."
         : status === "Closed"
           ? "The case appears closed. Confirm the outcome before promising any additional resolution."
           : "The case appears open. Keep the agent response tied to tracking, delivery, refund, or replacement status.";
@@ -131,7 +146,7 @@ export function buildCaseStatusSummary(
     openedAt: opened?.at ?? null,
     returnShippedAt: returnShipped?.at ?? null,
     returnDeliveredAt: returnDelivered?.at ?? null,
-    refundDueAt: refundDue?.deadlineAt ?? null,
+    refundDueAt,
     escalatedAt: escalated?.at ?? null,
     holdAt: hold?.at ?? null,
     holdUntil,
@@ -281,7 +296,10 @@ function isRefundDueEvent(event: HelpdeskTimelineEvent): boolean {
 }
 
 function isReturnRefundedEvent(event: HelpdeskTimelineEvent): boolean {
-  return event.action === "EBAY_RETURN_REFUNDED" || /refund issued for return/i.test(event.text);
+  return (
+    event.action === "EBAY_RETURN_REFUNDED" ||
+    /refund issued for return|return case refunded/i.test(event.text)
+  );
 }
 
 function isHoldCaseEvent(event: HelpdeskTimelineEvent): boolean {

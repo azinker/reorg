@@ -808,15 +808,23 @@ function systemTicketTimelineEvents(args: {
   }
 
   if (ctx.caseId && ctx.isDeliveredUpdate) {
+    const isReturnDelivery = ctx.isReturn;
+    const refundDueAt = parseEbayMonthDayWithReference(ctx.refundDueAt, args.at);
     events.push({
       id: `related-case-delivered-${baseId}-${ctx.caseId}`,
       type: "system",
-      action: "EBAY_ITEM_DELIVERED",
+      action: isReturnDelivery ? "EBAY_RETURN_DELIVERED" : "EBAY_ITEM_DELIVERED",
       kind: "case",
-      text: `eBay Marked Item Delivered For ${ctx.longCaseLabel} #${ctx.caseId} on eBay`,
-      shortText: `${ctx.shortCaseLabel} Shows Delivered`,
+      text: isReturnDelivery
+        ? "Returned Item Delivered"
+        : `eBay Marked Item Delivered For ${ctx.longCaseLabel} #${ctx.caseId} on eBay`,
+      shortText: isReturnDelivery
+        ? "Returned Item Delivered"
+        : `${ctx.shortCaseLabel} Shows Delivered`,
       href: ctx.href,
       externalId: ctx.caseId,
+      deadlineAt: isReturnDelivery ? refundDueAt : null,
+      deadlineLabel: isReturnDelivery && refundDueAt ? "Refund Due" : null,
       actor: null,
       at: args.at,
     });
@@ -851,28 +859,23 @@ function systemTicketTimelineEvents(args: {
   const isReturnSystem = Boolean(ctx.caseId && ctx.isReturn);
   const labelDueAt = parseEbayMonthDayWithReference(ctx.labelDueAt, args.at);
   const refundDueAt = parseEbayMonthDayWithReference(ctx.refundDueAt, args.at);
+  if (isReturnSystem && formatted.action === "EBAY_REFUND_REQUESTED") {
+    return [];
+  }
   const returnAdjusted =
     isReturnSystem && formatted.action === "EBAY_ITEM_DELIVERED"
       ? {
           action: "EBAY_RETURN_DELIVERED",
-          text: `Returned Item Delivered for Return #${ctx.caseId} on eBay`,
+          text: "Returned Item Delivered",
           shortText: "Returned Item Delivered",
           deadlineAt: refundDueAt,
           deadlineLabel: refundDueAt ? "Refund Due" : null,
         }
-      : isReturnSystem && formatted.action === "EBAY_REFUND_REQUESTED"
-        ? {
-            action: "EBAY_RETURN_REFUND_DUE",
-            text: `Refund Due for Return #${ctx.caseId} on eBay`,
-            shortText: "Refund Due",
-            deadlineAt: refundDueAt,
-            deadlineLabel: refundDueAt ? "Refund Due" : null,
-          }
-        : isReturnSystem && formatted.action === "EBAY_REFUND_ISSUED"
+      : isReturnSystem && formatted.action === "EBAY_REFUND_ISSUED"
           ? {
               action: "EBAY_RETURN_REFUNDED",
-              text: `Refund Issued for Return #${ctx.caseId} on eBay`,
-              shortText: "Refund Issued",
+              text: "Return Case Refunded on eBay",
+              shortText: "Refunded",
               deadlineAt: null,
               deadlineLabel: null,
             }
@@ -1329,7 +1332,6 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
     relatedTicketPredicates.length > 0 && exists.integration
       ? await db.helpdeskTicket.findMany({
           where: {
-            id: { not: id },
             integrationId: exists.integration.id,
             AND: [
               { OR: relatedTicketPredicates },
@@ -1366,7 +1368,9 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
         })
       : [];
 
-  const relatedTicketIds = [id, ...relatedSystemTickets.map((t) => t.id)];
+  const relatedTicketIds = Array.from(
+    new Set([id, ...relatedSystemTickets.map((t) => t.id)]),
+  );
 
   for (const ticket of relatedSystemTickets) {
     const systemMessages =

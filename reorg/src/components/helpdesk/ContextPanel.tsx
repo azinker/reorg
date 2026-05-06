@@ -1038,10 +1038,12 @@ function CaseStatusSection({
                   value={formatHelpdeskDate(summary.returnDeliveredAt)}
                 />
                 <CaseStatusDatum
-                  label="Refund Due"
-                  value={formatHelpdeskDate(summary.refundDueAt)}
+                  label={summary.status === "Refunded" ? "Refunded" : "Refund Due"}
+                  value={formatHelpdeskDate(
+                    summary.status === "Refunded" ? summary.closedAt : summary.refundDueAt,
+                  )}
                 />
-                {summary.closedAt ? (
+                {summary.closedAt && summary.status !== "Refunded" ? (
                   <CaseStatusDatum label="Closed" value={formatHelpdeskDate(summary.closedAt)} />
                 ) : null}
               </dl>
@@ -1070,6 +1072,8 @@ function CaseStatusSection({
               "flex gap-2 rounded-md border px-2 py-1.5 text-[11px] leading-relaxed",
               summary.status === "On Hold"
                 ? "border-sky-500/25 bg-sky-500/10 text-sky-700 dark:text-sky-200"
+                : summary.status === "Refunded"
+                  ? "border-emerald-500/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-200"
                 : "border-amber-500/25 bg-amber-500/10 text-amber-700 dark:text-amber-200",
             )}
           >

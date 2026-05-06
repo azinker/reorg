@@ -324,6 +324,23 @@ function trackingDisplayForEvent(event: SystemEvent): {
   };
 }
 
+function caseDisplayForEvent(event: SystemEvent): string | null {
+  const id = event.externalId?.trim();
+  if (!id) return null;
+  const visibleText = `${event.text} ${event.shortText ?? ""}`;
+  if (visibleText.includes(id)) return null;
+  if (/RETURN/i.test(event.action) || /return/i.test(visibleText)) {
+    return `Return Case #${id}`;
+  }
+  if (/ITEM_NOT_RECEIVED|INR/i.test(event.action) || /item not received|inr/i.test(visibleText)) {
+    return `Item Not Received Case #${id}`;
+  }
+  if (event.kind === "case" || event.kind === "refund") {
+    return `Case #${id}`;
+  }
+  return null;
+}
+
 function SystemEventPillContent({
   event,
   Icon,
@@ -332,6 +349,7 @@ function SystemEventPillContent({
   Icon: typeof Eye;
 }) {
   const tracking = trackingDisplayForEvent(event);
+  const caseDisplay = tracking ? null : caseDisplayForEvent(event);
   return (
     <>
       <Icon className="h-3 w-3 shrink-0" />
@@ -354,6 +372,14 @@ function SystemEventPillContent({
       ) : (
         <span className="font-medium">{event.text}</span>
       )}
+      {caseDisplay ? (
+        <>
+          <span className="opacity-60">-</span>
+          <span className="font-mono text-[11px] font-semibold leading-tight opacity-90">
+            {caseDisplay}
+          </span>
+        </>
+      ) : null}
       <span className="opacity-60">-</span>
       <span className="tabular-nums opacity-80">{formatDateTime(event.at)}</span>
     </>
@@ -396,7 +422,14 @@ interface InlineImage {
 function summarizeEbaySystemMessage(
   subject: string | null,
   bodyText: string,
-): { label: string; returnId: string | null; caseId: string | null; holdUntil: string | null } {
+): {
+  label: string;
+  returnId: string | null;
+  caseId: string | null;
+  caseLabel: string | null;
+  href: string | null;
+  holdUntil: string | null;
+} {
   const subjectText = subject ?? "";
   const bodyHead = (bodyText ?? "").replace(/<[^>]+>/g, " ").slice(0, 600);
   const haystack = `${subjectText}\n${bodyHead}`;
@@ -415,6 +448,20 @@ function summarizeEbaySystemMessage(
     /Case\s+ID\s+(\d{6,})/i.exec(bodyHead) ??
     /Request\s+ID\s*:?\s*(\d{6,})/i.exec(bodyHead);
   const caseId = caseIdMatch ? caseIdMatch[1] : null;
+  const directInrHref =
+    /https?:\/\/www\.ebay\.com\/res\/ItemNotReceived\/ViewRequest\?id=\d+[^"'<>\s]*/i.exec(
+      (bodyText ?? "").replace(/&amp;/gi, "&"),
+    )?.[0] ?? null;
+  const href = returnId
+    ? `https://www.ebay.com/rtn/Return/ReturnsDetail?returnId=${encodeURIComponent(returnId)}`
+    : caseId
+      ? directInrHref ?? `https://www.ebay.com/ItemNotReceived/${encodeURIComponent(caseId)}`
+      : null;
+  const caseLabel = returnId
+    ? `Return Case #${returnId}`
+    : caseId
+      ? `Item Not Received Case #${caseId}`
+      : null;
   const holdUntilMatch =
     /on\s+hold\s+until\s+([A-Za-z]+\s+\d{1,2},\s+\d{4})/i.exec(haystack) ??
     /update\s+by\s+([A-Za-z]+\s+\d{1,2},\s+\d{4})/i.exec(haystack);
@@ -460,7 +507,7 @@ function summarizeEbaySystemMessage(
   } else {
     label = "System Notification";
   }
-  return { label, returnId, caseId, holdUntil };
+  return { label, returnId, caseId, caseLabel, href, holdUntil };
 }
 
 function upgradeEbayImageUrl(url: string): string {
@@ -1903,62 +1950,62 @@ function TimelineItem({
 
   if (isEbaySystem) {
     const info = summarizeEbaySystemMessage(m.subject, m.bodyText);
+    const pillClassName =
+      "inline-flex max-w-[80%] items-center gap-2 rounded-full border border-hairline bg-surface px-3 py-1.5 text-[12px] text-muted-foreground";
+    const pillContent = (
+      <>
+        <svg
+          viewBox="0 0 24 24"
+          aria-hidden="true"
+          className="h-3.5 w-3.5 shrink-0 text-muted-foreground/70"
+          fill="currentColor"
+        >
+          <path d="M12 2 1 6v6c0 5.5 3.8 10.7 11 12 7.2-1.3 11-6.5 11-12V6l-11-4z" />
+        </svg>
+        <span className="font-medium text-foreground/80">
+          From eBay:
+        </span>
+        <span>{info.label}</span>
+        {info.caseLabel ? (
+          <>
+            <span className="opacity-50">-</span>
+            <span className="font-mono text-brand">{info.caseLabel}</span>
+          </>
+        ) : null}
+        {info.holdUntil && (
+          <>
+            <span className="opacity-50">-</span>
+            <span className="font-semibold text-amber-700 dark:text-amber-200">
+              Hold until {info.holdUntil}
+            </span>
+          </>
+        )}
+        <span
+          className="tabular-nums opacity-70"
+          title={formatRelativeTime(m.sentAt)}
+        >
+          - {formatDateTime(m.sentAt)}
+        </span>
+      </>
+    );
     return (
       <div className="flex justify-center py-1">
-        <div className="inline-flex max-w-[80%] items-center gap-2 rounded-full border border-hairline bg-surface px-3 py-1.5 text-[12px] text-muted-foreground">
-          <svg
-            viewBox="0 0 24 24"
-            aria-hidden="true"
-            className="h-3.5 w-3.5 shrink-0 text-muted-foreground/70"
-            fill="currentColor"
+        {info.href ? (
+          <a
+            href={info.href}
+            target="_blank"
+            rel="noopener noreferrer"
+            className={cn(
+              pillClassName,
+              "transition-colors hover:border-brand/50 hover:bg-surface-2 hover:text-foreground cursor-pointer",
+            )}
+            title="Open this eBay case in a new tab"
           >
-            <path d="M12 2 1 6v6c0 5.5 3.8 10.7 11 12 7.2-1.3 11-6.5 11-12V6l-11-4z" />
-          </svg>
-          <span className="font-medium text-foreground/80">
-            From eBay:
-          </span>
-          <span>{info.label}</span>
-          {info.returnId && (
-            <>
-              <span className="opacity-50">-</span>
-              <a
-                href={`https://www.ebay.com/mesh/returns/${info.returnId}/details`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="font-mono text-brand underline-offset-2 hover:underline"
-              >
-                Return #{info.returnId}
-              </a>
-            </>
-          )}
-          {!info.returnId && info.caseId && (
-            <>
-              <span className="opacity-50">-</span>
-              <a
-                href={`https://www.ebay.com/ItemNotReceived/${info.caseId}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="font-mono text-brand underline-offset-2 hover:underline"
-              >
-                Case #{info.caseId}
-              </a>
-            </>
-          )}
-          {info.holdUntil && (
-            <>
-              <span className="opacity-50">-</span>
-              <span className="font-semibold text-amber-700 dark:text-amber-200">
-                Hold until {info.holdUntil}
-              </span>
-            </>
-          )}
-          <span
-            className="tabular-nums opacity-70"
-            title={formatRelativeTime(m.sentAt)}
-          >
-            - {formatDateTime(m.sentAt)}
-          </span>
-        </div>
+            {pillContent}
+          </a>
+        ) : (
+          <div className={pillClassName}>{pillContent}</div>
+        )}
       </div>
     );
   }

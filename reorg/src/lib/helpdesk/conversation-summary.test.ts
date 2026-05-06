@@ -158,6 +158,48 @@ test("buildCaseStatusSummary fills return lifecycle fields", () => {
   assert.match(summary.agentNote, /Refund is due by May 6/);
 });
 
+test("buildCaseStatusSummary marks a completed return as refunded", () => {
+  const summary = buildCaseStatusSummary([
+    event(
+      "return-started",
+      "EBAY_RETURN_OPENED",
+      "case",
+      "Return Started on eBay",
+      "2026-04-24T21:24:34.000Z",
+      {
+        externalId: "5318063312",
+        href: "https://www.ebay.com/rtn/Return/ReturnsDetail?returnId=5318063312",
+      },
+    ),
+    event(
+      "return-delivered",
+      "EBAY_RETURN_DELIVERED",
+      "case",
+      "Returned Item Delivered",
+      "2026-05-04T18:25:48.000Z",
+      {
+        externalId: "5318063312",
+        deadlineAt: "2026-05-06T16:00:00.000Z",
+        deadlineLabel: "Refund Due",
+      },
+    ),
+    event(
+      "return-refunded",
+      "EBAY_RETURN_REFUNDED",
+      "case",
+      "Return Case Refunded on eBay",
+      "2026-05-06T18:19:07.000Z",
+      { externalId: "5318063312", shortText: "Refunded" },
+    ),
+  ]);
+
+  assert.ok(summary);
+  assert.equal(summary.status, "Refunded");
+  assert.equal(summary.latestEventText, "Refunded");
+  assert.equal(summary.refundDueAt, "2026-05-06T16:00:00.000Z");
+  assert.equal(summary.closedAt, "2026-05-06T18:19:07.000Z");
+});
+
 function event(
   id: string,
   action: string,
