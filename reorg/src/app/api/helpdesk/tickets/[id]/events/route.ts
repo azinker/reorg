@@ -106,6 +106,7 @@ interface TimelineEvent {
   shortText?: string | null;
   href?: string | null;
   externalId?: string | null;
+  holdUntil?: string | null;
   trackingNumber?: string | null;
   estimatedDeliveryText?: string | null;
   actor: {
@@ -745,6 +746,7 @@ function systemTicketTimelineEvents(args: {
       shortText: "Case Put On Hold",
       href: ctx.href,
       externalId: ctx.caseId,
+      holdUntil: ctx.holdUntil,
       actor: null,
       at: args.at,
     });

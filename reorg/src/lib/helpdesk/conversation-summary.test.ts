@@ -32,6 +32,11 @@ const caseEvents: HelpdeskTimelineEvent[] = [
     "case",
     "eBay Put Item Not Received Claim #5378488528 On Hold",
     "2026-05-01T15:00:00.000Z",
+    {
+      externalId: "5378488528",
+      href: "https://www.ebay.com/ItemNotReceived/5378488528",
+      holdUntil: "2026-05-11T16:00:00.000Z",
+    },
   ),
 ];
 
@@ -71,6 +76,8 @@ test("buildCaseStatusSummary recognizes an INR case on hold with an expiry date"
 
   assert.ok(summary);
   assert.equal(summary.title, "Item Not Received Case");
+  assert.equal(summary.caseId, "5378488528");
+  assert.equal(summary.caseUrl, "https://www.ebay.com/ItemNotReceived/5378488528");
   assert.equal(summary.status, "On Hold");
   assert.equal(summary.holdUntil, "May 11, 2026");
   assert.match(summary.agentNote, /on hold until May 11, 2026/);
@@ -103,6 +110,7 @@ function event(
   kind: string,
   text: string,
   at: string,
+  extra: Partial<HelpdeskTimelineEvent> = {},
 ): HelpdeskTimelineEvent {
   return {
     id,
@@ -111,5 +119,6 @@ function event(
     kind,
     text,
     at,
+    ...extra,
   };
 }

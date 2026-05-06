@@ -9,6 +9,7 @@ export interface HelpdeskTimelineEvent {
   shortText?: string | null;
   href?: string | null;
   externalId?: string | null;
+  holdUntil?: string | null;
   trackingNumber?: string | null;
   estimatedDeliveryText?: string | null;
   actor?: unknown;
@@ -38,6 +39,8 @@ export interface ConversationTicket {
 
 export interface CaseStatusSummary {
   title: string;
+  caseId: string | null;
+  caseUrl: string | null;
   status: "Open" | "Escalated to eBay" | "On Hold" | "Closed";
   tone: "amber" | "sky" | "emerald" | "neutral";
   openedAt: string | null;
@@ -66,6 +69,8 @@ export function buildCaseStatusSummary(
   const closed = last(caseEvents.filter(isClosedCaseEvent));
   const latest = last(caseEvents);
   const holdUntil = findHoldUntil(events, messages);
+  const linkedCaseEvent =
+    caseEvents.find((event) => event.externalId || event.href) ?? null;
   const title = inferCaseTitle(caseEvents, messages);
 
   let status: CaseStatusSummary["status"] = "Open";
@@ -94,6 +99,8 @@ export function buildCaseStatusSummary(
 
   return {
     title,
+    caseId: linkedCaseEvent?.externalId ?? null,
+    caseUrl: linkedCaseEvent?.href ?? null,
     status,
     tone,
     openedAt: opened?.at ?? null,
@@ -268,7 +275,22 @@ function findHoldUntil(
       });
     }
   }
+  const eventHoldUntil = events
+    .map((event) => event.holdUntil)
+    .find((value): value is string => Boolean(value));
+  if (eventHoldUntil) return normalizeHoldUntil(eventHoldUntil);
   return null;
+}
+
+function normalizeHoldUntil(value: string): string | null {
+  const parsed = new Date(value);
+  if (!Number.isFinite(parsed.getTime())) return null;
+  return parsed.toLocaleDateString("en-US", {
+    timeZone: HELP_DESK_TIME_ZONE,
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
 }
 
 function firstEventByActions(

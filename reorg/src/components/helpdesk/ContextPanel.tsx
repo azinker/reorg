@@ -1001,7 +1001,27 @@ function CaseStatusSection({
       ) : summary ? (
         <div className="space-y-2">
           <div className="rounded-md border border-hairline bg-surface/50 p-2">
-            <p className="text-xs font-semibold text-foreground">{summary.title}</p>
+            <div className="flex min-w-0 flex-wrap items-center gap-1.5 text-xs font-semibold text-foreground">
+              <span>{summary.title}</span>
+              {summary.caseId ? (
+                summary.caseUrl ? (
+                  <a
+                    href={summary.caseUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex min-w-0 items-center gap-1 rounded border border-amber-500/35 bg-amber-500/10 px-1.5 py-0.5 font-mono text-[11px] text-amber-700 underline-offset-2 transition-colors hover:border-amber-500/60 hover:bg-amber-500/15 hover:text-amber-800 hover:underline dark:text-amber-200 dark:hover:text-amber-100 cursor-pointer"
+                    title="Open this eBay case in a new tab"
+                  >
+                    Case #{summary.caseId}
+                    <ExternalLink className="h-3 w-3 shrink-0 opacity-70" />
+                  </a>
+                ) : (
+                  <span className="rounded border border-hairline bg-surface-2 px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground">
+                    Case #{summary.caseId}
+                  </span>
+                )
+              ) : null}
+            </div>
             <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1.5 text-[11px]">
               <CaseStatusDatum label="Opened" value={formatHelpdeskDate(summary.openedAt)} />
               <CaseStatusDatum
