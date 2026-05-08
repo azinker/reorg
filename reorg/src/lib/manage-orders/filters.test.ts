@@ -56,6 +56,7 @@ const baseOrder: ManageOrder = {
       orderLineItemId: null,
       transactionId: null,
       title: "Rechargeable light",
+      variationSelections: [],
       sku: "AA01_LIGHT",
       quantity: 2,
       availableQuantity: 9,

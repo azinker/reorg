@@ -96,6 +96,18 @@ function itemPicture(item: Record<string, unknown> | null) {
   return text(pictureUrl) ?? text(pictureDetails?.GalleryURL);
 }
 
+function variationSelections(variation: Record<string, unknown> | null) {
+  const specifics = asRecord(variation?.VariationSpecifics);
+  return asArray<Record<string, unknown>>(
+    specifics?.NameValueList as Record<string, unknown> | Record<string, unknown>[] | undefined,
+  )
+    .map((specific) => ({
+      name: text(specific.Name),
+      value: text(specific.Value),
+    }))
+    .filter((specific): specific is { name: string; value: string } => Boolean(specific.name && specific.value));
+}
+
 function selectedShippingService(order: Record<string, unknown>) {
   const selected = asRecord(order.ShippingServiceSelected);
   const details = asRecord(order.ShippingDetails);
@@ -401,6 +413,7 @@ function mapLine(tx: Record<string, unknown>): ManageOrderLineItem {
     orderLineItemId: text(tx.OrderLineItemID),
     transactionId: text(tx.TransactionID),
     title: lineTitle(tx, item),
+    variationSelections: variationSelections(variation),
     sku,
     quantity: Number(text(tx.QuantityPurchased) ?? 1) || 1,
     availableQuantity: null,
@@ -520,8 +533,8 @@ function stringFromJson(value: unknown): string | null {
   return null;
 }
 
-function classifyFeeType(feeType: string | null | undefined) {
-  const normalized = (feeType ?? "").toUpperCase();
+function classifyFeeType(...parts: Array<string | null | undefined>) {
+  const normalized = parts.filter(Boolean).join(" ").toUpperCase();
   if (
     normalized.includes("SHIPPING_LABEL") ||
     normalized.includes("POSTAGE") ||
@@ -530,6 +543,8 @@ function classifyFeeType(feeType: string | null | undefined) {
     return "shipping" as const;
   }
   if (
+    normalized.includes("AD_FEE") ||
+    normalized.includes("AD FEE") ||
     normalized.includes("PROMOTED") ||
     normalized.includes("ADVERT") ||
     normalized.includes("ADS EXPRESS") ||
@@ -695,10 +710,10 @@ function feeCents(fee: Record<string, unknown>) {
 
 function addFee(
   target: { transactionFeesCents: number; adFeeCents: number; otherFeesCents: number; shippingLabelCents: number },
-  feeType: string | null,
+  feeParts: Array<string | null | undefined>,
   cents: number,
 ) {
-  const classification = classifyFeeType(feeType);
+  const classification = classifyFeeType(...feeParts);
   if (classification === "ad") target.adFeeCents += cents;
   else if (classification === "shipping") target.shippingLabelCents += cents;
   else target.transactionFeesCents += cents;
@@ -719,7 +734,7 @@ function parseOrderEarningsFinance(earnings: Record<string, unknown> | null): Ma
   for (const fee of asArray<Record<string, unknown>>(
     expenses?.marketplaceFees as Record<string, unknown> | Record<string, unknown>[] | undefined,
   )) {
-    addFee(totals, stringFromJson(fee.feeType), feeCents(fee));
+    addFee(totals, [stringFromJson(fee.feeType), stringFromJson(fee.feeMemo)], feeCents(fee));
   }
   for (const fee of asArray<Record<string, unknown>>(
     expenses?.donations as Record<string, unknown> | Record<string, unknown>[] | undefined,
@@ -779,22 +794,28 @@ function parseTransactionFinance(transactions: Record<string, unknown>[], order:
     salesRecordNumber ??= stringFromJson(transaction.salesRecordReference);
     const transactionType = stringFromJson(transaction.transactionType);
     const feeType = stringFromJson(transaction.feeType);
+    const transactionMemo = stringFromJson(transaction.transactionMemo);
+    const transactionDescription =
+      stringFromJson(transaction.description) ??
+      stringFromJson(transaction.memo) ??
+      stringFromJson(transaction.transactionDescription);
     if (transactionType === "SALE") {
       fundsStatus ??= stringFromJson(transaction.transactionStatus);
-      fundsStatusDetail ??= stringFromJson(transaction.transactionMemo);
+      fundsStatusDetail ??= transactionMemo;
       taxCents += absMoneyJsonToCents(transaction.ebayCollectedTaxAmount) ?? 0;
       const amount = moneyJsonToCents(transaction.amount);
       if (amount != null) netCents = (netCents ?? 0) + amount;
-    } else if (feeType || transactionType === "NON_SALE_CHARGE") {
-      const cents = absMoneyJsonToCents(transaction.amount) ?? 0;
-      addFee(totals, feeType, cents);
+    } else if (feeType || transactionType === "NON_SALE_CHARGE" || moneyJsonToCents(transaction.amount) != null) {
+      const rawCents = moneyJsonToCents(transaction.amount);
+      const cents = rawCents != null && rawCents < 0 ? Math.abs(rawCents) : 0;
+      addFee(totals, [feeType, transactionType, transactionMemo, transactionDescription], cents);
     }
 
     for (const lineItem of transactionOrderLineItems(transaction)) {
       for (const fee of asArray<Record<string, unknown>>(
         lineItem.marketplaceFees as Record<string, unknown> | Record<string, unknown>[] | undefined,
       )) {
-        addFee(totals, stringFromJson(fee.feeType), feeCents(fee));
+        addFee(totals, [stringFromJson(fee.feeType), stringFromJson(fee.feeMemo)], feeCents(fee));
       }
     }
   }

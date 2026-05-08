@@ -28,6 +28,7 @@ export type ManageOrderLineItem = {
   orderLineItemId: string | null;
   transactionId: string | null;
   title: string;
+  variationSelections: Array<{ name: string; value: string }>;
   sku: string | null;
   quantity: number;
   availableQuantity: number | null;

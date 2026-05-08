@@ -10,7 +10,9 @@ import {
   Loader2,
   MoreHorizontal,
   PackageCheck,
+  Plus,
   Search,
+  Trash2,
   Truck,
   X,
 } from "lucide-react";
@@ -93,6 +95,18 @@ function carrierGuess(tracking: string) {
 
 function trackingForDisplay(order: ManageOrder) {
   return order.trackingNumbers.find((tracking) => tracking.number) ?? null;
+}
+
+function trackingUrl(carrier: string | null | undefined, trackingNumber: string) {
+  const normalizedCarrier = (carrier ?? carrierGuess(trackingNumber)).toUpperCase();
+  const encoded = encodeURIComponent(trackingNumber);
+  if (normalizedCarrier.includes("UPS")) return `https://www.ups.com/track?tracknum=${encoded}`;
+  if (normalizedCarrier.includes("FEDEX")) return `https://www.fedex.com/fedextrack/?trknbr=${encoded}`;
+  return `https://tools.usps.com/go/TrackConfirmAction?tLabels=${encoded}`;
+}
+
+function variationText(line: ManageOrder["lines"][number]) {
+  return line.variationSelections.map((selection) => `${selection.name}: ${selection.value}`).join("   ");
 }
 
 function labelCreatedDate(order: ManageOrder) {
@@ -329,18 +343,19 @@ export default function ManageOrdersPage() {
                         <div className="min-w-0">
                           {line.listingUrl ? <a href={line.listingUrl} target="_blank" rel="noreferrer" className="line-clamp-2 inline-flex items-center gap-1 font-medium text-primary hover:underline">{line.title}<ExternalLink className="h-3 w-3 shrink-0" /></a> : <span className="font-medium">{line.title}</span>}
                           <div className="mt-1 text-xs text-muted-foreground">Item {line.itemId}</div>
-                          <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
-                            <span className="inline-flex items-center gap-1 rounded border border-violet-500/30 bg-violet-500/10 px-1.5 py-0.5 font-semibold text-violet-300">
-                              SKU {line.sku ?? "N/A"}
-                              {line.sku ? <CopyButton value={line.sku} label="Copy SKU" compact /> : null}
-                            </span>
+                          {line.variationSelections.length ? <div className="mt-1 text-xs font-medium text-foreground">{variationText(line)}</div> : null}
+                          <div className="mt-1 inline-flex items-center gap-1 text-xs text-muted-foreground">
+                            Custom label (SKU): <span className="font-semibold text-foreground">{line.sku ?? "N/A"}</span>
+                            {line.sku ? <CopyButton value={line.sku} label="Copy SKU" compact /> : null}
+                          </div>
+                          <div className="mt-2 space-y-1 text-xs">
                             {tracking?.number ? (
-                              <span className="inline-flex items-center gap-1 rounded border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-emerald-300">
+                              <a href={trackingUrl(tracking.carrier, tracking.number)} target="_blank" rel="noreferrer" className="inline-flex w-fit cursor-pointer items-center gap-1 rounded border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-emerald-300 hover:bg-emerald-500/20 hover:underline">
                                 <Truck className="h-3 w-3" /> {tracking.carrier ?? "Tracking"} {tracking.number}
                                 <CopyButton value={tracking.number} label="Copy tracking" compact />
-                              </span>
+                              </a>
                             ) : null}
-                            <span className="rounded border border-border bg-background px-1.5 py-0.5 text-muted-foreground">ZIP {order.shippingPostalCode ?? "N/A"}</span>
+                            <div><span className="rounded border border-border bg-background px-1.5 py-0.5 text-muted-foreground">ZIP {order.shippingPostalCode ?? "N/A"}</span></div>
                           </div>
                         </div>
                       </div>
@@ -374,9 +389,13 @@ export default function ManageOrdersPage() {
   );
 }
 
+type TrackingDraft = {
+  carrier: "USPS" | "UPS" | "FedEx";
+  trackingNumber: string;
+};
+
 function ActionModal({ active, onClose, onDone }: { active: { order: ManageOrder; action: ManageOrderActionType }; onClose: () => void; onDone: () => void }) {
-  const [tracking, setTracking] = useState("");
-  const [carrier, setCarrier] = useState<"USPS" | "UPS" | "FedEx">("USPS");
+  const [trackingRows, setTrackingRows] = useState<TrackingDraft[]>([{ carrier: "USPS", trackingNumber: "" }]);
   const [confirming, setConfirming] = useState(false);
   const [humanActionToken, setHumanActionToken] = useState<string | null>(null);
   const [preparingToken, setPreparingToken] = useState(true);
@@ -408,9 +427,23 @@ function ActionModal({ active, onClose, onDone }: { active: { order: ManageOrder
     return () => controller.abort();
   }, [active.action, active.order.orderId, active.order.store]);
 
-  function onTrackingChange(value: string) {
-    setTracking(value);
-    setCarrier(carrierGuess(value) as "USPS" | "UPS" | "FedEx");
+  function updateTrackingRow(index: number, patch: Partial<TrackingDraft>) {
+    setTrackingRows((current) => current.map((row, rowIndex) => (rowIndex === index ? { ...row, ...patch } : row)));
+  }
+
+  function onTrackingChange(index: number, value: string) {
+    updateTrackingRow(index, {
+      trackingNumber: value,
+      carrier: carrierGuess(value) as TrackingDraft["carrier"],
+    });
+  }
+
+  function addTrackingRow() {
+    setTrackingRows((current) => [...current, { carrier: "USPS", trackingNumber: "" }]);
+  }
+
+  function removeTrackingRow(index: number) {
+    setTrackingRows((current) => current.filter((_, rowIndex) => rowIndex !== index));
   }
 
   async function confirm() {
@@ -418,6 +451,9 @@ function ActionModal({ active, onClose, onDone }: { active: { order: ManageOrder
     setError(null);
     try {
       if (!humanActionToken) throw new Error("Final confirmation token is not ready. Please reopen the modal.");
+      const trackingNumbers = trackingRows
+        .map((row) => ({ carrier: row.carrier, trackingNumber: row.trackingNumber.trim() }))
+        .filter((row) => row.trackingNumber.length >= 4);
       const res = await fetch("/api/manage-orders/actions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -426,7 +462,7 @@ function ActionModal({ active, onClose, onDone }: { active: { order: ManageOrder
           store: active.order.store,
           actionType: active.action,
           humanActionToken,
-          trackingNumbers: active.action === "add_tracking" ? [{ carrier, trackingNumber: tracking }] : undefined,
+          trackingNumbers: active.action === "add_tracking" ? trackingNumbers : undefined,
           messageBody: active.action === "message_buyer" ? message : undefined,
           sendAutoResponder,
         }),
@@ -460,10 +496,20 @@ function ActionModal({ active, onClose, onDone }: { active: { order: ManageOrder
         </div>
         {active.action === "add_tracking" ? (
           <div className="space-y-3">
-            <input value={tracking} onChange={(e) => onTrackingChange(e.target.value)} placeholder="Tracking number" className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" />
-            <select value={carrier} onChange={(e) => setCarrier(e.target.value as typeof carrier)} className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm">
-              <option>USPS</option><option>UPS</option><option>FedEx</option>
-            </select>
+            {trackingRows.map((row, index) => (
+              <div key={index} className="grid gap-2 sm:grid-cols-[1fr_120px_36px]">
+                <input value={row.trackingNumber} onChange={(event) => onTrackingChange(index, event.target.value)} placeholder="Tracking number" className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" />
+                <select value={row.carrier} onChange={(event) => updateTrackingRow(index, { carrier: event.target.value as TrackingDraft["carrier"] })} className="h-10 cursor-pointer rounded-md border border-input bg-background px-3 text-sm">
+                  <option>USPS</option><option>UPS</option><option>FedEx</option>
+                </select>
+                <button type="button" onClick={() => removeTrackingRow(index)} disabled={trackingRows.length === 1} title="Remove tracking row" className="inline-flex h-10 w-10 cursor-pointer items-center justify-center rounded-md border border-border text-muted-foreground hover:bg-accent disabled:cursor-not-allowed disabled:opacity-40">
+                  <Trash2 className="h-4 w-4" />
+                </button>
+              </div>
+            ))}
+            <button type="button" onClick={addTrackingRow} className="inline-flex cursor-pointer items-center gap-2 rounded-md border border-primary/45 px-3 py-1.5 text-sm font-medium text-primary hover:bg-primary/10">
+              <Plus className="h-4 w-4" /> Add another tracking
+            </button>
             <Warning text="This will add tracking to the live eBay order and mark it as shipped." />
           </div>
         ) : active.action === "mark_shipped" ? (
@@ -482,7 +528,7 @@ function ActionModal({ active, onClose, onDone }: { active: { order: ManageOrder
         {error ? <div className="mt-4 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">{error}</div> : null}
         <div className="mt-5 flex justify-end gap-2">
           <button onClick={onClose} className="cursor-pointer rounded-md border border-border px-4 py-2 text-sm hover:bg-accent">Cancel</button>
-          <button onClick={() => void confirm()} disabled={confirming || preparingToken || !humanActionToken || (active.action === "add_tracking" && !tracking.trim())} className="inline-flex cursor-pointer items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground disabled:cursor-not-allowed disabled:opacity-50">
+          <button onClick={() => void confirm()} disabled={confirming || preparingToken || !humanActionToken || (active.action === "add_tracking" && !trackingRows.some((row) => row.trackingNumber.trim().length >= 4))} className="inline-flex cursor-pointer items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground disabled:cursor-not-allowed disabled:opacity-50">
             {confirming || preparingToken ? <Loader2 className="h-4 w-4 animate-spin" /> : <PackageCheck className="h-4 w-4" />}
             Final Confirm
           </button>

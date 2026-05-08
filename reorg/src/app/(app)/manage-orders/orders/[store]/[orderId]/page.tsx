@@ -58,6 +58,25 @@ function validTrackings(order: ManageOrder) {
   return order.trackingNumbers.filter((tracking) => tracking.number);
 }
 
+function carrierGuess(tracking: string) {
+  if (/^9\d{18,25}$/.test(tracking.trim())) return "USPS";
+  if (/^1Z/i.test(tracking.trim())) return "UPS";
+  if (/^\d{12,15}$/.test(tracking.trim())) return "FedEx";
+  return "USPS";
+}
+
+function trackingUrl(carrier: string | null | undefined, trackingNumber: string) {
+  const normalizedCarrier = (carrier ?? carrierGuess(trackingNumber)).toUpperCase();
+  const encoded = encodeURIComponent(trackingNumber);
+  if (normalizedCarrier.includes("UPS")) return `https://www.ups.com/track?tracknum=${encoded}`;
+  if (normalizedCarrier.includes("FEDEX")) return `https://www.fedex.com/fedextrack/?trknbr=${encoded}`;
+  return `https://tools.usps.com/go/TrackConfirmAction?tLabels=${encoded}`;
+}
+
+function variationText(line: ManageOrder["lines"][number]) {
+  return line.variationSelections.map((selection) => `${selection.name}: ${selection.value}`).join("   ");
+}
+
 function labelCreatedDate(order: ManageOrder) {
   return firstTracking(order)?.shippedTime ?? order.shippedTime;
 }
@@ -229,7 +248,9 @@ export default function ManageOrderDetailsPage({
                     <div className="mt-2 flex flex-col gap-2">
                       {trackings.map((trackingRow) => (
                         <div key={`${trackingRow.carrier}-${trackingRow.number}`} className="inline-flex w-fit max-w-full items-center gap-1.5 rounded border border-emerald-500/30 bg-emerald-500/10 px-2 py-1 font-medium text-emerald-300">
-                          <span className="truncate">{trackingRow.carrier ?? "Carrier"} | {trackingRow.number}</span>
+                          <a href={trackingUrl(trackingRow.carrier, trackingRow.number!)} target="_blank" rel="noreferrer" className="truncate hover:underline">
+                            {trackingRow.carrier ?? "Carrier"} | {trackingRow.number}
+                          </a>
                           <CopyButton value={trackingRow.number!} title="Copy tracking number" compact />
                         </div>
                       ))}
@@ -253,13 +274,21 @@ export default function ManageOrderDetailsPage({
                   {line.imageUrl ? <img src={line.imageUrl} alt="" className="h-24 w-24 rounded-md border border-border object-cover" /> : <div className="flex h-24 w-24 items-center justify-center rounded-md border border-border bg-muted text-xs text-muted-foreground">No image</div>}
                   <div className="min-w-0 text-sm">
                     {line.listingUrl ? <a href={line.listingUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 font-medium text-primary hover:underline">{line.title}<ExternalLink className="h-3.5 w-3.5" /></a> : <div className="font-medium">{line.title}</div>}
-                    <div className="mt-2 inline-flex items-center gap-1 font-semibold text-violet-300">
-                      Custom label (SKU): {line.sku ?? "N/A"}
+                    {line.variationSelections.length ? <div className="mt-1 font-medium text-foreground">{variationText(line)}</div> : null}
+                    <div className="mt-1 text-muted-foreground">Item ID: {line.itemId}</div>
+                    <div className="mt-1 inline-flex items-center gap-1 text-muted-foreground">
+                      Custom label (SKU): <span className="font-semibold text-foreground">{line.sku ?? "N/A"}</span>
                       {line.sku ? <CopyButton value={line.sku} title="Copy SKU" compact /> : null}
                     </div>
-                    <div className="mt-1 text-muted-foreground">Item ID: {line.itemId}</div>
                     {line.adRate != null && line.adRate > 0 ? <div className="mt-1 text-emerald-300">Sold via Promoted Listings</div> : null}
-                    {tracking?.number ? <div className="mt-1 text-muted-foreground">Tracking <span className="text-primary">{tracking.number}</span></div> : null}
+                    {tracking?.number ? (
+                      <div className="mt-1 text-muted-foreground">
+                        Tracking{" "}
+                        <a href={trackingUrl(tracking.carrier, tracking.number)} target="_blank" rel="noreferrer" className="text-primary hover:underline">
+                          {tracking.number}
+                        </a>
+                      </div>
+                    ) : null}
                   </div>
                   <ItemMetric label="Quantity" value={`${line.quantity}`} hint={`(${line.availableQuantity ?? "?"} available)`} />
                   <ItemMetric label="Item price" value={money(line.unitPriceCents, currency)} />
@@ -303,14 +332,18 @@ export default function ManageOrderDetailsPage({
               <h3 className="mb-3 font-semibold">What your buyer paid</h3>
               <Summary label="Subtotal" value={money(order.subtotalCents, currency)} soft />
               <Summary label="Shipping" value={order.shippingCents ? money(order.shippingCents, currency) : "$0.00"} soft />
-              <Summary label="Sales tax" value={order.taxCents != null ? money(order.taxCents, currency) : "Unavailable"} soft />
+              {order.taxCents != null && order.taxCents > 0 ? <Summary label="Sales tax" value={money(order.taxCents, currency)} soft /> : null}
               <Summary label="Order total" value={money(buyerPaidTotal, currency)} strong soft />
             </div>
             <div className="mt-4 rounded-lg bg-muted/35 p-4">
               <h3 className="mb-3 font-semibold">What you earned</h3>
               <Summary label="Order total" value={money(buyerPaidTotal, currency)} soft />
-              <div className="mt-3 text-sm font-semibold">eBay collected from buyer</div>
-              <Summary label="Sales tax" value={order.taxCents != null ? feeMoney(order.taxCents, currency) : "Unavailable"} soft />
+              {order.taxCents != null && order.taxCents > 0 ? (
+                <>
+                  <div className="mt-3 text-sm font-semibold">eBay collected from buyer</div>
+                  <Summary label="Sales tax" value={feeMoney(order.taxCents, currency)} soft />
+                </>
+              ) : null}
               <div className="mt-3 text-sm font-semibold">Selling costs</div>
               <Summary label="Transaction fees" value={order.finance.transactionFeesCents != null ? feeMoney(order.finance.transactionFeesCents, currency) : "Unavailable"} soft />
               <Summary label="Ad Fee General" value={order.finance.adFeeCents != null ? feeMoney(order.finance.adFeeCents, currency) : "Unavailable"} soft />
