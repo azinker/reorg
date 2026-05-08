@@ -8,7 +8,7 @@ export const dynamic = "force-dynamic";
 
 const schema = z.object({
   store: z.enum(["ALL", "TPP_EBAY", "TT_EBAY"]).default("ALL"),
-  status: z.enum(["awaiting_shipment", "ship_within_24h", "awaiting_expedited"]).default("awaiting_shipment"),
+  status: z.enum(["all_orders", "awaiting_shipment", "shipped", "ship_within_24h", "awaiting_expedited"]).default("all_orders"),
   period: z.enum(["last_90_days", "last_week", "last_month"]).default("last_90_days"),
   searchBy: z.enum(["order_number", "buyer_username", "buyer_name", "item_id", "item_title", "sku"]).default("order_number"),
   searchTerm: z.string().default(""),

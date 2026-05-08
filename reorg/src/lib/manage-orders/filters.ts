@@ -53,11 +53,14 @@ export function shipByWithin24Hours(order: Pick<ManageOrder, "shipBy">, now = ne
 }
 
 export function matchesStatusFilter(
-  order: Pick<ManageOrder, "shippedTime" | "shipBy" | "shippingService">,
+  order: Pick<ManageOrder, "shippedTime" | "shipBy" | "shippingService" | "trackingNumbers">,
   status: ManageOrdersStatusFilter,
   now = new Date(),
 ) {
-  if (order.shippedTime) return false;
+  const isShipped = Boolean(order.shippedTime || order.trackingNumbers.length);
+  if (status === "all_orders") return true;
+  if (status === "shipped") return isShipped;
+  if (isShipped) return false;
   if (status === "ship_within_24h") return shipByWithin24Hours(order, now);
   if (status === "awaiting_expedited") return isExpeditedShippingService(order.shippingService);
   return true;

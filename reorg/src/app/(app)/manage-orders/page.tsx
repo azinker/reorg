@@ -1,8 +1,19 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, Loader2, MoreHorizontal, PackageCheck, Search, X } from "lucide-react";
+import { type MouseEvent, useEffect, useMemo, useState } from "react";
+import {
+  AlertTriangle,
+  Check,
+  Copy,
+  ExternalLink,
+  Loader2,
+  MoreHorizontal,
+  PackageCheck,
+  Search,
+  Truck,
+  X,
+} from "lucide-react";
 import type {
   ManageOrder,
   ManageOrderActionType,
@@ -17,7 +28,9 @@ const STORE_LABELS = {
 } as const;
 
 const STATUS_OPTIONS = [
+  ["all_orders", "All Orders"],
   ["awaiting_shipment", "Awaiting Shipment"],
+  ["shipped", "Shipped Orders"],
   ["ship_within_24h", "Awaiting Shipment - ship within 24 hours"],
   ["awaiting_expedited", "Awaiting Expedited Shipment"],
 ] as const;
@@ -67,9 +80,80 @@ function carrierGuess(tracking: string) {
   return "USPS";
 }
 
+function EbayLogo({ small }: { small?: boolean }) {
+  return (
+    <span className={cn("inline-flex items-baseline rounded-md border border-border bg-background font-bold leading-none shadow-sm", small ? "px-1 py-0 text-[10px]" : "px-2 py-1 text-lg")}>
+      <span className="text-blue-400">e</span>
+      <span className="text-red-400">B</span>
+      <span className="text-yellow-300">a</span>
+      <span className="text-emerald-400">y</span>
+    </span>
+  );
+}
+
+function Metric({ label, value, tone }: { label: string; value: string; tone: "violet" | "emerald" | "amber" }) {
+  const cls = {
+    violet: "border-violet-500/30 bg-violet-500/10 text-violet-300",
+    emerald: "border-emerald-500/30 bg-emerald-500/10 text-emerald-300",
+    amber: "border-amber-500/30 bg-amber-500/10 text-amber-300",
+  }[tone];
+  return (
+    <div className={cn("rounded-md border px-3 py-2", cls)}>
+      <div className="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</div>
+      <div className="text-sm font-semibold">{value}</div>
+    </div>
+  );
+}
+
+function StoreBadge({ store }: { store: ManageOrder["store"] }) {
+  return (
+    <span className={cn(
+      "inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide",
+      store === "TPP_EBAY"
+        ? "border-violet-500/40 bg-violet-500/10 text-violet-300"
+        : "border-emerald-500/40 bg-emerald-500/10 text-emerald-300",
+    )}>
+      <EbayLogo small /> {store === "TPP_EBAY" ? "TPP" : "TT"}
+    </span>
+  );
+}
+
+function CopyButton({ value, label, compact }: { value: string; label: string; compact?: boolean }) {
+  const [copied, setCopied] = useState(false);
+  function copy(e: MouseEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    void navigator.clipboard.writeText(value).then(() => {
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 900);
+    });
+  }
+  return (
+    <button
+      type="button"
+      onClick={copy}
+      title={copied ? "Copied!" : label}
+      aria-label={label}
+      className={cn("inline-flex cursor-pointer items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground", compact ? "h-4 w-4" : "h-5 w-5")}
+    >
+      {copied ? <Check className="h-3 w-3 text-emerald-400" /> : <Copy className="h-3 w-3" />}
+    </button>
+  );
+}
+
+function StatusChip({ order }: { order: ManageOrder }) {
+  if (order.shippedTime) {
+    return <div className="mb-2 inline-flex rounded border border-sky-500/30 bg-sky-500/10 px-2 py-1 text-xs font-semibold text-sky-300">Shipped {pdt(order.shippedTime)}</div>;
+  }
+  if (order.shipBy) {
+    return <div className="mb-2 inline-flex rounded border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-xs font-semibold text-amber-300">Ship by {pdt(order.shipBy)}</div>;
+  }
+  return <div className="mb-2 inline-flex rounded border border-emerald-500/30 bg-emerald-500/10 px-2 py-1 text-xs font-semibold text-emerald-300">Ready to ship</div>;
+}
+
 export default function ManageOrdersPage() {
   const [store, setStore] = useState<"ALL" | "TPP_EBAY" | "TT_EBAY">("ALL");
-  const [status, setStatus] = useState("awaiting_shipment");
+  const [status, setStatus] = useState("all_orders");
   const [period, setPeriod] = useState("last_90_days");
   const [searchBy, setSearchBy] = useState("order_number");
   const [searchTerm, setSearchTerm] = useState("");
@@ -109,14 +193,24 @@ export default function ManageOrdersPage() {
 
   return (
     <div className="p-6">
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold tracking-tight">Manage Orders</h1>
-        <p className="text-sm text-muted-foreground">
-          eBay order search and human-confirmed order actions for TPP and TT.
-        </p>
+      <div className="mb-5 flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <div className="mb-2 flex items-center gap-3">
+            <EbayLogo />
+            <h1 className="text-2xl font-bold tracking-tight">Manage Orders</h1>
+          </div>
+          <p className="text-sm text-muted-foreground">
+            eBay-style order management for TPP and TT with guarded, human-confirmed actions.
+          </p>
+        </div>
+        <div className="grid grid-cols-3 gap-2 text-right text-xs">
+          <Metric label="Orders" value={result?.totalCount?.toLocaleString() ?? "-"} tone="violet" />
+          <Metric label="Returned total" value={money(result?.totalCents ?? null)} tone="emerald" />
+          <Metric label="Page size" value={result ? String(result.pageSize) : "50"} tone="amber" />
+        </div>
       </div>
 
-      <section className="mb-4 rounded-lg border border-border bg-card p-4 shadow-sm">
+      <section className="mb-4 rounded-lg border border-border bg-card/95 p-4 shadow-sm">
         <div className="grid gap-3 lg:grid-cols-[180px_260px_160px_180px_1fr_auto]">
           <select value={store} onChange={(e) => setStore(e.target.value as typeof store)} className="h-10 rounded-md border border-input bg-background px-3 text-sm">
             {Object.entries(STORE_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
@@ -152,7 +246,7 @@ export default function ManageOrdersPage() {
       {error ? <div className="mb-4 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">{error}</div> : null}
 
       <section className="overflow-hidden rounded-lg border border-border bg-card shadow-sm">
-        <div className="grid grid-cols-[44px_150px_1fr_150px_160px_150px_150px_150px] border-b border-border bg-muted/40 px-3 py-2 text-xs font-semibold text-muted-foreground">
+        <div className="grid grid-cols-[44px_170px_minmax(520px,1fr)_210px_160px_150px_150px_150px] border-b border-border bg-muted/40 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
           <div />
           <div>Actions</div>
           <div>Order</div>
@@ -168,10 +262,10 @@ export default function ManageOrdersPage() {
           </div>
         ) : result && result.orders.length > 0 ? (
           result.orders.map((order) => (
-            <div key={`${order.store}-${order.orderId}`} className="grid grid-cols-[44px_150px_1fr_150px_160px_150px_150px_150px] gap-3 border-b border-border px-3 py-4 text-sm last:border-b-0">
+            <div key={`${order.store}-${order.orderId}`} className="grid grid-cols-[44px_170px_minmax(520px,1fr)_210px_160px_150px_150px_150px] gap-4 border-b border-border px-4 py-5 text-sm last:border-b-0 hover:bg-muted/20">
               <div><input type="checkbox" aria-label={`Select ${order.orderId}`} /></div>
               <div className="relative">
-                <div className="mb-2 text-xs font-semibold text-emerald-500">{order.shipBy ? `Ship by ${pdt(order.shipBy)}` : "Ready to ship"}</div>
+                <StatusChip order={order} />
                 <button onClick={() => setOpenMenu(openMenu === order.orderId ? null : order.orderId)} className="rounded-md border border-border p-1.5 hover:bg-accent">
                   <MoreHorizontal className="h-4 w-4" />
                 </button>
@@ -192,17 +286,28 @@ export default function ManageOrdersPage() {
               <div>
                 <div className="mb-2 flex items-center gap-2">
                   <Link href={orderHref(order)} className="font-semibold text-primary hover:underline">{order.orderId}</Link>
-                  <span className={cn("rounded px-1.5 py-0.5 text-[10px] font-semibold", order.store === "TPP_EBAY" ? "bg-blue-500/15 text-blue-400" : "bg-purple-500/15 text-purple-400")}>{order.store === "TPP_EBAY" ? "TPP" : "TT"}</span>
+                  <CopyButton value={order.orderId} label="Copy order number" />
+                  <StoreBadge store={order.store} />
                 </div>
-                <div className="mb-2 text-xs text-muted-foreground">{order.buyerName ?? "Unknown buyer"} | {order.buyerUsername ?? "no username"} | ZIP {order.shippingPostalCode ?? "N/A"}</div>
+                <div className="mb-3 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                  <span className="font-medium text-foreground">{order.buyerName ?? "Unknown buyer"}</span>
+                  <span>@{order.buyerUsername ?? "no username"}</span>
+                  <span className="rounded border border-border bg-background px-1.5 py-0.5">ZIP {order.shippingPostalCode ?? "N/A"}</span>
+                  {order.trackingNumbers.length ? order.trackingNumbers.map((tracking) => (
+                    tracking.number ? <span key={tracking.number} className="inline-flex items-center gap-1 rounded border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-emerald-300"><Truck className="h-3 w-3" />{tracking.number}<CopyButton value={tracking.number} label="Copy tracking" compact /></span> : null
+                  )) : null}
+                </div>
                 <div className="space-y-3">
                   {order.lines.map((line) => (
                     <div key={`${line.itemId}-${line.sku}`} className="flex gap-3">
                       {line.imageUrl ? <img src={line.imageUrl} alt="" className="h-14 w-14 rounded border border-border object-cover" /> : <div className="flex h-14 w-14 items-center justify-center rounded border border-border bg-muted text-xs text-muted-foreground">No image</div>}
-                      <div>
-                        {line.listingUrl ? <a href={line.listingUrl} target="_blank" rel="noreferrer" className="line-clamp-1 text-primary hover:underline">{line.title}</a> : <span>{line.title}</span>}
+                      <div className="min-w-0">
+                        {line.listingUrl ? <a href={line.listingUrl} target="_blank" rel="noreferrer" className="line-clamp-1 inline-flex items-center gap-1 text-primary hover:underline">{line.title}<ExternalLink className="h-3 w-3" /></a> : <span>{line.title}</span>}
                         <div className="text-xs text-muted-foreground">Item {line.itemId}</div>
-                        <div className="text-xs font-medium">SKU {line.sku ?? "N/A"}</div>
+                        <div className="mt-1 inline-flex items-center gap-1 rounded border border-violet-500/30 bg-violet-500/10 px-1.5 py-0.5 text-xs font-semibold text-violet-300">
+                          SKU {line.sku ?? "N/A"}
+                          {line.sku ? <CopyButton value={line.sku} label="Copy SKU" compact /> : null}
+                        </div>
                       </div>
                     </div>
                   ))}
@@ -210,8 +315,8 @@ export default function ManageOrdersPage() {
                 <button onClick={() => setActiveAction({ order, action: "add_tracking" })} className="mt-3 text-xs font-semibold text-primary hover:underline">+ Add Tracking</button>
               </div>
               <div>
-                <div className="font-medium">Total quantity: {order.lines.reduce((sum, line) => sum + line.quantity, 0)}</div>
-                {order.lines.map((line) => <div key={line.sku ?? line.itemId} className="text-xs text-muted-foreground">{line.sku ?? "SKU"}: {line.quantity} ({line.availableQuantity ?? "?"} available)</div>)}
+                <div className="mb-2 inline-flex rounded border border-emerald-500/30 bg-emerald-500/10 px-2 py-1 font-semibold text-emerald-300">Total quantity: {order.lines.reduce((sum, line) => sum + line.quantity, 0)}</div>
+                {order.lines.map((line) => <div key={line.sku ?? line.itemId} className="text-xs text-muted-foreground"><span className="font-semibold text-violet-300">{line.sku ?? "SKU"}</span>: <span className="font-semibold text-foreground">{line.quantity}</span> <span className="text-emerald-300">({line.availableQuantity ?? "?"} available)</span></div>)}
               </div>
               <div>
                 <div>{money(order.subtotalCents, order.currency ?? "USD")}</div>

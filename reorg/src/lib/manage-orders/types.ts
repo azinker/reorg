@@ -3,7 +3,9 @@ import type { Platform } from "@prisma/client";
 export type EbayStore = "TPP_EBAY" | "TT_EBAY";
 export type ManageOrdersStoreFilter = "ALL" | EbayStore;
 export type ManageOrdersStatusFilter =
+  | "all_orders"
   | "awaiting_shipment"
+  | "shipped"
   | "ship_within_24h"
   | "awaiting_expedited";
 export type ManageOrdersPeriodFilter = "last_90_days" | "last_week" | "last_month";
@@ -32,6 +34,28 @@ export type ManageOrderLineItem = {
   unitPriceCents: number | null;
   imageUrl: string | null;
   listingUrl: string | null;
+  supplierCostCents: number | null;
+  supplierShippingCents: number | null;
+  outboundShippingCents: number | null;
+  adRate: number | null;
+};
+
+export type ManageOrderFinance = {
+  transactionFeesCents: number | null;
+  adFeeCents: number | null;
+  otherFeesCents: number | null;
+  orderEarningsCents: number | null;
+  feesKnown: boolean;
+  source: "ebay_finances" | "unavailable";
+};
+
+export type ManageOrderInternalProfit = {
+  itemCostCents: number | null;
+  supplierShippingCents: number | null;
+  outboundShippingCents: number | null;
+  totalCogsCents: number | null;
+  estimatedProfitCents: number | null;
+  dataComplete: boolean;
 };
 
 export type ManageOrder = {
@@ -66,6 +90,8 @@ export type ManageOrder = {
   totalCents: number | null;
   currency: string | null;
   salesRecordNumber: string | null;
+  finance: ManageOrderFinance;
+  internalProfit: ManageOrderInternalProfit;
   lines: ManageOrderLineItem[];
 };
 

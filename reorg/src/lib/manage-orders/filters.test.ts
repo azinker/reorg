@@ -31,6 +31,22 @@ const baseOrder: ManageOrder = {
   totalCents: 1000,
   currency: "USD",
   salesRecordNumber: null,
+  finance: {
+    transactionFeesCents: null,
+    adFeeCents: null,
+    otherFeesCents: null,
+    orderEarningsCents: null,
+    feesKnown: false,
+    source: "unavailable",
+  },
+  internalProfit: {
+    itemCostCents: null,
+    supplierShippingCents: null,
+    outboundShippingCents: null,
+    totalCogsCents: null,
+    estimatedProfitCents: null,
+    dataComplete: false,
+  },
   lines: [
     {
       itemId: "123",
@@ -43,6 +59,10 @@ const baseOrder: ManageOrder = {
       unitPriceCents: 500,
       imageUrl: null,
       listingUrl: null,
+      supplierCostCents: null,
+      supplierShippingCents: null,
+      outboundShippingCents: null,
+      adRate: null,
     },
   ],
 };
@@ -60,6 +80,8 @@ test("status filters exclude shipped orders and detect ship-by window", () => {
   assert.equal(matchesStatusFilter(baseOrder, "ship_within_24h", now), true);
   assert.equal(matchesStatusFilter(baseOrder, "awaiting_expedited", now), true);
   assert.equal(matchesStatusFilter({ ...baseOrder, shippedTime: "2026-05-07T13:00:00.000Z" }, "awaiting_shipment", now), false);
+  assert.equal(matchesStatusFilter({ ...baseOrder, shippedTime: "2026-05-07T13:00:00.000Z" }, "shipped", now), true);
+  assert.equal(matchesStatusFilter({ ...baseOrder, shippedTime: "2026-05-07T13:00:00.000Z" }, "all_orders", now), true);
 });
 
 test("search prioritizes exact and allows partial fallback", () => {
