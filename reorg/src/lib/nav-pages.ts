@@ -30,6 +30,7 @@ export type PageKey =
   | "profit-center"
   | "payouts"
   | "sync"
+  | "manage-orders"
   | "ship-orders"
   | "auto-responder"
   | "help-desk"
@@ -161,6 +162,13 @@ export const NAV_PAGES: NavPage[] = [
     label: "Sync",
     icon: "RefreshCw",
     description: "Pull-only marketplace sync controls and status.",
+  },
+  {
+    key: "manage-orders",
+    href: "/manage-orders",
+    label: "Manage Orders",
+    icon: "ClipboardList",
+    description: "Human-triggered eBay order search, details, and guarded order actions.",
   },
   {
     key: "ship-orders",
