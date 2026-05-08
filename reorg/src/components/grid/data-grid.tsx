@@ -150,6 +150,7 @@ const DEFAULT_FILTERS: FilterState = {
 };
 
 const STORAGE_KEY_PREFIX = "reorg_grid_";
+const COLUMN_PREF_VERSION = 2;
 
 function loadUserPref<T>(key: string, fallback: T): T {
   if (typeof window === "undefined") return fallback;
@@ -166,6 +167,19 @@ function saveUserPref(key: string, value: unknown) {
   try {
     localStorage.setItem(STORAGE_KEY_PREFIX + key, JSON.stringify(value));
   } catch { /* quota exceeded - ignore */ }
+}
+
+function loadCatalogColumns(hiddenColumnIds: string[]) {
+  const savedVersion = loadUserPref<number | null>("columns_version", null);
+  if (savedVersion !== COLUMN_PREF_VERSION) {
+    saveUserPref("columns_version", COLUMN_PREF_VERSION);
+    saveUserPref("columns", DEFAULT_COLUMNS);
+    return applyCatalogColumnRestrictions(DEFAULT_COLUMNS, hiddenColumnIds);
+  }
+  return applyCatalogColumnRestrictions(
+    loadUserPref("columns", DEFAULT_COLUMNS),
+    hiddenColumnIds,
+  );
 }
 
 type SortField = "title" | "sku" | "inventory" | "upc" | null;
@@ -819,10 +833,7 @@ export function DataGrid({
   const [sortField, setSortField] = useState<SortField>(() => settings.defaultSort as SortField);
   const [sortDir, setSortDir] = useState<SortDir>("asc");
   const [columns, setColumns] = useState<ColumnConfig[]>(() =>
-    applyCatalogColumnRestrictions(
-      loadUserPref("columns", DEFAULT_COLUMNS),
-      catalogPermissions.hiddenColumns,
-    )
+    loadCatalogColumns(catalogPermissions.hiddenColumns)
   );
   const [highlightedRowId, setHighlightedRowId] = useState<string | null>(null);
   const [toast, setToast] = useState<{ message: string; isError: boolean } | null>(null);
@@ -3468,6 +3479,13 @@ export function DataGrid({
     );
   }
 
+  function resetColumns() {
+    const next = applyCatalogColumnRestrictions(DEFAULT_COLUMNS, catalogPermissions.hiddenColumns);
+    setColumns(next);
+    saveUserPref("columns", next);
+    saveUserPref("columns_version", COLUMN_PREF_VERSION);
+  }
+
   function highlightRow(rowId: string) {
     if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
     setHighlightedRowId(null);
@@ -3959,6 +3977,7 @@ export function DataGrid({
 
   /** Settings → Freeze key columns; column defs still mark which are “key” for width math. */
   const freezeKeyColumns = settings.frozenColumns;
+  const columnManagerColumns = columns.filter((c) => !hiddenColumnSet.has(c.id));
   const visibleColumns = columns.filter((c) => c.visible && !hiddenColumnSet.has(c.id));
   const frozenCols = visibleColumns.filter((c) => c.frozen);
   const scrollCols = visibleColumns.filter((c) => !c.frozen);
@@ -4085,7 +4104,7 @@ export function DataGrid({
             </div>
           )}
           <div data-tour="dashboard-columns-export" className="flex items-center gap-2">
-            <ColumnManager columns={visibleColumns} onToggle={toggleColumn} />
+            <ColumnManager columns={columnManagerColumns} onToggle={toggleColumn} onReset={resetColumns} />
             <button className="flex items-center gap-1 rounded px-2 py-1 text-xs text-muted-foreground transition-colors hover:text-foreground cursor-pointer">
               <Download className="h-3 w-3" />
               Export

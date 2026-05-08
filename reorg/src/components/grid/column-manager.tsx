@@ -1,15 +1,16 @@
 "use client";
 
 import { useState } from "react";
-import { Columns3, Eye, EyeOff } from "lucide-react";
+import { Columns3, Eye, EyeOff, RotateCcw } from "lucide-react";
 import type { ColumnConfig } from "@/lib/grid-types";
 
 interface ColumnManagerProps {
   columns: ColumnConfig[];
   onToggle: (columnId: string) => void;
+  onReset?: () => void;
 }
 
-export function ColumnManager({ columns, onToggle }: ColumnManagerProps) {
+export function ColumnManager({ columns, onToggle, onReset }: ColumnManagerProps) {
   const [open, setOpen] = useState(false);
 
   return (
@@ -29,6 +30,18 @@ export function ColumnManager({ columns, onToggle }: ColumnManagerProps) {
             <p className="mb-2 px-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
               Toggle Columns
             </p>
+            {onReset ? (
+              <button
+                onClick={() => {
+                  onReset();
+                  setOpen(false);
+                }}
+                className="mb-2 flex w-full items-center gap-2 rounded-md border border-border px-2 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground cursor-pointer"
+              >
+                <RotateCcw className="h-3.5 w-3.5" />
+                Reset to full catalog
+              </button>
+            ) : null}
             <div className="max-h-80 space-y-0.5 overflow-y-auto">
               {columns.map((col) => (
                 <button
