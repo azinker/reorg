@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
+import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import type { Platform } from "@prisma/client";
 import { mergeIntegrationConfig } from "@/lib/integrations/runtime-config";
@@ -66,6 +67,17 @@ export async function PATCH(
   { params }: { params: Promise<{ platform: string }> }
 ) {
   try {
+    const session = await auth();
+    if (!session?.user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+    if (session.user.role !== "ADMIN") {
+      return NextResponse.json(
+        { error: "Only admins can update integrations." },
+        { status: 403 },
+      );
+    }
+
     const { platform } = await params;
     if (!PLATFORMS.includes(platform as Platform)) {
       return NextResponse.json({ error: "Invalid platform" }, { status: 400 });

@@ -5,6 +5,7 @@ import { cn } from "@/lib/utils";
 import { Sidebar } from "@/components/layout/sidebar";
 import { TopBar } from "@/components/layout/top-bar";
 import { DashboardConnectionProvider } from "@/contexts/dashboard-connection-context";
+import { CurrentUserProvider } from "@/contexts/current-user-context";
 import { ImpersonationBanner } from "@/components/layout/impersonation-banner";
 
 interface AppShellProps {
@@ -77,12 +78,14 @@ export function AppShell({
             onNavigate={() => setMobileOpen(false)}
           />
         </div>
-        <DashboardConnectionProvider>
-          <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-            <TopBar user={user} onOpenSidebar={() => setMobileOpen(true)} />
-            <main className="min-w-0 flex-1 overflow-auto">{children}</main>
-          </div>
-        </DashboardConnectionProvider>
+        <CurrentUserProvider user={user}>
+          <DashboardConnectionProvider>
+            <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+              <TopBar user={user} onOpenSidebar={() => setMobileOpen(true)} />
+              <main className="min-w-0 flex-1 overflow-auto">{children}</main>
+            </div>
+          </DashboardConnectionProvider>
+        </CurrentUserProvider>
       </div>
     </div>
   );

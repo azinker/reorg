@@ -8,6 +8,7 @@ import { clearAllLocalTours, setLocalTourSeen } from "@/lib/onboarding-local";
 import { ONBOARDING_PAGES } from "@/lib/onboarding-pages";
 import { PageTour } from "@/components/onboarding/page-tour";
 import { PAGE_TOUR_STEPS } from "@/components/onboarding/page-tour-steps";
+import { useCurrentUser } from "@/contexts/current-user-context";
 import type { Density, RowHeight, SortColumn } from "@/lib/settings-store";
 import type { SyncProfile } from "@/lib/sync-types";
 import { cn } from "@/lib/utils";
@@ -429,6 +430,8 @@ export default function SettingsPage() {
   const router = useRouter();
   const { theme, setTheme } = useTheme();
   const { settings, update } = useSettings();
+  const user = useCurrentUser();
+  const isAdmin = user?.role === "ADMIN";
 
   async function replayCatalogTour() {
     setLocalTourSeen("catalog", false);
@@ -678,6 +681,8 @@ export default function SettingsPage() {
           </div>
         </section>
 
+        {isAdmin ? (
+          <>
         {/* SECTION 2: Safety Controls */}
         <section
           data-tour="settings-safety"
@@ -772,6 +777,8 @@ export default function SettingsPage() {
 
         {/* SECTION 3: Automatic Sync Schedule */}
         <SyncScheduleSection />
+          </>
+        ) : null}
 
         {/* Guided tour */}
         <section className="rounded-lg border border-border bg-card p-6 shadow-sm" data-tour="settings-tour">
@@ -802,6 +809,8 @@ export default function SettingsPage() {
           </button>
         </section>
 
+        {isAdmin ? (
+        <>
         {/* SECTION 5: Master Store (Danger Zone) */}
         <section className="rounded-lg border-2 border-destructive/50 bg-destructive/5 p-6 dark:bg-destructive/10">
           <h2 className="mb-5 flex items-center gap-2 text-lg font-semibold text-destructive">
@@ -831,8 +840,18 @@ export default function SettingsPage() {
             </p>
           </div>
         </section>
+        </>
+        ) : null}
       </div>
-      <PageTour page="settings" steps={PAGE_TOUR_STEPS.settings} ready />
+      <PageTour
+        page="settings"
+        steps={
+          isAdmin
+            ? PAGE_TOUR_STEPS.settings
+            : PAGE_TOUR_STEPS.settings.filter((step) => step.target !== "settings-safety")
+        }
+        ready
+      />
     </div>
   );
 }
