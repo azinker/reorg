@@ -14,7 +14,9 @@ import {
   MessageSquare,
   PackageCheck,
   PackagePlus,
+  Plus,
   Printer,
+  Trash2,
   Truck,
   X,
 } from "lucide-react";
@@ -52,8 +54,22 @@ function firstTracking(order: ManageOrder) {
   return order.trackingNumbers.find((tracking) => tracking.number) ?? null;
 }
 
+function validTrackings(order: ManageOrder) {
+  return order.trackingNumbers.filter((tracking) => tracking.number);
+}
+
 function labelCreatedDate(order: ManageOrder) {
   return firstTracking(order)?.shippedTime ?? order.shippedTime;
+}
+
+function fundsStatusLabel(status: string | null | undefined) {
+  if (!status) return "Unavailable";
+  const normalized = status.replace(/_/g, " ").toLowerCase();
+  if (normalized.includes("processing")) return "Processing";
+  if (normalized.includes("hold")) return "On hold";
+  if (normalized.includes("available")) return "Available";
+  if (normalized.includes("payout")) return "Paid out";
+  return normalized.replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
 function EbayLogoImage({ compact }: { compact?: boolean }) {
@@ -77,6 +93,8 @@ export default function ManageOrderDetailsPage({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [messageOpen, setMessageOpen] = useState(false);
+  const [trackingOpen, setTrackingOpen] = useState(false);
+  const [reloadNonce, setReloadNonce] = useState(0);
 
   useEffect(() => {
     void params.then(setRouteParams);
@@ -102,7 +120,7 @@ export default function ManageOrderDetailsPage({
     }
     void load();
     return () => { cancelled = true; };
-  }, [routeParams]);
+  }, [routeParams, reloadNonce]);
 
   const currency = order?.currency ?? "USD";
   const primaryLine = order?.lines[0] ?? null;
@@ -121,6 +139,7 @@ export default function ManageOrderDetailsPage({
   }
 
   const tracking = firstTracking(order);
+  const trackings = validTrackings(order);
 
   return (
     <div className="p-6">
@@ -206,17 +225,21 @@ export default function ManageOrderDetailsPage({
                 </div>
                 <div>
                   <div className="text-xs text-muted-foreground">Tracking</div>
-                  {tracking?.number ? (
-                    <div className="mt-1 inline-flex items-center gap-1 rounded border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 font-medium text-emerald-300">
-                      {tracking.carrier ?? "Carrier"} | {tracking.number}
-                      <CopyButton value={tracking.number} title="Copy tracking number" compact />
+                  {trackings.length ? (
+                    <div className="mt-2 flex flex-col gap-2">
+                      {trackings.map((trackingRow) => (
+                        <div key={`${trackingRow.carrier}-${trackingRow.number}`} className="inline-flex w-fit max-w-full items-center gap-1.5 rounded border border-emerald-500/30 bg-emerald-500/10 px-2 py-1 font-medium text-emerald-300">
+                          <span className="truncate">{trackingRow.carrier ?? "Carrier"} | {trackingRow.number}</span>
+                          <CopyButton value={trackingRow.number!} title="Copy tracking number" compact />
+                        </div>
+                      ))}
                     </div>
                   ) : (
                     <div className="mt-1 text-muted-foreground">No tracking yet</div>
                   )}
-                  <Link href={`/manage-orders?order=${encodeURIComponent(order.orderId)}`} className="mt-3 inline-flex cursor-pointer items-center gap-2 text-sm font-medium text-primary hover:underline">
-                    <PackagePlus className="h-4 w-4" /> Add Tracking
-                  </Link>
+                  <button type="button" onClick={() => setTrackingOpen(true)} className="mt-4 inline-flex cursor-pointer items-center gap-2 rounded-md border border-primary/45 px-3 py-1.5 text-sm font-medium text-primary hover:bg-primary/10">
+                    <Plus className="h-4 w-4" /> Add tracking
+                  </button>
                 </div>
               </div>
             </div>
@@ -267,7 +290,15 @@ export default function ManageOrderDetailsPage({
               <Info className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
               The buyer has paid for this order. Finance values are pulled from eBay when available.
             </div>
-            <div className="mb-4 text-sm text-muted-foreground">Funds status <span className="float-right font-medium text-foreground">{order.finance.feesKnown ? "Processing" : "Unavailable"}</span></div>
+            <div className="mb-4 flex items-start justify-between gap-4 text-sm">
+              <span className="text-muted-foreground">Funds status</span>
+              <span className="text-right">
+                <span className="font-medium text-foreground">{fundsStatusLabel(order.finance.fundsStatus)}</span>
+                {order.finance.fundsStatusDetail ? (
+                  <span className="mt-0.5 block text-xs text-muted-foreground">{order.finance.fundsStatusDetail}</span>
+                ) : null}
+              </span>
+            </div>
             <div className="rounded-lg bg-muted/35 p-4">
               <h3 className="mb-3 font-semibold">What your buyer paid</h3>
               <Summary label="Subtotal" value={money(order.subtotalCents, currency)} soft />
@@ -283,6 +314,7 @@ export default function ManageOrderDetailsPage({
               <div className="mt-3 text-sm font-semibold">Selling costs</div>
               <Summary label="Transaction fees" value={order.finance.transactionFeesCents != null ? feeMoney(order.finance.transactionFeesCents, currency) : "Unavailable"} soft />
               <Summary label="Ad Fee General" value={order.finance.adFeeCents != null ? feeMoney(order.finance.adFeeCents, currency) : "Unavailable"} soft />
+              <Summary label="Shipping label" value={order.finance.shippingLabelCents != null ? feeMoney(order.finance.shippingLabelCents, currency) : "Unavailable"} soft />
               <Summary label="Other fees" value={order.finance.otherFeesCents != null ? feeMoney(order.finance.otherFeesCents, currency) : "Unavailable"} soft />
               <Summary label="Order earnings" value={order.finance.orderEarningsCents != null ? money(order.finance.orderEarningsCents, currency) : "Unavailable"} strong soft />
             </div>
@@ -301,6 +333,16 @@ export default function ManageOrderDetailsPage({
         </aside>
       </div>
       {messageOpen ? <MessageBuyerModal order={order} onClose={() => setMessageOpen(false)} /> : null}
+      {trackingOpen ? (
+        <AddTrackingModal
+          order={order}
+          onClose={() => setTrackingOpen(false)}
+          onUpdated={() => {
+            setTrackingOpen(false);
+            setReloadNonce((value) => value + 1);
+          }}
+        />
+      ) : null}
     </div>
   );
 }
@@ -364,6 +406,132 @@ function CopyButton({ value, title, compact }: { value: string; title: string; c
     <button type="button" onClick={copy} title={copied ? "Copied!" : title} className={cn("inline-flex cursor-pointer items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground", compact ? "h-4 w-4" : "h-6 w-6")}>
       {copied ? <Check className="h-3 w-3 text-emerald-400" /> : <Copy className="h-3 w-3" />}
     </button>
+  );
+}
+
+type TrackingDraft = {
+  carrier: "USPS" | "UPS" | "FedEx";
+  trackingNumber: string;
+};
+
+function AddTrackingModal({ order, onClose, onUpdated }: { order: ManageOrder; onClose: () => void; onUpdated: () => void }) {
+  const [rows, setRows] = useState<TrackingDraft[]>([{ carrier: "USPS", trackingNumber: "" }]);
+  const [token, setToken] = useState<string | null>(null);
+  const [preparing, setPreparing] = useState(true);
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setPreparing(true);
+    fetch("/api/manage-orders/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ orderId: order.orderId, store: order.store, actionType: "add_tracking" }),
+      signal: controller.signal,
+    })
+      .then(async (res) => {
+        const json = await res.json();
+        if (!res.ok) throw new Error(json.error ?? "Could not prepare tracking confirmation");
+        setToken(json.data.humanActionToken);
+      })
+      .catch((err) => {
+        if (err instanceof DOMException && err.name === "AbortError") return;
+        setError(err instanceof Error ? err.message : "Could not prepare tracking confirmation");
+      })
+      .finally(() => setPreparing(false));
+    return () => controller.abort();
+  }, [order.orderId, order.store]);
+
+  function updateRow(index: number, patch: Partial<TrackingDraft>) {
+    setRows((current) => current.map((row, rowIndex) => (rowIndex === index ? { ...row, ...patch } : row)));
+  }
+
+  function addRow() {
+    setRows((current) => [...current, { carrier: "USPS", trackingNumber: "" }]);
+  }
+
+  function removeRow(index: number) {
+    setRows((current) => current.filter((_, rowIndex) => rowIndex !== index));
+  }
+
+  async function send() {
+    if (!token) return;
+    const trackingNumbers = rows
+      .map((row) => ({ carrier: row.carrier, trackingNumber: row.trackingNumber.trim() }))
+      .filter((row) => row.trackingNumber.length >= 4);
+    if (!trackingNumbers.length) {
+      setError("Enter at least one tracking number.");
+      return;
+    }
+    setSending(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/manage-orders/actions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          orderId: order.orderId,
+          store: order.store,
+          actionType: "add_tracking",
+          humanActionToken: token,
+          trackingNumbers,
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error ?? "Tracking update failed");
+      onUpdated();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Tracking update failed");
+    } finally {
+      setSending(false);
+    }
+  }
+
+  const canSubmit = rows.some((row) => row.trackingNumber.trim().length >= 4);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+      <div className="w-full max-w-2xl rounded-lg border border-border bg-card p-5 shadow-xl">
+        <div className="mb-4 flex items-start justify-between gap-3">
+          <div>
+            <h2 className="text-lg font-semibold">Add tracking</h2>
+            <p className="text-sm text-muted-foreground">{order.orderId}</p>
+          </div>
+          <button onClick={onClose} className="cursor-pointer rounded p-1 hover:bg-accent"><X className="h-4 w-4" /></button>
+        </div>
+        <div className="mb-3 flex gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-300">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          Adding tracking is a live eBay order action and requires final confirmation.
+        </div>
+        <div className="space-y-3">
+          {rows.map((row, index) => (
+            <div key={index} className="grid gap-2 sm:grid-cols-[130px_1fr_36px]">
+              <select value={row.carrier} onChange={(event) => updateRow(index, { carrier: event.target.value as TrackingDraft["carrier"] })} className="h-10 cursor-pointer rounded-md border border-input bg-background px-3 text-sm">
+                <option value="USPS">USPS</option>
+                <option value="UPS">UPS</option>
+                <option value="FedEx">FedEx</option>
+              </select>
+              <input value={row.trackingNumber} onChange={(event) => updateRow(index, { trackingNumber: event.target.value })} className="h-10 rounded-md border border-input bg-background px-3 text-sm" placeholder="Tracking number" />
+              <button type="button" onClick={() => removeRow(index)} disabled={rows.length === 1} title="Remove tracking row" className="inline-flex h-10 w-10 cursor-pointer items-center justify-center rounded-md border border-border text-muted-foreground hover:bg-accent disabled:cursor-not-allowed disabled:opacity-40">
+                <Trash2 className="h-4 w-4" />
+              </button>
+            </div>
+          ))}
+        </div>
+        <button type="button" onClick={addRow} className="mt-3 inline-flex cursor-pointer items-center gap-2 rounded-md border border-primary/45 px-3 py-1.5 text-sm font-medium text-primary hover:bg-primary/10">
+          <Plus className="h-4 w-4" /> Add another tracking
+        </button>
+        {error ? <div className="mt-4 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">{error}</div> : null}
+        <div className="mt-5 flex justify-end gap-2">
+          <button onClick={onClose} className="cursor-pointer rounded-md border border-border px-4 py-2 text-sm hover:bg-accent">Cancel</button>
+          <button onClick={() => void send()} disabled={preparing || sending || !token || !canSubmit} className="inline-flex cursor-pointer items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground disabled:cursor-not-allowed disabled:opacity-50">
+            {preparing || sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <PackagePlus className="h-4 w-4" />}
+            Final Confirm
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 

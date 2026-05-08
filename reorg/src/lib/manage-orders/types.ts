@@ -44,9 +44,12 @@ export type ManageOrderFinance = {
   transactionFeesCents: number | null;
   adFeeCents: number | null;
   otherFeesCents: number | null;
+  shippingLabelCents: number | null;
   orderEarningsCents: number | null;
+  fundsStatus: string | null;
+  fundsStatusDetail: string | null;
   feesKnown: boolean;
-  source: "ebay_finances" | "unavailable";
+  source: "ebay_finances" | "ebay_order_earnings" | "unavailable";
 };
 
 export type ManageOrderInternalProfit = {
