@@ -114,6 +114,13 @@ export const NAV_PAGES: NavPage[] = [
       "Buyer-message inbox with tickets, threads, and reply composer.",
   },
   {
+    key: "manage-orders",
+    href: "/manage-orders",
+    label: "Manage Orders",
+    icon: "ClipboardList",
+    description: "Human-triggered eBay order search, details, and guarded order actions.",
+  },
+  {
     key: "catalog-health",
     href: "/catalog-health",
     label: "Catalog Health",
@@ -162,13 +169,6 @@ export const NAV_PAGES: NavPage[] = [
     label: "Sync",
     icon: "RefreshCw",
     description: "Pull-only marketplace sync controls and status.",
-  },
-  {
-    key: "manage-orders",
-    href: "/manage-orders",
-    label: "Manage Orders",
-    icon: "ClipboardList",
-    description: "Human-triggered eBay order search, details, and guarded order actions.",
   },
   {
     key: "ship-orders",

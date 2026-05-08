@@ -1,18 +1,21 @@
 "use client";
 
 import Link from "next/link";
-import { type MouseEvent, useEffect, useState } from "react";
+import { type MouseEvent, useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
   ArrowLeft,
   Check,
+  ChevronDown,
   Copy,
   ExternalLink,
-  FileText,
+  Info,
   Loader2,
   MessageSquare,
   PackageCheck,
   PackagePlus,
+  Printer,
+  Truck,
   X,
 } from "lucide-react";
 import { useCurrentUser } from "@/contexts/current-user-context";
@@ -24,7 +27,12 @@ function money(cents: number | null | undefined, currency = "USD") {
   return new Intl.NumberFormat("en-US", { style: "currency", currency }).format(cents / 100);
 }
 
-function pdt(value: string | null | undefined) {
+function feeMoney(cents: number | null | undefined, currency = "USD") {
+  if (cents == null) return "Unavailable";
+  return `-${money(Math.abs(cents), currency)}`;
+}
+
+function dateOnly(value: string | null | undefined) {
   if (!value) return "Unavailable";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "Unavailable";
@@ -33,10 +41,29 @@ function pdt(value: string | null | undefined) {
     month: "short",
     day: "numeric",
     year: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-    timeZoneName: "short",
   }).format(date);
+}
+
+function orderStatus(order: ManageOrder) {
+  return order.shippedTime || order.trackingNumbers.length ? "Shipped" : "Awaiting shipment";
+}
+
+function firstTracking(order: ManageOrder) {
+  return order.trackingNumbers.find((tracking) => tracking.number) ?? null;
+}
+
+function labelCreatedDate(order: ManageOrder) {
+  return firstTracking(order)?.shippedTime ?? order.shippedTime;
+}
+
+function EbayLogoImage({ compact }: { compact?: boolean }) {
+  return (
+    <img
+      src="https://upload.wikimedia.org/wikipedia/commons/1/1b/EBay_logo.svg"
+      alt="eBay"
+      className={cn("block object-contain", compact ? "h-3.5 w-9" : "h-5 w-14")}
+    />
+  );
 }
 
 export default function ManageOrderDetailsPage({
@@ -75,6 +102,15 @@ export default function ManageOrderDetailsPage({
     return () => { cancelled = true; };
   }, [routeParams]);
 
+  const currency = order?.currency ?? "USD";
+  const primaryLine = order?.lines[0] ?? null;
+  const buyerPaidTotal = useMemo(() => {
+    if (!order) return null;
+    if (order.totalCents != null) return order.totalCents;
+    if (order.subtotalCents == null) return null;
+    return order.subtotalCents + (order.shippingCents ?? 0) + (order.taxCents ?? 0);
+  }, [order]);
+
   if (loading) {
     return <div className="flex h-full items-center justify-center"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>;
   }
@@ -82,114 +118,176 @@ export default function ManageOrderDetailsPage({
     return <div className="p-6 text-sm text-destructive">{error ?? "Order not found"}</div>;
   }
 
-  const currency = order.currency ?? "USD";
+  const tracking = firstTracking(order);
 
   return (
     <div className="p-6">
-      <Link href="/manage-orders" className="mb-4 inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground">
+      <Link href="/manage-orders" className="mb-4 inline-flex cursor-pointer items-center gap-2 text-sm text-muted-foreground hover:text-foreground">
         <ArrowLeft className="h-4 w-4" /> Back to Manage Orders
       </Link>
 
-      <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
+      <div className="mb-5 flex flex-wrap items-center justify-between gap-4">
         <div>
-          <div className="mb-2 flex flex-wrap items-center gap-2">
+          <div className="mb-3 flex items-center gap-2">
             <StoreBadge store={order.store} />
-            <CopyButton value={order.orderId} title="Copy order number" />
+            <CopyButton value={order.orderId} title="Copy order number" compact />
           </div>
-          <h1 className="text-2xl font-bold tracking-tight">{order.lines[0]?.title ?? "Order Details"}</h1>
-          <p className="text-sm text-muted-foreground">{order.store === "TPP_EBAY" ? "TPP eBay" : "TT eBay"} | Order <span className="font-semibold text-primary">{order.orderId}</span></p>
+          <h1 className="text-3xl font-bold tracking-tight">Order details</h1>
         </div>
-        <a href={`/api/manage-orders/orders/${order.store}/${encodeURIComponent(order.orderId)}/packing-slip`} target="_blank" className="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground">
-          <FileText className="h-4 w-4" /> Print Packing Slip
+        <a href={`/api/manage-orders/orders/${order.store}/${encodeURIComponent(order.orderId)}/packing-slip`} target="_blank" className="inline-flex cursor-pointer items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground">
+          <Printer className="h-4 w-4" /> Print packing slip
         </a>
       </div>
 
-      <div className="grid gap-6 xl:grid-cols-[1fr_360px]">
-        <div className="space-y-6">
-          <section className="rounded-lg border border-border bg-card p-5">
-            <h2 className="mb-4 text-sm font-semibold uppercase tracking-wider text-muted-foreground">Shipping timeline</h2>
-            <div className="grid gap-3 md:grid-cols-3">
-              <Timeline label="Buyer paid" value={pdt(order.paidTime)} tone="emerald" />
-              <Timeline label="Ship by" value={pdt(order.shipBy)} tone={order.shipBy ? "amber" : "muted"} />
-              <Timeline label="Delivery estimate" value={`${pdt(order.estimatedDeliveryMin)} - ${pdt(order.estimatedDeliveryMax)}`} tone="violet" />
+      <div className="mb-5 flex items-center gap-4">
+        {primaryLine?.imageUrl ? <img src={primaryLine.imageUrl} alt="" className="h-16 w-16 rounded-md border border-border object-cover" /> : <div className="flex h-16 w-16 items-center justify-center rounded-md border border-border bg-muted text-xs text-muted-foreground">No image</div>}
+        <div className="min-w-0">
+          {primaryLine?.listingUrl ? (
+            <a href={primaryLine.listingUrl} target="_blank" rel="noreferrer" className="line-clamp-2 inline-flex items-center gap-1 text-xl font-semibold text-foreground hover:text-primary hover:underline">
+              {primaryLine.title}<ExternalLink className="h-4 w-4 shrink-0" />
+            </a>
+          ) : (
+            <div className="text-xl font-semibold">{primaryLine?.title ?? "Order details"}</div>
+          )}
+          <div className="mt-1 text-sm text-muted-foreground">{order.store === "TPP_EBAY" ? "TPP eBay" : "TT eBay"} | Order <span className="font-semibold text-primary">{order.orderId}</span></div>
+        </div>
+      </div>
+
+      <div className="grid gap-5 xl:grid-cols-[1fr_390px]">
+        <main className="space-y-5">
+          <section className="rounded-xl border border-border bg-card p-5">
+            <div className="mb-4 flex flex-wrap items-start justify-between gap-4">
+              <div>
+                <h2 className="text-xl font-bold">{orderStatus(order)}</h2>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  {labelCreatedDate(order) ? `Label created ${dateOnly(labelCreatedDate(order))}. ` : null}
+                  {order.shipBy ? `Ship by ${dateOnly(order.shipBy)}. ` : null}
+                  {order.estimatedDeliveryMin || order.estimatedDeliveryMax ? `Estimated delivery ${dateOnly(order.estimatedDeliveryMin)} - ${dateOnly(order.estimatedDeliveryMax)}.` : null}
+                </p>
+              </div>
+              <Link href={`/manage-orders?order=${encodeURIComponent(order.orderId)}`} className="inline-flex cursor-pointer items-center gap-2 rounded-full border border-primary/50 px-4 py-2 text-sm font-semibold text-primary hover:bg-primary/10">
+                More actions <ChevronDown className="h-4 w-4" />
+              </Link>
+            </div>
+            <div className="relative mt-8 grid grid-cols-3 gap-4">
+              <div className="absolute left-8 right-8 top-3 h-1 rounded-full bg-muted" />
+              <div className={cn("absolute left-8 top-3 h-1 rounded-full bg-primary", orderStatus(order) === "Shipped" ? "right-[calc(33.333%+2rem)]" : "right-[calc(66.666%+2rem)]")} />
+              <TimelineDot label="Buyer paid" value={dateOnly(order.paidTime)} active />
+              <TimelineDot label={orderStatus(order)} value={labelCreatedDate(order) ? `Label created ${dateOnly(labelCreatedDate(order))}` : dateOnly(order.shipBy)} active={orderStatus(order) === "Shipped"} />
+              <TimelineDot label="Delivery" value={`${dateOnly(order.estimatedDeliveryMin)} - ${dateOnly(order.estimatedDeliveryMax)}`} active={false} />
             </div>
           </section>
 
-          <section className="rounded-lg border border-border bg-card p-5">
-            <h2 className="mb-4 text-sm font-semibold uppercase tracking-wider text-muted-foreground">Shipping</h2>
-            <div className="grid gap-4 md:grid-cols-2">
+          <section className="rounded-xl border border-border bg-card p-5">
+            <h2 className="mb-4 text-xl font-bold">Shipping</h2>
+            <div className="mb-4 flex items-center justify-between rounded-lg border border-border bg-muted/40 px-4 py-3">
+              <div className="inline-flex items-center gap-2 font-semibold"><Truck className="h-4 w-4" /> Shipping instructions</div>
+              <ChevronDown className="h-4 w-4 text-muted-foreground" />
+            </div>
+            <div className="grid gap-5 md:grid-cols-[1fr_1.2fr]">
               <div className="text-sm">
-                <div className="font-medium">{order.shippingAddress?.name ?? "Unavailable"}</div>
-                <div className="text-muted-foreground">{order.shippingAddress?.street1}</div>
+                <div className="mb-2 text-xs uppercase tracking-wide text-muted-foreground">Ship to</div>
+                <div className="inline-flex items-center gap-1 font-semibold">
+                  {order.shippingAddress?.name ?? "Unavailable"}
+                  {order.shippingAddress?.name ? <CopyButton value={order.shippingAddress.name} title="Copy ship-to name" compact /> : null}
+                </div>
+                <div className="mt-2 text-muted-foreground">{order.shippingAddress?.street1}</div>
                 {order.shippingAddress?.street2 ? <div className="text-muted-foreground">{order.shippingAddress.street2}</div> : null}
                 <div className="text-muted-foreground">{[order.shippingAddress?.cityName, order.shippingAddress?.stateOrProvince, order.shippingAddress?.postalCode].filter(Boolean).join(", ")}</div>
-                {order.shippingAddress?.phone ? <div className="mt-2 text-muted-foreground">Phone: {order.shippingAddress.phone}</div> : null}
+                <div className="text-muted-foreground">{order.shippingAddress?.countryName}</div>
+                {order.shippingAddress?.phone ? <div className="mt-4"><div className="text-xs text-muted-foreground">Phone</div><div>{order.shippingAddress.phone}</div></div> : null}
               </div>
-              <div className="text-sm">
-                <div>Service: <span className="font-medium">{order.shippingService ?? "Unavailable"}</span></div>
-                <div className="mt-2">Tracking:</div>
-                {order.trackingNumbers.length ? order.trackingNumbers.map((tracking) => (
-                  tracking.number ? <div key={tracking.number} className="inline-flex items-center gap-1 rounded border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-emerald-300">{tracking.carrier ?? "Carrier"} | {tracking.number}<CopyButton value={tracking.number} title="Copy tracking number" compact /></div> : null
-                )) : <div className="text-muted-foreground">No tracking yet</div>}
-                <Link href={`/manage-orders?order=${encodeURIComponent(order.orderId)}`} className="mt-3 inline-flex items-center gap-2 text-sm font-medium text-primary hover:underline">
-                  <PackagePlus className="h-4 w-4" /> Add Tracking
-                </Link>
+              <div className="grid gap-4 text-sm md:grid-cols-2">
+                <div>
+                  <div className="text-xs text-muted-foreground">Buyer selected shipping service</div>
+                  <div className="mt-1 font-semibold">{order.shippingService ?? "Unavailable"}</div>
+                </div>
+                <div>
+                  <div className="text-xs text-muted-foreground">Tracking</div>
+                  {tracking?.number ? (
+                    <div className="mt-1 inline-flex items-center gap-1 rounded border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 font-medium text-emerald-300">
+                      {tracking.carrier ?? "Carrier"} | {tracking.number}
+                      <CopyButton value={tracking.number} title="Copy tracking number" compact />
+                    </div>
+                  ) : (
+                    <div className="mt-1 text-muted-foreground">No tracking yet</div>
+                  )}
+                  <Link href={`/manage-orders?order=${encodeURIComponent(order.orderId)}`} className="mt-3 inline-flex cursor-pointer items-center gap-2 text-sm font-medium text-primary hover:underline">
+                    <PackagePlus className="h-4 w-4" /> Add Tracking
+                  </Link>
+                </div>
               </div>
             </div>
           </section>
 
-          <section className="rounded-lg border border-border bg-card p-5">
-            <h2 className="mb-4 text-sm font-semibold uppercase tracking-wider text-muted-foreground">Items</h2>
+          <section className="rounded-xl border border-border bg-card p-5">
+            <h2 className="mb-4 text-xl font-bold">Item</h2>
             <div className="space-y-4">
               {order.lines.map((line) => (
-                <div key={`${line.itemId}-${line.sku}`} className="flex gap-4 rounded-md border border-border p-3">
-                  {line.imageUrl ? <img src={line.imageUrl} alt="" className="h-20 w-20 rounded border border-border object-cover" /> : <div className="flex h-20 w-20 items-center justify-center rounded border border-border bg-muted text-xs text-muted-foreground">No image</div>}
-                  <div className="min-w-0 flex-1">
+                <div key={`${line.itemId}-${line.sku}`} className="grid gap-4 rounded-lg border border-border p-4 md:grid-cols-[96px_minmax(260px,1fr)_120px_130px_130px]">
+                  {line.imageUrl ? <img src={line.imageUrl} alt="" className="h-24 w-24 rounded-md border border-border object-cover" /> : <div className="flex h-24 w-24 items-center justify-center rounded-md border border-border bg-muted text-xs text-muted-foreground">No image</div>}
+                  <div className="min-w-0 text-sm">
                     {line.listingUrl ? <a href={line.listingUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 font-medium text-primary hover:underline">{line.title}<ExternalLink className="h-3.5 w-3.5" /></a> : <div className="font-medium">{line.title}</div>}
-                    <div className="mt-2 flex flex-wrap items-center gap-2 text-sm">
-                      <span className="inline-flex items-center gap-1 rounded border border-violet-500/30 bg-violet-500/10 px-1.5 py-0.5 font-semibold text-violet-300">SKU {line.sku ?? "N/A"}{line.sku ? <CopyButton value={line.sku} title="Copy SKU" compact /> : null}</span>
-                      <span className="text-muted-foreground">Item {line.itemId}</span>
+                    <div className="mt-2 inline-flex items-center gap-1 font-semibold text-violet-300">
+                      Custom label (SKU): {line.sku ?? "N/A"}
+                      {line.sku ? <CopyButton value={line.sku} title="Copy SKU" compact /> : null}
                     </div>
-                    <div className="mt-2 flex flex-wrap gap-2 text-sm">
-                      <span className="rounded border border-emerald-500/30 bg-emerald-500/10 px-2 py-1 font-semibold text-emerald-300">Qty {line.quantity}</span>
-                      <span className="rounded border border-sky-500/30 bg-sky-500/10 px-2 py-1 text-sky-300">eBay available {line.availableQuantity ?? "Unavailable"}</span>
-                      <span className="rounded border border-border bg-background px-2 py-1">Price {money(line.unitPriceCents, currency)}</span>
-                    </div>
+                    <div className="mt-1 text-muted-foreground">Item ID: {line.itemId}</div>
+                    {line.adRate != null && line.adRate > 0 ? <div className="mt-1 text-emerald-300">Sold via Promoted Listings</div> : null}
+                    {tracking?.number ? <div className="mt-1 text-muted-foreground">Tracking <span className="text-primary">{tracking.number}</span></div> : null}
                   </div>
+                  <ItemMetric label="Quantity" value={`${line.quantity}`} hint={`(${line.availableQuantity ?? "?"} available)`} />
+                  <ItemMetric label="Item price" value={money(line.unitPriceCents, currency)} />
+                  <ItemMetric label="Item total" value={money((line.unitPriceCents ?? 0) * line.quantity, currency)} />
                 </div>
               ))}
             </div>
           </section>
-        </div>
+        </main>
 
-        <aside className="space-y-6">
-          <section className="rounded-lg border border-border bg-card p-5">
-            <h2 className="mb-4 text-sm font-semibold uppercase tracking-wider text-muted-foreground">Order summary</h2>
-            <Summary label="Order number" value={order.orderId} />
-            <Summary label="Sales record" value={order.salesRecordNumber ?? "Unavailable"} />
-            <Summary label="Date sold" value={pdt(order.createdTime)} />
-            <Summary label="Date paid" value={pdt(order.paidTime)} />
+        <aside className="space-y-5">
+          <section className="rounded-xl border border-border bg-card p-5">
+            <h2 className="mb-4 text-xl font-bold">Order</h2>
+            <Summary label="Order" value={order.orderId} copyValue={order.orderId} />
+            <Summary label="Sales record no." value={order.salesRecordNumber ?? "Unavailable"} />
+            <Summary label="Sold" value={dateOnly(order.createdTime)} />
+            <Summary label="Buyer paid" value={dateOnly(order.paidTime)} />
             <Summary label="Buyer" value={order.buyerName ?? "Unavailable"} />
             <Summary label="Username" value={order.buyerUsername ?? "Unavailable"} />
-            <button onClick={() => setMessageOpen(true)} className="mt-4 inline-flex w-full cursor-pointer items-center justify-center gap-2 rounded-md border border-border px-3 py-2 text-sm font-medium hover:bg-accent">
-              <MessageSquare className="h-4 w-4" /> Message Buyer
+            <button onClick={() => setMessageOpen(true)} className="mt-4 inline-flex w-full cursor-pointer items-center justify-center gap-2 rounded-full border border-primary/50 px-3 py-2 text-sm font-medium text-primary hover:bg-primary/10">
+              <MessageSquare className="h-4 w-4" /> Message buyer
             </button>
           </section>
 
-          <section className="rounded-lg border border-border bg-card p-5">
-            <h2 className="mb-4 text-sm font-semibold uppercase tracking-wider text-muted-foreground">Payment / finances</h2>
-            <Summary label="Subtotal" value={money(order.subtotalCents, currency)} />
-            <Summary label="Shipping" value={order.shippingCents ? money(order.shippingCents, currency) : "Free shipping"} />
-            <Summary label="Sales tax" value={order.taxCents != null ? money(order.taxCents, currency) : "Unavailable"} />
-            <Summary label="Order total" value={money(order.totalCents, currency)} strong />
-            <Summary label="Transaction fees" value={order.finance.transactionFeesCents != null ? money(order.finance.transactionFeesCents, currency) : "Unavailable"} />
-            <Summary label="Ad fee general" value={order.finance.adFeeCents != null ? money(order.finance.adFeeCents, currency) : "Unavailable"} />
-            <Summary label="Other fees" value={order.finance.otherFeesCents != null ? money(order.finance.otherFeesCents, currency) : "Unavailable"} />
-            <Summary label="Order earnings" value={order.finance.orderEarningsCents != null ? money(order.finance.orderEarningsCents, currency) : "Unavailable"} strong />
+          <section className="rounded-xl border border-border bg-card p-5">
+            <h2 className="mb-4 text-xl font-bold">Payment</h2>
+            <div className="mb-4 flex gap-2 rounded-lg border border-border bg-muted/40 p-3 text-sm text-muted-foreground">
+              <Info className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+              The buyer has paid for this order. Finance values are pulled from eBay when available.
+            </div>
+            <div className="mb-4 text-sm text-muted-foreground">Funds status <span className="float-right font-medium text-foreground">{order.finance.feesKnown ? "Processing" : "Unavailable"}</span></div>
+            <div className="rounded-lg bg-muted/35 p-4">
+              <h3 className="mb-3 font-semibold">What your buyer paid</h3>
+              <Summary label="Subtotal" value={money(order.subtotalCents, currency)} soft />
+              <Summary label="Shipping" value={order.shippingCents ? money(order.shippingCents, currency) : "$0.00"} soft />
+              <Summary label="Sales tax" value={order.taxCents != null ? money(order.taxCents, currency) : "Unavailable"} soft />
+              <Summary label="Order total" value={money(buyerPaidTotal, currency)} strong soft />
+            </div>
+            <div className="mt-4 rounded-lg bg-muted/35 p-4">
+              <h3 className="mb-3 font-semibold">What you earned</h3>
+              <Summary label="Order total" value={money(buyerPaidTotal, currency)} soft />
+              <div className="mt-3 text-sm font-semibold">eBay collected from buyer</div>
+              <Summary label="Sales tax" value={order.taxCents != null ? feeMoney(order.taxCents, currency) : "Unavailable"} soft />
+              <div className="mt-3 text-sm font-semibold">Selling costs</div>
+              <Summary label="Transaction fees" value={order.finance.transactionFeesCents != null ? feeMoney(order.finance.transactionFeesCents, currency) : "Unavailable"} soft />
+              <Summary label="Ad Fee General" value={order.finance.adFeeCents != null ? feeMoney(order.finance.adFeeCents, currency) : "Unavailable"} soft />
+              <Summary label="Other fees" value={order.finance.otherFeesCents != null ? feeMoney(order.finance.otherFeesCents, currency) : "Unavailable"} soft />
+              <Summary label="Order earnings" value={order.finance.orderEarningsCents != null ? money(order.finance.orderEarningsCents, currency) : "Unavailable"} strong soft />
+            </div>
           </section>
 
           {user?.role === "ADMIN" ? (
-            <section className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-5">
+            <section className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-5">
               <h2 className="mb-4 text-sm font-semibold uppercase tracking-wider text-amber-300">Internal profit / COGS</h2>
               <Summary label="Item cost" value={order.internalProfit.itemCostCents != null ? money(order.internalProfit.itemCostCents, currency) : "Unavailable"} />
               <Summary label="Supplier shipping" value={order.internalProfit.supplierShippingCents != null ? money(order.internalProfit.supplierShippingCents, currency) : "Unavailable"} />
@@ -205,28 +303,35 @@ export default function ManageOrderDetailsPage({
   );
 }
 
-function Timeline({ label, value, tone }: { label: string; value: string; tone: "emerald" | "amber" | "violet" | "muted" }) {
-  const cls = {
-    emerald: "border-emerald-500/30 bg-emerald-500/10",
-    amber: "border-amber-500/30 bg-amber-500/10",
-    violet: "border-violet-500/30 bg-violet-500/10",
-    muted: "border-border bg-background",
-  }[tone];
-  return <div className={cn("rounded-md border p-3", cls)}><div className="text-xs text-muted-foreground">{label}</div><div className="mt-1 text-sm font-medium">{value}</div></div>;
-}
-
-function Summary({ label, value, strong }: { label: string; value: string; strong?: boolean }) {
-  return <div className="flex justify-between gap-3 border-b border-border py-2 text-sm last:border-b-0"><span className="text-muted-foreground">{label}</span><span className={strong ? "font-semibold" : "font-medium"}>{value}</span></div>;
-}
-
-function EbayLogo({ small }: { small?: boolean }) {
+function TimelineDot({ label, value, active }: { label: string; value: string; active: boolean }) {
   return (
-    <span className={cn("inline-flex items-baseline rounded border border-border bg-background font-bold leading-none", small ? "px-1 py-0 text-[10px]" : "px-2 py-1 text-sm")}>
-      <span className="text-blue-400">e</span>
-      <span className="text-red-400">B</span>
-      <span className="text-yellow-300">a</span>
-      <span className="text-emerald-400">y</span>
-    </span>
+    <div className="relative z-10 text-center">
+      <div className={cn("mx-auto h-7 w-7 rounded-full border-2", active ? "border-primary bg-primary" : "border-muted-foreground bg-card")} />
+      <div className="mt-3 font-semibold">{label}</div>
+      <div className="text-sm text-muted-foreground">{value}</div>
+    </div>
+  );
+}
+
+function ItemMetric({ label, value, hint }: { label: string; value: string; hint?: string }) {
+  return (
+    <div className="text-sm">
+      <div className="text-xs text-muted-foreground">{label}</div>
+      <div className="mt-1 font-semibold">{value}</div>
+      {hint ? <div className="text-xs text-muted-foreground">{hint}</div> : null}
+    </div>
+  );
+}
+
+function Summary({ label, value, strong, copyValue, soft }: { label: string; value: string; strong?: boolean; copyValue?: string; soft?: boolean }) {
+  return (
+    <div className={cn("flex justify-between gap-3 border-b py-2 text-sm last:border-b-0", soft ? "border-border/70" : "border-border")}>
+      <span className="text-muted-foreground">{label}</span>
+      <span className={cn("inline-flex min-w-0 items-center gap-1 text-right", strong ? "font-bold text-foreground" : "font-medium text-foreground")}>
+        {value}
+        {copyValue ? <CopyButton value={copyValue} title={`Copy ${label}`} compact /> : null}
+      </span>
+    </div>
   );
 }
 
@@ -235,10 +340,10 @@ function StoreBadge({ store }: { store: ManageOrder["store"] }) {
     <span className={cn(
       "inline-flex items-center gap-1 rounded border px-2 py-1 text-xs font-bold uppercase tracking-wide",
       store === "TPP_EBAY"
-        ? "border-violet-500/40 bg-violet-500/10 text-violet-300"
+        ? "border-blue-500/40 bg-blue-500/10 text-blue-300"
         : "border-emerald-500/40 bg-emerald-500/10 text-emerald-300",
     )}>
-      <EbayLogo small /> {store === "TPP_EBAY" ? "TPP" : "TT"}
+      <EbayLogoImage compact /> {store === "TPP_EBAY" ? "TPP" : "TT"}
     </span>
   );
 }
@@ -323,7 +428,7 @@ function MessageBuyerModal({ order, onClose }: { order: ManageOrder; onClose: ()
             <h2 className="text-lg font-semibold">Message Buyer</h2>
             <p className="text-sm text-muted-foreground">{order.buyerName ?? order.buyerUsername ?? "Buyer"} | {order.orderId}</p>
           </div>
-          <button onClick={onClose} className="rounded p-1 hover:bg-accent"><X className="h-4 w-4" /></button>
+          <button onClick={onClose} className="cursor-pointer rounded p-1 hover:bg-accent"><X className="h-4 w-4" /></button>
         </div>
         <div className="mb-3 flex gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-300">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
@@ -332,8 +437,8 @@ function MessageBuyerModal({ order, onClose }: { order: ManageOrder; onClose: ()
         <textarea value={body} onChange={(event) => setBody(event.target.value)} className="min-h-40 w-full rounded-md border border-input bg-background p-3 text-sm" placeholder="Type the buyer message..." />
         {error ? <div className="mt-4 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">{error}</div> : null}
         <div className="mt-5 flex justify-end gap-2">
-          <button onClick={onClose} className="rounded-md border border-border px-4 py-2 text-sm hover:bg-accent">Cancel</button>
-          <button onClick={() => void send()} disabled={preparing || sending || !token || !body.trim()} className="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground disabled:opacity-50">
+          <button onClick={onClose} className="cursor-pointer rounded-md border border-border px-4 py-2 text-sm hover:bg-accent">Cancel</button>
+          <button onClick={() => void send()} disabled={preparing || sending || !token || !body.trim()} className="inline-flex cursor-pointer items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground disabled:cursor-not-allowed disabled:opacity-50">
             {preparing || sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <PackageCheck className="h-4 w-4" />}
             Final Confirm
           </button>

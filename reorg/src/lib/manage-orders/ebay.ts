@@ -233,7 +233,11 @@ async function fetchOrdersForContext(ctx: StoreContext, input: SearchInput) {
 </GetOrdersRequest>`;
 
   const { orders } = await ebayGetOrders(ctx, body);
-  return Promise.all(orders.map((order) => mapOrder(ctx, order)));
+  const mapped = await Promise.all(orders.map((order) => mapOrder(ctx, order)));
+  if (exactOrderSearch && mapped.length <= 5) {
+    return Promise.all(mapped.map((order) => enrichOrderDetail(ctx, order)));
+  }
+  return mapped;
 }
 
 export async function searchManageOrders(input: SearchInput): Promise<ManageOrdersSearchResult> {
@@ -269,6 +273,10 @@ export async function getManageOrderDetail(store: EbayStore, orderId: string) {
   const { orders } = await ebayGetOrders(ctx, body);
   if (!orders[0]) return null;
   const order = await mapOrder(ctx, orders[0]);
+  return enrichOrderDetail(ctx, order);
+}
+
+async function enrichOrderDetail(ctx: StoreContext, order: ManageOrder) {
   const [fulfillment, finance] = await Promise.all([
     fetchFulfillmentOrder(ctx, order.apiOrderId).catch(() => null),
     fetchFinanceForOrder(ctx, order).catch((error) => {
@@ -371,39 +379,71 @@ function mapLine(tx: Record<string, unknown>): ManageOrderLineItem {
 async function enrichLines(lines: ManageOrderLineItem[], platform: EbayStore) {
   const skus = [...new Set(lines.map((line) => line.sku).filter(Boolean))] as string[];
   if (skus.length === 0) return lines;
-  const listings = await db.marketplaceListing.findMany({
-    where: {
-      integration: { platform },
-      sku: { in: skus },
-    },
-    select: {
-      sku: true,
-      inventory: true,
-      imageUrl: true,
-      adRate: true,
-      masterRow: {
-        select: {
-          imageUrl: true,
-          supplierCost: true,
-          supplierShipping: true,
-          shippingCostOverride: true,
+  const [listings, shippingRateMap] = await Promise.all([
+    db.marketplaceListing.findMany({
+      where: {
+        integration: { platform },
+        sku: { in: skus },
+      },
+      select: {
+        sku: true,
+        inventory: true,
+        imageUrl: true,
+        adRate: true,
+        masterRow: {
+          select: {
+            imageUrl: true,
+            weight: true,
+            supplierCost: true,
+            supplierShipping: true,
+            shippingCostOverride: true,
+          },
         },
       },
-    },
-  }).catch(() => []);
+    }).catch(() => []),
+    fetchShippingRateMap().catch(() => new Map<string, number>()),
+  ]);
   const bySku = new Map(listings.map((listing) => [listing.sku, listing]));
   return lines.map((line) => {
     const listing = line.sku ? bySku.get(line.sku) : undefined;
+    const outboundShipping =
+      listing?.masterRow.shippingCostOverride ??
+      lookupShippingCostFromRates(listing?.masterRow.weight ?? null, shippingRateMap);
     return {
       ...line,
       availableQuantity: listing?.inventory ?? line.availableQuantity,
       imageUrl: listing?.masterRow.imageUrl ?? listing?.imageUrl ?? line.imageUrl,
       supplierCostCents: dollarsToCents(listing?.masterRow.supplierCost),
       supplierShippingCents: dollarsToCents(listing?.masterRow.supplierShipping),
-      outboundShippingCents: dollarsToCents(listing?.masterRow.shippingCostOverride),
+      outboundShippingCents: dollarsToCents(outboundShipping),
       adRate: listing?.adRate ?? null,
     };
   });
+}
+
+async function fetchShippingRateMap() {
+  const rates = await db.shippingRate.findMany({
+    where: { cost: { not: null } },
+    select: { weightKey: true, cost: true },
+  });
+  const rateMap = new Map<string, number>();
+  for (const rate of rates) {
+    if (rate.cost != null) rateMap.set(rate.weightKey, rate.cost);
+  }
+  return rateMap;
+}
+
+function lookupShippingCostFromRates(weight: string | null, rateMap: Map<string, number>) {
+  if (!weight) return null;
+  const trimmed = weight.trim().toUpperCase();
+  if (rateMap.has(trimmed)) return rateMap.get(trimmed) ?? null;
+  if (trimmed.endsWith("OZ")) return rateMap.get(trimmed.replace("OZ", "oz")) ?? null;
+  if (/^\d+$/.test(trimmed)) return rateMap.get(`${trimmed}oz`) ?? null;
+  if (/^\d+\s*LBS?$/.test(trimmed)) {
+    const normalized = trimmed.replace(/\s+/g, "").replace(/LB$/, "LBS");
+    return rateMap.get(normalized) ?? null;
+  }
+  return null;
 }
 
 function defaultFinance() {
@@ -455,41 +495,119 @@ function moneyJsonToCents(value: unknown) {
   return amount == null ? null : Math.round(amount * 100);
 }
 
+function absMoneyJsonToCents(value: unknown) {
+  const cents = moneyJsonToCents(value);
+  return cents == null ? null : Math.abs(cents);
+}
+
+function centsNear(a: number | null | undefined, b: number | null | undefined, tolerance = 3) {
+  return a != null && b != null && Math.abs(a - b) <= tolerance;
+}
+
+function transactionBuyerUsername(transaction: Record<string, unknown>) {
+  const buyer = asRecord(transaction.buyer);
+  return stringFromJson(buyer?.username) ?? stringFromJson(buyer?.userId);
+}
+
+function transactionOrderLineItems(transaction: Record<string, unknown>) {
+  return asArray<Record<string, unknown>>(
+    transaction.orderLineItems as Record<string, unknown> | Record<string, unknown>[] | undefined,
+  );
+}
+
+function transactionMatchesOrder(transaction: Record<string, unknown>, order: ManageOrder) {
+  const externalOrderId = stringFromJson(transaction.orderId);
+  const salesRecord = stringFromJson(transaction.salesRecordReference);
+  if (externalOrderId === order.orderId || externalOrderId === order.apiOrderId) return true;
+  if (salesRecord && salesRecord === order.salesRecordNumber) return true;
+
+  const orderLineIds = new Set(order.lines.map((line) => line.orderLineItemId).filter(Boolean));
+  const itemIds = new Set(order.lines.map((line) => line.itemId).filter(Boolean));
+  const skus = new Set(order.lines.map((line) => line.sku).filter(Boolean));
+  const lineMatched = transactionOrderLineItems(transaction).some((line) => {
+    const lineId = stringFromJson(line.lineItemId) ?? stringFromJson(line.orderLineItemId);
+    const legacyItemId =
+      stringFromJson(line.legacyItemId) ??
+      stringFromJson(line.itemId) ??
+      stringFromJson(line.listingMarketplaceId);
+    const sku = stringFromJson(line.sku) ?? stringFromJson(line.customLabel);
+    return Boolean(
+      (lineId && orderLineIds.has(lineId)) ||
+      (legacyItemId && itemIds.has(legacyItemId)) ||
+      (sku && skus.has(sku)),
+    );
+  });
+  if (lineMatched) return true;
+
+  const buyer = transactionBuyerUsername(transaction);
+  const basisCents = moneyJsonToCents(transaction.totalFeeBasisAmount);
+  const amountCents = moneyJsonToCents(transaction.amount);
+  const buyerMatches = buyer && order.buyerUsername && buyer.toLowerCase() === order.buyerUsername.toLowerCase();
+  const amountMatches =
+    centsNear(basisCents, order.subtotalCents) ||
+    centsNear(basisCents, order.totalCents) ||
+    centsNear(amountCents, order.totalCents) ||
+    centsNear(amountCents, order.subtotalCents);
+  return Boolean(buyerMatches && amountMatches);
+}
+
+async function fetchFinanceTransactions(ctx: StoreContext, from: Date, to: Date) {
+  const baseUrl =
+    ctx.environment === "PRODUCTION"
+      ? "https://apiz.ebay.com"
+      : "https://apiz.sandbox.ebay.com";
+  const limit = 200;
+  const fetchPage = async (offset: number) => {
+    const url = new URL(`${baseUrl}/sell/finances/v1/transaction`);
+    url.searchParams.set("filter", `transactionDate:[${from.toISOString()}..${to.toISOString()}]`);
+    url.searchParams.set("limit", String(limit));
+    url.searchParams.set("offset", String(offset));
+    const response = await fetch(url, {
+      headers: {
+        Authorization: `Bearer ${ctx.accessToken}`,
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+    });
+    if (!response.ok) throw new Error(`eBay finances fetch failed: ${response.status}`);
+    const json = (await response.json()) as { transactions?: Array<Record<string, unknown>>; total?: number };
+    return {
+      batch: json.transactions ?? [],
+      total: Number(json.total ?? 0),
+    };
+  };
+
+  const firstPage = await fetchPage(0);
+  const transactions = [...firstPage.batch];
+  const total = Number.isFinite(firstPage.total) && firstPage.total > 0 ? firstPage.total : null;
+  if (total != null) {
+    for (let offset = limit; offset < total; offset += limit) {
+      const page = await fetchPage(offset);
+      transactions.push(...page.batch);
+    }
+    return transactions;
+  }
+
+  let offset = firstPage.batch.length;
+  while (offset > 0 && transactions.length === offset && firstPage.batch.length === limit) {
+    const page = await fetchPage(offset);
+    if (page.batch.length === 0) break;
+    transactions.push(...page.batch);
+    offset += page.batch.length;
+    if (page.batch.length < limit) break;
+  }
+  return transactions;
+}
+
 async function fetchFinanceForOrder(ctx: StoreContext, order: ManageOrder) {
   const pivot = new Date(order.paidTime ?? order.createdTime ?? Date.now());
   const from = new Date(pivot);
   from.setDate(from.getDate() - 3);
   const to = new Date(pivot);
   to.setDate(to.getDate() + 21);
-  const baseUrl =
-    ctx.environment === "PRODUCTION"
-      ? "https://apiz.ebay.com"
-      : "https://apiz.sandbox.ebay.com";
-  const url = new URL(`${baseUrl}/sell/finances/v1/transaction`);
-  url.searchParams.set("filter", `transactionDate:[${from.toISOString()}..${to.toISOString()}]`);
-  url.searchParams.set("limit", "200");
-  const response = await fetch(url, {
-    headers: {
-      Authorization: `Bearer ${ctx.accessToken}`,
-      Accept: "application/json",
-      "Content-Type": "application/json",
-    },
-  });
-  if (!response.ok) throw new Error(`eBay finances fetch failed: ${response.status}`);
-  const json = (await response.json()) as { transactions?: Array<Record<string, unknown>> };
-  const orderLineIds = new Set(order.lines.map((line) => line.orderLineItemId).filter(Boolean));
-  const transactions = (json.transactions ?? []).filter((transaction) => {
-    const externalOrderId = stringFromJson(transaction.orderId);
-    const salesRecord = stringFromJson(transaction.salesRecordReference);
-    if (externalOrderId === order.orderId || externalOrderId === order.apiOrderId) return true;
-    if (salesRecord && salesRecord === order.salesRecordNumber) return true;
-    return asArray<Record<string, unknown>>(
-      transaction.orderLineItems as Record<string, unknown> | Record<string, unknown>[] | undefined,
-    ).some((line) => {
-      const lineId = stringFromJson(line.lineItemId) ?? stringFromJson(line.orderLineItemId);
-      return Boolean(lineId && orderLineIds.has(lineId));
-    });
-  });
+  const transactions = (await fetchFinanceTransactions(ctx, from, to)).filter((transaction) =>
+    transactionMatchesOrder(transaction, order),
+  );
 
   if (transactions.length === 0) return null;
 
@@ -503,19 +621,18 @@ async function fetchFinanceForOrder(ctx: StoreContext, order: ManageOrder) {
   for (const transaction of transactions) {
     salesRecordNumber ??= stringFromJson(transaction.salesRecordReference);
     const transactionType = stringFromJson(transaction.transactionType);
-    taxCents += moneyJsonToCents(transaction.ebayCollectedTaxAmount) ?? 0;
+    if (transactionType && transactionType !== "SALE") continue;
+    taxCents += absMoneyJsonToCents(transaction.ebayCollectedTaxAmount) ?? 0;
     const amount = moneyJsonToCents(transaction.amount);
     if (amount != null) netCents = (netCents ?? 0) + amount;
-    for (const lineItem of asArray<Record<string, unknown>>(
-      transaction.orderLineItems as Record<string, unknown> | Record<string, unknown>[] | undefined,
-    )) {
+    for (const lineItem of transactionOrderLineItems(transaction)) {
       for (const fee of asArray<Record<string, unknown>>(
         lineItem.marketplaceFees as Record<string, unknown> | Record<string, unknown>[] | undefined,
       )) {
         const feeCents =
-          moneyJsonToCents(fee.amount) ??
-          moneyJsonToCents(fee.convertedFromAmount) ??
-          moneyJsonToCents(fee.value) ??
+          absMoneyJsonToCents(fee.amount) ??
+          absMoneyJsonToCents(fee.convertedFromAmount) ??
+          absMoneyJsonToCents(fee.value) ??
           0;
         const classification = classifyFeeType(stringFromJson(fee.feeType));
         if (classification === "ad") {
@@ -528,6 +645,12 @@ async function fetchFinanceForOrder(ctx: StoreContext, order: ManageOrder) {
       }
     }
   }
+  const buyerPaidCents =
+    order.subtotalCents != null
+      ? order.subtotalCents + (order.shippingCents ?? 0) + (taxCents || 0)
+      : order.totalCents ?? 0;
+  const computedNetCents =
+    buyerPaidCents - (taxCents || 0) - transactionFeesCents - adFeeCents - otherFeesCents;
 
   return {
     salesRecordNumber,
@@ -536,7 +659,7 @@ async function fetchFinanceForOrder(ctx: StoreContext, order: ManageOrder) {
       transactionFeesCents,
       adFeeCents,
       otherFeesCents,
-      orderEarningsCents: netCents,
+      orderEarningsCents: netCents ?? computedNetCents,
       feesKnown: true,
       source: "ebay_finances" as const,
     },
@@ -584,10 +707,20 @@ function applyDetailEnrichment(
     };
   }
   if (financeResult) {
+    const taxCents = financeResult.taxCents ?? enriched.taxCents;
+    const calculatedBuyerTotal =
+      enriched.subtotalCents != null
+        ? enriched.subtotalCents + (enriched.shippingCents ?? 0) + (taxCents ?? 0)
+        : null;
+    const totalCents =
+      calculatedBuyerTotal != null && financeResult.taxCents != null
+        ? Math.max(enriched.totalCents ?? 0, calculatedBuyerTotal)
+        : enriched.totalCents;
     enriched = {
       ...enriched,
       salesRecordNumber: enriched.salesRecordNumber ?? financeResult.salesRecordNumber,
-      taxCents: enriched.taxCents ?? financeResult.taxCents,
+      taxCents,
+      totalCents,
       finance: financeResult.finance,
     };
   }
@@ -623,7 +756,12 @@ function calculateInternalProfit(
   const feesKnown = finance.transactionFeesCents != null && finance.adFeeCents != null;
   const estimatedProfitCents =
     totalCents != null && complete && feesKnown
-      ? totalCents - (taxCents ?? 0) - totalCogsCents - (finance.transactionFeesCents ?? 0) - (finance.adFeeCents ?? 0)
+      ? totalCents -
+        (taxCents ?? 0) -
+        totalCogsCents -
+        (finance.transactionFeesCents ?? 0) -
+        (finance.adFeeCents ?? 0) -
+        (finance.otherFeesCents ?? 0)
       : null;
   return {
     itemCostCents: complete ? itemCostCents : itemCostCents || null,
