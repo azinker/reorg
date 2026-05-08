@@ -20,6 +20,8 @@ const TRADING_API = "https://api.ebay.com/ws/api.dll";
 const SITE_ID = "0";
 const COMPAT_LEVEL = "1199";
 const PAGE_SIZE = 50;
+const DETAIL_FULFILLMENT_TIMEOUT_MS = 4500;
+const DETAIL_FINANCE_TIMEOUT_MS = 7000;
 
 const parser = new XMLParser({
   ignoreAttributes: false,
@@ -285,13 +287,39 @@ export async function getManageOrderDetail(store: EbayStore, orderId: string) {
 
 async function enrichOrderDetail(ctx: StoreContext, order: ManageOrder) {
   const [fulfillment, finance] = await Promise.all([
-    fetchFulfillmentOrder(ctx, order.apiOrderId).catch(() => null),
-    fetchFinanceForOrder(ctx, order).catch((error) => {
-      console.warn("[manage-orders] finance lookup failed", error);
-      return null;
-    }),
+    runWithTimeout(
+      (signal) => fetchFulfillmentOrder(ctx, order.apiOrderId, signal),
+      DETAIL_FULFILLMENT_TIMEOUT_MS,
+      "fulfillment",
+    ),
+    runWithTimeout(
+      (signal) => fetchFinanceForOrder(ctx, order, signal),
+      DETAIL_FINANCE_TIMEOUT_MS,
+      "finance",
+    ),
   ]);
   return applyDetailEnrichment(order, fulfillment, finance);
+}
+
+async function runWithTimeout<T>(
+  run: (signal: AbortSignal) => Promise<T | null>,
+  timeoutMs: number,
+  label: string,
+) {
+  const controller = new AbortController();
+  const timeout = windowlessSetTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await run(controller.signal);
+  } catch (error) {
+    console.warn(`[manage-orders] ${label} enrichment skipped`, error);
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function windowlessSetTimeout(handler: () => void, timeoutMs: number) {
+  return setTimeout(handler, timeoutMs);
 }
 
 async function mapOrder(ctx: StoreContext, order: Record<string, unknown>): Promise<ManageOrder> {
@@ -558,7 +586,7 @@ function transactionMatchesOrder(transaction: Record<string, unknown>, order: Ma
   return Boolean(buyerMatches && amountMatches);
 }
 
-async function fetchFinanceTransactions(ctx: StoreContext, from: Date, to: Date) {
+async function fetchFinanceTransactions(ctx: StoreContext, from: Date, to: Date, signal?: AbortSignal) {
   const baseUrl =
     ctx.environment === "PRODUCTION"
       ? "https://apiz.ebay.com"
@@ -575,6 +603,7 @@ async function fetchFinanceTransactions(ctx: StoreContext, from: Date, to: Date)
         Accept: "application/json",
         "Content-Type": "application/json",
       },
+      signal,
     });
     if (!response.ok) throw new Error(`eBay finances fetch failed: ${response.status}`);
     const json = (await response.json()) as { transactions?: Array<Record<string, unknown>>; total?: number };
@@ -606,13 +635,13 @@ async function fetchFinanceTransactions(ctx: StoreContext, from: Date, to: Date)
   return transactions;
 }
 
-async function fetchFinanceForOrder(ctx: StoreContext, order: ManageOrder) {
+async function fetchFinanceForOrder(ctx: StoreContext, order: ManageOrder, signal?: AbortSignal) {
   const pivot = new Date(order.paidTime ?? order.createdTime ?? Date.now());
   const from = new Date(pivot);
   from.setDate(from.getDate() - 3);
   const to = new Date(pivot);
   to.setDate(to.getDate() + 21);
-  const transactions = (await fetchFinanceTransactions(ctx, from, to)).filter((transaction) =>
+  const transactions = (await fetchFinanceTransactions(ctx, from, to, signal)).filter((transaction) =>
     transactionMatchesOrder(transaction, order),
   );
 
@@ -673,7 +702,7 @@ async function fetchFinanceForOrder(ctx: StoreContext, order: ManageOrder) {
   };
 }
 
-async function fetchFulfillmentOrder(ctx: StoreContext, apiOrderId: string) {
+async function fetchFulfillmentOrder(ctx: StoreContext, apiOrderId: string, signal?: AbortSignal) {
   const baseUrl =
     ctx.environment === "PRODUCTION"
       ? "https://api.ebay.com"
@@ -684,6 +713,7 @@ async function fetchFulfillmentOrder(ctx: StoreContext, apiOrderId: string) {
       Accept: "application/json",
       "Content-Type": "application/json",
     },
+    signal,
   });
   if (!response.ok) return null;
   return (await response.json()) as Record<string, unknown>;

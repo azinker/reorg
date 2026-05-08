@@ -89,8 +89,10 @@ export default function ManageOrderDetailsPage({
       setLoading(true);
       try {
         const res = await fetch(`/api/manage-orders/orders/${routeParams!.store}/${encodeURIComponent(routeParams!.orderId)}`, { cache: "no-store" });
-        const json = await res.json();
+        const contentType = res.headers.get("content-type") ?? "";
+        const json = contentType.includes("application/json") ? await res.json() : null;
         if (!res.ok) throw new Error(json.error ?? "Failed to load order");
+        if (!json?.data) throw new Error("Order details returned an unexpected response. Please try again.");
         if (!cancelled) setOrder(json.data);
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : "Failed to load order");
