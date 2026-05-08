@@ -233,16 +233,23 @@ async function fetchOrdersForContext(ctx: StoreContext, input: SearchInput) {
 </GetOrdersRequest>`;
 
   const { orders } = await ebayGetOrders(ctx, body);
-  const mapped = await Promise.all(orders.map((order) => mapOrder(ctx, order)));
-  if (exactOrderSearch && mapped.length <= 5) {
-    return Promise.all(mapped.map((order) => enrichOrderDetail(ctx, order)));
-  }
-  return mapped;
+  return Promise.all(orders.map((order) => mapOrder(ctx, order)));
 }
 
 export async function searchManageOrders(input: SearchInput): Promise<ManageOrdersSearchResult> {
   const contexts = await fetchStoreContexts(input.store);
-  const nested = await Promise.all(contexts.map((ctx) => fetchOrdersForContext(ctx, input)));
+  const settled = await Promise.allSettled(contexts.map((ctx) => fetchOrdersForContext(ctx, input)));
+  const nested = settled.flatMap((result, index) => {
+    if (result.status === "fulfilled") return [result.value];
+    console.warn("[manage-orders/search] store lookup failed", {
+      store: contexts[index]?.platform,
+      error: result.reason instanceof Error ? result.reason.message : result.reason,
+    });
+    return [];
+  });
+  if (nested.length === 0 && settled.some((result) => result.status === "rejected")) {
+    throw new Error("All eBay order searches failed.");
+  }
   const now = new Date();
   const filtered = nested
     .flat()
