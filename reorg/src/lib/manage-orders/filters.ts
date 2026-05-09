@@ -76,9 +76,18 @@ function haystackForSearch(order: ManageOrder, searchBy: ManageOrdersSearchBy) {
   return order.lines.map((line) => line.sku ?? "");
 }
 
+function normalizeTrackingSearchValue(value: string) {
+  return value.replace(/[\s-]+/g, "").toLowerCase();
+}
+
 export function matchesSearch(order: ManageOrder, searchBy: ManageOrdersSearchBy, searchTerm: string) {
-  const term = searchTerm.trim().toLowerCase();
+  const term =
+    searchBy === "tracking_number"
+      ? normalizeTrackingSearchValue(searchTerm.trim())
+      : searchTerm.trim().toLowerCase();
   if (!term) return true;
-  const values = haystackForSearch(order, searchBy).map((value) => value.toLowerCase());
+  const values = haystackForSearch(order, searchBy).map((value) =>
+    searchBy === "tracking_number" ? normalizeTrackingSearchValue(value) : value.toLowerCase(),
+  );
   return values.some((value) => value === term) || values.some((value) => value.includes(term));
 }

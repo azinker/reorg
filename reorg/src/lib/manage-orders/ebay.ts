@@ -36,7 +36,7 @@ const DETAIL_FULFILLMENT_TIMEOUT_MS = 4500;
 const DETAIL_FINANCE_TIMEOUT_MS = 7000;
 const SEARCH_FEEDBACK_TIMEOUT_MS = 4500;
 const NON_ORDER_SEARCH_PAGE_LIMIT = 5;
-const TRACKING_SEARCH_PAGE_LIMIT = 25;
+const TRACKING_SEARCH_PAGE_LIMIT = 100;
 
 const parser = new XMLParser({
   ignoreAttributes: false,
@@ -171,6 +171,33 @@ function trackingNumbers(order: Record<string, unknown>) {
     .filter((row, index, all) => row.number && all.findIndex((other) => other.number === row.number) === index);
 }
 
+function normalizeTrackingSearchValue(value: string | null | undefined) {
+  return (value ?? "").replace(/[\s-]+/g, "").toLowerCase();
+}
+
+function rawOrderHasTracking(order: Record<string, unknown>, searchTerm: string) {
+  const term = normalizeTrackingSearchValue(searchTerm);
+  if (!term) return false;
+  return trackingNumbers(order).some((tracking) => {
+    const number = normalizeTrackingSearchValue(tracking.number);
+    return number === term || number.includes(term);
+  });
+}
+
+function appendSearchedTrackingIfMissing(order: ManageOrder, searchTerm: string) {
+  const term = normalizeTrackingSearchValue(searchTerm);
+  if (!term || order.trackingNumbers.some((tracking) => normalizeTrackingSearchValue(tracking.number) === term)) {
+    return order;
+  }
+  return {
+    ...order,
+    trackingNumbers: [
+      ...order.trackingNumbers,
+      { number: searchTerm.trim(), carrier: null, shippedTime: order.shippedTime },
+    ],
+  };
+}
+
 function deliveryDates(order: Record<string, unknown>) {
   const tx = firstRecord(asRecord(order.TransactionArray)?.Transaction);
   const txSelected = asRecord(tx?.ShippingServiceSelected);
@@ -242,6 +269,33 @@ async function ebayGetOrders(ctx: StoreContext, body: string) {
   };
 }
 
+async function fetchOrdersByIds(ctx: StoreContext, orderIds: string[]) {
+  const uniqueOrderIds = Array.from(new Set(orderIds.map((orderId) => orderId.trim()).filter(Boolean)));
+  if (uniqueOrderIds.length === 0) return [];
+  const body = `<?xml version="1.0" encoding="utf-8"?>
+<GetOrdersRequest xmlns="urn:ebay:apis:eBLBaseComponents">
+  <OrderIDArray>${uniqueOrderIds.map((orderId) => `<OrderID>${escapeXml(orderId)}</OrderID>`).join("")}</OrderIDArray>
+  <DetailLevel>ReturnAll</DetailLevel>
+</GetOrdersRequest>`;
+  const { orders } = await ebayGetOrders(ctx, body);
+  return Promise.all(orders.map((order) => mapOrder(ctx, order)));
+}
+
+async function findLocalOrderIdsByTracking(ctx: StoreContext, searchTerm: string) {
+  const candidates = Array.from(new Set([searchTerm.trim(), normalizeTrackingSearchValue(searchTerm)].filter(Boolean)));
+  if (candidates.length === 0) return [];
+  const jobs = await db.autoResponderJob.findMany({
+    where: {
+      integrationId: ctx.integrationId,
+      trackingNumber: { in: candidates },
+    },
+    select: { orderNumber: true },
+    orderBy: { createdAt: "desc" },
+    take: 20,
+  });
+  return Array.from(new Set(jobs.map((job) => job.orderNumber).filter(Boolean)));
+}
+
 async function fetchOrdersForContext(ctx: StoreContext, input: SearchInput) {
   const { from, to } = periodToDateRange(input.period);
   const exactOrderSearch = input.searchBy === "order_number" && input.searchTerm.trim();
@@ -268,22 +322,33 @@ async function fetchOrdersForContext(ctx: StoreContext, input: SearchInput) {
 </GetOrdersRequest>`;
 
   const searchTerm = input.searchTerm.trim();
+  if (input.searchBy === "tracking_number" && searchTerm) {
+    const localOrderIds = await findLocalOrderIdsByTracking(ctx, searchTerm);
+    if (localOrderIds.length > 0) {
+      const localMatches = await fetchOrdersByIds(ctx, localOrderIds);
+      if (localMatches.length > 0) {
+        return localMatches.map((order) => appendSearchedTrackingIfMissing(order, searchTerm));
+      }
+    }
+
+    const matchedRawOrders: Record<string, unknown>[] = [];
+    for (let pageNumber = 1; pageNumber <= TRACKING_SEARCH_PAGE_LIMIT; pageNumber += 1) {
+      const { orders, total } = await ebayGetOrders(ctx, buildPagedBody(pageNumber));
+      matchedRawOrders.push(...orders.filter((order) => rawOrderHasTracking(order, searchTerm)));
+      if (matchedRawOrders.length > 0) break;
+      if (orders.length < 100 || pageNumber >= Math.ceil(total / 100)) break;
+    }
+    return Promise.all(matchedRawOrders.map((order) => mapOrder(ctx, order)));
+  }
+
   const scanLimit = searchTerm
-    ? input.searchBy === "tracking_number"
-      ? TRACKING_SEARCH_PAGE_LIMIT
-      : NON_ORDER_SEARCH_PAGE_LIMIT
+    ? NON_ORDER_SEARCH_PAGE_LIMIT
     : 1;
   const allOrders: ManageOrder[] = [];
   for (let pageNumber = 1; pageNumber <= scanLimit; pageNumber += 1) {
     const { orders, total } = await ebayGetOrders(ctx, buildPagedBody(pageNumber));
     const mapped = await Promise.all(orders.map((order) => mapOrder(ctx, order)));
     allOrders.push(...mapped);
-    if (
-      input.searchBy === "tracking_number" &&
-      mapped.some((order) => matchesSearch(order, input.searchBy, searchTerm))
-    ) {
-      break;
-    }
     if (orders.length < 100 || pageNumber >= Math.ceil(total / 100)) break;
   }
   return allOrders;

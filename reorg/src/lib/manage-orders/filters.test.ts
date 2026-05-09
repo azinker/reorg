@@ -111,6 +111,14 @@ test("search prioritizes exact and allows partial fallback", () => {
     ),
     true,
   );
+  assert.equal(
+    matchesSearch(
+      { ...baseOrder, trackingNumbers: [{ carrier: "USPS", number: "9501 9938 1443 8233 6271 64", shippedTime: null }] },
+      "tracking_number",
+      "9501993814438233627164",
+    ),
+    true,
+  );
   assert.equal(matchesSearch(baseOrder, "buyer_username", "missing"), false);
 });
 
