@@ -36,7 +36,15 @@ const DETAIL_FULFILLMENT_TIMEOUT_MS = 4500;
 const DETAIL_FINANCE_TIMEOUT_MS = 7000;
 const SEARCH_FEEDBACK_TIMEOUT_MS = 4500;
 const NON_ORDER_SEARCH_PAGE_LIMIT = 5;
-const TRACKING_SEARCH_PAGE_LIMIT = 100;
+// Cap eBay GetOrders pages we'll scan for a tracking-number fallback.
+// Each page is up to 100 orders, so 20 pages ≈ 2,000 most recent orders —
+// enough for the typical "did this label ship in the period" lookup.
+// Was 100 (10k orders) which serialized into multi-minute searches when
+// the local AutoResponderJob index didn't cover the tracking number.
+const TRACKING_SEARCH_PAGE_LIMIT = 20;
+// Parallelize fallback page fetches so we don't pay 20 round trips serially.
+// Kept low to stay polite to eBay's Trading API rate budget per store.
+const TRACKING_SEARCH_PAGE_CONCURRENCY = 5;
 
 const parser = new XMLParser({
   ignoreAttributes: false,
@@ -332,11 +340,37 @@ async function fetchOrdersForContext(ctx: StoreContext, input: SearchInput) {
     }
 
     const matchedRawOrders: Record<string, unknown>[] = [];
-    for (let pageNumber = 1; pageNumber <= TRACKING_SEARCH_PAGE_LIMIT; pageNumber += 1) {
-      const { orders, total } = await ebayGetOrders(ctx, buildPagedBody(pageNumber));
-      matchedRawOrders.push(...orders.filter((order) => rawOrderHasTracking(order, searchTerm)));
-      if (matchedRawOrders.length > 0) break;
-      if (orders.length < 100 || pageNumber >= Math.ceil(total / 100)) break;
+    let nextPage = 1;
+    let knownPageCeiling = TRACKING_SEARCH_PAGE_LIMIT;
+    while (
+      matchedRawOrders.length === 0 &&
+      nextPage <= Math.min(TRACKING_SEARCH_PAGE_LIMIT, knownPageCeiling)
+    ) {
+      const waveEnd = Math.min(
+        nextPage + TRACKING_SEARCH_PAGE_CONCURRENCY - 1,
+        TRACKING_SEARCH_PAGE_LIMIT,
+        knownPageCeiling,
+      );
+      const wavePages: number[] = [];
+      for (let p = nextPage; p <= waveEnd; p += 1) wavePages.push(p);
+      nextPage = waveEnd + 1;
+      const waveResults = await Promise.all(
+        wavePages.map((page) => ebayGetOrders(ctx, buildPagedBody(page))),
+      );
+      let lastPageReached = false;
+      for (const { orders, total } of waveResults) {
+        if (total > 0) {
+          knownPageCeiling = Math.min(
+            knownPageCeiling,
+            Math.ceil(total / 100),
+          );
+        }
+        matchedRawOrders.push(
+          ...orders.filter((order) => rawOrderHasTracking(order, searchTerm)),
+        );
+        if (orders.length < 100) lastPageReached = true;
+      }
+      if (lastPageReached) break;
     }
     return Promise.all(matchedRawOrders.map((order) => mapOrder(ctx, order)));
   }

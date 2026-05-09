@@ -5,6 +5,7 @@ import { searchManageOrders } from "@/lib/manage-orders/ebay";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
 const schema = z.object({
   store: z.enum(["ALL", "TPP_EBAY", "TT_EBAY"]).default("ALL"),
