@@ -72,6 +72,7 @@ function haystackForSearch(order: ManageOrder, searchBy: ManageOrdersSearchBy) {
   if (searchBy === "buyer_name") return [order.buyerName ?? ""];
   if (searchBy === "item_id") return order.lines.map((line) => line.itemId);
   if (searchBy === "item_title") return order.lines.map((line) => line.title);
+  if (searchBy === "tracking_number") return order.trackingNumbers.map((tracking) => tracking.number ?? "");
   return order.lines.map((line) => line.sku ?? "");
 }
 

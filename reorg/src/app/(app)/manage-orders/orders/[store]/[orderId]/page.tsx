@@ -21,7 +21,7 @@ import {
   X,
 } from "lucide-react";
 import { useCurrentUser } from "@/contexts/current-user-context";
-import type { ManageOrder } from "@/lib/manage-orders/types";
+import type { ManageOrder, ManageOrderActionType } from "@/lib/manage-orders/types";
 import { cn } from "@/lib/utils";
 
 function money(cents: number | null | undefined, currency = "USD") {
@@ -91,6 +91,37 @@ function fundsStatusLabel(status: string | null | undefined) {
   return normalized.replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
+function feedbackToneClasses(order: ManageOrder) {
+  const first = order.feedback.items[0];
+  if (first?.isAutomated) return "border-sky-500/30 bg-sky-500/10 text-sky-200";
+  if (first?.kind === "POSITIVE") return "border-emerald-500/30 bg-emerald-500/10 text-emerald-200";
+  if (first?.kind === "NEGATIVE") return "border-red-500/35 bg-red-500/10 text-red-200";
+  if (first?.kind === "NEUTRAL") return "border-amber-500/35 bg-amber-500/10 text-amber-200";
+  if (order.feedback.state === "NOT_LEFT") return "border-zinc-500/30 bg-zinc-500/10 text-zinc-200";
+  return "border-muted-foreground/25 bg-muted/40 text-muted-foreground";
+}
+
+function feedbackSummaryText(order: ManageOrder) {
+  const first = order.feedback.items[0];
+  if (first?.isAutomated) return "Automated positive feedback";
+  if (first) return `${first.kind.toLowerCase()} feedback left`;
+  if (order.feedback.state === "NOT_LEFT") return "No feedback left";
+  return "Feedback not checked";
+}
+
+function feedbackDetailText(order: ManageOrder) {
+  const first = order.feedback.items[0];
+  if (first?.comment) return first.comment;
+  if (first) return `Left ${dateOnly(first.leftAt)}`;
+  if (order.feedback.leaveBy) return `Buyer can leave feedback until ${dateOnly(order.feedback.leaveBy)}`;
+  return order.feedback.reason ?? null;
+}
+
+function caseToneClasses(order: ManageOrder) {
+  if (order.cases.openCount > 0) return "border-red-500/40 bg-red-500/15 text-red-100";
+  return "border-amber-500/35 bg-amber-500/10 text-amber-100";
+}
+
 function EbayLogoImage({ compact }: { compact?: boolean }) {
   return (
     <img
@@ -113,6 +144,8 @@ export default function ManageOrderDetailsPage({
   const [error, setError] = useState<string | null>(null);
   const [messageOpen, setMessageOpen] = useState(false);
   const [trackingOpen, setTrackingOpen] = useState(false);
+  const [moreActionsOpen, setMoreActionsOpen] = useState(false);
+  const [confirmAction, setConfirmAction] = useState<"mark_shipped" | "cancel_order" | null>(null);
   const [reloadNonce, setReloadNonce] = useState(0);
 
   useEffect(() => {
@@ -205,9 +238,61 @@ export default function ManageOrderDetailsPage({
                   {order.estimatedDeliveryMin || order.estimatedDeliveryMax ? `Estimated delivery ${dateOnly(order.estimatedDeliveryMin)} - ${dateOnly(order.estimatedDeliveryMax)}.` : null}
                 </p>
               </div>
-              <Link href={`/manage-orders?order=${encodeURIComponent(order.orderId)}`} className="inline-flex cursor-pointer items-center gap-2 rounded-full border border-primary/50 px-4 py-2 text-sm font-semibold text-primary hover:bg-primary/10">
-                More actions <ChevronDown className="h-4 w-4" />
-              </Link>
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => setMoreActionsOpen((open) => !open)}
+                  className="inline-flex cursor-pointer items-center gap-2 rounded-full border border-primary/50 px-4 py-2 text-sm font-semibold text-primary hover:bg-primary/10"
+                  aria-haspopup="menu"
+                  aria-expanded={moreActionsOpen}
+                >
+                  More actions <ChevronDown className="h-4 w-4" />
+                </button>
+                {moreActionsOpen ? (
+                  <div className="absolute right-0 top-11 z-20 w-56 rounded-md border border-border bg-popover p-1 shadow-lg">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setMoreActionsOpen(false);
+                        setTrackingOpen(true);
+                      }}
+                      className="block w-full cursor-pointer rounded px-3 py-2 text-left text-sm hover:bg-accent"
+                    >
+                      Add Tracking Number
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setMoreActionsOpen(false);
+                        setConfirmAction("mark_shipped");
+                      }}
+                      className="block w-full cursor-pointer rounded px-3 py-2 text-left text-sm hover:bg-accent"
+                    >
+                      Mark As Shipped
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setMoreActionsOpen(false);
+                        setConfirmAction("cancel_order");
+                      }}
+                      className="block w-full cursor-pointer rounded px-3 py-2 text-left text-sm hover:bg-accent"
+                    >
+                      Cancel Order
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setMoreActionsOpen(false);
+                        setMessageOpen(true);
+                      }}
+                      className="block w-full cursor-pointer rounded px-3 py-2 text-left text-sm hover:bg-accent"
+                    >
+                      Message Buyer
+                    </button>
+                  </div>
+                ) : null}
+              </div>
             </div>
             <div className="relative mt-8 grid grid-cols-3 gap-4">
               <div className="absolute left-8 right-8 top-3 h-1 rounded-full bg-muted" />
@@ -313,6 +398,75 @@ export default function ManageOrderDetailsPage({
             </button>
           </section>
 
+          {order.cases.hasCases ? (
+            <section className="rounded-xl border border-red-500/30 bg-red-500/5 p-5">
+              <div className="mb-4 flex items-center justify-between gap-3">
+                <h2 className="text-xl font-bold">eBay Cases</h2>
+                <span className={cn("rounded-full border px-2 py-0.5 text-xs font-semibold", caseToneClasses(order))}>
+                  {order.cases.openCount > 0
+                    ? `${order.cases.openCount} Open`
+                    : "History"}
+                </span>
+              </div>
+              <div className="space-y-2">
+                {order.cases.items.map((item) => {
+                  const body = (
+                    <>
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="font-semibold">{item.label}</span>
+                        <span className={cn("rounded px-1.5 py-0.5 text-[11px] font-semibold", item.isOpen ? "bg-red-500/20 text-red-100" : "bg-amber-500/15 text-amber-100")}>
+                          {item.statusLabel}
+                        </span>
+                      </div>
+                      <div className="mt-1 font-mono text-xs">#{item.externalId}</div>
+                      {item.reason ? <div className="mt-1 text-xs text-muted-foreground">{item.reason}</div> : null}
+                      <div className="mt-1 text-xs text-muted-foreground">
+                        Opened {dateOnly(item.openedAt)}
+                        {item.closedAt ? ` | Closed ${dateOnly(item.closedAt)}` : null}
+                      </div>
+                    </>
+                  );
+                  return item.manageUrl ? (
+                    <a
+                      key={item.id}
+                      href={item.manageUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="block cursor-pointer rounded-lg border border-red-500/25 bg-red-500/10 p-3 hover:bg-red-500/15"
+                      title={`Open ${item.label} on eBay`}
+                    >
+                      <div className="flex items-start gap-2">
+                        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-red-300" />
+                        <div className="min-w-0 flex-1">{body}</div>
+                        <ExternalLink className="h-4 w-4 shrink-0 text-red-200" />
+                      </div>
+                    </a>
+                  ) : (
+                    <div key={item.id} className="rounded-lg border border-red-500/25 bg-red-500/10 p-3">
+                      <div className="flex items-start gap-2">
+                        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-red-300" />
+                        <div className="min-w-0 flex-1">{body}</div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+          ) : null}
+
+          <section className="rounded-xl border border-border bg-card p-5">
+            <h2 className="mb-4 text-xl font-bold">Feedback</h2>
+            <div className={cn("rounded-lg border px-3 py-2 text-sm", feedbackToneClasses(order))}>
+              <div className="font-semibold capitalize">{feedbackSummaryText(order)}</div>
+              {feedbackDetailText(order) ? <div className="mt-1 text-xs opacity-85">{feedbackDetailText(order)}</div> : null}
+              {order.feedback.items[0]?.isAutomated && order.feedback.leaveBy ? (
+                <div className="mt-1 text-xs opacity-85">
+                  Buyer can leave feedback until {dateOnly(order.feedback.leaveBy)}
+                </div>
+              ) : null}
+            </div>
+          </section>
+
           <section className="rounded-xl border border-border bg-card p-5">
             <h2 className="mb-4 text-xl font-bold">Payment</h2>
             <div className="mb-4 flex gap-2 rounded-lg border border-border bg-muted/40 p-3 text-sm text-muted-foreground">
@@ -372,6 +526,17 @@ export default function ManageOrderDetailsPage({
           onClose={() => setTrackingOpen(false)}
           onUpdated={() => {
             setTrackingOpen(false);
+            setReloadNonce((value) => value + 1);
+          }}
+        />
+      ) : null}
+      {confirmAction ? (
+        <OrderConfirmationModal
+          order={order}
+          action={confirmAction}
+          onClose={() => setConfirmAction(null)}
+          onUpdated={() => {
+            setConfirmAction(null);
             setReloadNonce((value) => value + 1);
           }}
         />
@@ -560,6 +725,118 @@ function AddTrackingModal({ order, onClose, onUpdated }: { order: ManageOrder; o
           <button onClick={onClose} className="cursor-pointer rounded-md border border-border px-4 py-2 text-sm hover:bg-accent">Cancel</button>
           <button onClick={() => void send()} disabled={preparing || sending || !token || !canSubmit} className="inline-flex cursor-pointer items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground disabled:cursor-not-allowed disabled:opacity-50">
             {preparing || sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <PackagePlus className="h-4 w-4" />}
+            Final Confirm
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Warning({ text }: { text: string }) {
+  return (
+    <div className="flex gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-300">
+      <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+      {text}
+    </div>
+  );
+}
+
+function OrderConfirmationModal({
+  order,
+  action,
+  onClose,
+  onUpdated,
+}: {
+  order: ManageOrder;
+  action: Extract<ManageOrderActionType, "mark_shipped" | "cancel_order">;
+  onClose: () => void;
+  onUpdated: () => void;
+}) {
+  const [token, setToken] = useState<string | null>(null);
+  const [preparing, setPreparing] = useState(true);
+  const [sending, setSending] = useState(false);
+  const [sendAutoResponder, setSendAutoResponder] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setPreparing(true);
+    setToken(null);
+    setError(null);
+    fetch("/api/manage-orders/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ orderId: order.orderId, store: order.store, actionType: action }),
+      signal: controller.signal,
+    })
+      .then(async (res) => {
+        const json = await res.json();
+        if (!res.ok) throw new Error(json.error ?? "Could not prepare confirmation");
+        setToken(json.data.humanActionToken);
+      })
+      .catch((err) => {
+        if (err instanceof DOMException && err.name === "AbortError") return;
+        setError(err instanceof Error ? err.message : "Could not prepare confirmation");
+      })
+      .finally(() => setPreparing(false));
+    return () => controller.abort();
+  }, [action, order.orderId, order.store]);
+
+  async function send() {
+    if (!token) return;
+    setSending(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/manage-orders/actions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          orderId: order.orderId,
+          store: order.store,
+          actionType: action,
+          humanActionToken: token,
+          sendAutoResponder: action === "mark_shipped" ? sendAutoResponder : undefined,
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error ?? "Action failed");
+      onUpdated();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Action failed");
+    } finally {
+      setSending(false);
+    }
+  }
+
+  const title = action === "mark_shipped" ? "Mark As Shipped" : "Cancel Order";
+  const warning =
+    action === "mark_shipped"
+      ? "This will mark the live eBay order as shipped without adding tracking. This may affect seller metrics and buyer visibility. Continue?"
+      : "This will attempt to cancel the live eBay order after final confirmation. Cancellation is currently blocked unless live eBay order actions are enabled and implemented.";
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+      <div className="w-full max-w-lg rounded-lg border border-border bg-card p-5 shadow-xl">
+        <div className="mb-4 flex items-start justify-between gap-3">
+          <div>
+            <h2 className="text-lg font-semibold">{title}</h2>
+            <p className="text-sm text-muted-foreground">{order.store === "TPP_EBAY" ? "TPP eBay" : "TT eBay"} | {order.orderId}</p>
+          </div>
+          <button onClick={onClose} className="cursor-pointer rounded p-1 hover:bg-accent"><X className="h-4 w-4" /></button>
+        </div>
+        <Warning text={warning} />
+        {action === "mark_shipped" ? (
+          <label className="mt-4 flex items-center gap-2 text-sm">
+            <input type="checkbox" checked={sendAutoResponder} onChange={(event) => setSendAutoResponder(event.target.checked)} />
+            Send shipped auto-message if enabled
+          </label>
+        ) : null}
+        {error ? <div className="mt-4 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">{error}</div> : null}
+        <div className="mt-5 flex justify-end gap-2">
+          <button onClick={onClose} className="cursor-pointer rounded-md border border-border px-4 py-2 text-sm hover:bg-accent">Cancel</button>
+          <button onClick={() => void send()} disabled={preparing || sending || !token} className="inline-flex cursor-pointer items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground disabled:cursor-not-allowed disabled:opacity-50">
+            {preparing || sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <PackageCheck className="h-4 w-4" />}
             Final Confirm
           </button>
         </div>

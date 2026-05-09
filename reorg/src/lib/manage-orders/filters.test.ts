@@ -50,6 +50,17 @@ const baseOrder: ManageOrder = {
     estimatedProfitCents: null,
     dataComplete: false,
   },
+  feedback: {
+    state: "UNKNOWN",
+    items: [],
+    checkedLive: false,
+    leaveBy: null,
+  },
+  cases: {
+    hasCases: false,
+    openCount: 0,
+    items: [],
+  },
   lines: [
     {
       itemId: "123",
@@ -92,6 +103,14 @@ test("search prioritizes exact and allows partial fallback", () => {
   assert.equal(matchesSearch(baseOrder, "order_number", "10-14584-35650"), true);
   assert.equal(matchesSearch(baseOrder, "sku", "AA01"), true);
   assert.equal(matchesSearch(baseOrder, "item_title", "light"), true);
+  assert.equal(
+    matchesSearch(
+      { ...baseOrder, trackingNumbers: [{ carrier: "USPS", number: "9501993814438233627164", shippedTime: null }] },
+      "tracking_number",
+      "9501993814438233627164",
+    ),
+    true,
+  );
   assert.equal(matchesSearch(baseOrder, "buyer_username", "missing"), false);
 });
 

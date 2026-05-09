@@ -50,6 +50,7 @@ const SEARCH_BY_OPTIONS = [
   ["item_id", "Item ID"],
   ["item_title", "Item Title"],
   ["sku", "SKU"],
+  ["tracking_number", "Tracking Number"],
 ] as const;
 
 function money(cents: number | null | undefined, currency = "USD") {
@@ -177,6 +178,99 @@ function StatusBlock({ order }: { order: ManageOrder }) {
     );
   }
   return <div className="font-semibold text-emerald-300">Ready to ship</div>;
+}
+
+function feedbackToneClasses(order: ManageOrder) {
+  const first = order.feedback.items[0];
+  if (first?.isAutomated) return "border-sky-500/30 bg-sky-500/10 text-sky-200";
+  if (first?.kind === "POSITIVE") return "border-emerald-500/30 bg-emerald-500/10 text-emerald-200";
+  if (first?.kind === "NEGATIVE") return "border-red-500/35 bg-red-500/10 text-red-200";
+  if (first?.kind === "NEUTRAL") return "border-amber-500/35 bg-amber-500/10 text-amber-200";
+  if (order.feedback.state === "NOT_LEFT") return "border-zinc-500/30 bg-zinc-500/10 text-zinc-200";
+  return "border-muted-foreground/25 bg-muted/40 text-muted-foreground";
+}
+
+function feedbackDeadlineText(order: ManageOrder) {
+  if (!order.feedback.leaveBy) return null;
+  return `Buyer can leave feedback until ${pdtDate(order.feedback.leaveBy)}`;
+}
+
+function FeedbackBadge({ order }: { order: ManageOrder }) {
+  const first = order.feedback.items[0];
+  const deadline = feedbackDeadlineText(order);
+  let label = "Feedback not checked";
+  let detail = order.feedback.reason ?? null;
+
+  if (first) {
+    label = first.isAutomated ? "Automated positive feedback" : `${first.kind.toLowerCase()} feedback left`;
+    detail = first.comment ?? `Left ${pdtDate(first.leftAt)}`;
+  } else if (order.feedback.state === "NOT_LEFT") {
+    label = "No feedback left";
+    detail = deadline;
+  } else if (order.feedback.state === "UNKNOWN" && deadline) {
+    detail = deadline;
+  }
+
+  return (
+    <div className={cn("mb-3 mt-2 w-fit max-w-full rounded-md border px-2 py-1 text-xs", feedbackToneClasses(order))}>
+      <div className="font-semibold capitalize">{label}</div>
+      {detail ? <div className="mt-0.5 line-clamp-2 text-[11px] opacity-85">{detail}</div> : null}
+      {first?.isAutomated && deadline ? (
+        <div className="mt-0.5 text-[11px] opacity-85">{deadline}</div>
+      ) : null}
+    </div>
+  );
+}
+
+function caseToneClasses(order: ManageOrder) {
+  if (order.cases.openCount > 0) return "border-red-500/40 bg-red-500/15 text-red-100";
+  return "border-amber-500/35 bg-amber-500/10 text-amber-100";
+}
+
+function CaseBadge({ order }: { order: ManageOrder }) {
+  if (!order.cases.hasCases) return null;
+  const openLabel =
+    order.cases.openCount > 0
+      ? `${order.cases.openCount} open case${order.cases.openCount === 1 ? "" : "s"}`
+      : "Case history";
+
+  return (
+    <div className={cn("mb-3 w-fit max-w-full rounded-md border px-2 py-1 text-xs", caseToneClasses(order))}>
+      <div className="flex items-center gap-1.5 font-semibold">
+        <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+        {openLabel}
+      </div>
+      <div className="mt-1 flex flex-wrap gap-1.5">
+        {order.cases.items.slice(0, 3).map((item) => {
+          const content = (
+            <>
+              <span>{item.label}</span>
+              <span className={cn("font-semibold", item.isOpen ? "text-red-100" : "text-amber-100")}>{item.statusLabel}</span>
+              <span className="font-mono">#{item.externalId}</span>
+              {item.manageUrl ? <ExternalLink className="h-3 w-3 shrink-0" /> : null}
+            </>
+          );
+          return item.manageUrl ? (
+            <a
+              key={item.id}
+              href={item.manageUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex max-w-full cursor-pointer items-center gap-1 rounded border border-current/25 px-1.5 py-0.5 hover:bg-white/10 hover:underline"
+              title={`Open ${item.label} on eBay`}
+            >
+              {content}
+            </a>
+          ) : (
+            <span key={item.id} className="inline-flex max-w-full items-center gap-1 rounded border border-current/25 px-1.5 py-0.5">
+              {content}
+            </span>
+          );
+        })}
+        {order.cases.items.length > 3 ? <span className="opacity-80">+{order.cases.items.length - 3} more</span> : null}
+      </div>
+    </div>
+  );
 }
 
 function SelectWithPrefix({
@@ -336,6 +430,8 @@ export default function ManageOrdersPage() {
                     <span className="font-semibold text-foreground">{order.buyerName ?? "Unknown buyer"}</span>
                     <span className="text-muted-foreground">@{order.buyerUsername ?? "no username"}</span>
                   </div>
+                  <FeedbackBadge order={order} />
+                  <CaseBadge order={order} />
                   <div className="space-y-4">
                     {order.lines.map((line) => (
                       <div key={`${line.itemId}-${line.sku}`} className="flex gap-4">

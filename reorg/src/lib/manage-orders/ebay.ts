@@ -2,13 +2,24 @@ import { XMLParser } from "fast-xml-parser";
 import { db } from "@/lib/db";
 import {
   buildEbayConfig,
+  type EbayConfig,
+  type EbayOrderContext,
   getEbayAccessToken,
 } from "@/lib/services/auto-responder-ebay";
 import { periodToDateRange, matchesSearch, matchesStatusFilter } from "@/lib/manage-orders/filters";
+import {
+  feedbackMirrorToSnapshot,
+  fetchEbayFeedbackForOrderContext,
+  type HelpdeskFeedbackSnapshot,
+} from "@/lib/services/helpdesk-feedback";
 import type {
   EbayStore,
   ManageOrder,
+  ManageOrderCaseItem,
+  ManageOrderCaseSummary,
   ManageOrderFinance,
+  ManageOrderFeedbackItem,
+  ManageOrderFeedbackSummary,
   ManageOrderLineItem,
   ManageOrdersPeriodFilter,
   ManageOrdersSearchBy,
@@ -23,6 +34,9 @@ const COMPAT_LEVEL = "1199";
 const PAGE_SIZE = 50;
 const DETAIL_FULFILLMENT_TIMEOUT_MS = 4500;
 const DETAIL_FINANCE_TIMEOUT_MS = 7000;
+const SEARCH_FEEDBACK_TIMEOUT_MS = 4500;
+const NON_ORDER_SEARCH_PAGE_LIMIT = 5;
+const TRACKING_SEARCH_PAGE_LIMIT = 25;
 
 const parser = new XMLParser({
   ignoreAttributes: false,
@@ -37,6 +51,7 @@ type StoreContext = {
   integrationId: string;
   accessToken: string;
   environment: string;
+  config: EbayConfig;
 };
 
 type SearchInput = {
@@ -190,6 +205,7 @@ async function fetchStoreContexts(store: ManageOrdersStoreFilter): Promise<Store
         integrationId: integration.id,
         accessToken: await getEbayAccessToken(integration.id, config),
         environment: config.environment ?? "PRODUCTION",
+        config,
       };
     }),
   );
@@ -229,26 +245,48 @@ async function ebayGetOrders(ctx: StoreContext, body: string) {
 async function fetchOrdersForContext(ctx: StoreContext, input: SearchInput) {
   const { from, to } = periodToDateRange(input.period);
   const exactOrderSearch = input.searchBy === "order_number" && input.searchTerm.trim();
-  const body = exactOrderSearch
-    ? `<?xml version="1.0" encoding="utf-8"?>
+  if (exactOrderSearch) {
+    const body = `<?xml version="1.0" encoding="utf-8"?>
 <GetOrdersRequest xmlns="urn:ebay:apis:eBLBaseComponents">
   <OrderIDArray><OrderID>${escapeXml(input.searchTerm.trim())}</OrderID></OrderIDArray>
   <DetailLevel>ReturnAll</DetailLevel>
-</GetOrdersRequest>`
-    : `<?xml version="1.0" encoding="utf-8"?>
+</GetOrdersRequest>`;
+    const { orders } = await ebayGetOrders(ctx, body);
+    return Promise.all(orders.map((order) => mapOrder(ctx, order)));
+  }
+
+  const buildPagedBody = (pageNumber: number) => `<?xml version="1.0" encoding="utf-8"?>
 <GetOrdersRequest xmlns="urn:ebay:apis:eBLBaseComponents">
   <OrderStatus>Completed</OrderStatus>
   <CreateTimeFrom>${from.toISOString()}</CreateTimeFrom>
   <CreateTimeTo>${to.toISOString()}</CreateTimeTo>
   <Pagination>
     <EntriesPerPage>100</EntriesPerPage>
-    <PageNumber>1</PageNumber>
+    <PageNumber>${pageNumber}</PageNumber>
   </Pagination>
   <DetailLevel>ReturnAll</DetailLevel>
 </GetOrdersRequest>`;
 
-  const { orders } = await ebayGetOrders(ctx, body);
-  return Promise.all(orders.map((order) => mapOrder(ctx, order)));
+  const searchTerm = input.searchTerm.trim();
+  const scanLimit = searchTerm
+    ? input.searchBy === "tracking_number"
+      ? TRACKING_SEARCH_PAGE_LIMIT
+      : NON_ORDER_SEARCH_PAGE_LIMIT
+    : 1;
+  const allOrders: ManageOrder[] = [];
+  for (let pageNumber = 1; pageNumber <= scanLimit; pageNumber += 1) {
+    const { orders, total } = await ebayGetOrders(ctx, buildPagedBody(pageNumber));
+    const mapped = await Promise.all(orders.map((order) => mapOrder(ctx, order)));
+    allOrders.push(...mapped);
+    if (
+      input.searchBy === "tracking_number" &&
+      mapped.some((order) => matchesSearch(order, input.searchBy, searchTerm))
+    ) {
+      break;
+    }
+    if (orders.length < 100 || pageNumber >= Math.ceil(total / 100)) break;
+  }
+  return allOrders;
 }
 
 export async function searchManageOrders(input: SearchInput): Promise<ManageOrdersSearchResult> {
@@ -274,7 +312,11 @@ export async function searchManageOrders(input: SearchInput): Promise<ManageOrde
 
   const page = Math.max(1, input.page);
   const start = (page - 1) * PAGE_SIZE;
-  const orders = filtered.slice(start, start + PAGE_SIZE);
+  const orders = await enrichOrdersWithFeedback(
+    contexts,
+    filtered.slice(start, start + PAGE_SIZE),
+    Boolean(input.searchTerm.trim()) && filtered.length <= 5,
+  );
   return {
     orders,
     totalCount: filtered.length,
@@ -299,7 +341,7 @@ export async function getManageOrderDetail(store: EbayStore, orderId: string) {
 }
 
 async function enrichOrderDetail(ctx: StoreContext, order: ManageOrder) {
-  const [fulfillment, finance] = await Promise.all([
+  const [fulfillment, finance, feedback, cases] = await Promise.all([
     runWithTimeout(
       (signal) => fetchFulfillmentOrder(ctx, order.apiOrderId, signal),
       DETAIL_FULFILLMENT_TIMEOUT_MS,
@@ -310,8 +352,14 @@ async function enrichOrderDetail(ctx: StoreContext, order: ManageOrder) {
       DETAIL_FINANCE_TIMEOUT_MS,
       "finance",
     ),
+    loadFeedbackSummaryForOrder(ctx, order, true),
+    loadCaseSummaryForOrder(ctx, order),
   ]);
-  return applyDetailEnrichment(order, fulfillment, finance);
+  return {
+    ...applyDetailEnrichment(order, fulfillment, finance),
+    feedback,
+    cases,
+  };
 }
 
 async function runWithTimeout<T>(
@@ -399,6 +447,13 @@ async function mapOrder(ctx: StoreContext, order: Record<string, unknown>): Prom
       text(firstRecord(transactions)?.SellingManagerSalesRecordNumber),
     finance: defaultFinance(),
     internalProfit: calculateInternalProfit(enrichedLines, totalCents, taxCents, defaultFinance()),
+    feedback: defaultFeedbackSummary({
+      createdTime: text(order.CreatedTime),
+      paidTime: text(order.PaidTime),
+      estimatedDeliveryMin: dates.estimatedMin,
+      estimatedDeliveryMax: dates.estimatedMax,
+    }),
+    cases: defaultCaseSummary(),
     lines: enrichedLines,
   };
 }
@@ -509,6 +564,312 @@ function defaultFinance(): ManageOrderFinance {
     feesKnown: false,
     source: "unavailable",
   };
+}
+
+function validDate(value: string | null | undefined) {
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isFinite(date.getTime()) ? date : null;
+}
+
+function addDays(date: Date, days: number) {
+  const next = new Date(date);
+  next.setUTCDate(next.getUTCDate() + days);
+  return next;
+}
+
+function earliestDate(dates: Array<Date | null>) {
+  return dates
+    .filter((date): date is Date => Boolean(date))
+    .sort((left, right) => left.getTime() - right.getTime())[0] ?? null;
+}
+
+function feedbackLeaveByIso(
+  order: Pick<ManageOrder, "createdTime" | "paidTime" | "estimatedDeliveryMin" | "estimatedDeliveryMax">,
+) {
+  const deliveredOrExpected = earliestDate([
+    validDate(order.estimatedDeliveryMax),
+    validDate(order.estimatedDeliveryMin),
+  ]);
+  if (deliveredOrExpected) return addDays(deliveredOrExpected, 60).toISOString();
+  const purchased = validDate(order.createdTime) ?? validDate(order.paidTime);
+  return purchased ? addDays(purchased, 90).toISOString() : null;
+}
+
+function defaultFeedbackSummary(
+  order: Pick<ManageOrder, "createdTime" | "paidTime" | "estimatedDeliveryMin" | "estimatedDeliveryMax">,
+): ManageOrderFeedbackSummary {
+  return {
+    state: "UNKNOWN",
+    items: [],
+    checkedLive: false,
+    leaveBy: feedbackLeaveByIso(order),
+  };
+}
+
+function defaultCaseSummary(): ManageOrderCaseSummary {
+  return {
+    hasCases: false,
+    openCount: 0,
+    items: [],
+  };
+}
+
+function caseKindLabel(kind: ManageOrderCaseItem["kind"]) {
+  switch (kind) {
+    case "RETURN":
+      return "Return Case";
+    case "ITEM_NOT_RECEIVED":
+      return "INR Case";
+    case "NOT_AS_DESCRIBED":
+      return "INAD Claim";
+    case "CHARGEBACK":
+      return "Payment Dispute";
+    default:
+      return "eBay Case";
+  }
+}
+
+function caseStatusLabel(status: string) {
+  return status
+    .replace(/_/g, " ")
+    .toLowerCase()
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function isOpenCaseStatus(status: string) {
+  return !["CLOSED", "CANCELLED", "REFUNDED"].includes(status);
+}
+
+function fallbackCaseUrl(kind: ManageOrderCaseItem["kind"], externalId: string) {
+  const encoded = encodeURIComponent(externalId);
+  if (kind === "RETURN" || kind === "NOT_AS_DESCRIBED") {
+    return `https://www.ebay.com/rtn/Return/ReturnsDetail?returnId=${encoded}`;
+  }
+  if (kind === "ITEM_NOT_RECEIVED") {
+    return `https://www.ebay.com/ItemNotReceived/${encoded}`;
+  }
+  return null;
+}
+
+async function loadCaseSummaryForOrder(
+  ctx: StoreContext,
+  order: ManageOrder,
+): Promise<ManageOrderCaseSummary> {
+  const orderIds = [...new Set([order.orderId, order.apiOrderId].filter(Boolean))];
+  if (orderIds.length === 0) return defaultCaseSummary();
+  try {
+    const rows = await db.helpdeskCase.findMany({
+      where: {
+        integrationId: ctx.integrationId,
+        ebayOrderNumber: { in: orderIds },
+      },
+      orderBy: { openedAt: "desc" },
+      take: 20,
+    });
+    const items = rows.map((row): ManageOrderCaseItem => {
+      const kind = row.kind as ManageOrderCaseItem["kind"];
+      const status = String(row.status);
+      return {
+        id: row.id,
+        externalId: row.externalId,
+        kind,
+        label: caseKindLabel(kind),
+        status,
+        statusLabel: caseStatusLabel(status),
+        reason: row.reason,
+        openedAt: row.openedAt.toISOString(),
+        closedAt: row.closedAt?.toISOString() ?? null,
+        manageUrl: row.manageUrl ?? fallbackCaseUrl(kind, row.externalId),
+        isOpen: isOpenCaseStatus(status),
+      };
+    });
+    return {
+      hasCases: items.length > 0,
+      openCount: items.filter((item) => item.isOpen).length,
+      items,
+    };
+  } catch (error) {
+    console.warn("[manage-orders] case mirror lookup skipped", {
+      orderId: order.orderId,
+      store: order.store,
+      error: error instanceof Error ? error.message : error,
+    });
+    return defaultCaseSummary();
+  }
+}
+
+function feedbackSnapshotToManageOrderItem(snapshot: HelpdeskFeedbackSnapshot): ManageOrderFeedbackItem {
+  return {
+    id: snapshot.id,
+    externalId: snapshot.externalId,
+    kind: snapshot.kind as ManageOrderFeedbackItem["kind"],
+    starRating: snapshot.starRating,
+    comment: snapshot.comment,
+    sellerResponse: snapshot.sellerResponse,
+    ebayOrderNumber: snapshot.ebayOrderNumber,
+    ebayItemId: snapshot.ebayItemId,
+    buyerUserId: snapshot.buyerUserId,
+    leftAt: snapshot.leftAt,
+    source: snapshot.source,
+    isAutomated: snapshot.isAutomated,
+  };
+}
+
+function orderToFeedbackContext(order: ManageOrder): EbayOrderContext {
+  const tracking = order.trackingNumbers.find((entry) => entry.number);
+  return {
+    orderId: order.orderId,
+    salesRecordNumber: order.salesRecordNumber,
+    buyerUserId: order.buyerUsername ?? "",
+    buyerName: order.buyerName ?? order.buyerUsername ?? "",
+    buyerEmail: null,
+    orderStatus: order.shippedTime || order.trackingNumbers.length ? "SHIPPED" : null,
+    createdTime: order.createdTime,
+    paidTime: order.paidTime,
+    shippedTime: order.shippedTime,
+    estimatedDeliveryMin: order.estimatedDeliveryMin,
+    estimatedDeliveryMax: order.estimatedDeliveryMax,
+    actualDeliveryTime: null,
+    shippingService: order.shippingService,
+    trackingNumber: tracking?.number ?? null,
+    trackingCarrier: tracking?.carrier ?? null,
+    trackingNumbers: order.trackingNumbers
+      .filter((entry): entry is { number: string; carrier: string | null; shippedTime: string | null } =>
+        Boolean(entry.number),
+      )
+      .map((entry) => ({
+        number: entry.number,
+        carrier: entry.carrier,
+        shippedTime: entry.shippedTime,
+      })),
+    totalCents: order.totalCents,
+    shippingCents: order.shippingCents,
+    currency: order.currency,
+    shippingAddress: order.shippingAddress,
+    lineItems: order.lines.map((line) => ({
+      itemId: line.itemId,
+      orderLineItemId: line.orderLineItemId,
+      transactionId: line.transactionId,
+      title: line.title,
+      sku: line.sku,
+      quantity: line.quantity,
+      unitPriceCents: line.unitPriceCents,
+      pictureUrl: line.imageUrl,
+    })),
+  };
+}
+
+async function withFeedbackTimeout<T>(promise: Promise<T>, timeoutMs: number) {
+  let timeout: ReturnType<typeof setTimeout> | null = null;
+  try {
+    return await Promise.race<T | null>([
+      promise,
+      new Promise<null>((resolve) => {
+        timeout = setTimeout(() => resolve(null), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
+async function loadFeedbackSummaryForOrder(
+  ctx: StoreContext,
+  order: ManageOrder,
+  allowLiveLookup: boolean,
+): Promise<ManageOrderFeedbackSummary> {
+  const fallback = defaultFeedbackSummary(order);
+  try {
+    const mirrorRows = await db.helpdeskFeedback.findMany({
+      where: {
+        integrationId: ctx.integrationId,
+        ebayOrderNumber: order.orderId,
+      },
+      orderBy: { leftAt: "desc" },
+      take: 20,
+    });
+    const mirrorItems = mirrorRows
+      .map(feedbackMirrorToSnapshot)
+      .map(feedbackSnapshotToManageOrderItem);
+    if (mirrorItems.length > 0) {
+      return {
+        ...fallback,
+        state: "LEFT",
+        items: mirrorItems,
+        checkedLive: false,
+      };
+    }
+  } catch (error) {
+    console.warn("[manage-orders] feedback mirror lookup skipped", {
+      orderId: order.orderId,
+      store: order.store,
+      error: error instanceof Error ? error.message : error,
+    });
+  }
+
+  if (!allowLiveLookup) {
+    return {
+      ...fallback,
+      reason: "Live feedback lookup is skipped for broad result sets.",
+    };
+  }
+
+  try {
+    const live = await withFeedbackTimeout(
+      fetchEbayFeedbackForOrderContext({
+        integrationId: ctx.integrationId,
+        config: ctx.config,
+        order: orderToFeedbackContext(order),
+      }),
+      SEARCH_FEEDBACK_TIMEOUT_MS,
+    );
+    if (!live) {
+      return {
+        ...fallback,
+        reason: "Feedback lookup timed out.",
+      };
+    }
+    return {
+      ...fallback,
+      state: live.length > 0 ? "LEFT" : "NOT_LEFT",
+      items: live.map(feedbackSnapshotToManageOrderItem),
+      checkedLive: true,
+    };
+  } catch (error) {
+    console.warn("[manage-orders] live feedback lookup skipped", {
+      orderId: order.orderId,
+      store: order.store,
+      error: error instanceof Error ? error.message : error,
+    });
+    return {
+      ...fallback,
+      reason: "Feedback status unavailable.",
+    };
+  }
+}
+
+async function enrichOrdersWithFeedback(
+  contexts: StoreContext[],
+  orders: ManageOrder[],
+  allowLiveLookup: boolean,
+) {
+  const contextByStore = new Map(contexts.map((ctx) => [ctx.platform, ctx]));
+  return Promise.all(
+    orders.map(async (order) => {
+      const ctx = contextByStore.get(order.store);
+      if (!ctx) return order;
+      const [feedback, cases] = await Promise.all([
+        loadFeedbackSummaryForOrder(ctx, order, allowLiveLookup),
+        loadCaseSummaryForOrder(ctx, order),
+      ]);
+      return {
+        ...order,
+        feedback,
+        cases,
+      };
+    }),
+  );
 }
 
 function dollarsToCents(value: number | null | undefined) {

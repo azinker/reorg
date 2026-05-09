@@ -15,7 +15,8 @@ export type ManageOrdersSearchBy =
   | "buyer_name"
   | "item_id"
   | "item_title"
-  | "sku";
+  | "sku"
+  | "tracking_number";
 
 export type ManageOrderActionType =
   | "add_tracking"
@@ -62,6 +63,49 @@ export type ManageOrderInternalProfit = {
   dataComplete: boolean;
 };
 
+export type ManageOrderFeedbackItem = {
+  id: string;
+  externalId: string;
+  kind: "POSITIVE" | "NEUTRAL" | "NEGATIVE";
+  starRating: number | null;
+  comment: string | null;
+  sellerResponse: string | null;
+  ebayOrderNumber: string | null;
+  ebayItemId: string | null;
+  buyerUserId: string | null;
+  leftAt: string;
+  source: "mirror" | "live";
+  isAutomated: boolean;
+};
+
+export type ManageOrderFeedbackSummary = {
+  state: "LEFT" | "NOT_LEFT" | "UNKNOWN";
+  items: ManageOrderFeedbackItem[];
+  checkedLive: boolean;
+  leaveBy: string | null;
+  reason?: string;
+};
+
+export type ManageOrderCaseItem = {
+  id: string;
+  externalId: string;
+  kind: "RETURN" | "ITEM_NOT_RECEIVED" | "NOT_AS_DESCRIBED" | "CHARGEBACK" | "OTHER";
+  label: string;
+  status: string;
+  statusLabel: string;
+  reason: string | null;
+  openedAt: string;
+  closedAt: string | null;
+  manageUrl: string | null;
+  isOpen: boolean;
+};
+
+export type ManageOrderCaseSummary = {
+  hasCases: boolean;
+  openCount: number;
+  items: ManageOrderCaseItem[];
+};
+
 export type ManageOrder = {
   orderId: string;
   apiOrderId: string;
@@ -96,6 +140,8 @@ export type ManageOrder = {
   salesRecordNumber: string | null;
   finance: ManageOrderFinance;
   internalProfit: ManageOrderInternalProfit;
+  feedback: ManageOrderFeedbackSummary;
+  cases: ManageOrderCaseSummary;
   lines: ManageOrderLineItem[];
 };
 
