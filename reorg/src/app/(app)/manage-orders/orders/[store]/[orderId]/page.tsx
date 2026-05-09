@@ -132,6 +132,9 @@ function EbayLogoImage({ compact }: { compact?: boolean }) {
   );
 }
 
+const SELECT_CLASS =
+  "reorg-themed-select cursor-pointer rounded-md border border-input bg-background text-foreground outline-none [color-scheme:dark] focus:border-primary";
+
 export default function ManageOrderDetailsPage({
   params,
 }: {
@@ -705,7 +708,7 @@ function AddTrackingModal({ order, onClose, onUpdated }: { order: ManageOrder; o
         <div className="space-y-3">
           {rows.map((row, index) => (
             <div key={index} className="grid gap-2 sm:grid-cols-[130px_1fr_36px]">
-              <select value={row.carrier} onChange={(event) => updateRow(index, { carrier: event.target.value as TrackingDraft["carrier"] })} className="h-10 cursor-pointer rounded-md border border-input bg-background px-3 text-sm">
+              <select value={row.carrier} onChange={(event) => updateRow(index, { carrier: event.target.value as TrackingDraft["carrier"] })} className={cn(SELECT_CLASS, "h-10 px-3 text-sm")}>
                 <option value="USPS">USPS</option>
                 <option value="UPS">UPS</option>
                 <option value="FedEx">FedEx</option>

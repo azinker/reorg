@@ -365,6 +365,17 @@
   list-style: none;
   user-select: none;
 }
+
+.reorg-themed-select option,
+.reorg-themed-select optgroup {
+  background-color: var(--popover);
+  color: var(--popover-foreground);
+}
+
+.reorg-themed-select option:checked {
+  background-color: var(--primary);
+  color: var(--primary-foreground);
+}
 .helpdesk-html-body details.helpdesk-quoted-history > summary::-webkit-details-marker {
   display: none;
 }

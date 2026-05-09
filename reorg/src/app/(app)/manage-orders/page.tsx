@@ -45,13 +45,16 @@ const PERIOD_OPTIONS = [
 
 const SEARCH_BY_OPTIONS = [
   ["order_number", "Order Number"],
+  ["tracking_number", "Tracking Number"],
   ["buyer_username", "Buyer Username"],
   ["buyer_name", "Buyer Name"],
   ["item_id", "Item ID"],
   ["item_title", "Item Title"],
   ["sku", "SKU"],
-  ["tracking_number", "Tracking Number"],
 ] as const;
+
+const SELECT_CLASS =
+  "reorg-themed-select cursor-pointer rounded-md border border-input bg-background text-foreground outline-none [color-scheme:dark] focus:border-primary";
 
 function money(cents: number | null | undefined, currency = "USD") {
   if (cents == null) return "Unavailable";
@@ -287,7 +290,7 @@ function SelectWithPrefix({
   return (
     <label className="flex h-11 items-center rounded-md border border-input bg-background px-3 text-sm focus-within:border-primary">
       <span className="mr-1 text-muted-foreground">{prefix}:</span>
-      <select value={value} onChange={(event) => onChange(event.target.value)} className="min-w-0 flex-1 cursor-pointer bg-transparent font-semibold outline-none">
+      <select value={value} onChange={(event) => onChange(event.target.value)} className="reorg-themed-select min-w-0 flex-1 cursor-pointer bg-transparent font-semibold text-foreground outline-none [color-scheme:dark]">
         {options.map(([optionValue, label]) => <option key={optionValue} value={optionValue}>{label}</option>)}
       </select>
     </label>
@@ -351,7 +354,7 @@ export default function ManageOrdersPage() {
 
       <section className="mb-5 rounded-lg border border-border bg-card/95 p-4 shadow-sm">
         <div className="grid gap-3 xl:grid-cols-[180px_240px_170px_210px_minmax(260px,1fr)_48px_auto]">
-          <select value={store} onChange={(event) => setStore(event.target.value as typeof store)} className="h-11 cursor-pointer rounded-md border border-input bg-background px-3 text-sm font-semibold">
+          <select value={store} onChange={(event) => setStore(event.target.value as typeof store)} className={cn(SELECT_CLASS, "h-11 px-3 text-sm font-semibold")}>
             {Object.entries(STORE_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
           </select>
           <SelectWithPrefix prefix="Status" value={status} onChange={setStatus} options={STATUS_OPTIONS} />
@@ -595,7 +598,7 @@ function ActionModal({ active, onClose, onDone }: { active: { order: ManageOrder
             {trackingRows.map((row, index) => (
               <div key={index} className="grid gap-2 sm:grid-cols-[1fr_120px_36px]">
                 <input value={row.trackingNumber} onChange={(event) => onTrackingChange(index, event.target.value)} placeholder="Tracking number" className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" />
-                <select value={row.carrier} onChange={(event) => updateTrackingRow(index, { carrier: event.target.value as TrackingDraft["carrier"] })} className="h-10 cursor-pointer rounded-md border border-input bg-background px-3 text-sm">
+                <select value={row.carrier} onChange={(event) => updateTrackingRow(index, { carrier: event.target.value as TrackingDraft["carrier"] })} className={cn(SELECT_CLASS, "h-10 px-3 text-sm")}>
                   <option>USPS</option><option>UPS</option><option>FedEx</option>
                 </select>
                 <button type="button" onClick={() => removeTrackingRow(index)} disabled={trackingRows.length === 1} title="Remove tracking row" className="inline-flex h-10 w-10 cursor-pointer items-center justify-center rounded-md border border-border text-muted-foreground hover:bg-accent disabled:cursor-not-allowed disabled:opacity-40">
