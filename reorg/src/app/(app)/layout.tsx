@@ -22,7 +22,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       )
     : null;
 
-  if (actor?.isImpersonating && allowedPageKeys) {
+  if (actor && allowedPageKeys) {
     const hdrs = await headers();
     const requestedKey = hdrs.get("x-reorg-page-key");
     if (requestedKey && isPageKey(requestedKey)) {

@@ -47,6 +47,7 @@ function dateOnly(value: string | null | undefined) {
 }
 
 function orderStatus(order: ManageOrder) {
+  if (order.actualDeliveryTime) return "Delivered";
   return order.shippedTime || order.trackingNumbers.length ? "Shipped" : "Awaiting shipment";
 }
 
@@ -115,6 +116,17 @@ function feedbackDetailText(order: ManageOrder) {
   if (first) return `Left ${dateOnly(first.leftAt)}`;
   if (order.feedback.leaveBy) return `Buyer can leave feedback until ${dateOnly(order.feedback.leaveBy)}`;
   return order.feedback.reason ?? null;
+}
+
+function deliveryTimelineValue(order: ManageOrder) {
+  if (order.actualDeliveryTime) return dateOnly(order.actualDeliveryTime);
+  return `${dateOnly(order.estimatedDeliveryMin)} - ${dateOnly(order.estimatedDeliveryMax)}`;
+}
+
+function shipmentProgressClass(order: ManageOrder) {
+  if (order.actualDeliveryTime) return "right-8";
+  if (orderStatus(order) === "Shipped") return "right-[calc(33.333%+2rem)]";
+  return "right-[calc(66.666%+2rem)]";
 }
 
 function caseToneClasses(order: ManageOrder) {
@@ -236,6 +248,7 @@ export default function ManageOrderDetailsPage({
               <div>
                 <h2 className="text-xl font-bold">{orderStatus(order)}</h2>
                 <p className="mt-1 text-sm text-muted-foreground">
+                  {order.actualDeliveryTime ? `Delivered ${dateOnly(order.actualDeliveryTime)}. ` : null}
                   {labelCreatedDate(order) ? `Label created ${dateOnly(labelCreatedDate(order))}. ` : null}
                   {order.shipBy ? `Ship by ${dateOnly(order.shipBy)}. ` : null}
                   {order.estimatedDeliveryMin || order.estimatedDeliveryMax ? `Estimated delivery ${dateOnly(order.estimatedDeliveryMin)} - ${dateOnly(order.estimatedDeliveryMax)}.` : null}
@@ -299,10 +312,10 @@ export default function ManageOrderDetailsPage({
             </div>
             <div className="relative mt-8 grid grid-cols-3 gap-4">
               <div className="absolute left-8 right-8 top-3 h-1 rounded-full bg-muted" />
-              <div className={cn("absolute left-8 top-3 h-1 rounded-full bg-primary", orderStatus(order) === "Shipped" ? "right-[calc(33.333%+2rem)]" : "right-[calc(66.666%+2rem)]")} />
+              <div className={cn("absolute left-8 top-3 h-1 rounded-full bg-primary", shipmentProgressClass(order))} />
               <TimelineDot label="Buyer paid" value={dateOnly(order.paidTime)} active />
-              <TimelineDot label={orderStatus(order)} value={labelCreatedDate(order) ? `Label created ${dateOnly(labelCreatedDate(order))}` : dateOnly(order.shipBy)} active={orderStatus(order) === "Shipped"} />
-              <TimelineDot label="Delivery" value={`${dateOnly(order.estimatedDeliveryMin)} - ${dateOnly(order.estimatedDeliveryMax)}`} active={false} />
+              <TimelineDot label="Shipped" value={labelCreatedDate(order) ? `Label created ${dateOnly(labelCreatedDate(order))}` : dateOnly(order.shipBy)} active={orderStatus(order) === "Shipped" || orderStatus(order) === "Delivered"} />
+              <TimelineDot label={order.actualDeliveryTime ? "Delivered" : "Delivery"} value={deliveryTimelineValue(order)} active={orderStatus(order) === "Delivered"} />
             </div>
           </section>
 
@@ -459,13 +472,20 @@ export default function ManageOrderDetailsPage({
 
           <section className="rounded-xl border border-border bg-card p-5">
             <h2 className="mb-4 text-xl font-bold">Feedback</h2>
-            <div className={cn("rounded-lg border px-3 py-2 text-sm", feedbackToneClasses(order))}>
-              <div className="font-semibold capitalize">{feedbackSummaryText(order)}</div>
-              {feedbackDetailText(order) ? <div className="mt-1 text-xs opacity-85">{feedbackDetailText(order)}</div> : null}
+            <div
+              className={cn("flex min-w-0 items-center gap-2 rounded-lg border px-3 py-2 text-sm", feedbackToneClasses(order))}
+              title={[
+                feedbackSummaryText(order),
+                feedbackDetailText(order),
+                order.feedback.items[0]?.isAutomated && order.feedback.leaveBy
+                  ? `Buyer can leave feedback until ${dateOnly(order.feedback.leaveBy)}`
+                  : null,
+              ].filter(Boolean).join(" - ")}
+            >
+              <span className="shrink-0 font-semibold capitalize">{feedbackSummaryText(order)}</span>
+              {feedbackDetailText(order) ? <span className="min-w-0 truncate text-xs opacity-85">- {feedbackDetailText(order)}</span> : null}
               {order.feedback.items[0]?.isAutomated && order.feedback.leaveBy ? (
-                <div className="mt-1 text-xs opacity-85">
-                  Buyer can leave feedback until {dateOnly(order.feedback.leaveBy)}
-                </div>
+                <span className="hidden shrink-0 text-xs opacity-85 2xl:inline">- Buyer can leave feedback until {dateOnly(order.feedback.leaveBy)}</span>
               ) : null}
             </div>
           </section>

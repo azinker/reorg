@@ -22,6 +22,7 @@ const baseOrder: ManageOrder = {
   shipBy: "2026-05-08T10:00:00.000Z",
   estimatedDeliveryMin: null,
   estimatedDeliveryMax: null,
+  actualDeliveryTime: null,
   shippedTime: null,
   shippingService: "USPSPriority",
   trackingNumbers: [],

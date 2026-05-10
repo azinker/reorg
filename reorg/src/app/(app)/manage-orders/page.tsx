@@ -117,6 +117,12 @@ function labelCreatedDate(order: ManageOrder) {
   return trackingForDisplay(order)?.shippedTime ?? order.shippedTime;
 }
 
+function fulfillmentStatus(order: ManageOrder) {
+  if (order.actualDeliveryTime) return "delivered";
+  if (order.shippedTime || order.trackingNumbers.length) return "shipped";
+  return "awaiting";
+}
+
 function EbayLogoImage({ compact }: { compact?: boolean }) {
   return (
     <img
@@ -164,7 +170,16 @@ function CopyButton({ value, label, compact }: { value: string; label: string; c
 }
 
 function StatusBlock({ order }: { order: ManageOrder }) {
-  if (order.shippedTime || order.trackingNumbers.length) {
+  const status = fulfillmentStatus(order);
+  if (status === "delivered") {
+    return (
+      <div>
+        <div className="font-semibold text-emerald-300">Delivered</div>
+        <div className="text-xs text-muted-foreground">Delivered {pdtDate(order.actualDeliveryTime)}</div>
+      </div>
+    );
+  }
+  if (status === "shipped") {
     return (
       <div>
         <div className="font-semibold text-sky-300">Shipped</div>
@@ -198,28 +213,40 @@ function feedbackDeadlineText(order: ManageOrder) {
   return `Buyer can leave feedback until ${pdtDate(order.feedback.leaveBy)}`;
 }
 
+function feedbackLabel(order: ManageOrder) {
+  const first = order.feedback.items[0];
+  if (first?.isAutomated) return "Automated positive feedback";
+  if (first) return `${first.kind.toLowerCase()} feedback left`;
+  if (order.feedback.state === "NOT_LEFT") return "No feedback left";
+  return "Feedback not checked";
+}
+
+function feedbackDetail(order: ManageOrder) {
+  const first = order.feedback.items[0];
+  if (first?.comment) return first.comment;
+  if (first) return `Left ${pdtDate(first.leftAt)}`;
+  if (order.feedback.state === "NOT_LEFT") return feedbackDeadlineText(order);
+  return order.feedback.reason ?? feedbackDeadlineText(order);
+}
+
 function FeedbackBadge({ order }: { order: ManageOrder }) {
   const first = order.feedback.items[0];
   const deadline = feedbackDeadlineText(order);
-  let label = "Feedback not checked";
-  let detail = order.feedback.reason ?? null;
-
-  if (first) {
-    label = first.isAutomated ? "Automated positive feedback" : `${first.kind.toLowerCase()} feedback left`;
-    detail = first.comment ?? `Left ${pdtDate(first.leftAt)}`;
-  } else if (order.feedback.state === "NOT_LEFT") {
-    label = "No feedback left";
-    detail = deadline;
-  } else if (order.feedback.state === "UNKNOWN" && deadline) {
-    detail = deadline;
-  }
+  const label = feedbackLabel(order);
+  const detail = feedbackDetail(order);
 
   return (
-    <div className={cn("mb-3 mt-2 w-fit max-w-full rounded-md border px-2 py-1 text-xs", feedbackToneClasses(order))}>
-      <div className="font-semibold capitalize">{label}</div>
-      {detail ? <div className="mt-0.5 line-clamp-2 text-[11px] opacity-85">{detail}</div> : null}
+    <div
+      className={cn(
+        "mb-3 mt-2 inline-flex max-w-full items-center gap-1.5 rounded-md border px-2 py-1 text-xs",
+        feedbackToneClasses(order),
+      )}
+      title={[label, detail, first?.isAutomated && deadline ? deadline : null].filter(Boolean).join(" - ")}
+    >
+      <span className="shrink-0 font-semibold capitalize">{label}</span>
+      {detail ? <span className="min-w-0 truncate opacity-85">- {detail}</span> : null}
       {first?.isAutomated && deadline ? (
-        <div className="mt-0.5 text-[11px] opacity-85">{deadline}</div>
+        <span className="hidden shrink-0 opacity-85 2xl:inline">- {deadline}</span>
       ) : null}
     </div>
   );

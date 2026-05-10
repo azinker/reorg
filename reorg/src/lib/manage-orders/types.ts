@@ -129,6 +129,7 @@ export type ManageOrder = {
   shipBy: string | null;
   estimatedDeliveryMin: string | null;
   estimatedDeliveryMax: string | null;
+  actualDeliveryTime: string | null;
   shippedTime: string | null;
   shippingService: string | null;
   trackingNumbers: Array<{ number: string | null; carrier: string | null; shippedTime: string | null }>;

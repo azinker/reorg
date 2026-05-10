@@ -9,7 +9,6 @@ import {
 } from "@/lib/network-transfer-request";
 import {
   NAV_PAGES,
-  resolveAllowedPageKeys,
   type PageKey,
 } from "@/lib/nav-pages";
 
@@ -104,29 +103,15 @@ export default auth(function proxy(req: NextRequest & { auth?: unknown }) {
     return NextResponse.redirect(new URL("/login", req.url));
   }
 
-  // Page-access gating for non-API routes. We never gate API routes here —
+  // Page-access metadata for non-API routes. We never gate API routes here —
   // those have their own admin/role checks at the route handler level.
-  // When an admin is impersonating, we skip middleware-level gating and let
-  // (app)/layout.tsx perform it using the impersonated user's permissions.
+  //
+  // Important: do not make the allow/deny decision here. The auth JWT can lag
+  // behind a user's freshly edited pagePermissions, so (app)/layout.tsx does
+  // the actual gate using getActor(), which reads current DB-backed access.
   if (!pathname.startsWith("/api/")) {
     const pageKey = resolvePageKeyForPath(pathname);
     if (pageKey) {
-      const impersonating = req.cookies.get("reorg_impersonate");
-      if (!impersonating) {
-        const sessionUser = (req.auth as {
-          user?: { role?: string; pagePermissions?: string[] | null };
-        } | null)?.user;
-        const allowed = resolveAllowedPageKeys({
-          role: sessionUser?.role ?? "OPERATOR",
-          pagePermissions: sessionUser?.pagePermissions ?? null,
-        });
-        if (!allowed.has(pageKey)) {
-          const url = req.nextUrl.clone();
-          url.pathname = "/dashboard";
-          url.search = `?denied=${encodeURIComponent(pageKey)}`;
-          return NextResponse.redirect(url);
-        }
-      }
       return buildNextResponse(req, {
         "x-reorg-page-key": pageKey,
         "x-reorg-pathname": pathname,

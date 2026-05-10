@@ -208,6 +208,8 @@ function appendSearchedTrackingIfMissing(order: ManageOrder, searchTerm: string)
 
 function deliveryDates(order: Record<string, unknown>) {
   const tx = firstRecord(asRecord(order.TransactionArray)?.Transaction);
+  const orderSelected = asRecord(order.ShippingServiceSelected);
+  const orderPackageInfo = asRecord(orderSelected?.ShippingPackageInfo);
   const txSelected = asRecord(tx?.ShippingServiceSelected);
   const packageInfo = asRecord(txSelected?.ShippingPackageInfo);
   return {
@@ -219,10 +221,16 @@ function deliveryDates(order: Record<string, unknown>) {
       text(tx?.ShippingDetails && asRecord(tx.ShippingDetails)?.ShipByTime),
     estimatedMin:
       text(order.EstimatedDeliveryDateMin) ??
+      text(orderSelected?.EstimatedDeliveryDateMin) ??
       text(packageInfo?.EstimatedDeliveryTimeMin),
     estimatedMax:
       text(order.EstimatedDeliveryDateMax) ??
+      text(orderSelected?.EstimatedDeliveryDateMax) ??
       text(packageInfo?.EstimatedDeliveryTimeMax),
+    actualDeliveryTime:
+      text(order.ActualDeliveryTime) ??
+      text(orderPackageInfo?.ActualDeliveryTime) ??
+      text(packageInfo?.ActualDeliveryTime),
   };
 }
 
@@ -532,6 +540,7 @@ async function mapOrder(ctx: StoreContext, order: Record<string, unknown>): Prom
     shipBy: dates.shipBy,
     estimatedDeliveryMin: dates.estimatedMin,
     estimatedDeliveryMax: dates.estimatedMax,
+    actualDeliveryTime: dates.actualDeliveryTime,
     shippedTime: text(order.ShippedTime),
     shippingService: selectedShippingService(order),
     trackingNumbers: tracking,
@@ -551,6 +560,7 @@ async function mapOrder(ctx: StoreContext, order: Record<string, unknown>): Prom
       paidTime: text(order.PaidTime),
       estimatedDeliveryMin: dates.estimatedMin,
       estimatedDeliveryMax: dates.estimatedMax,
+      actualDeliveryTime: dates.actualDeliveryTime,
     }),
     cases: defaultCaseSummary(),
     lines: enrichedLines,
@@ -684,9 +694,10 @@ function earliestDate(dates: Array<Date | null>) {
 }
 
 function feedbackLeaveByIso(
-  order: Pick<ManageOrder, "createdTime" | "paidTime" | "estimatedDeliveryMin" | "estimatedDeliveryMax">,
+  order: Pick<ManageOrder, "createdTime" | "paidTime" | "estimatedDeliveryMin" | "estimatedDeliveryMax" | "actualDeliveryTime">,
 ) {
   const deliveredOrExpected = earliestDate([
+    validDate(order.actualDeliveryTime),
     validDate(order.estimatedDeliveryMax),
     validDate(order.estimatedDeliveryMin),
   ]);
@@ -696,7 +707,7 @@ function feedbackLeaveByIso(
 }
 
 function defaultFeedbackSummary(
-  order: Pick<ManageOrder, "createdTime" | "paidTime" | "estimatedDeliveryMin" | "estimatedDeliveryMax">,
+  order: Pick<ManageOrder, "createdTime" | "paidTime" | "estimatedDeliveryMin" | "estimatedDeliveryMax" | "actualDeliveryTime">,
 ): ManageOrderFeedbackSummary {
   return {
     state: "UNKNOWN",
@@ -829,7 +840,7 @@ function orderToFeedbackContext(order: ManageOrder): EbayOrderContext {
     shippedTime: order.shippedTime,
     estimatedDeliveryMin: order.estimatedDeliveryMin,
     estimatedDeliveryMax: order.estimatedDeliveryMax,
-    actualDeliveryTime: null,
+    actualDeliveryTime: order.actualDeliveryTime,
     shippingService: order.shippingService,
     trackingNumber: tracking?.number ?? null,
     trackingCarrier: tracking?.carrier ?? null,
@@ -1375,10 +1386,15 @@ function applyDetailEnrichment(
     enriched = {
       ...enriched,
       salesRecordNumber: enriched.salesRecordNumber ?? stringFromJson(fulfillment.salesRecordReference),
-      shipBy: enriched.shipBy ?? shipBy,
-      estimatedDeliveryMin: enriched.estimatedDeliveryMin ?? minEstimated,
-      estimatedDeliveryMax: enriched.estimatedDeliveryMax ?? maxEstimated,
-    };
+    shipBy: enriched.shipBy ?? shipBy,
+    estimatedDeliveryMin: enriched.estimatedDeliveryMin ?? minEstimated,
+    estimatedDeliveryMax: enriched.estimatedDeliveryMax ?? maxEstimated,
+    actualDeliveryTime:
+      enriched.actualDeliveryTime ??
+      stringFromJson(shippingStep?.actualDeliveryDate) ??
+      stringFromJson(shippingStep?.actualDeliveryTime) ??
+      stringFromJson(fulfillment.actualDeliveryDate),
+  };
   }
   if (financeResult?.finance) {
     const taxCents = financeResult.taxCents ?? enriched.taxCents;
