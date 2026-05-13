@@ -75,7 +75,7 @@ export function buildCaseStatusSummary(
 
   if (caseEvents.length === 0) return null;
 
-  const title = inferCaseTitle(caseEvents, messages);
+  const title = inferCaseTitle(caseEvents);
   const isReturnCase = title === "Return Case";
   const opened = caseEvents.find(isOpenCaseEvent) ?? null;
   const returnShipped = last(caseEvents.filter((event) => isReturnShippedEvent(event)));
@@ -280,10 +280,15 @@ export function formatHelpdeskDate(value: string | null | undefined): string {
 }
 
 function isCaseEvent(event: HelpdeskTimelineEvent): boolean {
-  return (
-    event.kind === "case" ||
-    /^EBAY_(CASE|ITEM_NOT_RECEIVED|RETURN|BUYER_CANCEL|REFUND)/.test(event.action) ||
-    /case|claim|return|item not received|refund|cancel/i.test(event.text)
+  if (event.kind === "case") return true;
+  if (/^EBAY_(CASE|ITEM_NOT_RECEIVED|RETURN|BUYER_CANCEL)/.test(event.action)) {
+    return true;
+  }
+  if (/^EBAY_REFUND/.test(event.action)) {
+    return Boolean(event.externalId) || /case|claim|return/i.test(event.text);
+  }
+  return /case|claim|return request|return case|item not received|cancel(?:lation)? request/i.test(
+    event.text,
   );
 }
 
@@ -327,11 +332,8 @@ function isClosedCaseEvent(event: HelpdeskTimelineEvent): boolean {
   return event.action === "EBAY_CASE_CLOSED" || /closed/i.test(event.text);
 }
 
-function inferCaseTitle(events: HelpdeskTimelineEvent[], messages: ConversationMessage[]): string {
-  const haystack = [
-    ...events.map((event) => `${event.action} ${event.text}`),
-    ...messages.map((message) => `${message.subject ?? ""} ${message.bodyText}`),
-  ].join(" ");
+function inferCaseTitle(events: HelpdeskTimelineEvent[]): string {
+  const haystack = events.map((event) => `${event.action} ${event.text}`).join(" ");
   if (/item not received|INR/i.test(haystack)) return "Item Not Received Case";
   if (/return/i.test(haystack)) return "Return Case";
   if (/cancel/i.test(haystack)) return "Cancellation Request";

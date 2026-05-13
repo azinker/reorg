@@ -200,6 +200,33 @@ test("buildCaseStatusSummary marks a completed return as refunded", () => {
   assert.equal(summary.closedAt, "2026-05-06T18:19:07.000Z");
 });
 
+test("buildCaseStatusSummary ignores feedback notifications and normal return wording", () => {
+  const summary = buildCaseStatusSummary(
+    [
+      event(
+        "feedback-removal",
+        "EBAY_SYSTEM_NOTIFICATION",
+        "feedback",
+        "eBay Notification: Feedback Removal Approved",
+        "2026-05-12T21:29:00.000Z",
+      ),
+    ],
+    [
+      {
+        direction: "OUTBOUND",
+        source: "EBAY",
+        subject: null,
+        bodyText: "I can offer a free return option if that helps resolve this.",
+        sentAt: "2026-05-12T20:32:00.000Z",
+        fromName: "Adam",
+        fromIdentifier: null,
+      },
+    ],
+  );
+
+  assert.equal(summary, null);
+});
+
 test("buildCaseStatusSummary treats legacy return delivery and refund labels as current", () => {
   const summary = buildCaseStatusSummary(
     [

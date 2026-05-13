@@ -527,6 +527,29 @@ function compactTimelineLabel(action: string, text: string): string {
   }
 }
 
+function systemTimelineKindForAction(args: {
+  action: string;
+  text: string;
+  systemMessageType: string | null;
+  hasCaseId: boolean;
+}): SystemEventKind {
+  if (
+    args.action === "EBAY_ITEM_NOT_RECEIVED_CASE" ||
+    /^EBAY_(CASE|RETURN|BUYER_CANCEL)/.test(args.action) ||
+    (args.action === "EBAY_ITEM_DELIVERED" && args.hasCaseId)
+  ) {
+    return "case";
+  }
+  if (/^EBAY_CANCEL/.test(args.action)) return "cancel";
+  if (/^EBAY_REFUND/.test(args.action)) {
+    return args.hasCaseId || /case|claim|return/i.test(args.text) ? "case" : "refund";
+  }
+  if (args.systemMessageType === SYSTEM_MESSAGE_TYPES.FEEDBACK_REMOVAL_APPROVED) {
+    return "feedback";
+  }
+  return "status";
+}
+
 function stripHtmlToPlainText(value: string | null | undefined): string {
   if (!value) return "";
   return value
@@ -902,7 +925,12 @@ function systemTicketTimelineEvents(args: {
       id: `related-system-${baseId}`,
       type: "system",
       action,
-      kind: "case",
+      kind: systemTimelineKindForAction({
+        action,
+        text,
+        systemMessageType: args.systemMessageType,
+        hasCaseId: Boolean(ctx.caseId),
+      }),
       text,
       shortText,
       href: ctx.href,

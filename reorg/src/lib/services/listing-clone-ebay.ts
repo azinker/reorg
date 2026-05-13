@@ -692,13 +692,17 @@ function normalizeCloneCatalogMetadata(
 function scrubCrossSellerCatalogHints(item: Record<string, unknown>): void {
   const pld = item.ProductListingDetails as Record<string, unknown> | undefined;
   if (!pld || typeof pld !== "object") return;
+  const upc =
+    typeof pld.UPC === "string" && pld.UPC.trim()
+      ? pld.UPC.trim()
+      : "Does Not Apply";
   delete pld.IncludeeBayProductDetails;
   delete pld.ProductReferenceID;
   delete pld.ProductDefinition;
-  delete pld.UPC;
   delete pld.EAN;
   delete pld.ISBN;
   delete pld.BrandMPN;
+  pld.UPC = upc;
   const keys = Object.keys(pld).filter((k) => {
     const v = pld[k];
     if (v == null) return false;
