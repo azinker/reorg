@@ -249,6 +249,7 @@ export function parseXmlSimple(xml: string): Record<string, unknown> {
           "ShipmentTrackingDetails",
           "Errors",
           "Error",
+          "Refund",
         ].includes(tagName),
     });
     return parser.parse(xml) as Record<string, unknown>;
@@ -316,9 +317,14 @@ export function extractTrackingNumbersFromOrder(
   }
 
   // 2. Order-level ShippingServiceSelected (eBay shipping label path)
-  const sss = order.ShippingServiceSelected as Record<string, unknown> | undefined;
-  if (sss) {
-    addFromDetails(sss.ShipmentTrackingDetails, orderShippedTime);
+  const shippingServiceSelected = order.ShippingServiceSelected as
+    | Record<string, unknown>
+    | undefined;
+  if (shippingServiceSelected) {
+    addFromDetails(
+      shippingServiceSelected.ShipmentTrackingDetails,
+      orderShippedTime,
+    );
   }
 
   // 3 + 4 + 5. Transaction-level
@@ -600,6 +606,22 @@ export interface EbayOrderContext {
    * doesn't expose a per-order shipping line.
    */
   shippingCents: number | null;
+  /**
+   * Cents refunded (or refund due) to the buyer per eBay order payload.
+   * Trading API: `RefundAmount` / `MonetaryDetails.Refunds`. Fulfillment API:
+   * `paymentSummary` refund hints when present.
+   */
+  refundCents: number | null;
+  /**
+   * Trading-only: `RefundStatus` (Success | Pending | Failure). Null when
+   * eBay does not return it or when context came from Fulfillment API.
+   */
+  refundStatus: string | null;
+  /**
+   * Estimated buyer net after refunds: max(0, paid/total basis − refundCents).
+   * Null when there is no positive refund amount to net against.
+   */
+  buyerNetCents: number | null;
   currency: string | null;
   shippingAddress: EbayOrderContextAddress | null;
   lineItems: EbayOrderContextLineItem[];
@@ -629,6 +651,54 @@ function pickCurrency(raw: unknown): string | null {
     if (cur) return String(cur);
   }
   return "USD";
+}
+
+/**
+ * Sum refund cents from Trading GetOrders `MonetaryDetails.Refunds`, else
+ * fall back to order-level `RefundAmount`.
+ */
+function extractTradingOrderRefundCents(order: Record<string, unknown>): number | null {
+  const monetary = order.MonetaryDetails as Record<string, unknown> | undefined;
+  if (monetary) {
+    const refunds = monetary.Refunds as Record<string, unknown> | undefined;
+    if (refunds) {
+      const raw = refunds.Refund;
+      const arr = asList<Record<string, unknown>>(raw);
+      let sum = 0;
+      for (const r of arr) {
+        const c = parseDollarsToCents(
+          r.RefundAmount ?? r.TotalRefundAmount ?? r.PaymentAmount,
+        );
+        if (c != null && c > 0) sum += c;
+      }
+      if (sum > 0) return sum;
+    }
+  }
+  const direct = parseDollarsToCents(order.RefundAmount);
+  return direct != null && direct > 0 ? direct : null;
+}
+
+/** Best-effort refund total from Sell Fulfillment order JSON. */
+function extractFulfillmentRefundCents(order: Record<string, unknown>): number | null {
+  const ps = asRecord(order.paymentSummary);
+  let sum = 0;
+  for (const r of asList(ps?.refunds)) {
+    const rec = asRecord(r);
+    const c = parseFulfillmentMoneyToCents(
+      rec?.total ?? rec?.amount ?? asRecord(rec?.amount)?.value ?? r,
+    );
+    if (c != null && c > 0) sum += c;
+  }
+  for (const pay of asList(ps?.payments)) {
+    const p = asRecord(pay);
+    const c = parseFulfillmentMoneyToCents(
+      p?.refundAmount ??
+        asRecord(p?.refund)?.totalAmount ??
+        p?.totalRefundAmount,
+    );
+    if (c != null && c > 0) sum += c;
+  }
+  return sum > 0 ? sum : null;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -913,6 +983,15 @@ async function fetchEbayFulfillmentOrderContext(
     nonEmptyString(firstShippingStep?.shippingServiceCode) ??
     nonEmptyString(firstInstruction?.shippingServiceCode);
 
+  const orderTotalCents =
+    parseFulfillmentMoneyToCents(total) ??
+    parseFulfillmentMoneyToCents(subtotal);
+  const refundCents = extractFulfillmentRefundCents(order);
+  const buyerNetCents =
+    refundCents != null && refundCents > 0 && orderTotalCents != null
+      ? Math.max(0, orderTotalCents - refundCents)
+      : null;
+
   return {
     orderId:
       nonEmptyString(order.legacyOrderId) ??
@@ -943,10 +1022,11 @@ async function fetchEbayFulfillmentOrderContext(
     trackingNumber: firstTracking.number,
     trackingCarrier: firstTracking.carrier,
     trackingNumbers,
-    totalCents:
-      parseFulfillmentMoneyToCents(total) ??
-      parseFulfillmentMoneyToCents(subtotal),
+    totalCents: orderTotalCents,
     shippingCents: parseFulfillmentMoneyToCents(deliveryCost),
+    refundCents,
+    refundStatus: null,
+    buyerNetCents,
     currency:
       pickFulfillmentCurrency(total) ??
       pickFulfillmentCurrency(subtotal) ??
@@ -1104,7 +1184,16 @@ export async function fetchEbayOrderContext(
   const estimatedDeliveryMax = delivery.estimatedMax;
   const actualDeliveryTime = delivery.actualDeliveryTime;
 
-  const totalCents = parseDollarsToCents(order.Total ?? order.AmountPaid);
+  const amountPaidCents = parseDollarsToCents(order.AmountPaid);
+  const totalFieldCents = parseDollarsToCents(order.Total);
+  const totalCents = amountPaidCents ?? totalFieldCents;
+  const refundCents = extractTradingOrderRefundCents(order);
+  const refundStatus = readXmlText(order.RefundStatus);
+  const basisForNet = amountPaidCents ?? totalFieldCents;
+  const buyerNetCents =
+    refundCents != null && refundCents > 0 && basisForNet != null
+      ? Math.max(0, basisForNet - refundCents)
+      : null;
   const currency = pickCurrency(order.Total) ?? pickCurrency(order.AmountPaid);
 
   // Sales Record Number (Selling Manager). Optional ΓÇö only present when the
@@ -1133,6 +1222,9 @@ export async function fetchEbayOrderContext(
     trackingNumbers,
     totalCents,
     shippingCents,
+    refundCents,
+    refundStatus,
+    buyerNetCents,
     currency,
     shippingAddress,
     lineItems,

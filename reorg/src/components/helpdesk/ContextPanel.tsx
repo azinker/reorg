@@ -163,6 +163,9 @@ interface OrderContext {
   totalCents: number | null;
   /** Shipping fee in cents; null = free shipping or unavailable. */
   shippingCents: number | null;
+  refundCents: number | null;
+  refundStatus: string | null;
+  buyerNetCents: number | null;
   currency: string | null;
   shippingAddress: OrderContextAddress | null;
   lineItems: OrderContextLineItem[];
@@ -782,21 +785,49 @@ function CustomerCard({
           </div>
         </Row>
         <Row label="Total Order value">
-          <span className="text-foreground">
-            {order?.totalCents != null ? (
-              <>
-                <span className="font-semibold">
-                  {formatMoney(order.totalCents, order.currency)}
-                </span>
-                <span className="ml-1 text-muted-foreground">
-                  ({orderCount > 0 ? orderCount : 1} order
-                  {orderCount === 1 || orderCount === 0 ? "" : "s"})
-                </span>
-              </>
-            ) : (
-              totalLabel
-            )}
-          </span>
+          <div className="flex flex-col items-end gap-1 text-right">
+            <span className="text-foreground">
+              {order?.totalCents != null ? (
+                <>
+                  <span className="font-semibold">
+                    {formatMoney(order.totalCents, order.currency)}
+                  </span>
+                  <span className="ml-1 text-muted-foreground">
+                    ({orderCount > 0 ? orderCount : 1} order
+                    {orderCount === 1 || orderCount === 0 ? "" : "s"})
+                  </span>
+                </>
+              ) : (
+                totalLabel
+              )}
+            </span>
+            {order?.refundCents != null && order.refundCents > 0 ? (
+              <div className="max-w-[240px] space-y-0.5 text-[11px] leading-snug">
+                <p>
+                  <span className="text-muted-foreground">Refunded </span>
+                  <span className="font-semibold tabular-nums text-amber-700 dark:text-amber-300">
+                    {formatMoney(order.refundCents, order.currency)}
+                  </span>
+                  {order.refundStatus ? (
+                    <span
+                      className="ml-1 text-[10px] font-medium text-muted-foreground"
+                      title="eBay refund status"
+                    >
+                      ({order.refundStatus})
+                    </span>
+                  ) : null}
+                </p>
+                {order.buyerNetCents != null ? (
+                  <p>
+                    <span className="text-muted-foreground">Buyer net </span>
+                    <span className="font-semibold tabular-nums text-foreground">
+                      {formatMoney(order.buyerNetCents, order.currency)}
+                    </span>
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
         </Row>
         <Row label="Segments">
           <div className="flex flex-wrap justify-end gap-1">

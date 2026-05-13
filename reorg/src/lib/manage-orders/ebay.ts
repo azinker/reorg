@@ -855,6 +855,9 @@ function orderToFeedbackContext(order: ManageOrder): EbayOrderContext {
       })),
     totalCents: order.totalCents,
     shippingCents: order.shippingCents,
+    refundCents: null,
+    refundStatus: null,
+    buyerNetCents: null,
     currency: order.currency,
     shippingAddress: order.shippingAddress,
     lineItems: order.lines.map((line) => ({
