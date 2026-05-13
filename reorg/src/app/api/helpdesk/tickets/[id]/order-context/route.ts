@@ -3,7 +3,7 @@ import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { buildEbayConfig } from "@/lib/services/auto-responder-ebay";
 import { getOrderContextCached } from "@/lib/services/helpdesk-order-context-cache";
-import { getCurrentInventoryBySkus } from "@/lib/services/helpdesk-inventory";
+import { getCurrentInventoryBySkus, getCatalogWeightLabelBySkus } from "@/lib/services/helpdesk-inventory";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -77,7 +77,10 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
     const skus = ctx.lineItems
       .map((line) => line.sku?.trim())
       .filter((sku): sku is string => Boolean(sku));
-    const inventoryBySku = await getCurrentInventoryBySkus(skus);
+    const [inventoryBySku, weightBySku] = await Promise.all([
+      getCurrentInventoryBySkus(skus),
+      getCatalogWeightLabelBySkus(skus),
+    ]);
     const enrichedCtx = {
       ...ctx,
       lineItems: ctx.lineItems.map((line) => {
@@ -85,6 +88,7 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
         return {
           ...line,
           currentInventory: sku ? inventoryBySku.get(sku) ?? null : null,
+          catalogWeight: sku ? weightBySku.get(sku) ?? null : null,
         };
       }),
     };

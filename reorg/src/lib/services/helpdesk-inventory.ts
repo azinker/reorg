@@ -3,6 +3,7 @@ import {
   selectCurrentInventory,
   type CurrentInventoryCandidate,
 } from "@/lib/helpdesk/inventory";
+import { masterRowWeightLabel } from "@/lib/services/calculation";
 
 export async function getCurrentInventoryBySkus(
   skus: string[],
@@ -51,4 +52,28 @@ export async function getCurrentInventoryBySku(
 ): Promise<number | null> {
   const inventoryBySku = await getCurrentInventoryBySkus([sku]);
   return inventoryBySku.get(sku.trim()) ?? null;
+}
+
+/**
+ * Catalog weight labels keyed by SKU (MasterRow is authoritative — one row
+ * per SKU across all marketplaces).
+ */
+export async function getCatalogWeightLabelBySkus(
+  skus: string[],
+): Promise<Map<string, string | null>> {
+  const uniqueSkus = [...new Set(skus.map((s) => s.trim()).filter(Boolean))];
+  const bySku = new Map<string, string | null>(
+    uniqueSkus.map((sku) => [sku, null]),
+  );
+  if (uniqueSkus.length === 0) return bySku;
+
+  const rows = await db.masterRow.findMany({
+    where: { sku: { in: uniqueSkus } },
+    select: { sku: true, weight: true, weightDisplay: true, weightOz: true },
+  });
+
+  for (const row of rows) {
+    bySku.set(row.sku, masterRowWeightLabel(row));
+  }
+  return bySku;
 }

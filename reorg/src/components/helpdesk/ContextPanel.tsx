@@ -122,6 +122,8 @@ interface OrderContextLineItem {
   title: string;
   sku: string | null;
   currentInventory: number | null;
+  /** Catalog MasterRow weight, same formatting as grid. */
+  catalogWeight: string | null;
   quantity: number;
   unitPriceCents: number | null;
   pictureUrl: string | null;
@@ -929,6 +931,9 @@ function ProductInquirySection({
               currentInventory={listing.currentInventory}
             />
           ) : null}
+          {listing.catalogWeight ? (
+            <CatalogWeightBlurb weight={listing.catalogWeight} />
+          ) : null}
           <p className="mt-1 inline-flex items-center gap-1 truncate font-mono text-[11px] text-muted-foreground">
             Item #{listing.itemId}
             <ExternalLink className="h-3 w-3 shrink-0 opacity-70" />
@@ -1153,7 +1158,7 @@ function OrderInfoSection({
       : null;
   const productItems: OrderContextLineItem[] =
     ctx?.lineItems && ctx.lineItems.length > 0
-      ? ctx.lineItems.map((item) => {
+        ? ctx.lineItems.map((item) => {
           const listing =
             ticket.listingInfo && ticket.listingInfo.itemId === item.itemId
               ? ticket.listingInfo
@@ -1169,6 +1174,8 @@ function OrderInfoSection({
             pictureUrl: item.pictureUrl ?? listing?.imageUrl ?? null,
             currentInventory:
               item.currentInventory ?? listing?.currentInventory ?? null,
+            catalogWeight:
+              item.catalogWeight ?? listing?.catalogWeight ?? null,
           };
         })
       : ticket.ebayItemId
@@ -1183,6 +1190,7 @@ function OrderInfoSection({
                 ticket.ebayItemId,
               sku: fallbackListing?.sku ?? null,
               currentInventory: fallbackListing?.currentInventory ?? null,
+              catalogWeight: fallbackListing?.catalogWeight ?? null,
               quantity: 1,
               unitPriceCents: null,
               pictureUrl: fallbackListing?.imageUrl ?? null,
@@ -1469,6 +1477,9 @@ function OrderInfoSection({
                         sku={item.sku}
                         currentInventory={item.currentInventory}
                       />
+                    ) : null}
+                    {item.catalogWeight ? (
+                      <CatalogWeightBlurb weight={item.catalogWeight} />
                     ) : null}
                   </div>
                   <div className="shrink-0 text-right text-xs">
@@ -1792,6 +1803,21 @@ function SkuInventoryLine({
       <CopyButton value={sku} title="Copy SKU" />
       <InventoryBadge value={currentInventory} />
     </div>
+  );
+}
+
+/** Catalog grid–style weight label from MasterRow (oz / LBS). */
+function CatalogWeightBlurb({ weight }: { weight: string }) {
+  return (
+    <p className="mt-1 text-[11px] leading-snug text-muted-foreground">
+      <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/85">
+        Weight
+      </span>
+      <span className="mx-1.5 text-foreground/35" aria-hidden>
+        ·
+      </span>
+      <span className="font-medium tabular-nums text-foreground/90">{weight}</span>
+    </p>
   );
 }
 

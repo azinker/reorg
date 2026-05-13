@@ -96,3 +96,36 @@ export function formatWeightDisplay(weightDisplay: string): string {
 
   return trimmed;
 }
+
+/**
+ * Single label for Help Desk / APIs: prefer `weightDisplay`, then raw `weight`
+ * (catalog editable string), then computed ounces. Mirrors how the catalog
+ * grid renders the weight column.
+ */
+export function masterRowWeightLabel(w: {
+  weight: string | null;
+  weightDisplay: string | null;
+  weightOz: number | null;
+}): string | null {
+  if (w.weightDisplay?.trim()) {
+    return formatWeightDisplay(w.weightDisplay.trim());
+  }
+  if (w.weight?.trim()) {
+    const raw = w.weight.trim();
+    const t = raw.toUpperCase();
+    if (t.endsWith("LBS")) return t.replace(/\s+/g, "");
+    const num = parseFloat(raw);
+    if (!Number.isNaN(num)) return `${num}oz`;
+    return raw;
+  }
+  if (w.weightOz != null && w.weightOz > 0) {
+    if (w.weightOz >= 16 && w.weightOz % 16 === 0) {
+      return `${w.weightOz / 16}LBS`;
+    }
+    if (Number.isInteger(w.weightOz)) {
+      return `${w.weightOz}oz`;
+    }
+    return `${Math.round(w.weightOz * 10) / 10}oz`;
+  }
+  return null;
+}

@@ -210,6 +210,8 @@ export interface HelpdeskListingInfo {
   title: string | null;
   imageUrl: string | null;
   currentInventory: number | null;
+  /** Formatted like the catalog grid (oz / LBS), from MasterRow when SKU matches. */
+  catalogWeight: string | null;
 }
 
 export interface HelpdeskTicketDetail extends HelpdeskTicketSummary {

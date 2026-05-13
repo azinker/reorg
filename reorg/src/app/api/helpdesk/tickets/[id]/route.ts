@@ -12,6 +12,7 @@ import {
   extractEnvelopePreviewImages,
 } from "@/lib/helpdesk/html-clean";
 import { getCurrentInventoryBySku } from "@/lib/services/helpdesk-inventory";
+import { masterRowWeightLabel } from "@/lib/services/calculation";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -629,6 +630,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     title: string | null;
     imageUrl: string | null;
     currentInventory: number | null;
+    catalogWeight: string | null;
   } | null = null;
   if (ticket.ebayItemId) {
     const listingSelect = {
@@ -636,6 +638,9 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       sku: true,
       title: true,
       imageUrl: true,
+      masterRow: {
+        select: { weight: true, weightDisplay: true, weightOz: true },
+      },
     } satisfies Prisma.MarketplaceListingSelect;
     const listing =
       (await db.marketplaceListing.findFirst({
@@ -664,6 +669,10 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         title: listing.title ?? ticket.ebayItemTitle ?? null,
         imageUrl: listing.imageUrl ?? null,
         currentInventory,
+        catalogWeight:
+          listing.masterRow != null
+            ? masterRowWeightLabel(listing.masterRow)
+            : null,
       };
     } else {
       // No internal MarketplaceListing match (item not in our catalog,
@@ -676,6 +685,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         title: ticket.ebayItemTitle ?? null,
         imageUrl: null,
         currentInventory: null,
+        catalogWeight: null,
       };
     }
   }
