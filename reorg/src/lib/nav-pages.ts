@@ -28,6 +28,7 @@ export type PageKey =
   | "tasks"
   | "revenue"
   | "profit-center"
+  | "video"
   | "payouts"
   | "sync"
   | "manage-orders"
@@ -63,6 +64,7 @@ export interface NavPage {
     | "ClipboardList"
     | "ChartNoAxesCombined"
     | "DollarSign"
+    | "Video"
     | "Wallet"
     | "RefreshCw"
     | "PackageCheck"
@@ -154,6 +156,14 @@ export const NAV_PAGES: NavPage[] = [
     label: "Profit Center",
     icon: "DollarSign",
     description: "Per-listing profit with cost / fee / shipping breakdown.",
+  },
+  {
+    key: "video",
+    href: "/video",
+    label: "Video",
+    icon: "Video",
+    description:
+      "Create marketplace-ready product video prompts from top-performing TPP eBay listings.",
   },
   {
     key: "payouts",

@@ -45,6 +45,11 @@ Use this reference when configuring reorG. Copy `.env.example` to `.env` and fil
 | `SHOPIFY_ACCESS_TOKEN` | Admin API access token | Shopify Admin → Apps → Create app | Yes (if using Shopify) | Long token string |
 | `SHOPIFY_API_VERSION` | Shopify API version to use | [Shopify docs](https://shopify.dev/docs/api/usage/versioning) | Yes (if using Shopify) | `2025-01` |
 | `SHOPIFY_WEBHOOK_SECRET` | Secret used to validate Shopify webhook signatures | Shopify app webhook settings | Recommended | Reuse app client secret or set an explicit secret |
+| **Higgsfield (Video)** |
+| `HF_KEY` | Combined Higgsfield API credentials for the Video page | Higgsfield Cloud | Yes (for direct generation) | `api-key:api-secret` |
+| `HIGGSFIELD_API_KEY` | Higgsfield API key, if not using `HF_KEY` | Higgsfield Cloud | Yes (for direct generation) | API key |
+| `HIGGSFIELD_API_SECRET` | Higgsfield API secret, if not using `HF_KEY` | Higgsfield Cloud | Yes (for direct generation) | API secret |
+| `HIGGSFIELD_VIDEO_MODEL` | Optional model override for Video generation | You set it | No | `bytedance/seedance/v1/pro/image-to-video` |
 | **Cloudflare R2 (Backups)** |
 | `R2_ACCOUNT_ID` | Cloudflare account ID | Cloudflare dashboard | Yes (for backups) | 32-character hex string |
 | `R2_ACCESS_KEY_ID` | R2 API access key | Cloudflare R2 → Manage R2 API Tokens | Yes (for backups) | Alphanumeric string |
