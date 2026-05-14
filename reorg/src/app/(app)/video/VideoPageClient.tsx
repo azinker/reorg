@@ -34,6 +34,16 @@ type VideoTopItem = {
   photoCount: number;
 };
 
+type VideoSalesCoverage = {
+  window: VideoWindow;
+  requestedFrom: string;
+  requestedTo: string;
+  latestOrderDate: string | null;
+  hasCurrentWindowData: boolean;
+  isStale: boolean;
+  message: string | null;
+};
+
 type HiggsfieldConnectionStatus = {
   configured: boolean;
   authMode: "HF_KEY" | "HIGGSFIELD_API_KEY_SECRET" | "missing";
@@ -72,6 +82,7 @@ type VideoListingBrief = {
 
 type ItemsResponse = {
   items: VideoTopItem[];
+  coverage: VideoSalesCoverage;
   connection: HiggsfieldConnectionStatus;
   generatedAt: string;
 };
@@ -131,6 +142,7 @@ function SettingPill(props: { label: string; value: string }) {
 export function VideoPageClient() {
   const [windowDays, setWindowDays] = useState<VideoWindow>("30d");
   const [items, setItems] = useState<VideoTopItem[]>([]);
+  const [coverage, setCoverage] = useState<VideoSalesCoverage | null>(null);
   const [connection, setConnection] = useState<HiggsfieldConnectionStatus | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [brief, setBrief] = useState<VideoListingBrief | null>(null);
@@ -158,8 +170,9 @@ export function VideoPageClient() {
         await fetch(`/api/video/items?${params.toString()}`, { cache: "no-store" }),
       );
       setItems(data.items);
+      setCoverage(data.coverage);
       setConnection(data.connection);
-      setStatusText(`TPP rankings refreshed ${formatDateTime(data.generatedAt)}.`);
+      setStatusText(data.coverage.message ?? `TPP rankings refreshed ${formatDateTime(data.generatedAt)}.`);
       setSelectedId((current) => {
         if (current && data.items.some((item) => item.marketplaceListingId === current)) return current;
         return data.items.find((item) => item.marketplaceListingId)?.marketplaceListingId ?? null;
@@ -182,7 +195,7 @@ export function VideoPageClient() {
         await fetch(`/api/video/brief?${params.toString()}`, { cache: "no-store" }),
       );
       setBrief(data);
-      setStatusText("Prompt built from the live TPP eBay listing data stored in reorG.");
+      setStatusText("Prompt built from live TPP eBay GetItem data, including full description and listing photos returned by eBay.");
     } catch (briefError) {
       setBrief(null);
       setError(briefError instanceof Error ? briefError.message : "Failed to build prompt.");
@@ -317,8 +330,16 @@ export function VideoPageClient() {
       ) : null}
 
       {statusText ? (
-        <div className="flex items-center gap-2 rounded-xl border border-border bg-card px-4 py-3 text-sm text-muted-foreground">
-          <CheckCircle2 className="h-4 w-4 text-emerald-300" />
+        <div className={`flex items-center gap-2 rounded-xl border px-4 py-3 text-sm ${
+          coverage?.isStale
+            ? "border-amber-500/25 bg-amber-500/10 text-amber-100"
+            : "border-border bg-card text-muted-foreground"
+        }`}>
+          {coverage?.isStale ? (
+            <AlertTriangle className="h-4 w-4 text-amber-200" />
+          ) : (
+            <CheckCircle2 className="h-4 w-4 text-emerald-300" />
+          )}
           <span>{statusText}</span>
           {requestId ? <span className="ml-auto font-mono text-xs">Request {requestId}</span> : null}
         </div>
@@ -452,7 +473,7 @@ export function VideoPageClient() {
             ) : null}
             {!loadingItems && items.length === 0 ? (
               <div className="py-8 text-center text-sm text-muted-foreground">
-                No TPP eBay revenue lines were found for this window.
+                {coverage?.message ?? "No current-window TPP eBay revenue lines were found."}
               </div>
             ) : null}
           </div>

@@ -2244,3 +2244,32 @@ export async function refreshEbayItemsDirect(
 
   return { updated, errors };
 }
+
+/**
+ * Read-only single-item fetch for creative workflows that need the full eBay
+ * payload, including fields intentionally stripped before database storage.
+ */
+export async function fetchEbayTppFullItemDirect(
+  integration: { id: string; platform: string; config: Record<string, unknown> },
+  itemId: string,
+): Promise<unknown | null> {
+  const config = integration.config;
+  const appId = config.appId as string;
+  const certId = config.certId as string;
+  const refreshToken = config.refreshToken as string;
+  if (!appId || !certId || !refreshToken) {
+    throw new Error("eBay credentials missing from integration config");
+  }
+
+  const ebayConfig: EbayConfig = {
+    appId,
+    certId,
+    refreshToken,
+    accessToken: config.accessToken as string | undefined,
+    accountUserId:
+      typeof config.accountUserId === "string" ? config.accountUserId : null,
+    accessTokenExpiresAt: config.accessTokenExpiresAt as number | undefined,
+  };
+
+  return fetchFullItem(integration.id, ebayConfig, itemId);
+}

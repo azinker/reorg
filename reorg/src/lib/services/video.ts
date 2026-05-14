@@ -1,6 +1,6 @@
 import type { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
-import { refreshEbayItemsDirect } from "@/lib/services/ebay-tpp-sync";
+import { fetchEbayTppFullItemDirect } from "@/lib/services/ebay-tpp-sync";
 
 const DEFAULT_VIDEO_MODEL = "bytedance/seedance/v1/pro/image-to-video";
 const DEFAULT_VIDEO_DURATION_SECONDS = 12;
@@ -25,6 +25,21 @@ export type VideoTopItem = {
   listingUrl: string | null;
   hasListingDescription: boolean;
   photoCount: number;
+};
+
+export type VideoSalesCoverage = {
+  window: VideoWindow;
+  requestedFrom: string;
+  requestedTo: string;
+  latestOrderDate: string | null;
+  hasCurrentWindowData: boolean;
+  isStale: boolean;
+  message: string | null;
+};
+
+export type VideoTopItemsResult = {
+  items: VideoTopItem[];
+  coverage: VideoSalesCoverage;
 };
 
 export type VideoListingBrief = {
@@ -84,21 +99,6 @@ type MutableItem = {
   netRevenueKnown: number;
   hasMissingNetData: boolean;
   orderIds: Set<string>;
-};
-
-type ListingFallbackRow = {
-  id: string;
-  sku: string;
-  title: string | null;
-  imageUrl: string | null;
-  salePrice: number | null;
-  inventory: number | null;
-  platformItemId: string;
-  rawData: Prisma.JsonValue;
-  masterRow: {
-    imageUrl: string | null;
-    title: string | null;
-  };
 };
 
 type VideoListingRecord = {
@@ -172,20 +172,32 @@ function stripHtml(value: string | null) {
     .replace(/<script[\s\S]*?<\/script>/gi, " ")
     .replace(/<style[\s\S]*?<\/style>/gi, " ")
     .replace(/<br\s*\/?>/gi, "\n")
-    .replace(/<\/p>/gi, "\n")
+    .replace(/<\/(p|div|section|article|h[1-6])>/gi, "\n")
+    .replace(/<li[^>]*>/gi, "\n- ")
+    .replace(/<\/li>/gi, "\n")
+    .replace(/<\/tr>/gi, "\n")
+    .replace(/<\/t[dh]>/gi, " | ")
     .replace(/<[^>]+>/g, " ")
     .replace(/&nbsp;/gi, " ")
     .replace(/&amp;/gi, "&")
     .replace(/&quot;/gi, '"')
     .replace(/&#39;/gi, "'")
-    .replace(/\s+/g, " ")
+    .replace(/&apos;/gi, "'")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&#(\d+);/g, (_match, code) => String.fromCharCode(Number(code)))
+    .replace(/\r/g, "")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n[ \t]+/g, "\n")
+    .replace(/[ \t]{2,}/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
     .trim();
   return text.length > 0 ? text : null;
 }
 
 function truncate(value: string | null, maxLength: number) {
   if (!value || value.length <= maxLength) return value;
-  return `${value.slice(0, maxLength - 1).trimEnd()}...`;
+  return `${value.slice(0, maxLength - 1).trimEnd()}\n[Description truncated for prompt length.]`;
 }
 
 function getItemSpecifics(rawData: unknown): Array<{ name: string; value: string }> {
@@ -230,57 +242,6 @@ function getPictureUrls(rawData: unknown): string[] {
   return [...urls];
 }
 
-function readPath(value: unknown, path: string[]) {
-  let current: unknown = value;
-  for (const key of path) {
-    current = asRecord(current)?.[key];
-  }
-  return current;
-}
-
-function firstNumber(values: unknown[]) {
-  for (const value of values) {
-    const parsed =
-      typeof value === "number"
-        ? value
-        : typeof value === "string"
-          ? Number(value)
-          : Number.NaN;
-    if (Number.isFinite(parsed)) return parsed;
-  }
-  return null;
-}
-
-function getEbayQuantitySold(rawData: unknown) {
-  return firstNumber([
-    readPath(rawData, ["SellingStatus", "QuantitySold"]),
-    readPath(rawData, ["SellingStatus", "QuantitySoldByPickupInStore"]),
-    asRecord(rawData)?.QuantitySold,
-  ]) ?? 0;
-}
-
-function getEbayWatchCount(rawData: unknown) {
-  return firstNumber([
-    asRecord(rawData)?.WatchCount,
-    readPath(rawData, ["ListingDetails", "WatchCount"]),
-  ]) ?? 0;
-}
-
-function getEbayViewCount(rawData: unknown) {
-  return firstNumber([
-    asRecord(rawData)?.HitCount,
-    readPath(rawData, ["ListingDetails", "ViewItemURL"]),
-  ]) ?? 0;
-}
-
-function getListingPhotoSet(listing: Pick<ListingFallbackRow, "imageUrl" | "rawData" | "masterRow">) {
-  const photos = new Set<string>();
-  if (listing.imageUrl) photos.add(listing.imageUrl);
-  if (listing.masterRow.imageUrl) photos.add(listing.masterRow.imageUrl);
-  for (const url of getPictureUrls(listing.rawData)) photos.add(url);
-  return photos;
-}
-
 function getHiggsfieldAuthHeader() {
   const singleKey = process.env.HF_KEY || process.env.HIGGSFIELD_KEY;
   if (singleKey?.trim()) return `Key ${singleKey.trim()}`;
@@ -313,45 +274,112 @@ function ebayListingUrl(platformItemId: string | null | undefined) {
   return platformItemId ? `https://www.ebay.com/itm/${encodeURIComponent(platformItemId)}` : null;
 }
 
+function formatSpecificsForPrompt(specifics: Array<{ name: string; value: string }>) {
+  if (specifics.length === 0) return "No structured item specifics were returned. Use the title, photos, and full listing description.";
+  return specifics
+    .slice(0, 36)
+    .map((entry) => `- ${entry.name}: ${entry.value}`)
+    .join("\n");
+}
+
+function formatPhotoUrlsForPrompt(imageUrls: string[]) {
+  if (imageUrls.length === 0) return "No listing photos were returned.";
+  return imageUrls
+    .slice(0, 12)
+    .map((url, index) => `- Photo ${index + 1}: ${url}`)
+    .join("\n");
+}
+
 function buildVideoPrompt(brief: Omit<VideoListingBrief, "prompt" | "negativePrompt" | "generationSettings">) {
-  const specifics = brief.itemSpecifics.slice(0, 18);
-  const brand = getSpecificValue(specifics, ["Brand", "Manufacturer", "Manufacturer Part Number"]);
+  const specifics = brief.itemSpecifics;
+  const brand = getSpecificValue(specifics, ["Brand", "Manufacturer"]);
   const mpn = getSpecificValue(specifics, ["Manufacturer Part Number", "MPN", "Part Number"]);
-  const usefulSpecifics = specifics
-    .filter((entry) => !["brand", "manufacturer", "manufacturer part number"].includes(entry.name.toLowerCase()))
-    .map((entry) => `${entry.name}: ${entry.value}`)
-    .join("; ");
-  const description = truncate(brief.descriptionText, 1800);
+  const description = truncate(brief.descriptionText, 12000);
 
   return [
-    "Create a clear, engaging, promotional product video advertisement for an eBay video campaign.",
-    `Final video target: ${VIDEO_SIZE}, ${VIDEO_RESOLUTION}, ${VIDEO_ASPECT_RATIO} landscape, square pixels, clean marketplace-safe product ad style, 12-15 seconds. No voiceover is needed.`,
-    "Use the provided product image as the hero visual reference. Keep the exact product accurate: preserve shape, materials, color, labels, connectors, ports, fitment clues, and any visible part numbers.",
+    "Create a premium, clear, engaging 15-second product video advertisement for an eBay video campaign.",
     "",
-    "Product:",
-    `Title: ${brief.title}`,
-    `SKU: ${brief.sku}`,
-    `eBay item ID: ${brief.platformItemId}`,
-    brand ? `Brand/manufacturer: ${brand}` : null,
-    mpn ? `Part number: ${mpn}` : null,
-    brief.condition ? `Condition: ${brief.condition}` : null,
-    brief.category ? `Category: ${brief.category}` : null,
-    usefulSpecifics ? `Known specs: ${usefulSpecifics}` : null,
-    description ? `Full listing description text to use for accurate feature selection: ${description}` : null,
+    "VIDEO SETTINGS:",
+    `- Format: ${VIDEO_ASPECT_RATIO} horizontal widescreen`,
+    `- Resolution: ${VIDEO_SIZE}, ${VIDEO_RESOLUTION.toUpperCase()} Full HD`,
+    "- Duration: exactly 15 seconds",
+    "- Audio: no voiceover, no spoken script, no music requirement; the ad must work perfectly on muted autoplay",
+    "- Style: polished Amazon/eBay-style e-commerce product ad",
+    "- Mood: trustworthy, useful, practical, buyer-friendly, product-focused",
+    "- Visual quality: crisp studio lighting, sharp product detail, smooth cinematic motion, realistic product rendering",
+    "- Camera: smooth dolly shots, macro close-ups, soft parallax, controlled product rotation, no shaky movement",
+    "- Background: clean white/light gray studio or tidy workbench environment; subtle color accents are okay only if they do not distract from the item",
+    "- Product accuracy: keep the product exactly aligned with the provided listing photos and facts. Preserve color, materials, shape, connectors, ports, prongs, labels, included parts, and visible identifiers.",
     "",
-    "Ad structure:",
-    "0-2s: Strong hero reveal of the actual product with a smooth push-in and clean lighting.",
-    "2-7s: Show 3-4 close-up detail moments based only on the listing facts: ports, materials, included parts, dimensions, condition, useful controls, or visible identifiers.",
-    "7-11s: Make the product feel useful and easy to choose. Use subtle motion graphics or short on-screen callouts, maximum 3-5 words each.",
-    "11-15s: End on a clean final beauty shot with concise on-screen copy: Match the part. Fix it fast.",
+    "IMPORTANT CREATIVE INSTRUCTION:",
+    "Read the full eBay listing data below before deciding the scenes and on-screen callouts. Use only facts that appear in the title, item specifics, listing photos, or full listing description. Make the video promotional and fun, but do not invent features, compatibility, guarantees, discounts, shipping claims, ratings, review counts, scarcity, or performance claims.",
     "",
-    "Visual style:",
-    "Premium but practical marketplace ad. Crisp macro camera movement, clean studio or workbench setting, soft reflections, high contrast product detail, no messy background, no fake packaging.",
-    "Keep the product centered and readable for shoppers watching muted autoplay. No voiceover. No loud text wall. No gimmicks that hide the item.",
+    "PRODUCT DATA FROM EBAY LISTING:",
+    `- Title: ${brief.title}`,
+    `- SKU: ${brief.sku}`,
+    `- eBay item ID: ${brief.platformItemId}`,
+    brief.listingUrl ? `- eBay listing URL: ${brief.listingUrl}` : null,
+    brief.condition ? `- Condition: ${brief.condition}` : null,
+    brief.category ? `- Category: ${brief.category}` : null,
+    brand ? `- Brand/manufacturer from listing: ${brand}` : null,
+    mpn ? `- Part number / MPN from listing: ${mpn}` : null,
+    brief.upc ? `- UPC: ${brief.upc}` : null,
+    brief.weight ? `- Stored item weight: ${brief.weight}` : null,
+    brief.inventory != null ? `- Current stored inventory: ${brief.inventory}` : null,
     "",
-    "Marketplace compliance:",
-    "Do not invent compatibility, warranties, discounts, shipping promises, ratings, review counts, scarcity, or performance claims not present in the listing.",
-    "Do not add Amazon, eBay, OEM, or vehicle brand logos unless they visibly exist on the actual product photo. Do not show prices.",
+    "ITEM SPECIFICS RETURNED BY EBAY:",
+    formatSpecificsForPrompt(specifics),
+    "",
+    "LISTING PHOTO REFERENCES:",
+    "Use the provided image-to-video source image as the primary visual reference. If the generation tool can use multiple references, use these listing photo URLs as additional references:",
+    formatPhotoUrlsForPrompt(brief.imageUrls),
+    "",
+    "FULL EBAY LISTING DESCRIPTION:",
+    description ?? "No full listing description was returned by eBay for this item. Build the ad only from title, photos, category, condition, and item specifics.",
+    "",
+    "SCENE-BY-SCENE TIMELINE:",
+    "0:00-0:02 - Hero reveal: open with the real product centered on a clean tabletop. Use a smooth push-in or slide-in. Show the whole item clearly so the shopper instantly understands what is being sold.",
+    "On-screen text: choose a short hook based on the listing, such as the product type, replacement purpose, compatibility need, or problem it solves. Keep it 3-6 words.",
+    "",
+    "0:02-0:04 - Product identity: cut to a clean close-up of the most recognizable part of the item. Show shape, finish, connectors, ports, included cable, buttons, labels, or other visible identifiers from the photos.",
+    "On-screen text: the exact product type from the listing title, shortened for readability.",
+    "",
+    "0:04-0:07 - Compatibility / use case: show the product in a realistic, marketplace-safe context that matches the listing description. If the listing names compatible models, display only those names. If compatibility is uncertain, use a generic use-case shot without model claims.",
+    "On-screen text: one concise compatibility or use-case callout from the listing facts.",
+    "",
+    "0:07-0:10 - Feature close-ups: show 2-3 quick macro moments based on the listing description and item specifics. Examples: connector detail, cable length, foldaway prongs, included parts, material, color, size, control buttons, mounting points, or other physical details. Only include details that are visible or stated.",
+    "On-screen text: short feature phrases, maximum 3-5 words each.",
+    "",
+    "0:10-0:12 - Buyer confidence: make the item feel easy to understand and easy to choose. Use clean animated callouts or simple icons tied to real listing facts such as condition, included quantity, compatibility warning, or package contents. Do not show fake badges.",
+    "On-screen text: one useful fact from the description, not a hype claim.",
+    "",
+    "0:12-0:14 - Final beauty shot: return to the product arranged neatly and fully visible. Use subtle reflection, clean lighting, and a stable composition suitable for eBay/Amazon sponsored product video.",
+    "On-screen text: a concise purchase-oriented line based on the product, for example 'Ready to replace' or 'Get back to use' only if it fits the listing.",
+    "",
+    "0:14-0:15 - End card: keep the product visible with a clean final CTA. No price, no star ratings, no review counts.",
+    "On-screen text: 'Available from The Perfect Part' plus one short listing-accurate phrase.",
+    "",
+    "TEXT OVERLAY STYLE:",
+    "- Use clean bold sans-serif typography",
+    "- Use dark charcoal text on light backgrounds or white text on dark product close-ups",
+    "- Keep text large, readable, and inside the safe center area of the 16:9 frame",
+    "- Use no more than one main text phrase per scene",
+    "- Do not overcrowd the frame or cover important product details",
+    "",
+    "VISUAL DETAILS TO EMPHASIZE:",
+    "- The exact product shown in the listing photos",
+    "- The strongest buyer-relevant facts from the listing description",
+    "- Any compatibility, package contents, dimensions, color, material, quantity, condition, or warning that is explicitly stated",
+    "- Clean product readability for shoppers scrolling with sound off",
+    "",
+    "MARKETPLACE COMPLIANCE:",
+    "- Do not show official marketplace logos, OEM logos, or brand logos unless they visibly exist on the actual product photo",
+    "- Do not imply the product is official/OEM unless the listing explicitly says so",
+    "- Do not show prices, coupons, discounts, shipping speed, delivery promises, returns promises, reviews, ratings, or sold-count badges",
+    "- Do not create before/after claims, safety claims, performance claims, warranty claims, or technical certifications unless explicitly present in the listing description",
+    "",
+    "FINAL STYLE:",
+    "A polished eBay/Amazon sponsored-product style advertisement with clean studio product shots, smooth motion, clear muted-autoplay text, accurate product details, and a trustworthy value-focused tone.",
   ].filter(Boolean).join("\n");
 }
 
@@ -380,12 +408,60 @@ export function getHiggsfieldConnectionStatus(): HiggsfieldConnectionStatus {
   };
 }
 
-export async function getTopTppVideoItems(window: VideoWindow, limit = 30): Promise<VideoTopItem[]> {
+function buildSalesCoverage(args: {
+  window: VideoWindow;
+  from: Date;
+  to: Date;
+  latestOrderDate: Date | null;
+  itemCount: number;
+}): VideoSalesCoverage {
+  const latestOrderDate = args.latestOrderDate?.toISOString() ?? null;
+  const hasCurrentWindowData = args.itemCount > 0;
+  const isStale = !args.latestOrderDate || args.latestOrderDate < args.from;
+  const latestText = args.latestOrderDate
+    ? args.latestOrderDate.toLocaleString("en-US", {
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+      })
+    : null;
+
+  return {
+    window: args.window,
+    requestedFrom: args.from.toISOString(),
+    requestedTo: args.to.toISOString(),
+    latestOrderDate,
+    hasCurrentWindowData,
+    isStale,
+    message: isStale
+      ? latestText
+        ? `TPP sales data is stale for the selected ${args.window.toUpperCase()} window. Latest stored TPP sale is ${latestText}; refresh Revenue/Sync before trusting top-performer rankings.`
+        : `No stored TPP sales lines were found. Refresh Revenue/Sync before building top-performer rankings.`
+      : hasCurrentWindowData
+        ? null
+        : `No TPP sales lines were found inside the selected ${args.window.toUpperCase()} window.`,
+  };
+}
+
+export async function getTopTppVideoItems(window: VideoWindow, limit = 30): Promise<VideoTopItemsResult> {
   const from = startDateForWindow(window);
+  const to = new Date();
+  const latestLine = await db.marketplaceSaleLine.findFirst({
+    where: {
+      platform: "TPP_EBAY",
+      isCancelled: false,
+      isReturn: false,
+    },
+    select: { orderDate: true },
+    orderBy: { orderDate: "desc" },
+  });
+
   const lines = await db.marketplaceSaleLine.findMany({
     where: {
       platform: "TPP_EBAY",
-      orderDate: { gte: from },
+      orderDate: { gte: from, lte: to },
       isCancelled: false,
       isReturn: false,
     },
@@ -435,7 +511,18 @@ export async function getTopTppVideoItems(window: VideoWindow, limit = 30): Prom
   const ranked = [...items.values()]
     .sort((a, b) => b.unitsSold - a.unitsSold || b.grossRevenue - a.grossRevenue)
     .slice(0, limit);
-  if (ranked.length === 0) return getTopTppListingsByEbayPerformance(limit);
+  if (ranked.length === 0) {
+    return {
+      items: [],
+      coverage: buildSalesCoverage({
+        window,
+        from,
+        to,
+        latestOrderDate: latestLine?.orderDate ?? null,
+        itemCount: 0,
+      }),
+    };
+  }
 
   const skus = ranked.map((item) => item.sku);
   const itemIds = [...new Set(ranked.flatMap((item) => [...item.platformItemIds]))];
@@ -491,94 +578,34 @@ export async function getTopTppVideoItems(window: VideoWindow, limit = 30): Prom
       hasListingDescription: Boolean(stripHtml(firstString([asRecord(listing?.rawData)?.Description]))),
       photoCount: photos.size,
     };
-  }).filter((row) => row.marketplaceListingId && row.imageUrl);
-
-  return revenueRows.length > 0 ? revenueRows : getTopTppListingsByEbayPerformance(limit);
-}
-
-async function getTopTppListingsByEbayPerformance(limit: number): Promise<VideoTopItem[]> {
-  const listings = await db.marketplaceListing.findMany({
-    where: {
-      integration: { platform: "TPP_EBAY" },
-      status: "ACTIVE",
-    },
-    select: {
-      id: true,
-      sku: true,
-      title: true,
-      imageUrl: true,
-      salePrice: true,
-      inventory: true,
-      platformItemId: true,
-      rawData: true,
-      masterRow: {
-        select: {
-          imageUrl: true,
-          title: true,
-        },
-      },
-    },
-    take: 2000,
   });
 
-  return (listings as ListingFallbackRow[])
-    .map((listing) => {
-      const unitsSold = getEbayQuantitySold(listing.rawData);
-      const watchCount = getEbayWatchCount(listing.rawData);
-      const viewCount = getEbayViewCount(listing.rawData);
-      const photos = getListingPhotoSet(listing);
-      return {
-        listing,
-        unitsSold,
-        watchCount,
-        viewCount,
-        grossRevenue: unitsSold * (listing.salePrice ?? 0),
-        photos,
-      };
-    })
-    .filter((entry) =>
-      entry.photos.size > 0 &&
-      (entry.unitsSold > 0 || entry.watchCount > 0 || entry.viewCount > 0)
-    )
-    .sort((a, b) =>
-      b.unitsSold - a.unitsSold ||
-      b.grossRevenue - a.grossRevenue ||
-      b.watchCount - a.watchCount ||
-      b.viewCount - a.viewCount,
-    )
-    .slice(0, limit)
-    .map(({ listing, unitsSold, grossRevenue, photos }) => ({
-      sku: listing.sku,
-      title: listing.title ?? listing.masterRow.title ?? null,
-      marketplaceListingId: listing.id,
-      platformItemId: listing.platformItemId,
-      imageUrl: listing.imageUrl ?? listing.masterRow.imageUrl ?? [...photos][0] ?? null,
-      unitsSold,
-      grossRevenue,
-      netRevenue: null,
-      orderCount: unitsSold,
-      salePrice: listing.salePrice,
-      inventory: listing.inventory,
-      listingUrl: ebayListingUrl(listing.platformItemId),
-      hasListingDescription: Boolean(stripHtml(firstString([asRecord(listing.rawData)?.Description]))),
-      photoCount: photos.size,
-    }));
+  return {
+    items: revenueRows,
+    coverage: buildSalesCoverage({
+      window,
+      from,
+      to,
+      latestOrderDate: latestLine?.orderDate ?? null,
+      itemCount: revenueRows.length,
+    }),
+  };
 }
 
-async function refreshListingForVideoBrief(listing: { platformItemId: string }) {
+async function fetchFullListingPayloadForVideoBrief(listing: { platformItemId: string }) {
   const integration = await db.integration.findFirst({
     where: { platform: "TPP_EBAY" },
     select: { id: true, platform: true, config: true, enabled: true },
   });
-  if (!integration?.enabled) return;
+  if (!integration?.enabled) return null;
 
-  await refreshEbayItemsDirect(
+  return fetchEbayTppFullItemDirect(
     {
       id: integration.id,
       platform: integration.platform,
       config: integration.config as Record<string, unknown>,
     },
-    [listing.platformItemId],
+    listing.platformItemId,
   );
 }
 
@@ -610,54 +637,25 @@ export async function getVideoListingBrief(marketplaceListingId: string): Promis
   });
   if (!listing) return null;
 
-  const initialDescription = stripHtml(firstString([asRecord(listing.rawData)?.Description]));
-  const initialPhotos = getPictureUrls(listing.rawData);
-  if (!initialDescription || initialPhotos.length <= 1) {
-    await refreshListingForVideoBrief(listing).catch((error) => {
-      console.warn("[video] Full eBay item refresh failed before prompt build", error);
-    });
-    return getVideoListingBriefFromStoredData(marketplaceListingId);
-  }
-
-  return buildVideoListingBriefFromListing(listing);
-}
-
-async function getVideoListingBriefFromStoredData(marketplaceListingId: string): Promise<VideoListingBrief | null> {
-  const listing = await db.marketplaceListing.findFirst({
-    where: {
-      id: marketplaceListingId,
-      integration: { platform: "TPP_EBAY" },
-    },
-    select: {
-      id: true,
-      sku: true,
-      title: true,
-      imageUrl: true,
-      salePrice: true,
-      inventory: true,
-      platformItemId: true,
-      rawData: true,
-      masterRow: {
-        select: {
-          title: true,
-          imageUrl: true,
-          upc: true,
-          weightDisplay: true,
-          weight: true,
-        },
-      },
-    },
+  const liveRawData = await fetchFullListingPayloadForVideoBrief(listing).catch((error) => {
+    console.warn("[video] Full eBay GetItem fetch failed before prompt build", error);
+    return null;
   });
-  return listing ? buildVideoListingBriefFromListing(listing as VideoListingRecord) : null;
+
+  return buildVideoListingBriefFromListing(listing, liveRawData);
 }
 
-function buildVideoListingBriefFromListing(listing: VideoListingRecord): VideoListingBrief {
-  const raw = asRecord(listing.rawData);
-  const specifics = getItemSpecifics(listing.rawData);
+function buildVideoListingBriefFromListing(
+  listing: VideoListingRecord,
+  rawDataOverride?: unknown | null,
+): VideoListingBrief {
+  const sourceRawData = rawDataOverride ?? listing.rawData;
+  const raw = asRecord(sourceRawData);
+  const specifics = getItemSpecifics(sourceRawData);
   const images = new Set<string>();
   if (listing.imageUrl) images.add(listing.imageUrl);
   if (listing.masterRow.imageUrl) images.add(listing.masterRow.imageUrl);
-  for (const url of getPictureUrls(listing.rawData)) images.add(url);
+  for (const url of getPictureUrls(sourceRawData)) images.add(url);
 
   const briefBase = {
     marketplaceListingId: listing.id,

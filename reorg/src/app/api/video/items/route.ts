@@ -34,10 +34,11 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const items = await getTopTppVideoItems(parsed.data.window as VideoWindow, parsed.data.limit);
+    const result = await getTopTppVideoItems(parsed.data.window as VideoWindow, parsed.data.limit);
     return NextResponse.json({
       data: {
-        items,
+        items: result.items,
+        coverage: result.coverage,
         connection: getHiggsfieldConnectionStatus(),
         generatedAt: new Date().toISOString(),
       },
