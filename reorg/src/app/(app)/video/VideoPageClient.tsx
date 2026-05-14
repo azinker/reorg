@@ -5,6 +5,7 @@ import {
   AlertTriangle,
   CheckCircle2,
   Copy,
+  Download,
   ExternalLink,
   ImageIcon,
   Loader2,
@@ -91,11 +92,23 @@ type ItemsResponse = {
 type GenerateResponse = {
   brief: VideoListingBrief;
   higgsfield: {
+    id?: string;
     status?: string;
     request_id?: string;
     status_url?: string;
     video?: { url?: string };
+    images?: Array<{ url?: string }>;
+    url?: string;
   } | null;
+};
+
+type VideoOutputState = {
+  listingId: string;
+  requestId: string | null;
+  videoUrl: string | null;
+  status: string;
+  startedAt: number;
+  updatedAt: number;
 };
 
 function formatCurrency(value: number | null | undefined) {
@@ -115,6 +128,45 @@ function formatDateTime(value: string | null | undefined) {
     hour: "numeric",
     minute: "2-digit",
   });
+}
+
+function getVideoOutputUrl(data: unknown): string | null {
+  if (!data || typeof data !== "object") return null;
+  const record = data as Record<string, unknown>;
+  const video = record.video && typeof record.video === "object" ? record.video as { url?: unknown } : null;
+  if (typeof video?.url === "string") return video.url;
+  if (typeof record.url === "string") return record.url;
+  const images = Array.isArray(record.images) ? record.images : [];
+  const firstImageUrl = images
+    .map((entry) => entry && typeof entry === "object" ? (entry as { url?: unknown }).url : null)
+    .find((url): url is string => typeof url === "string");
+  return firstImageUrl ?? null;
+}
+
+function getEstimatedProgress(status: string, startedAt: number | null) {
+  if (status === "completed") return 100;
+  if (status === "failed" || status === "nsfw" || status === "cancelled" || status === "canceled") return 100;
+  if (!startedAt) return status === "submitting" ? 8 : 0;
+
+  const elapsed = Date.now() - startedAt;
+  const timed = Math.min(90, Math.round((elapsed / 180_000) * 90));
+  if (status === "queued") return Math.max(15, Math.min(40, timed));
+  if (status === "in_progress" || status === "processing") return Math.max(42, Math.min(94, timed));
+  if (status === "submitting") return Math.max(8, Math.min(18, timed));
+  return Math.max(12, Math.min(88, timed));
+}
+
+function formatRemainingTime(progress: number, status: string) {
+  if (status === "completed") return "Ready";
+  if (status === "failed" || status === "nsfw" || status === "cancelled" || status === "canceled") return "Stopped";
+  if (progress < 35) return "About 2-3 min";
+  if (progress < 70) return "About 1-2 min";
+  if (progress < 95) return "Finishing up";
+  return "Almost ready";
+}
+
+function videoOutputStorageKey(listingId: string) {
+  return `reorg.video.output.${listingId}`;
 }
 
 async function readJsonData<T>(response: Response): Promise<T> {
@@ -154,13 +206,23 @@ export function VideoPageClient() {
   const [error, setError] = useState("");
   const [requestId, setRequestId] = useState<string | null>(null);
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
+  const [generationStatus, setGenerationStatus] = useState("");
+  const [generationStartedAt, setGenerationStartedAt] = useState<number | null>(null);
+  const [progressTick, setProgressTick] = useState(0);
   const [copied, setCopied] = useState(false);
+  const [copiedVideoUrl, setCopiedVideoUrl] = useState(false);
   const pollTimerRef = useRef<number | null>(null);
+  const progressTimerRef = useRef<number | null>(null);
 
   const selectedItem = useMemo(
     () => items.find((item) => item.marketplaceListingId === selectedId) ?? null,
     [items, selectedId],
   );
+  const generationProgress = useMemo(
+    () => getEstimatedProgress(generationStatus, generationStartedAt),
+    [generationStatus, generationStartedAt, progressTick],
+  );
+  const generationRemaining = formatRemainingTime(generationProgress, generationStatus);
 
   const loadItems = useCallback(async () => {
     setLoadingItems(true);
@@ -190,6 +252,22 @@ export function VideoPageClient() {
     setError("");
     setVideoUrl(null);
     setRequestId(null);
+    setGenerationStatus("");
+    setGenerationStartedAt(null);
+    const savedOutput = window.localStorage.getItem(videoOutputStorageKey(marketplaceListingId));
+    if (savedOutput) {
+      try {
+        const parsed = JSON.parse(savedOutput) as Partial<VideoOutputState>;
+        if (parsed.listingId === marketplaceListingId) {
+          setVideoUrl(typeof parsed.videoUrl === "string" ? parsed.videoUrl : null);
+          setRequestId(typeof parsed.requestId === "string" ? parsed.requestId : null);
+          setGenerationStatus(typeof parsed.status === "string" ? parsed.status : "");
+          setGenerationStartedAt(typeof parsed.startedAt === "number" ? parsed.startedAt : null);
+        }
+      } catch {
+        window.localStorage.removeItem(videoOutputStorageKey(marketplaceListingId));
+      }
+    }
     try {
       const params = new URLSearchParams({ marketplaceListingId });
       const data = await readJsonData<VideoListingBrief>(
@@ -220,8 +298,32 @@ export function VideoPageClient() {
   useEffect(() => {
     return () => {
       if (pollTimerRef.current) window.clearInterval(pollTimerRef.current);
+      if (progressTimerRef.current) window.clearInterval(progressTimerRef.current);
     };
   }, []);
+
+  useEffect(() => {
+    const active = submitting || Boolean(requestId && !videoUrl && generationStatus && !["failed", "nsfw", "cancelled", "canceled", "completed"].includes(generationStatus));
+    if (!active) {
+      if (progressTimerRef.current) {
+        window.clearInterval(progressTimerRef.current);
+        progressTimerRef.current = null;
+      }
+      return;
+    }
+
+    if (progressTimerRef.current) window.clearInterval(progressTimerRef.current);
+    progressTimerRef.current = window.setInterval(() => {
+      setProgressTick((tick) => tick + 1);
+    }, 1000);
+
+    return () => {
+      if (progressTimerRef.current) {
+        window.clearInterval(progressTimerRef.current);
+        progressTimerRef.current = null;
+      }
+    };
+  }, [generationStatus, requestId, submitting, videoUrl]);
 
   const pollStatus = useCallback((nextRequestId: string) => {
     if (pollTimerRef.current) window.clearInterval(pollTimerRef.current);
@@ -232,14 +334,26 @@ export function VideoPageClient() {
           await fetch(`/api/video/higgsfield/status?${params.toString()}`, { cache: "no-store" }),
         );
         const status = typeof data.status === "string" ? data.status : "processing";
+        setGenerationStatus(status);
         setStatusText(`Higgsfield status: ${status}.`);
-        const video = data.video && typeof data.video === "object" ? data.video as { url?: unknown } : null;
-        if (status === "completed" || typeof video?.url === "string") {
+        const outputUrl = getVideoOutputUrl(data);
+        if (status === "completed" || outputUrl) {
           if (pollTimerRef.current) window.clearInterval(pollTimerRef.current);
           pollTimerRef.current = null;
-          setVideoUrl(typeof video?.url === "string" ? video.url : null);
+          setGenerationStatus("completed");
+          setVideoUrl(outputUrl);
+          if (brief?.marketplaceListingId) {
+            window.localStorage.setItem(videoOutputStorageKey(brief.marketplaceListingId), JSON.stringify({
+              listingId: brief.marketplaceListingId,
+              requestId: nextRequestId,
+              videoUrl: outputUrl,
+              status: "completed",
+              startedAt: generationStartedAt ?? Date.now(),
+              updatedAt: Date.now(),
+            } satisfies VideoOutputState));
+          }
         }
-        if (status === "failed" || status === "nsfw" || status === "cancelled") {
+        if (status === "failed" || status === "nsfw" || status === "cancelled" || status === "canceled") {
           if (pollTimerRef.current) window.clearInterval(pollTimerRef.current);
           pollTimerRef.current = null;
         }
@@ -247,13 +361,18 @@ export function VideoPageClient() {
         setError(statusError instanceof Error ? statusError.message : "Failed to poll Higgsfield status.");
       }
     }, 7000);
-  }, []);
+  }, [brief?.marketplaceListingId, generationStartedAt]);
 
   async function submitToHiggsfield() {
     if (!brief) return;
     setSubmitting(true);
     setError("");
     setVideoUrl(null);
+    setCopiedVideoUrl(false);
+    const startedAt = Date.now();
+    setGenerationStartedAt(startedAt);
+    setGenerationStatus("submitting");
+    setProgressTick((tick) => tick + 1);
     try {
       const data = await readJsonData<GenerateResponse>(
         await fetch("/api/video/higgsfield/generate", {
@@ -266,15 +385,27 @@ export function VideoPageClient() {
         }),
       );
       setBrief(data.brief);
-      const nextRequestId = data.higgsfield?.request_id ?? null;
+      const nextRequestId = data.higgsfield?.request_id ?? data.higgsfield?.id ?? null;
+      const outputUrl = getVideoOutputUrl(data.higgsfield);
       setRequestId(nextRequestId);
+      setGenerationStatus(data.higgsfield?.status ?? (outputUrl ? "completed" : "queued"));
       setStatusText(nextRequestId ? "Higgsfield generation queued." : "Higgsfield returned a response.");
-      if (data.higgsfield?.video?.url) {
-        setVideoUrl(data.higgsfield.video.url);
+      window.localStorage.setItem(videoOutputStorageKey(brief.marketplaceListingId), JSON.stringify({
+        listingId: brief.marketplaceListingId,
+        requestId: nextRequestId,
+        videoUrl: outputUrl,
+        status: outputUrl ? "completed" : data.higgsfield?.status ?? "queued",
+        startedAt,
+        updatedAt: Date.now(),
+      } satisfies VideoOutputState));
+      if (outputUrl) {
+        setGenerationStatus("completed");
+        setVideoUrl(outputUrl);
       } else if (nextRequestId) {
         pollStatus(nextRequestId);
       }
     } catch (submitError) {
+      setGenerationStatus("failed");
       setError(submitError instanceof Error ? submitError.message : "Failed to submit generation.");
     } finally {
       setSubmitting(false);
@@ -286,6 +417,13 @@ export function VideoPageClient() {
     await navigator.clipboard.writeText(`${brief.prompt}\n\nNegative prompt:\n${brief.negativePrompt}`);
     setCopied(true);
     window.setTimeout(() => setCopied(false), 1500);
+  }
+
+  async function copyVideoLink() {
+    if (!videoUrl) return;
+    await navigator.clipboard.writeText(videoUrl);
+    setCopiedVideoUrl(true);
+    window.setTimeout(() => setCopiedVideoUrl(false), 1500);
   }
 
   return (
@@ -548,17 +686,6 @@ export function VideoPageClient() {
                     {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <WandSparkles className="h-4 w-4" />}
                     Generate
                   </button>
-                  {videoUrl ? (
-                    <a
-                      href={videoUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="inline-flex cursor-pointer items-center gap-2 rounded-md border border-emerald-500/25 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-200 hover:bg-emerald-500/15"
-                    >
-                      <Play className="h-4 w-4" />
-                      Open Video
-                    </a>
-                  ) : null}
                   {brief.listingUrl ? (
                     <a
                       href={brief.listingUrl}
@@ -571,6 +698,80 @@ export function VideoPageClient() {
                     </a>
                   ) : null}
                 </div>
+
+                {(submitting || requestId || generationStatus || videoUrl) ? (
+                  <div className="rounded-lg border border-border bg-background p-3">
+                    <div className="flex items-center justify-between gap-3 text-xs">
+                      <div>
+                        <p className="font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                          Generation
+                        </p>
+                        <p className="mt-1 text-foreground">
+                          {videoUrl ? "Video ready" : generationStatus ? `Higgsfield ${generationStatus.replace("_", " ")}` : "Waiting"}
+                        </p>
+                      </div>
+                      <div className="text-right text-muted-foreground">
+                        <p>{Math.round(generationProgress)}%</p>
+                        <p>{generationRemaining}</p>
+                      </div>
+                    </div>
+                    <div className="mt-3 h-2 overflow-hidden rounded-full bg-muted">
+                      <div
+                        className="h-full rounded-full bg-[#C43E3E] transition-[width] duration-700"
+                        style={{ width: `${Math.min(100, Math.max(0, generationProgress))}%` }}
+                      />
+                    </div>
+                    {requestId ? (
+                      <div className="mt-2 truncate font-mono text-[11px] text-muted-foreground">
+                        Request {requestId}
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
+
+                {videoUrl ? (
+                  <div className="rounded-lg border border-emerald-500/25 bg-emerald-500/10 p-3">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                      <div>
+                        <p className="text-sm font-medium text-emerald-100">Output video is ready</p>
+                        <p className="mt-1 max-w-[520px] truncate text-xs text-emerald-200/75">{videoUrl}</p>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <a
+                          href={videoUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex cursor-pointer items-center gap-2 rounded-md border border-emerald-500/25 bg-background px-3 py-2 text-sm text-emerald-100 hover:bg-muted/50"
+                        >
+                          <Play className="h-4 w-4" />
+                          Open
+                        </a>
+                        <a
+                          href={videoUrl}
+                          download
+                          className="inline-flex cursor-pointer items-center gap-2 rounded-md border border-emerald-500/25 bg-background px-3 py-2 text-sm text-emerald-100 hover:bg-muted/50"
+                        >
+                          <Download className="h-4 w-4" />
+                          Download
+                        </a>
+                        <button
+                          type="button"
+                          onClick={() => void copyVideoLink()}
+                          className="inline-flex cursor-pointer items-center gap-2 rounded-md border border-emerald-500/25 bg-background px-3 py-2 text-sm text-emerald-100 hover:bg-muted/50"
+                        >
+                          <Copy className="h-4 w-4" />
+                          {copiedVideoUrl ? "Copied" : "Copy Link"}
+                        </button>
+                      </div>
+                    </div>
+                    <video
+                      className="mt-3 aspect-video w-full rounded-md border border-emerald-500/20 bg-black"
+                      src={videoUrl}
+                      controls
+                      playsInline
+                    />
+                  </div>
+                ) : null}
               </div>
             ) : (
               <div className="mt-4 rounded-lg border border-dashed border-border px-4 py-8 text-center text-sm text-muted-foreground">

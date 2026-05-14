@@ -3,11 +3,15 @@ import { db } from "@/lib/db";
 import { fetchEbayTppFullItemDirect } from "@/lib/services/ebay-tpp-sync";
 import { fetchMarketplaceSales } from "@/lib/inventory-forecast/marketplace-sales";
 
-const DEFAULT_VIDEO_MODEL = "bytedance/seedance/v1/pro/image-to-video";
+const DEFAULT_VIDEO_ENDPOINT = "/v1/image2video/dop";
+const DEFAULT_VIDEO_MODEL = "dop-turbo";
 const DEFAULT_VIDEO_DURATION_SECONDS = 12;
 const VIDEO_ASPECT_RATIO = "16:9";
 const VIDEO_RESOLUTION = "1080p";
 const VIDEO_SIZE = "1920x1080";
+const LEGACY_UNAVAILABLE_VIDEO_MODELS = new Set([
+  "bytedance/seedance/v1/pro/image-to-video",
+]);
 
 export type VideoWindow = "7d" | "30d" | "90d";
 
@@ -122,12 +126,14 @@ type VideoListingRecord = {
 };
 
 type HiggsfieldQueuedResponse = {
+  id?: string;
   status?: string;
   request_id?: string;
   status_url?: string;
   cancel_url?: string;
   video?: { url?: string };
   images?: Array<{ url?: string }>;
+  url?: string;
 };
 
 function daysForWindow(window: VideoWindow) {
@@ -258,7 +264,20 @@ function getHiggsfieldAuthHeader() {
 }
 
 function getVideoModelId() {
-  return process.env.HIGGSFIELD_VIDEO_MODEL?.trim() || DEFAULT_VIDEO_MODEL;
+  const configured = process.env.HIGGSFIELD_VIDEO_MODEL?.trim();
+  if (!configured || LEGACY_UNAVAILABLE_VIDEO_MODELS.has(configured)) return DEFAULT_VIDEO_MODEL;
+  return configured;
+}
+
+function getHiggsfieldVideoEndpoint() {
+  const configured = process.env.HIGGSFIELD_VIDEO_ENDPOINT?.trim();
+  if (configured) return configured.startsWith("/") ? configured : `/${configured}`;
+  return DEFAULT_VIDEO_ENDPOINT;
+}
+
+function buildHiggsfieldUrl(endpoint: string) {
+  const baseUrl = (process.env.HIGGSFIELD_BASE_URL || "https://platform.higgsfield.ai").replace(/\/+$/, "");
+  return `${baseUrl}${endpoint.startsWith("/") ? endpoint : `/${endpoint}`}`;
 }
 
 function getAuthMode(): HiggsfieldConnectionStatus["authMode"] {
@@ -785,7 +804,8 @@ export async function submitHiggsfieldVideoGeneration(args: {
 
   const duration = Math.min(20, Math.max(6, args.durationSeconds ?? DEFAULT_VIDEO_DURATION_SECONDS));
   const modelId = getVideoModelId();
-  const response = await fetch(`https://platform.higgsfield.ai/${modelId}`, {
+  const endpoint = getHiggsfieldVideoEndpoint();
+  const response = await fetch(buildHiggsfieldUrl(endpoint), {
     method: "POST",
     headers: {
       Authorization: authHeader,
@@ -793,12 +813,21 @@ export async function submitHiggsfieldVideoGeneration(args: {
       Accept: "application/json",
     },
     body: JSON.stringify({
-      image_url: brief.imageUrls[0],
+      model: modelId,
       prompt: brief.prompt,
+      input_images: [
+        {
+          type: "image_url",
+          image_url: brief.imageUrls[0],
+        },
+      ],
+      image_url: brief.imageUrls[0],
       negative_prompt: brief.negativePrompt,
       duration,
       aspect_ratio: VIDEO_ASPECT_RATIO,
       resolution: VIDEO_RESOLUTION,
+      enhance_prompt: true,
+      check_nsfw: true,
     }),
   });
 
@@ -818,6 +847,7 @@ export async function submitHiggsfieldVideoGeneration(args: {
         sku: brief.sku,
         platformItemId: brief.platformItemId,
         modelId,
+        endpoint,
         duration,
         requestId: json?.request_id ?? null,
       } as unknown as Prisma.InputJsonValue,
@@ -838,7 +868,7 @@ export async function getHiggsfieldRequestStatus(requestId: string) {
     throw new Error("Higgsfield is not configured.");
   }
 
-  const response = await fetch(`https://platform.higgsfield.ai/requests/${encodeURIComponent(requestId)}/status`, {
+  const response = await fetch(buildHiggsfieldUrl(`/requests/${encodeURIComponent(requestId)}/status`), {
     headers: {
       Authorization: authHeader,
       Accept: "application/json",

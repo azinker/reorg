@@ -49,7 +49,8 @@ Use this reference when configuring reorG. Copy `.env.example` to `.env` and fil
 | `HF_KEY` | Combined Higgsfield API credentials for the Video page | Higgsfield Cloud | Yes (for direct generation) | `api-key:api-secret` |
 | `HIGGSFIELD_API_KEY` | Higgsfield API key, if not using `HF_KEY` | Higgsfield Cloud | Yes (for direct generation) | API key |
 | `HIGGSFIELD_API_SECRET` | Higgsfield API secret, if not using `HF_KEY` | Higgsfield Cloud | Yes (for direct generation) | API secret |
-| `HIGGSFIELD_VIDEO_MODEL` | Optional model override for Video generation | You set it | No | `bytedance/seedance/v1/pro/image-to-video` |
+| `HIGGSFIELD_VIDEO_ENDPOINT` | Optional Higgsfield video endpoint override | You set it | No | `/v1/image2video/dop` |
+| `HIGGSFIELD_VIDEO_MODEL` | Optional model override for Video generation | You set it | No | `dop-turbo` |
 | **Cloudflare R2 (Backups)** |
 | `R2_ACCOUNT_ID` | Cloudflare account ID | Cloudflare dashboard | Yes (for backups) | 32-character hex string |
 | `R2_ACCESS_KEY_ID` | R2 API access key | Cloudflare R2 → Manage R2 API Tokens | Yes (for backups) | Alphanumeric string |
