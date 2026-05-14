@@ -36,6 +36,7 @@ type VideoTopItem = {
 
 type VideoSalesCoverage = {
   window: VideoWindow;
+  source: "database" | "live_ebay";
   requestedFrom: string;
   requestedTo: string;
   latestOrderDate: string | null;

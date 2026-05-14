@@ -1,6 +1,7 @@
 import type { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import { fetchEbayTppFullItemDirect } from "@/lib/services/ebay-tpp-sync";
+import { fetchMarketplaceSales } from "@/lib/inventory-forecast/marketplace-sales";
 
 const DEFAULT_VIDEO_MODEL = "bytedance/seedance/v1/pro/image-to-video";
 const DEFAULT_VIDEO_DURATION_SECONDS = 12;
@@ -29,6 +30,7 @@ export type VideoTopItem = {
 
 export type VideoSalesCoverage = {
   window: VideoWindow;
+  source: "database" | "live_ebay";
   requestedFrom: string;
   requestedTo: string;
   latestOrderDate: string | null;
@@ -410,14 +412,16 @@ export function getHiggsfieldConnectionStatus(): HiggsfieldConnectionStatus {
 
 function buildSalesCoverage(args: {
   window: VideoWindow;
+  source: VideoSalesCoverage["source"];
   from: Date;
   to: Date;
   latestOrderDate: Date | null;
   itemCount: number;
+  message?: string | null;
 }): VideoSalesCoverage {
   const latestOrderDate = args.latestOrderDate?.toISOString() ?? null;
   const hasCurrentWindowData = args.itemCount > 0;
-  const isStale = !args.latestOrderDate || args.latestOrderDate < args.from;
+  const isStale = args.source === "database" && (!args.latestOrderDate || args.latestOrderDate < args.from);
   const latestText = args.latestOrderDate
     ? args.latestOrderDate.toLocaleString("en-US", {
         month: "short",
@@ -430,18 +434,90 @@ function buildSalesCoverage(args: {
 
   return {
     window: args.window,
+    source: args.source,
     requestedFrom: args.from.toISOString(),
     requestedTo: args.to.toISOString(),
     latestOrderDate,
     hasCurrentWindowData,
     isStale,
-    message: isStale
+    message: args.message ?? (isStale
       ? latestText
         ? `TPP sales data is stale for the selected ${args.window.toUpperCase()} window. Latest stored TPP sale is ${latestText}; refresh Revenue/Sync before trusting top-performer rankings.`
         : `No stored TPP sales lines were found. Refresh Revenue/Sync before building top-performer rankings.`
       : hasCurrentWindowData
         ? null
-        : `No TPP sales lines were found inside the selected ${args.window.toUpperCase()} window.`,
+        : `No TPP sales lines were found inside the selected ${args.window.toUpperCase()} window.`),
+  };
+}
+
+function aggregateVideoSaleLines(lines: SaleLine[]): MutableItem[] {
+  const items = new Map<string, MutableItem>();
+  for (const line of lines) {
+    const key = line.sku.trim();
+    if (!key) continue;
+    const gross =
+      safeNumber(line.grossRevenueAmount) ??
+      ((safeNumber(line.unitPriceAmount) ?? 0) * line.quantity);
+    const net = safeNumber(line.netRevenueAmount);
+    const item =
+      items.get(key) ??
+      {
+        sku: key,
+        title: line.title,
+        platformItemIds: new Set<string>(),
+        unitsSold: 0,
+        grossRevenue: 0,
+        netRevenueKnown: 0,
+        hasMissingNetData: false,
+        orderIds: new Set<string>(),
+      };
+    if (!item.title?.trim() && line.title?.trim()) item.title = line.title;
+    if (line.platformItemId?.trim()) item.platformItemIds.add(line.platformItemId);
+    item.unitsSold += line.quantity;
+    item.grossRevenue += gross;
+    if (net != null) item.netRevenueKnown += net;
+    else if (gross > 0) item.hasMissingNetData = true;
+    item.orderIds.add(line.marketplaceSaleOrderId);
+    items.set(key, item);
+  }
+
+  return [...items.values()];
+}
+
+async function getLiveTppVideoRankings(window: VideoWindow, limit: number) {
+  const integration = await db.integration.findFirst({
+    where: { platform: "TPP_EBAY", enabled: true },
+    select: { platform: true, label: true, config: true },
+  });
+  if (!integration) {
+    return { ranked: [] as MutableItem[], latestOrderDate: null as Date | null };
+  }
+
+  const fetched = await fetchMarketplaceSales(integration, daysForWindow(window));
+  const liveLines: SaleLine[] = fetched.lines
+    .filter((line) => !line.isCancelled && !line.isReturn)
+    .map((line) => ({
+      marketplaceSaleOrderId: line.externalOrderId,
+      masterRowId: null,
+      sku: line.sku,
+      title: line.title,
+      platformItemId: line.platformItemId ?? null,
+      quantity: line.quantity,
+      unitPriceAmount: line.unitPriceAmount ?? null,
+      grossRevenueAmount: line.grossRevenueAmount ?? null,
+      netRevenueAmount: line.netRevenueAmount ?? null,
+    }));
+
+  const latestOrderDate = fetched.lines.reduce<Date | null>((latest, line) => {
+    if (!latest || line.orderDate > latest) return line.orderDate;
+    return latest;
+  }, null);
+
+  return {
+    ranked: aggregateVideoSaleLines(liveLines)
+      .sort((a, b) => b.unitsSold - a.unitsSold || b.grossRevenue - a.grossRevenue)
+      .slice(0, limit),
+    latestOrderDate,
   };
 }
 
@@ -478,48 +554,39 @@ export async function getTopTppVideoItems(window: VideoWindow, limit = 30): Prom
     },
   });
 
-  const items = new Map<string, MutableItem>();
-  for (const line of lines as SaleLine[]) {
-    const key = line.sku.trim();
-    if (!key) continue;
-    const gross =
-      safeNumber(line.grossRevenueAmount) ??
-      ((safeNumber(line.unitPriceAmount) ?? 0) * line.quantity);
-    const net = safeNumber(line.netRevenueAmount);
-    const item =
-      items.get(key) ??
-      {
-        sku: key,
-        title: line.title,
-        platformItemIds: new Set<string>(),
-        unitsSold: 0,
-        grossRevenue: 0,
-        netRevenueKnown: 0,
-        hasMissingNetData: false,
-        orderIds: new Set<string>(),
-      };
-    if (!item.title?.trim() && line.title?.trim()) item.title = line.title;
-    if (line.platformItemId?.trim()) item.platformItemIds.add(line.platformItemId);
-    item.unitsSold += line.quantity;
-    item.grossRevenue += gross;
-    if (net != null) item.netRevenueKnown += net;
-    else if (gross > 0) item.hasMissingNetData = true;
-    item.orderIds.add(line.marketplaceSaleOrderId);
-    items.set(key, item);
-  }
-
-  const ranked = [...items.values()]
+  let source: VideoSalesCoverage["source"] = "database";
+  let latestOrderDate = latestLine?.orderDate ?? null;
+  let coverageMessage: string | null = null;
+  let ranked = aggregateVideoSaleLines(lines as SaleLine[])
     .sort((a, b) => b.unitsSold - a.unitsSold || b.grossRevenue - a.grossRevenue)
     .slice(0, limit);
+
+  if (ranked.length === 0 && (!latestLine?.orderDate || latestLine.orderDate < from)) {
+    try {
+      const live = await getLiveTppVideoRankings(window, limit);
+      if (live.ranked.length > 0) {
+        ranked = live.ranked;
+        source = "live_ebay";
+        latestOrderDate = live.latestOrderDate;
+        coverageMessage = `Rankings fetched live from eBay GetOrders for the selected ${window.toUpperCase()} window because stored TPP revenue data is stale.`;
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Live eBay GetOrders fetch failed.";
+      coverageMessage = `Stored TPP revenue data is stale, and live eBay GetOrders fallback failed: ${message}`;
+    }
+  }
+
   if (ranked.length === 0) {
     return {
       items: [],
       coverage: buildSalesCoverage({
         window,
+        source,
         from,
         to,
-        latestOrderDate: latestLine?.orderDate ?? null,
+        latestOrderDate,
         itemCount: 0,
+        message: coverageMessage,
       }),
     };
   }
@@ -569,7 +636,7 @@ export async function getTopTppVideoItems(window: VideoWindow, limit = 30): Prom
       platformItemId: listing?.platformItemId ?? [...item.platformItemIds][0] ?? null,
       imageUrl: listing?.imageUrl ?? listing?.masterRow.imageUrl ?? getPictureUrls(listing?.rawData)[0] ?? null,
       unitsSold: item.unitsSold,
-      grossRevenue: item.grossRevenue,
+      grossRevenue: item.grossRevenue > 0 ? item.grossRevenue : item.unitsSold * (listing?.salePrice ?? 0),
       netRevenue: item.hasMissingNetData ? null : item.netRevenueKnown,
       orderCount: item.orderIds.size,
       salePrice: listing?.salePrice ?? null,
@@ -584,10 +651,12 @@ export async function getTopTppVideoItems(window: VideoWindow, limit = 30): Prom
     items: revenueRows,
     coverage: buildSalesCoverage({
       window,
+      source,
       from,
       to,
-      latestOrderDate: latestLine?.orderDate ?? null,
+      latestOrderDate,
       itemCount: revenueRows.length,
+      message: coverageMessage,
     }),
   };
 }
