@@ -1,5 +1,6 @@
 import type { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
+import { refreshEbayItemsDirect } from "@/lib/services/ebay-tpp-sync";
 
 const DEFAULT_VIDEO_MODEL = "bytedance/seedance/v1/pro/image-to-video";
 const DEFAULT_VIDEO_DURATION_SECONDS = 12;
@@ -83,6 +84,39 @@ type MutableItem = {
   netRevenueKnown: number;
   hasMissingNetData: boolean;
   orderIds: Set<string>;
+};
+
+type ListingFallbackRow = {
+  id: string;
+  sku: string;
+  title: string | null;
+  imageUrl: string | null;
+  salePrice: number | null;
+  inventory: number | null;
+  platformItemId: string;
+  rawData: Prisma.JsonValue;
+  masterRow: {
+    imageUrl: string | null;
+    title: string | null;
+  };
+};
+
+type VideoListingRecord = {
+  id: string;
+  sku: string;
+  title: string | null;
+  imageUrl: string | null;
+  salePrice: number | null;
+  inventory: number | null;
+  platformItemId: string;
+  rawData: Prisma.JsonValue;
+  masterRow: {
+    title: string | null;
+    imageUrl: string | null;
+    upc: string | null;
+    weightDisplay: string | null;
+    weight: string | null;
+  };
 };
 
 type HiggsfieldQueuedResponse = {
@@ -196,6 +230,57 @@ function getPictureUrls(rawData: unknown): string[] {
   return [...urls];
 }
 
+function readPath(value: unknown, path: string[]) {
+  let current: unknown = value;
+  for (const key of path) {
+    current = asRecord(current)?.[key];
+  }
+  return current;
+}
+
+function firstNumber(values: unknown[]) {
+  for (const value of values) {
+    const parsed =
+      typeof value === "number"
+        ? value
+        : typeof value === "string"
+          ? Number(value)
+          : Number.NaN;
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return null;
+}
+
+function getEbayQuantitySold(rawData: unknown) {
+  return firstNumber([
+    readPath(rawData, ["SellingStatus", "QuantitySold"]),
+    readPath(rawData, ["SellingStatus", "QuantitySoldByPickupInStore"]),
+    asRecord(rawData)?.QuantitySold,
+  ]) ?? 0;
+}
+
+function getEbayWatchCount(rawData: unknown) {
+  return firstNumber([
+    asRecord(rawData)?.WatchCount,
+    readPath(rawData, ["ListingDetails", "WatchCount"]),
+  ]) ?? 0;
+}
+
+function getEbayViewCount(rawData: unknown) {
+  return firstNumber([
+    asRecord(rawData)?.HitCount,
+    readPath(rawData, ["ListingDetails", "ViewItemURL"]),
+  ]) ?? 0;
+}
+
+function getListingPhotoSet(listing: Pick<ListingFallbackRow, "imageUrl" | "rawData" | "masterRow">) {
+  const photos = new Set<string>();
+  if (listing.imageUrl) photos.add(listing.imageUrl);
+  if (listing.masterRow.imageUrl) photos.add(listing.masterRow.imageUrl);
+  for (const url of getPictureUrls(listing.rawData)) photos.add(url);
+  return photos;
+}
+
 function getHiggsfieldAuthHeader() {
   const singleKey = process.env.HF_KEY || process.env.HIGGSFIELD_KEY;
   if (singleKey?.trim()) return `Key ${singleKey.trim()}`;
@@ -229,19 +314,19 @@ function ebayListingUrl(platformItemId: string | null | undefined) {
 }
 
 function buildVideoPrompt(brief: Omit<VideoListingBrief, "prompt" | "negativePrompt" | "generationSettings">) {
-  const specifics = brief.itemSpecifics.slice(0, 12);
+  const specifics = brief.itemSpecifics.slice(0, 18);
   const brand = getSpecificValue(specifics, ["Brand", "Manufacturer", "Manufacturer Part Number"]);
   const mpn = getSpecificValue(specifics, ["Manufacturer Part Number", "MPN", "Part Number"]);
   const usefulSpecifics = specifics
     .filter((entry) => !["brand", "manufacturer", "manufacturer part number"].includes(entry.name.toLowerCase()))
     .map((entry) => `${entry.name}: ${entry.value}`)
     .join("; ");
-  const description = truncate(brief.descriptionText, 900);
+  const description = truncate(brief.descriptionText, 1800);
 
   return [
-    "Create a fun, engaging marketplace product video ad for one eBay/Amazon shopper who is already comparing parts.",
-    `Output must be ${VIDEO_SIZE}, ${VIDEO_RESOLUTION}, ${VIDEO_ASPECT_RATIO} landscape, clean MP4/MOV-friendly composition, 12-15 seconds, polished product-commercial style.`,
-    "Use the provided product photo as the hero visual reference. Keep the product accurate: preserve shape, materials, color, visible labels, connectors, fitment clues, and part numbers.",
+    "Create a clear, engaging, promotional product video advertisement for an eBay video campaign.",
+    `Final video target: ${VIDEO_SIZE}, ${VIDEO_RESOLUTION}, ${VIDEO_ASPECT_RATIO} landscape, square pixels, clean marketplace-safe product ad style, 12-15 seconds. No voiceover is needed.`,
+    "Use the provided product image as the hero visual reference. Keep the exact product accurate: preserve shape, materials, color, labels, connectors, ports, fitment clues, and any visible part numbers.",
     "",
     "Product:",
     `Title: ${brief.title}`,
@@ -252,13 +337,17 @@ function buildVideoPrompt(brief: Omit<VideoListingBrief, "prompt" | "negativePro
     brief.condition ? `Condition: ${brief.condition}` : null,
     brief.category ? `Category: ${brief.category}` : null,
     usefulSpecifics ? `Known specs: ${usefulSpecifics}` : null,
-    description ? `Listing description summary: ${description}` : null,
+    description ? `Full listing description text to use for accurate feature selection: ${description}` : null,
     "",
-    "Creative direction:",
-    "Open with a quick macro push-in on the actual product, then use smooth hyper-motion camera moves, crisp reflections, clean workshop or studio lighting, and fast detail reveals.",
-    "Show the part as trustworthy, clean, ready to install, and easy to identify. Add subtle animated callouts for the strongest concrete features from the listing, but keep text short because marketplace videos autoplay muted.",
-    "Use an upbeat, practical, buyer-friendly tone. Make it feel like a premium replacement-part showcase, not a generic stock ad.",
-    "End with a clear final beauty shot of the product and concise on-screen copy: Match the part. Fix it fast.",
+    "Ad structure:",
+    "0-2s: Strong hero reveal of the actual product with a smooth push-in and clean lighting.",
+    "2-7s: Show 3-4 close-up detail moments based only on the listing facts: ports, materials, included parts, dimensions, condition, useful controls, or visible identifiers.",
+    "7-11s: Make the product feel useful and easy to choose. Use subtle motion graphics or short on-screen callouts, maximum 3-5 words each.",
+    "11-15s: End on a clean final beauty shot with concise on-screen copy: Match the part. Fix it fast.",
+    "",
+    "Visual style:",
+    "Premium but practical marketplace ad. Crisp macro camera movement, clean studio or workbench setting, soft reflections, high contrast product detail, no messy background, no fake packaging.",
+    "Keep the product centered and readable for shoppers watching muted autoplay. No voiceover. No loud text wall. No gimmicks that hide the item.",
     "",
     "Marketplace compliance:",
     "Do not invent compatibility, warranties, discounts, shipping promises, ratings, review counts, scarcity, or performance claims not present in the listing.",
@@ -346,7 +435,7 @@ export async function getTopTppVideoItems(window: VideoWindow, limit = 30): Prom
   const ranked = [...items.values()]
     .sort((a, b) => b.unitsSold - a.unitsSold || b.grossRevenue - a.grossRevenue)
     .slice(0, limit);
-  if (ranked.length === 0) return [];
+  if (ranked.length === 0) return getTopTppListingsByEbayPerformance(limit);
 
   const skus = ranked.map((item) => item.sku);
   const itemIds = [...new Set(ranked.flatMap((item) => [...item.platformItemIds]))];
@@ -376,7 +465,7 @@ export async function getTopTppVideoItems(window: VideoWindow, limit = 30): Prom
     },
   });
 
-  return ranked.map((item) => {
+  const revenueRows = ranked.map((item) => {
     const listing =
       listings.find((entry) => item.platformItemIds.has(entry.platformItemId)) ??
       listings.find((entry) => entry.sku === item.sku) ??
@@ -402,7 +491,95 @@ export async function getTopTppVideoItems(window: VideoWindow, limit = 30): Prom
       hasListingDescription: Boolean(stripHtml(firstString([asRecord(listing?.rawData)?.Description]))),
       photoCount: photos.size,
     };
+  }).filter((row) => row.marketplaceListingId && row.imageUrl);
+
+  return revenueRows.length > 0 ? revenueRows : getTopTppListingsByEbayPerformance(limit);
+}
+
+async function getTopTppListingsByEbayPerformance(limit: number): Promise<VideoTopItem[]> {
+  const listings = await db.marketplaceListing.findMany({
+    where: {
+      integration: { platform: "TPP_EBAY" },
+      status: "ACTIVE",
+    },
+    select: {
+      id: true,
+      sku: true,
+      title: true,
+      imageUrl: true,
+      salePrice: true,
+      inventory: true,
+      platformItemId: true,
+      rawData: true,
+      masterRow: {
+        select: {
+          imageUrl: true,
+          title: true,
+        },
+      },
+    },
+    take: 2000,
   });
+
+  return (listings as ListingFallbackRow[])
+    .map((listing) => {
+      const unitsSold = getEbayQuantitySold(listing.rawData);
+      const watchCount = getEbayWatchCount(listing.rawData);
+      const viewCount = getEbayViewCount(listing.rawData);
+      const photos = getListingPhotoSet(listing);
+      return {
+        listing,
+        unitsSold,
+        watchCount,
+        viewCount,
+        grossRevenue: unitsSold * (listing.salePrice ?? 0),
+        photos,
+      };
+    })
+    .filter((entry) =>
+      entry.photos.size > 0 &&
+      (entry.unitsSold > 0 || entry.watchCount > 0 || entry.viewCount > 0)
+    )
+    .sort((a, b) =>
+      b.unitsSold - a.unitsSold ||
+      b.grossRevenue - a.grossRevenue ||
+      b.watchCount - a.watchCount ||
+      b.viewCount - a.viewCount,
+    )
+    .slice(0, limit)
+    .map(({ listing, unitsSold, grossRevenue, photos }) => ({
+      sku: listing.sku,
+      title: listing.title ?? listing.masterRow.title ?? null,
+      marketplaceListingId: listing.id,
+      platformItemId: listing.platformItemId,
+      imageUrl: listing.imageUrl ?? listing.masterRow.imageUrl ?? [...photos][0] ?? null,
+      unitsSold,
+      grossRevenue,
+      netRevenue: null,
+      orderCount: unitsSold,
+      salePrice: listing.salePrice,
+      inventory: listing.inventory,
+      listingUrl: ebayListingUrl(listing.platformItemId),
+      hasListingDescription: Boolean(stripHtml(firstString([asRecord(listing.rawData)?.Description]))),
+      photoCount: photos.size,
+    }));
+}
+
+async function refreshListingForVideoBrief(listing: { platformItemId: string }) {
+  const integration = await db.integration.findFirst({
+    where: { platform: "TPP_EBAY" },
+    select: { id: true, platform: true, config: true, enabled: true },
+  });
+  if (!integration?.enabled) return;
+
+  await refreshEbayItemsDirect(
+    {
+      id: integration.id,
+      platform: integration.platform,
+      config: integration.config as Record<string, unknown>,
+    },
+    [listing.platformItemId],
+  );
 }
 
 export async function getVideoListingBrief(marketplaceListingId: string): Promise<VideoListingBrief | null> {
@@ -433,6 +610,48 @@ export async function getVideoListingBrief(marketplaceListingId: string): Promis
   });
   if (!listing) return null;
 
+  const initialDescription = stripHtml(firstString([asRecord(listing.rawData)?.Description]));
+  const initialPhotos = getPictureUrls(listing.rawData);
+  if (!initialDescription || initialPhotos.length <= 1) {
+    await refreshListingForVideoBrief(listing).catch((error) => {
+      console.warn("[video] Full eBay item refresh failed before prompt build", error);
+    });
+    return getVideoListingBriefFromStoredData(marketplaceListingId);
+  }
+
+  return buildVideoListingBriefFromListing(listing);
+}
+
+async function getVideoListingBriefFromStoredData(marketplaceListingId: string): Promise<VideoListingBrief | null> {
+  const listing = await db.marketplaceListing.findFirst({
+    where: {
+      id: marketplaceListingId,
+      integration: { platform: "TPP_EBAY" },
+    },
+    select: {
+      id: true,
+      sku: true,
+      title: true,
+      imageUrl: true,
+      salePrice: true,
+      inventory: true,
+      platformItemId: true,
+      rawData: true,
+      masterRow: {
+        select: {
+          title: true,
+          imageUrl: true,
+          upc: true,
+          weightDisplay: true,
+          weight: true,
+        },
+      },
+    },
+  });
+  return listing ? buildVideoListingBriefFromListing(listing as VideoListingRecord) : null;
+}
+
+function buildVideoListingBriefFromListing(listing: VideoListingRecord): VideoListingBrief {
   const raw = asRecord(listing.rawData);
   const specifics = getItemSpecifics(listing.rawData);
   const images = new Set<string>();
