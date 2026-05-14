@@ -62,6 +62,7 @@ enum BackupStatus {
 enum ListingStatus {
   ACTIVE
   OUT_OF_STOCK
+  REMOVED
 }
 
 enum ForecastBucket {

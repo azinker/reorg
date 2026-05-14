@@ -4,6 +4,7 @@ import type { GridRow, StoreValue, Platform, UpcPushTarget } from "@/lib/grid-ty
 import { Prisma } from "@prisma/client";
 
 const UPC_PUSH_PLATFORMS = new Set<Platform>(["TPP_EBAY", "TT_EBAY", "BIGCOMMERCE", "SHOPIFY"]);
+const VISIBLE_LISTING_WHERE = { status: { not: "REMOVED" as const } };
 
 const masterRowWithRelations = Prisma.validator<Prisma.MasterRowDefaultArgs>()({
   select: {
@@ -17,6 +18,7 @@ const masterRowWithRelations = Prisma.validator<Prisma.MasterRowDefaultArgs>()({
     supplierShipping: true,
     shippingCostOverride: true,
     listings: {
+      where: VISIBLE_LISTING_WHERE,
       select: {
         id: true,
         platformItemId: true,
@@ -34,6 +36,7 @@ const masterRowWithRelations = Prisma.validator<Prisma.MasterRowDefaultArgs>()({
           },
         },
         childListings: {
+          where: VISIBLE_LISTING_WHERE,
           select: {
             id: true,
             platformItemId: true,
@@ -85,6 +88,7 @@ const childMasterRowFullSelect = Prisma.validator<Prisma.MasterRowDefaultArgs>()
     supplierShipping: true,
     shippingCostOverride: true,
     listings: {
+      where: VISIBLE_LISTING_WHERE,
       select: {
         id: true,
         platformItemId: true,
@@ -174,7 +178,7 @@ async function fetchMasterRows() {
           where: {
             isActive: true,
             listings: {
-              some: {},
+              some: VISIBLE_LISTING_WHERE,
             },
           },
           ...masterRowWithRelations,

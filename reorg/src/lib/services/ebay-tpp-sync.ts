@@ -31,7 +31,10 @@ import {
   getFallbackPerRunEbayGetItemBudget,
   getPerRunEbayGetItemBudget,
 } from "@/lib/services/ebay-sync-policy";
-import { removeMarketplaceListingsOlderThan } from "@/lib/services/listing-prune";
+import {
+  markMarketplaceListingsOlderThanRemoved,
+  markMarketplaceListingsRemovedByPlatformItemId,
+} from "@/lib/services/listing-soft-remove";
 import { repairVariationFamiliesForIntegration } from "@/lib/services/variation-repair";
 import { propagateEbayRateLimitToAllSharedIntegrations } from "@/lib/services/ebay-rate-limit";
 
@@ -649,6 +652,22 @@ export async function runEbayTppSync(
                 throw new Error("Missing GetItem result for changed eBay listing.");
               }
               if (fetched.status === "rejected") {
+                if (isEbayListingRemovedError(fetched.reason)) {
+                  const marked = await markMarketplaceListingsRemovedByPlatformItemId(
+                    integration.id,
+                    itemId,
+                  );
+                  if (marked.markedListings > 0) {
+                    progress.itemsProcessed++;
+                    progress.itemsUpdated += marked.markedListings;
+                    progress.errors.push({
+                      sku: itemId,
+                      message:
+                        "eBay no longer returns this listing (removed/not found/unavailable), so it was hidden from the local catalog.",
+                    });
+                    continue;
+                  }
+                }
                 throw fetched.reason;
               }
 
@@ -748,13 +767,13 @@ export async function runEbayTppSync(
       }
 
       await runFullSync(integration, ebayConfig, syncJob.id, progress, analyticsSnapshot, apiCalls);
-      const stalePrune = await removeMarketplaceListingsOlderThan(
+      const staleRemoval = await markMarketplaceListingsOlderThanRemoved(
         integration.id,
         syncJob.startedAt ?? new Date(0),
       );
-      if (stalePrune.deletedListings > 0 || stalePrune.deletedMasterRows > 0) {
+      if (staleRemoval.markedListings > 0) {
         console.log(
-          `[ebay-tpp-sync] Pruned ${stalePrune.deletedListings} stale TPP listings and ${stalePrune.deletedMasterRows} orphaned master rows after full sync`,
+          `[ebay-tpp-sync] Soft-removed ${staleRemoval.markedListings} stale TPP listings after full sync`,
         );
       }
       await db.unmatchedListing.deleteMany({
@@ -1440,6 +1459,23 @@ function isEbayUsageLimitError(error: unknown) {
   return message.toLowerCase().includes("usage limit");
 }
 
+function isEbayListingRemovedError(error: unknown) {
+  if (isEbayUsageLimitError(error)) {
+    return false;
+  }
+
+  const message =
+    error instanceof Error
+      ? error.message
+      : typeof error === "string"
+        ? error
+        : "";
+
+  return /(?:item|listing).*(?:removed|not found|unavailable|deleted|ended|policy)|invalid item id/i.test(
+    message,
+  );
+}
+
 function str(obj: unknown, key: string): string | undefined {
   if (obj == null || typeof obj !== "object") return undefined;
   const value = (obj as Record<string, unknown>)[key];
@@ -1675,6 +1711,7 @@ async function upsertEbayItem(
           masterRowId: parentMaster.id,
           title: title ?? null,
           imageUrl,
+          status: "ACTIVE",
           rawData: trimRawDataForStorage(JSON.parse(JSON.stringify(item)), "TPP_EBAY"),
           lastSyncedAt: new Date(),
         },

@@ -26,7 +26,7 @@ type VariationListingRecord = {
   title: string | null;
   imageUrl: string | null;
   inventory: number | null;
-  status: "ACTIVE" | "OUT_OF_STOCK";
+  status: "ACTIVE" | "OUT_OF_STOCK" | "REMOVED";
   rawData: Prisma.JsonValue;
   createdAt: Date;
 };
@@ -335,6 +335,7 @@ export async function repairVariationFamiliesForIntegration(
       integrationId,
       platformVariantId: { not: null },
       isVariation: true,
+      status: { not: "REMOVED" },
     },
     select: {
       id: true,
@@ -377,6 +378,7 @@ export async function repairVariationFamiliesForIntegration(
     where: {
       integrationId,
       platformItemId: { in: familyPlatformItemIds },
+      status: { not: "REMOVED" },
     },
     select: {
       id: true,
