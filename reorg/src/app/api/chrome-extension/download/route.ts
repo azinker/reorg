@@ -11,8 +11,32 @@ import { queueCurrentRequestBinaryResponseSample } from "@/lib/services/network-
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-async function zipExtensionDirectory(): Promise<Buffer> {
-  const root = join(process.cwd(), "chrome-extension");
+const EXTENSION_PACKAGES = {
+  "catalog-link": {
+    root: "chrome-extension",
+    filename: "reorg-chrome-extension.zip",
+  },
+  "sale-history": {
+    root: "chrome-extensions/sale-history",
+    filename: "tpp-ebay-sold-history-extension.zip",
+  },
+  skuvault: {
+    root: "chrome-extensions/skuvault",
+    filename: "skuvault-quick-adjust-extension.zip",
+  },
+} as const;
+
+type ExtensionPackageId = keyof typeof EXTENSION_PACKAGES;
+
+function getExtensionPackageId(value: string | null): ExtensionPackageId {
+  if (value && value in EXTENSION_PACKAGES) {
+    return value as ExtensionPackageId;
+  }
+  return "catalog-link";
+}
+
+async function zipExtensionDirectory(packageId: ExtensionPackageId): Promise<Buffer> {
+  const root = join(process.cwd(), EXTENSION_PACKAGES[packageId].root);
   if (!existsSync(root)) {
     throw new Error("Extension directory missing");
   }
@@ -38,28 +62,32 @@ async function zipExtensionDirectory(): Promise<Buffer> {
   return Buffer.concat(chunks);
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   const session = await auth();
   if (!session?.user?.id && !isAuthBypassEnabled()) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  const url = new URL(request.url);
+  const packageId = getExtensionPackageId(url.searchParams.get("extension"));
+  const filename = EXTENSION_PACKAGES[packageId].filename;
+
   try {
-    const buffer = await zipExtensionDirectory();
+    const buffer = await zipExtensionDirectory(packageId);
     queueCurrentRequestBinaryResponseSample({
       bytesEstimate: buffer.length,
-      metadata: { contentType: "application/zip" },
+      metadata: { contentType: "application/zip", extensionPackage: packageId },
     });
     return new NextResponse(new Uint8Array(buffer), {
       status: 200,
       headers: {
         "Content-Type": "application/zip",
-        "Content-Disposition": 'attachment; filename="reorg-chrome-extension.zip"',
+        "Content-Disposition": `attachment; filename="${filename}"`,
         "Cache-Control": "no-store",
       },
     });
   } catch (error) {
-    console.error("[chrome-extension download]", error);
+    console.error("[chrome-extension download]", { packageId, error });
     return NextResponse.json(
       { error: "Extension package could not be built. Contact an administrator." },
       { status: 500 },

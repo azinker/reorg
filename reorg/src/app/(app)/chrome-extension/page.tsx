@@ -1,28 +1,87 @@
 "use client";
 
 import { useState } from "react";
+import type { ComponentType } from "react";
 import {
-  Puzzle,
-  Download,
-  Loader2,
-  ExternalLink,
   CheckCircle2,
+  Download,
+  ExternalLink,
   FolderOpen,
+  Loader2,
+  PackageSearch,
+  Puzzle,
   ToggleLeft,
+  Warehouse,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const PRODUCTION_ORIGIN = "https://reorg.theperfectpart.net";
 
+type ExtensionId = "catalog-link" | "sale-history" | "skuvault";
+
+const EXTENSIONS: Array<{
+  id: ExtensionId;
+  name: string;
+  filename: string;
+  accent: string;
+  icon: ComponentType<{ className?: string; "aria-hidden"?: boolean }>;
+  description: string;
+  usage: string[];
+}> = [
+  {
+    id: "catalog-link",
+    name: "reorG Catalog Link",
+    filename: "reorg-chrome-extension.zip",
+    accent: "bg-violet-600 text-white hover:bg-violet-700",
+    icon: Puzzle,
+    description:
+      "Jump from eBay, Shopify admin, or BigCommerce admin straight to the matching reorG catalog row.",
+    usage: [
+      "Open a supported listing page.",
+      "Click the floating Open in reorG button or the extension popup.",
+      "Set the reorG base URL in extension options if needed.",
+    ],
+  },
+  {
+    id: "sale-history",
+    name: "THE PERFECT PART - eBay Sold History",
+    filename: "tpp-ebay-sold-history-extension.zip",
+    accent: "bg-blue-600 text-white hover:bg-blue-700",
+    icon: PackageSearch,
+    description:
+      "Adds sold-history navigation and a last-30-days sales summary to eBay listing and purchase history pages.",
+    usage: [
+      "Open an eBay listing page.",
+      "Use the sold-history controls added by the extension.",
+      "Review the purchase-history summary on eBay sold history pages.",
+    ],
+  },
+  {
+    id: "skuvault",
+    name: "SKUVAULT Quick Adjust",
+    filename: "skuvault-quick-adjust-extension.zip",
+    accent: "bg-emerald-600 text-white hover:bg-emerald-700",
+    icon: Warehouse,
+    description:
+      "Quick popup for SkuVault SKU lookup plus add/remove quantity in WH3, location 12126.",
+    usage: [
+      "Stay logged into reorG in Chrome.",
+      "Enter a SKU to load current on-hand quantity.",
+      "Enter a quantity, then click ADD or REMOVE.",
+    ],
+  },
+];
+
 export default function ChromeExtensionPage() {
-  const [downloading, setDownloading] = useState(false);
+  const [downloading, setDownloading] = useState<ExtensionId | null>(null);
   const [downloadError, setDownloadError] = useState<string | null>(null);
 
-  async function handleDownload() {
+  async function handleDownload(extension: (typeof EXTENSIONS)[number]) {
     setDownloadError(null);
-    setDownloading(true);
+    setDownloading(extension.id);
     try {
-      const res = await fetch("/api/chrome-extension/download", {
+      const params = new URLSearchParams({ extension: extension.id });
+      const res = await fetch(`/api/chrome-extension/download?${params}`, {
         credentials: "include",
       });
       if (!res.ok) {
@@ -33,13 +92,13 @@ export default function ChromeExtensionPage() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = "reorg-chrome-extension.zip";
+      a.download = extension.filename;
       a.click();
       URL.revokeObjectURL(url);
     } catch (e) {
       setDownloadError(e instanceof Error ? e.message : "Download failed");
     } finally {
-      setDownloading(false);
+      setDownloading(null);
     }
   }
 
@@ -48,145 +107,90 @@ export default function ChromeExtensionPage() {
       <div className="border-b border-border px-6 py-5">
         <h1 className="flex items-center gap-2 text-xl font-semibold tracking-tight text-foreground">
           <Puzzle className="h-6 w-6 shrink-0 text-[#C43E3E]" aria-hidden />
-          Chrome extension
+          Chrome Extensions
         </h1>
         <p className="mt-2 max-w-3xl text-sm text-muted-foreground">
-          Install the reorG Catalog Link extension to jump from eBay, Shopify admin, or BigCommerce
-          admin straight to the matching row in the catalog using an existing reorG tab when
-          possible.
+          Download and install the internal Chrome extensions used with reorG, eBay, and SkuVault.
         </p>
       </div>
 
-      <div className="mx-auto w-full max-w-3xl space-y-10 px-6 py-8">
-        <section className="rounded-lg border border-border bg-card/40 p-5">
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-            Download
-          </h2>
-          <p className="mt-2 text-sm text-foreground">
-            Download the extension package as a ZIP file. Unzip it, then in Chrome use{" "}
-            <strong className="font-medium text-foreground">Load unpacked</strong> on the folder that{" "}
-            <strong className="font-medium text-foreground">directly</strong> contains{" "}
-            <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">manifest.json</code>{" "}
-            (same level as <code className="font-mono text-xs">background.js</code>), not a parent
-            folder and not the <code className="font-mono text-xs">.zip</code> file.
-          </p>
-          <div className="mt-4 flex flex-wrap items-center gap-3">
-            <button
-              type="button"
-              onClick={() => void handleDownload()}
-              disabled={downloading}
-              className={cn(
-                "inline-flex items-center gap-2 rounded-md px-4 py-2.5 text-sm font-semibold transition-colors cursor-pointer",
-                downloading
-                  ? "cursor-wait bg-muted text-muted-foreground"
-                  : "bg-violet-600 text-white hover:bg-violet-700",
-              )}
-            >
-              {downloading ? (
-                <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
-              ) : (
-                <Download className="h-4 w-4" aria-hidden />
-              )}
-              {downloading ? "Preparing…" : "Download extension (ZIP)"}
-            </button>
-            {downloadError ? (
-              <span className="text-sm text-red-600 dark:text-red-400">{downloadError}</span>
-            ) : null}
-          </div>
+      <div className="mx-auto w-full max-w-5xl space-y-8 px-6 py-8">
+        <section className="grid gap-4 lg:grid-cols-3">
+          {EXTENSIONS.map((extension) => {
+            const Icon = extension.icon;
+            const isDownloading = downloading === extension.id;
+            return (
+              <article key={extension.id} className="rounded-lg border border-border bg-card/40 p-5">
+                <div className="flex items-start gap-3">
+                  <div className="rounded-md bg-muted p-2">
+                    <Icon className="h-5 w-5 text-[#C43E3E]" aria-hidden />
+                  </div>
+                  <div>
+                    <h2 className="text-base font-semibold text-foreground">{extension.name}</h2>
+                    <p className="mt-1 text-xs text-muted-foreground">{extension.filename}</p>
+                  </div>
+                </div>
+                <p className="mt-4 text-sm text-muted-foreground">{extension.description}</p>
+                <button
+                  type="button"
+                  onClick={() => void handleDownload(extension)}
+                  disabled={downloading !== null}
+                  className={cn(
+                    "mt-5 inline-flex h-10 cursor-pointer items-center gap-2 rounded-md px-3 text-sm font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-50",
+                    extension.accent,
+                  )}
+                >
+                  {isDownloading ? (
+                    <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+                  ) : (
+                    <Download className="h-4 w-4" aria-hidden />
+                  )}
+                  {isDownloading ? "Preparing..." : "Download ZIP"}
+                </button>
+              </article>
+            );
+          })}
         </section>
+
+        {downloadError ? (
+          <div className="rounded-md border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300">
+            {downloadError}
+          </div>
+        ) : null}
 
         <section>
           <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
             Install in Google Chrome
           </h2>
-          <ol className="mt-4 space-y-4 text-sm text-foreground">
-            <li className="flex gap-3">
-              <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-violet-600/15 text-xs font-bold text-violet-600 dark:text-violet-400">
-                1
-              </span>
-              <div>
-                <p className="font-medium">Unzip the download</p>
-                <p className="mt-1 text-muted-foreground">
-                  Extract <code className="font-mono text-xs">reorg-chrome-extension.zip</code>. Open
-                  the extracted location until you see <code className="font-mono text-xs">
-                    manifest.json
-                  </code>{" "}
-                  and <code className="font-mono text-xs">background.js</code> in the{" "}
-                  <strong className="font-medium text-foreground">same</strong> folder — that is the
-                  folder you will choose in the next step. If Windows created a nested folder, use the
-                  inner one (Chrome shows &quot;Manifest file is missing&quot; if you pick the wrong
-                  level).
-                </p>
-              </div>
-            </li>
-            <li className="flex gap-3">
-              <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-violet-600/15 text-xs font-bold text-violet-600 dark:text-violet-400">
-                2
-              </span>
-              <div>
-                <p className="font-medium">Open Chrome Extensions</p>
-                <p className="mt-1 text-muted-foreground">
-                  In Chrome, go to{" "}
-                  <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">
-                    chrome://extensions
-                  </code>{" "}
-                  or Menu → Extensions → Manage extensions.
-                </p>
-              </div>
-            </li>
-            <li className="flex gap-3">
-              <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-violet-600/15 text-xs font-bold text-violet-600 dark:text-violet-400">
-                3
-              </span>
-              <div>
-                <p className="font-medium">Enable Developer mode</p>
-                <p className="mt-1 text-muted-foreground">
-                  Turn on <strong className="font-medium text-foreground">Developer mode</strong>{" "}
-                  (toggle in the top-right on the extensions page).
-                </p>
-              </div>
-            </li>
-            <li className="flex gap-3">
-              <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-violet-600/15 text-xs font-bold text-violet-600 dark:text-violet-400">
-                4
-              </span>
-              <div>
-                <p className="font-medium">Load unpacked</p>
-                <p className="mt-1 text-muted-foreground">
-                  Click <strong className="font-medium text-foreground">Load unpacked</strong> and
-                  select that folder — the directory whose <strong className="font-medium text-foreground">
-                    immediate
-                  </strong>{" "}
-                  children include <code className="font-mono text-xs">manifest.json</code>, not the{" "}
-                  <code className="font-mono text-xs">.zip</code> and not a folder that only contains
-                  another subfolder.
-                </p>
-              </div>
-            </li>
-            <li className="flex gap-3">
-              <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-violet-600/15 text-xs font-bold text-violet-600 dark:text-violet-400">
-                5
-              </span>
-              <div>
-                <p className="font-medium">Pin the extension (optional)</p>
-                <p className="mt-1 text-muted-foreground">
-                  Click the puzzle icon in Chrome’s toolbar and pin &quot;reorG Catalog Link&quot;
-                  for quick access while browsing listings.
-                </p>
-              </div>
-            </li>
+          <ol className="mt-4 grid gap-4 text-sm text-foreground md:grid-cols-2">
+            {[
+              ["Unzip the download", "Extract the ZIP. Open the extracted location until you see manifest.json in the folder."],
+              ["Open Chrome Extensions", "Go to chrome://extensions or Menu > Extensions > Manage extensions."],
+              ["Enable Developer mode", "Turn on Developer mode using the toggle in the top-right on the extensions page."],
+              ["Load unpacked", "Click Load unpacked and choose the folder whose immediate children include manifest.json."],
+              ["Pin the extension", "Click the Chrome puzzle icon and pin whichever extension you use often."],
+              ["Reload after updates", "After downloading a newer ZIP, remove the old unpacked extension or click Reload after replacing files."],
+            ].map(([title, body], index) => (
+              <li key={title} className="flex gap-3 rounded-lg border border-border bg-card/30 p-4">
+                <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-violet-600/15 text-xs font-bold text-violet-600 dark:text-violet-400">
+                  {index + 1}
+                </span>
+                <div>
+                  <p className="font-medium">{title}</p>
+                  <p className="mt-1 text-muted-foreground">{body}</p>
+                </div>
+              </li>
+            ))}
           </ol>
         </section>
 
         <section className="rounded-lg border border-border bg-card/40 p-5">
           <h2 className="flex items-center gap-2 text-sm font-semibold text-foreground">
             <ToggleLeft className="h-4 w-4 text-[#C43E3E]" aria-hidden />
-            Point the extension at reorG
+            Catalog Link settings
           </h2>
           <p className="mt-2 text-sm text-muted-foreground">
-            Right-click the extension icon → <strong className="text-foreground">Options</strong> (or
-            use the link in the popup). Set{" "}
-            <strong className="text-foreground">reorG base URL</strong> to:
+            Right-click reorG Catalog Link, open Options, and set the reorG base URL to:
           </p>
           <ul className="mt-3 space-y-2 text-sm">
             <li className="flex items-start gap-2">
@@ -201,65 +205,46 @@ export default function ChromeExtensionPage() {
             <li className="flex items-start gap-2">
               <FolderOpen className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
               <span className="text-muted-foreground">
-                Local development: e.g.{" "}
+                Local development:{" "}
                 <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">
                   http://localhost:3000
                 </code>{" "}
-                (no trailing slash).
+                with no trailing slash.
               </span>
             </li>
           </ul>
-          <p className="mt-4 text-sm text-muted-foreground">
-            For <strong className="text-foreground">eBay</strong>, choose whether listings default to{" "}
-            <strong className="text-foreground">TPP</strong> or <strong className="text-foreground">TT</strong>{" "}
-            (public eBay URLs do not identify the store). For{" "}
-            <strong className="text-foreground">BigCommerce</strong>, you can optionally restrict the
-            admin hostname.
-          </p>
         </section>
 
         <section>
           <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-            Using the extension
+            Using each extension
           </h2>
-          <ul className="mt-3 list-disc space-y-2 pl-5 text-sm text-muted-foreground">
-            <li>
-              Open a listing on eBay, Shopify admin, or BigCommerce admin (product edit page).
-            </li>
-            <li>
-              Use the purple <strong className="text-foreground">Open in reorG</strong> floating button
-              (bottom-right on the listing page), or open the extension popup and click the same label.
-            </li>
-            <li>
-              If you already have a tab on the <strong className="text-foreground">catalog</strong>, that
-              tab is focused and the grid scrolls to the row <strong className="text-foreground">without
-              reloading</strong> the catalog. If the reorG tab was on another page, it navigates to the
-              catalog once.
-            </li>
-            <li>Stay logged into reorG in Chrome.</li>
-          </ul>
+          <div className="mt-4 grid gap-4 lg:grid-cols-3">
+            {EXTENSIONS.map((extension) => (
+              <article key={extension.id} className="rounded-lg border border-border bg-card/30 p-4">
+                <h3 className="text-sm font-semibold text-foreground">{extension.name}</h3>
+                <ul className="mt-3 list-disc space-y-2 pl-5 text-sm text-muted-foreground">
+                  {extension.usage.map((item) => (
+                    <li key={item}>{item}</li>
+                  ))}
+                </ul>
+              </article>
+            ))}
+          </div>
         </section>
 
         <section className="rounded-md border border-dashed border-border bg-muted/30 px-4 py-3 text-xs text-muted-foreground">
           <p>
-            Updates: after the developer replaces the extension files, open{" "}
-            <code className="font-mono">chrome://extensions</code> and click{" "}
-            <strong className="text-foreground">Reload</strong> on reorG Catalog Link, or remove
-            and load unpacked again from a fresh unzip.
+            SKUVAULT credentials are never included in the Chrome extension. The popup talks to
+            authenticated reorG server routes, and reorG performs the SkuVault API calls.
           </p>
         </section>
-
-        <p className="text-xs text-muted-foreground">
-          More detail: see{" "}
-          <code className="rounded bg-muted px-1 font-mono">reorg/chrome-extension/README.md</code> in
-          the repository.
-        </p>
 
         <a
           href={PRODUCTION_ORIGIN}
           target="_blank"
           rel="noopener noreferrer"
-          className="inline-flex items-center gap-1.5 text-sm font-medium text-violet-600 hover:text-violet-700 dark:text-violet-400 dark:hover:text-violet-300 cursor-pointer"
+          className="inline-flex cursor-pointer items-center gap-1.5 text-sm font-medium text-violet-600 hover:text-violet-700 dark:text-violet-400 dark:hover:text-violet-300"
         >
           Open reorG production
           <ExternalLink className="h-3.5 w-3.5" aria-hidden />

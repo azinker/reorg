@@ -1,0 +1,41 @@
+{
+  "manifest_version": 3,
+  "name": "THE PERFECT PART - eBay Sold History",
+  "version": "1.1.0",
+  "description": "Adds Sold History navigation and a last-30-days sales summary for eBay listing and purchase history pages.",
+  "permissions": [
+    "tabs"
+  ],
+  "host_permissions": [
+    "https://www.ebay.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.ebay.com/itm/*"
+      ],
+      "js": [
+        "content/listing_v3.js"
+      ],
+      "css": [
+        "content/styles.css"
+      ],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://www.ebay.com/bin/purchaseHistory*"
+      ],
+      "js": [
+        "content/purchaseHistory.js"
+      ],
+      "css": [
+        "content/styles.css"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}

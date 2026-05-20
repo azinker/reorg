@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>SKUVAULT Quick Adjust</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <main class="wrap">
+      <header>
+        <div>
+          <h1>SKUVAULT</h1>
+          <p>WH3 · Location 12126</p>
+        </div>
+        <a href="https://reorg.theperfectpart.net/chrome-extension" target="_blank" rel="noreferrer">reorG</a>
+      </header>
+
+      <label>
+        <span>SKU</span>
+        <input id="sku" autocomplete="off" placeholder="Enter SKU" />
+      </label>
+
+      <section id="stockCard" class="stock muted" aria-live="polite">
+        <span class="label">On hand</span>
+        <strong id="onHand">-</strong>
+      </section>
+
+      <label>
+        <span>Quantity</span>
+        <input id="quantity" type="number" min="1" step="1" value="1" />
+      </label>
+
+      <div class="actions">
+        <button id="add" class="add" type="button">ADD</button>
+        <button id="remove" class="remove" type="button">REMOVE</button>
+      </div>
+
+      <p id="status" class="status">Enter a SKU to load current quantity.</p>
+    </main>
+    <script src="popup.js"></script>
+  </body>
+</html>
