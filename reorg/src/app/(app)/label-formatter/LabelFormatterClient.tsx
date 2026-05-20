@@ -205,6 +205,16 @@ export function LabelFormatterClient() {
     });
   }
 
+  function removeSelectedRows() {
+    if (selectedIds.size === 0) return;
+    setRows((current) => current.filter((row) => !selectedIds.has(row.id)));
+    setSelectedIds(new Set());
+    setBanner({
+      type: "success",
+      message: `Deleted ${selectedIds.size} selected row${selectedIds.size === 1 ? "" : "s"}.`,
+    });
+  }
+
   function toggleSelected(id: string) {
     setSelectedIds((current) => {
       const next = new Set(current);
@@ -369,8 +379,20 @@ export function LabelFormatterClient() {
             Working Table
             <span className="text-muted-foreground">({rows.length})</span>
           </div>
-          <div className="text-xs text-muted-foreground">
-            {selectedRows.length > 0 ? `${selectedRows.length} selected` : "No rows selected"}
+          <div className="flex items-center gap-3">
+            <div className="text-xs text-muted-foreground">
+              {selectedRows.length > 0 ? `${selectedRows.length} selected` : "No rows selected"}
+            </div>
+            {selectedRows.length > 0 ? (
+              <button
+                type="button"
+                onClick={removeSelectedRows}
+                className="inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-md border border-red-500/30 bg-red-500/10 px-2.5 text-xs font-medium text-red-300 hover:bg-red-500/20"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                Delete Selected
+              </button>
+            ) : null}
           </div>
         </div>
         <div className="overflow-x-auto">
