@@ -45,6 +45,8 @@ type HistoryRow = {
   zipFileName: string | null;
 };
 
+const WORKING_ROWS_STORAGE_KEY = "reorg.labelFormatter.workingRows.v1";
+
 const EMPTY_MANUAL_ROW: LabelFormatterRow = {
   note: "",
   orderNumber: "",
@@ -62,6 +64,61 @@ function makeId() {
   return typeof crypto !== "undefined" && "randomUUID" in crypto
     ? crypto.randomUUID()
     : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function stringValue(value: unknown) {
+  return typeof value === "string" ? value : "";
+}
+
+function isSourceStore(value: unknown): value is LabelFormatterSourceStore {
+  return value === "EBAY_TPP" || value === "EBAY_TT" || value === "MANUAL";
+}
+
+function normalizeStoredLineItems(value: unknown): LabelFormatterLineItem[] {
+  if (!Array.isArray(value)) return [{ sku: "", quantity: 1 }];
+
+  const lineItems = value.flatMap((item) => {
+    if (!isRecord(item)) return [];
+    const sku = stringValue(item.sku);
+    const quantity = Number(item.quantity);
+    return [{
+      sku,
+      quantity: Number.isInteger(quantity) && quantity > 0 ? quantity : 1,
+    }];
+  });
+
+  return lineItems.length > 0 ? lineItems : [{ sku: "", quantity: 1 }];
+}
+
+function normalizeStoredRows(value: unknown): WorkingRow[] {
+  if (!Array.isArray(value)) return [];
+
+  return value.flatMap((item) => {
+    if (!isRecord(item)) return [];
+
+    const orderNumber = stringValue(item.orderNumber);
+    if (!orderNumber.trim()) return [];
+
+    return [{
+      id: stringValue(item.id) || makeId(),
+      note: stringValue(item.note),
+      orderNumber,
+      sourceStore: isSourceStore(item.sourceStore) ? item.sourceStore : "MANUAL",
+      buyerName: stringValue(item.buyerName),
+      addressLine1: stringValue(item.addressLine1),
+      addressLine2: stringValue(item.addressLine2),
+      city: stringValue(item.city),
+      state: stringValue(item.state),
+      zipCode: stringValue(item.zipCode),
+      lineItems: normalizeStoredLineItems(item.lineItems),
+      createdAt: stringValue(item.createdAt) || new Date().toISOString(),
+      updatedAt: stringValue(item.updatedAt) || undefined,
+    }];
+  });
 }
 
 function toWorkingRow(row: LabelFormatterRow, note: string): WorkingRow {
@@ -110,13 +167,36 @@ export function LabelFormatterClient() {
   const [manualOpen, setManualOpen] = useState(false);
   const [manualDraft, setManualDraft] = useState<LabelFormatterRow>(EMPTY_MANUAL_ROW);
   const [history, setHistory] = useState<HistoryRow[]>([]);
+  const [workingRowsHydrated, setWorkingRowsHydrated] = useState(false);
 
   const selectedRows = useMemo(() => rows.filter((row) => selectedIds.has(row.id)), [rows, selectedIds]);
   const allSelected = rows.length > 0 && rows.every((row) => selectedIds.has(row.id));
 
   useEffect(() => {
+    try {
+      const storedRows = window.localStorage.getItem(WORKING_ROWS_STORAGE_KEY);
+      if (storedRows) setRows(normalizeStoredRows(JSON.parse(storedRows)));
+    } catch {
+      window.localStorage.removeItem(WORKING_ROWS_STORAGE_KEY);
+    } finally {
+      setWorkingRowsHydrated(true);
+    }
+
     void refreshHistory();
   }, []);
+
+  useEffect(() => {
+    if (!workingRowsHydrated) return;
+    window.localStorage.setItem(WORKING_ROWS_STORAGE_KEY, JSON.stringify(rows));
+  }, [rows, workingRowsHydrated]);
+
+  useEffect(() => {
+    setSelectedIds((current) => {
+      const activeIds = new Set(rows.map((row) => row.id));
+      const next = new Set([...current].filter((id) => activeIds.has(id)));
+      return next.size === current.size ? current : next;
+    });
+  }, [rows]);
 
   async function refreshHistory() {
     try {
