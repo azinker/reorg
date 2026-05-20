@@ -1,8 +1,11 @@
 const SKUVAULT_API_ROOT = "https://app.skuvault.com/api";
 const SKUVAULT_WAREHOUSE_CODE = "WH3";
+const SKUVAULT_DEFAULT_WAREHOUSE_ID = 123409;
 const SKUVAULT_LOCATION_CODE = "12126";
 const SKUVAULT_TOKEN_TTL_MS = 55 * 60 * 1000;
 const SKUVAULT_WAREHOUSE_TTL_MS = 6 * 60 * 60 * 1000;
+const SKUVAULT_RATE_LIMIT_MESSAGE =
+  "SkuVault is throttling API calls. Wait a minute and try again.";
 
 type SkuVaultTokens = {
   tenantToken: string;
@@ -86,6 +89,14 @@ async function postSkuVault(path: string, body: Record<string, unknown>) {
   });
 
   const json = await response.json().catch(() => null) as unknown;
+  if (response.status === 429) {
+    const retryAfter = response.headers.get("retry-after");
+    throw new Error(
+      retryAfter
+        ? `${SKUVAULT_RATE_LIMIT_MESSAGE} SkuVault says retry after ${retryAfter} seconds.`
+        : SKUVAULT_RATE_LIMIT_MESSAGE,
+    );
+  }
   if (!response.ok) {
     throw new Error(parseSkuVaultError(json) ?? `SkuVault request failed (${response.status})`);
   }
@@ -99,6 +110,17 @@ async function postSkuVault(path: string, body: Record<string, unknown>) {
 async function getTokens() {
   const now = Date.now();
   if (cachedTokens && cachedTokens.expiresAt > now) return cachedTokens;
+
+  const configuredTenantToken = process.env.SKUVAULT_TENANT_TOKEN?.trim();
+  const configuredUserToken = process.env.SKUVAULT_USER_TOKEN?.trim();
+  if (configuredTenantToken && configuredUserToken) {
+    cachedTokens = {
+      tenantToken: configuredTenantToken,
+      userToken: configuredUserToken,
+      expiresAt: now + SKUVAULT_TOKEN_TTL_MS,
+    };
+    return cachedTokens;
+  }
 
   const body = await postSkuVault("/gettokens", {
     Email: requiredEnv("SKUVAULT_USERNAME"),
@@ -123,6 +145,7 @@ async function getWarehouseId() {
   const configuredId = process.env.SKUVAULT_WAREHOUSE_ID?.trim();
   const configuredNumber = configuredId ? numberFromUnknown(configuredId) : null;
   if (configuredNumber !== null) return configuredNumber;
+  if (SKUVAULT_DEFAULT_WAREHOUSE_ID > 0) return SKUVAULT_DEFAULT_WAREHOUSE_ID;
 
   const now = Date.now();
   if (cachedWarehouse && cachedWarehouse.expiresAt > now) return cachedWarehouse.id;
@@ -159,7 +182,8 @@ function parseQuantity(body: unknown) {
   const directQuantity =
     numberFromUnknown(record.Quantity) ??
     numberFromUnknown(record.QuantityOnHand) ??
-    numberFromUnknown(record.TotalOnHand);
+    numberFromUnknown(record.TotalOnHand) ??
+    numberFromUnknown(record.TotalQuantityOnHand);
   if (directQuantity !== null) return directQuantity;
 
   const nested = asRecord(record.ItemQuantity);

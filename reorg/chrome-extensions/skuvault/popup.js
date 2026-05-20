@@ -10,6 +10,7 @@ const removeButton = document.getElementById("remove");
 
 let lookupTimer = null;
 let activeLookup = null;
+let lastLookupSku = "";
 
 function setStatus(message, type = "") {
   statusEl.textContent = message;
@@ -58,6 +59,8 @@ async function lookupQuantity() {
     setStatus("Enter a SKU to load current quantity.");
     return;
   }
+  if (sku === lastLookupSku) return;
+  lastLookupSku = sku;
 
   if (activeLookup) activeLookup.abort();
   const controller = new AbortController();
@@ -84,7 +87,7 @@ function scheduleLookup() {
   window.clearTimeout(lookupTimer);
   lookupTimer = window.setTimeout(() => {
     lookupQuantity();
-  }, 350);
+  }, 900);
 }
 
 async function adjust(action) {
@@ -115,6 +118,7 @@ async function adjust(action) {
     );
     chrome.storage.local.set({ lastSku: sku }).catch(() => {});
   } catch (error) {
+    lastLookupSku = "";
     setStatus(error.message || "SkuVault update failed.", "error");
   } finally {
     setBusy(false);
@@ -140,7 +144,8 @@ removeButton.addEventListener("click", () => adjust("remove"));
 chrome.storage.local.get(["lastSku"]).then((result) => {
   if (typeof result.lastSku === "string" && result.lastSku.trim()) {
     skuInput.value = result.lastSku.trim();
-    lookupQuantity();
+    setStatus("Press Enter or edit the SKU to load current quantity.");
+    skuInput.focus();
   } else {
     skuInput.focus();
   }
