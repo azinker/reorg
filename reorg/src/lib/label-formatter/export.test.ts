@@ -35,7 +35,7 @@ test("LabelCrow workbook uses exact A-Q headers and row mapping", async () => {
 
   assert.equal(sheet.getCell("A2").value, "Resolv PK RTRN");
   assert.equal(sheet.getCell("B2").value, "2877 NW 10th Ave");
-  assert.equal(sheet.getCell("C2").value, "18");
+  assert.equal(sheet.getCell("C2").text, "");
   assert.equal(sheet.getCell("D2").value, "MIAMI");
   assert.equal(sheet.getCell("E2").value, "FL");
   assert.equal(sheet.getCell("F2").value, "33198");
@@ -46,7 +46,7 @@ test("LabelCrow workbook uses exact A-Q headers and row mapping", async () => {
 
   assert.equal(sheet.getCell("G2").value, "Michael Daniels");
   assert.equal(sheet.getCell("H2").value, "87 Wolf Creek Rd");
-  assert.equal(sheet.getCell("I2").value, "");
+  assert.equal(sheet.getCell("I2").text, "");
   assert.equal(sheet.getCell("J2").value, "Troy");
   assert.equal(sheet.getCell("K2").value, "MO");
   assert.equal(sheet.getCell("L2").value, "63379-3708");

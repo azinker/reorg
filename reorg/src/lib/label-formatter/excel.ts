@@ -24,7 +24,7 @@ export const LABELCROW_HEADERS = [
 const FROM_CONSTANTS = {
   fromName: "Resolv PK RTRN",
   fromStreet: "2877 NW 10th Ave",
-  fromStreet2: "18",
+  fromStreet2: "",
   fromCity: "MIAMI",
   fromState: "FL",
   fromZip: "33198",
