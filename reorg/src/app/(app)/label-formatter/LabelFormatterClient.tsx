@@ -75,7 +75,7 @@ function stringValue(value: unknown) {
 }
 
 function isSourceStore(value: unknown): value is LabelFormatterSourceStore {
-  return value === "EBAY_TPP" || value === "EBAY_TT" || value === "MANUAL";
+  return value === "EBAY_TPP" || value === "EBAY_TT" || value === "BIGCOMMERCE" || value === "SHOPIFY" || value === "MANUAL";
 }
 
 function normalizeStoredLineItems(value: unknown): LabelFormatterLineItem[] {
@@ -139,6 +139,11 @@ function skuSummary(items: LabelFormatterLineItem[]) {
 
 function textList(value: unknown) {
   return Array.isArray(value) ? value.map(String).join(", ") : "";
+}
+
+function sourceStoreList(value: unknown) {
+  if (!Array.isArray(value)) return "";
+  return value.map((entry) => isSourceStore(entry) ? sourceStoreLabel(entry) : String(entry)).join(", ");
 }
 
 function validateManualRow(row: LabelFormatterRow) {
@@ -245,7 +250,7 @@ export function LabelFormatterClient() {
       } else if (json.data.status === "conflict") {
         setConflictPending(json.data.matches);
       } else {
-        setBanner({ type: "warning", message: "No matching eBay TPP or TT order found. You can add it manually." });
+        setBanner({ type: "warning", message: "No matching connected store order found. You can add it manually." });
         setManualDraft({ ...EMPTY_MANUAL_ROW, note, orderNumber: trimmed });
       }
     } catch {
@@ -371,7 +376,7 @@ export function LabelFormatterClient() {
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Label Formatter</h1>
           <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
-            Look up eBay TPP or TT orders, prepare resend rows, and export LabelCrow Excel + 4x6 packing slips.
+            Look up eBay, BigCommerce, or Shopify orders, prepare resend rows, and export LabelCrow Excel + 4x6 packing slips.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -518,6 +523,8 @@ export function LabelFormatterClient() {
                       >
                         <option value="EBAY_TPP">eBay TPP</option>
                         <option value="EBAY_TT">eBay TT</option>
+                        <option value="BIGCOMMERCE">BigCommerce</option>
+                        <option value="SHOPIFY">Shopify</option>
                         <option value="MANUAL">Manual</option>
                       </select>
                     </td>
@@ -608,7 +615,7 @@ export function LabelFormatterClient() {
                   <td className="px-4 py-3">{entry.createdBy?.name ?? entry.createdBy?.email ?? "Unknown"}</td>
                   <td className="px-4 py-3">{entry.rowCount}</td>
                   <td className="px-4 py-3 font-mono text-xs">{textList(entry.orderNumbers)}</td>
-                  <td className="px-4 py-3 text-xs">{textList(entry.sourceStores)}</td>
+                  <td className="px-4 py-3 text-xs">{sourceStoreList(entry.sourceStores)}</td>
                   <td className="px-4 py-3 text-xs text-muted-foreground">
                     {entry.excelFileName}, {entry.pdfFileName}
                   </td>
@@ -728,7 +735,7 @@ function ConflictModal({
         <div className="flex items-start justify-between gap-3">
           <div>
             <h2 className="text-lg font-semibold">Order found in both stores</h2>
-            <p className="mt-2 text-sm text-muted-foreground">Choose which eBay store should be used for this row.</p>
+            <p className="mt-2 text-sm text-muted-foreground">Choose which store should be used for this row.</p>
           </div>
           <button onClick={onCancel} className="cursor-pointer rounded-md p-1 hover:bg-accent" aria-label="Close">
             <X className="h-4 w-4" />
@@ -781,7 +788,7 @@ function ManualModal({
         <div className="flex items-start justify-between gap-3">
           <div>
             <h2 className="text-lg font-semibold">Manual Add</h2>
-            <p className="mt-1 text-sm text-muted-foreground">Add address and SKU data for an order that was not found on eBay.</p>
+            <p className="mt-1 text-sm text-muted-foreground">Add address and SKU data for an order that was not found automatically.</p>
           </div>
           <button onClick={onCancel} className="cursor-pointer rounded-md p-1 hover:bg-accent" aria-label="Close">
             <X className="h-4 w-4" />
@@ -789,6 +796,20 @@ function ManualModal({
         </div>
         <div className="mt-5 grid gap-3 md:grid-cols-2">
           <ManualField label="Notes" value={draft.note ?? ""} onChange={(value) => patch({ note: value })} />
+          <label className="space-y-1.5 text-sm">
+            <span className="font-medium">Store</span>
+            <select
+              value={draft.sourceStore}
+              onChange={(event) => patch({ sourceStore: event.target.value as LabelFormatterSourceStore })}
+              className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm outline-none focus:border-primary"
+            >
+              <option value="EBAY_TPP">eBay TPP</option>
+              <option value="EBAY_TT">eBay TT</option>
+              <option value="BIGCOMMERCE">BigCommerce</option>
+              <option value="SHOPIFY">Shopify</option>
+              <option value="MANUAL">Manual</option>
+            </select>
+          </label>
           <ManualField label="Order Number" value={draft.orderNumber} onChange={(value) => patch({ orderNumber: value })} />
           <ManualField label="Buyer Name" value={draft.buyerName} onChange={(value) => patch({ buyerName: value })} />
           <ManualField label="Address Line 1" value={draft.addressLine1} onChange={(value) => patch({ addressLine1: value })} />

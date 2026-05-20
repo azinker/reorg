@@ -49,7 +49,7 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     console.error("[label-formatter/lookup] failed", error);
     return NextResponse.json(
-      { error: "Failed to look up this eBay order. You can add it manually instead." },
+      { error: "Failed to look up this order. You can add it manually instead." },
       { status: 500 },
     );
   }

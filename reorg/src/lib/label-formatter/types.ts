@@ -4,7 +4,13 @@ export const LABEL_FORMATTER_EXCEL_FILENAME = "ADAM_RESENDS.xlsx";
 export const LABEL_FORMATTER_PDF_FILENAME = "PACKINGSLIP_ADAM_RESENDS.pdf";
 export const LABEL_FORMATTER_ZIP_FILENAME = "LABEL_FORMATTER_EXPORT.zip";
 
-export const labelFormatterSourceStoreSchema = z.enum(["EBAY_TPP", "EBAY_TT", "MANUAL"]);
+export const labelFormatterSourceStoreSchema = z.enum([
+  "EBAY_TPP",
+  "EBAY_TT",
+  "BIGCOMMERCE",
+  "SHOPIFY",
+  "MANUAL",
+]);
 export type LabelFormatterSourceStore = z.infer<typeof labelFormatterSourceStoreSchema>;
 
 export type LabelFormatterLineItem = {
@@ -61,6 +67,10 @@ export function sourceStoreLabel(sourceStore: LabelFormatterSourceStore): string
       return "eBay TPP";
     case "EBAY_TT":
       return "eBay TT";
+    case "BIGCOMMERCE":
+      return "BigCommerce";
+    case "SHOPIFY":
+      return "Shopify";
     case "MANUAL":
       return "Manual";
   }
