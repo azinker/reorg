@@ -1,0 +1,67 @@
+import { z } from "zod";
+
+export const LABEL_FORMATTER_EXCEL_FILENAME = "ADAM_RESENDS.xlsx";
+export const LABEL_FORMATTER_PDF_FILENAME = "PACKINGSLIP_ADAM_RESENDS.pdf";
+export const LABEL_FORMATTER_ZIP_FILENAME = "LABEL_FORMATTER_EXPORT.zip";
+
+export const labelFormatterSourceStoreSchema = z.enum(["EBAY_TPP", "EBAY_TT", "MANUAL"]);
+export type LabelFormatterSourceStore = z.infer<typeof labelFormatterSourceStoreSchema>;
+
+export type LabelFormatterLineItem = {
+  sku: string;
+  quantity: number;
+};
+
+export type LabelFormatterRow = {
+  id?: string;
+  note?: string;
+  orderNumber: string;
+  sourceStore: LabelFormatterSourceStore;
+  buyerName: string;
+  addressLine1: string;
+  addressLine2?: string;
+  city: string;
+  state: string;
+  zipCode: string;
+  lineItems: LabelFormatterLineItem[];
+};
+
+const trimmedString = (max: number) =>
+  z.string().trim().max(max);
+
+export const labelFormatterLineItemSchema = z.object({
+  sku: trimmedString(120).min(1, "SKU is required"),
+  quantity: z.coerce.number().int().positive().max(9999),
+});
+
+export const labelFormatterRowSchema = z.object({
+  id: trimmedString(80).optional(),
+  note: trimmedString(500).optional().default(""),
+  orderNumber: trimmedString(80).min(1, "Order number is required"),
+  sourceStore: labelFormatterSourceStoreSchema,
+  buyerName: trimmedString(160).min(1, "Buyer name is required"),
+  addressLine1: trimmedString(200).min(1, "Address line 1 is required"),
+  addressLine2: trimmedString(200).optional().default(""),
+  city: trimmedString(100).min(1, "City is required"),
+  state: trimmedString(40).min(1, "State is required"),
+  zipCode: trimmedString(40).min(1, "Zip code is required"),
+  lineItems: z.array(labelFormatterLineItemSchema).min(1, "At least one SKU line is required"),
+});
+
+export const labelFormatterExportSchema = z.object({
+  mode: z.enum(["all", "selected"]),
+  rows: z.array(labelFormatterRowSchema).min(1).max(500),
+});
+
+export type LabelFormatterExportInput = z.infer<typeof labelFormatterExportSchema>;
+
+export function sourceStoreLabel(sourceStore: LabelFormatterSourceStore): string {
+  switch (sourceStore) {
+    case "EBAY_TPP":
+      return "eBay TPP";
+    case "EBAY_TT":
+      return "eBay TT";
+    case "MANUAL":
+      return "Manual";
+  }
+}

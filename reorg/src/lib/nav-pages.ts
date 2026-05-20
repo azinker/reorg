@@ -32,6 +32,7 @@ export type PageKey =
   | "payouts"
   | "sync"
   | "manage-orders"
+  | "label-formatter"
   | "ship-orders"
   | "auto-responder"
   | "help-desk"
@@ -121,6 +122,13 @@ export const NAV_PAGES: NavPage[] = [
     label: "Manage Orders",
     icon: "ClipboardList",
     description: "Human-triggered eBay order search, details, and guarded order actions.",
+  },
+  {
+    key: "label-formatter",
+    href: "/label-formatter",
+    label: "Label Formatter",
+    icon: "PackageCheck",
+    description: "Look up eBay resend orders and export LabelCrow Excel plus 4x6 packing slips.",
   },
   {
     key: "catalog-health",

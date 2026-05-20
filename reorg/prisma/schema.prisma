@@ -332,6 +332,7 @@ model User {
   helpdeskCreatedFilters     HelpdeskFilter[]       @relation("HelpdeskFilterCreator")
   helpdeskColumnPrefs        HelpdeskColumnPref[]   @relation("HelpdeskColumnPrefUser")
   helpdeskPresence           HelpdeskPresence[]     @relation("HelpdeskPresenceUser")
+  labelFormatterExportBatches LabelFormatterExportBatch[] @relation("LabelFormatterExportBatchCreator")
 
   @@map("users")
 }
@@ -639,6 +640,52 @@ model Backup {
   @@index([status])
   @@index([expiresAt])
   @@map("backups")
+}
+
+// ─── Label Formatter ─────────────────────────────────────────────────────────
+
+model LabelFormatterExportBatch {
+  id              String   @id @default(cuid())
+  createdByUserId String?
+  rowCount        Int
+  orderNumbers    Json     @default("[]")
+  sourceStores    Json     @default("[]")
+  excelFileName   String
+  pdfFileName     String
+  zipFileName     String?
+  excelFileKey    String?
+  pdfFileKey      String?
+  createdAt       DateTime @default(now())
+
+  createdBy User?                     @relation("LabelFormatterExportBatchCreator", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  rows      LabelFormatterExportRow[]
+
+  @@index([createdByUserId])
+  @@index([createdAt])
+  @@map("label_formatter_export_batches")
+}
+
+model LabelFormatterExportRow {
+  id           String   @id @default(cuid())
+  batchId      String
+  note         String?
+  orderNumber  String
+  sourceStore  String
+  buyerName    String
+  addressLine1 String
+  addressLine2 String?
+  city         String
+  state        String
+  zipCode      String
+  lineItems    Json     @default("[]")
+  createdAt    DateTime @default(now())
+
+  batch LabelFormatterExportBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+
+  @@index([batchId])
+  @@index([orderNumber])
+  @@index([sourceStore])
+  @@map("label_formatter_export_rows")
 }
 
 // ─── App Settings ────────────────────────────────────────────────────────────
