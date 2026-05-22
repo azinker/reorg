@@ -45,6 +45,13 @@ type HistoryRow = {
   zipFileName: string | null;
 };
 
+type WorkingRowsResponse = {
+  data?: WorkingRow[];
+  error?: string;
+};
+
+type WorkingRowsSyncStatus = "loading" | "saved" | "saving" | "error" | "local-only";
+
 const WORKING_ROWS_STORAGE_KEY = "reorg.labelFormatter.workingRows.v1";
 
 const EMPTY_MANUAL_ROW: LabelFormatterRow = {
@@ -100,13 +107,10 @@ function normalizeStoredRows(value: unknown): WorkingRow[] {
   return value.flatMap((item) => {
     if (!isRecord(item)) return [];
 
-    const orderNumber = stringValue(item.orderNumber);
-    if (!orderNumber.trim()) return [];
-
     return [{
       id: stringValue(item.id) || makeId(),
       note: stringValue(item.note),
-      orderNumber,
+      orderNumber: stringValue(item.orderNumber),
       sourceStore: isSourceStore(item.sourceStore) ? item.sourceStore : "MANUAL",
       buyerName: stringValue(item.buyerName),
       addressLine1: stringValue(item.addressLine1),
@@ -119,6 +123,65 @@ function normalizeStoredRows(value: unknown): WorkingRow[] {
       updatedAt: stringValue(item.updatedAt) || undefined,
     }];
   });
+}
+
+function rowTimestamp(row: WorkingRow) {
+  const value = row.updatedAt || row.createdAt;
+  const time = Date.parse(value);
+  return Number.isFinite(time) ? time : 0;
+}
+
+function rowMergeKey(row: WorkingRow) {
+  const orderNumber = row.orderNumber.trim().toLowerCase();
+  if (!orderNumber) return "";
+  return `${row.sourceStore}:${orderNumber}`;
+}
+
+function mergeWorkingRows(serverRows: WorkingRow[], localRows: WorkingRow[]) {
+  const merged = [...serverRows];
+
+  for (const localRow of localRows) {
+    const key = rowMergeKey(localRow);
+    const existingIndex = merged.findIndex((row) =>
+      row.id === localRow.id || (key && rowMergeKey(row) === key),
+    );
+
+    if (existingIndex === -1) {
+      merged.push(localRow);
+      continue;
+    }
+
+    if (rowTimestamp(localRow) > rowTimestamp(merged[existingIndex])) {
+      merged[existingIndex] = localRow;
+    }
+  }
+
+  return merged;
+}
+
+function readLocalWorkingRows() {
+  try {
+    const storedRows = window.localStorage.getItem(WORKING_ROWS_STORAGE_KEY);
+    return storedRows ? normalizeStoredRows(JSON.parse(storedRows)) : [];
+  } catch {
+    window.localStorage.removeItem(WORKING_ROWS_STORAGE_KEY);
+    return [];
+  }
+}
+
+function workingRowsSyncLabel(status: WorkingRowsSyncStatus) {
+  switch (status) {
+    case "loading":
+      return "Loading rows";
+    case "saving":
+      return "Saving";
+    case "saved":
+      return "Saved to account";
+    case "local-only":
+      return "Saved in this browser only";
+    case "error":
+      return "Sync error";
+  }
 }
 
 function toWorkingRow(row: LabelFormatterRow, note: string): WorkingRow {
@@ -173,27 +236,88 @@ export function LabelFormatterClient() {
   const [manualDraft, setManualDraft] = useState<LabelFormatterRow>(EMPTY_MANUAL_ROW);
   const [history, setHistory] = useState<HistoryRow[]>([]);
   const [workingRowsHydrated, setWorkingRowsHydrated] = useState(false);
+  const [workingRowsCanSave, setWorkingRowsCanSave] = useState(false);
+  const [workingRowsSyncStatus, setWorkingRowsSyncStatus] = useState<WorkingRowsSyncStatus>("loading");
 
   const selectedRows = useMemo(() => rows.filter((row) => selectedIds.has(row.id)), [rows, selectedIds]);
   const allSelected = rows.length > 0 && rows.every((row) => selectedIds.has(row.id));
 
   useEffect(() => {
-    try {
-      const storedRows = window.localStorage.getItem(WORKING_ROWS_STORAGE_KEY);
-      if (storedRows) setRows(normalizeStoredRows(JSON.parse(storedRows)));
-    } catch {
-      window.localStorage.removeItem(WORKING_ROWS_STORAGE_KEY);
-    } finally {
-      setWorkingRowsHydrated(true);
+    let cancelled = false;
+
+    async function hydrateWorkingRows() {
+      const localRows = readLocalWorkingRows();
+
+      try {
+        const res = await fetch("/api/label-formatter/working-rows", { cache: "no-store" });
+        const json = (await res.json()) as WorkingRowsResponse;
+        if (!res.ok || !json.data) throw new Error(json.error ?? "Failed to load working rows.");
+
+        if (cancelled) return;
+        setRows(mergeWorkingRows(normalizeStoredRows(json.data), localRows));
+        setWorkingRowsCanSave(true);
+        setWorkingRowsSyncStatus("saved");
+      } catch {
+        if (cancelled) return;
+        if (localRows.length > 0) {
+          setRows(localRows);
+          setWorkingRowsSyncStatus("local-only");
+          setBanner({
+            type: "warning",
+            message: "Loaded rows saved in this browser, but account sync is unavailable right now.",
+          });
+        } else {
+          setWorkingRowsSyncStatus("error");
+          setBanner({ type: "error", message: "Could not load Label Formatter working rows." });
+        }
+        setWorkingRowsCanSave(false);
+      } finally {
+        if (!cancelled) setWorkingRowsHydrated(true);
+      }
     }
 
+    void hydrateWorkingRows();
     void refreshHistory();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
     if (!workingRowsHydrated) return;
-    window.localStorage.setItem(WORKING_ROWS_STORAGE_KEY, JSON.stringify(rows));
-  }, [rows, workingRowsHydrated]);
+
+    try {
+      window.localStorage.setItem(WORKING_ROWS_STORAGE_KEY, JSON.stringify(rows));
+    } catch {
+      // The server-backed draft remains the source of truth when local storage is unavailable.
+    }
+
+    if (!workingRowsCanSave) return;
+
+    const controller = new AbortController();
+    const timeout = window.setTimeout(async () => {
+      setWorkingRowsSyncStatus("saving");
+      try {
+        const res = await fetch("/api/label-formatter/working-rows", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ rows }),
+          signal: controller.signal,
+        });
+        if (!res.ok) throw new Error("Save failed");
+        setWorkingRowsSyncStatus("saved");
+      } catch (error) {
+        if (controller.signal.aborted) return;
+        setWorkingRowsSyncStatus("error");
+      }
+    }, 600);
+
+    return () => {
+      window.clearTimeout(timeout);
+      controller.abort();
+    };
+  }, [rows, workingRowsCanSave, workingRowsHydrated]);
 
   useEffect(() => {
     setSelectedIds((current) => {
@@ -296,7 +420,7 @@ export function LabelFormatterClient() {
     setSelectedIds(new Set());
     setBanner({
       type: "success",
-      message: `Deleted ${selectedIds.size} selected row${selectedIds.size === 1 ? "" : "s"}.`,
+      message: `Removed ${selectedIds.size} selected row${selectedIds.size === 1 ? "" : "s"}.`,
     });
   }
 
@@ -465,6 +589,17 @@ export function LabelFormatterClient() {
             <span className="text-muted-foreground">({rows.length})</span>
           </div>
           <div className="flex items-center gap-3">
+            <div
+              className={cn(
+                "text-xs",
+                workingRowsSyncStatus === "saved" && "text-emerald-300",
+                workingRowsSyncStatus === "saving" && "text-muted-foreground",
+                (workingRowsSyncStatus === "loading" || workingRowsSyncStatus === "local-only") && "text-amber-300",
+                workingRowsSyncStatus === "error" && "text-red-300",
+              )}
+            >
+              {workingRowsSyncLabel(workingRowsSyncStatus)}
+            </div>
             <div className="text-xs text-muted-foreground">
               {selectedRows.length > 0 ? `${selectedRows.length} selected` : "No rows selected"}
             </div>

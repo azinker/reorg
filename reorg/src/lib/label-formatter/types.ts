@@ -61,6 +61,34 @@ export const labelFormatterExportSchema = z.object({
 
 export type LabelFormatterExportInput = z.infer<typeof labelFormatterExportSchema>;
 
+const draftString = (max: number) => z.string().trim().max(max);
+
+export const labelFormatterWorkingLineItemSchema = z.object({
+  sku: draftString(120),
+  quantity: z.coerce.number().int().positive().max(9999),
+});
+
+export const labelFormatterWorkingRowSchema = z.object({
+  id: draftString(80).optional(),
+  note: draftString(500).optional().default(""),
+  orderNumber: draftString(80),
+  sourceStore: labelFormatterSourceStoreSchema,
+  buyerName: draftString(160),
+  addressLine1: draftString(200),
+  addressLine2: draftString(200).optional().default(""),
+  city: draftString(100),
+  state: draftString(40),
+  zipCode: draftString(40),
+  lineItems: z.array(labelFormatterWorkingLineItemSchema).min(1).max(100),
+});
+
+export const labelFormatterWorkingRowsSaveSchema = z.object({
+  rows: z.array(labelFormatterWorkingRowSchema).max(500),
+});
+
+export type LabelFormatterWorkingRowInput = z.infer<typeof labelFormatterWorkingRowSchema>;
+export type LabelFormatterWorkingRowsSaveInput = z.infer<typeof labelFormatterWorkingRowsSaveSchema>;
+
 export function sourceStoreLabel(sourceStore: LabelFormatterSourceStore): string {
   switch (sourceStore) {
     case "EBAY_TPP":

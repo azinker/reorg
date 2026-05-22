@@ -333,6 +333,7 @@ model User {
   helpdeskColumnPrefs        HelpdeskColumnPref[]   @relation("HelpdeskColumnPrefUser")
   helpdeskPresence           HelpdeskPresence[]     @relation("HelpdeskPresenceUser")
   labelFormatterExportBatches LabelFormatterExportBatch[] @relation("LabelFormatterExportBatchCreator")
+  labelFormatterWorkingRows   LabelFormatterWorkingRow[]   @relation("LabelFormatterWorkingRowOwner")
 
   @@map("users")
 }
@@ -686,6 +687,30 @@ model LabelFormatterExportRow {
   @@index([orderNumber])
   @@index([sourceStore])
   @@map("label_formatter_export_rows")
+}
+
+model LabelFormatterWorkingRow {
+  id              String   @id @default(cuid())
+  createdByUserId String
+  note            String?
+  orderNumber     String
+  sourceStore     String
+  buyerName       String
+  addressLine1    String
+  addressLine2    String?
+  city            String
+  state           String
+  zipCode         String
+  lineItems       Json     @default("[]")
+  sortOrder       Int      @default(0)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  createdBy User @relation("LabelFormatterWorkingRowOwner", fields: [createdByUserId], references: [id], onDelete: Cascade)
+
+  @@index([createdByUserId, sortOrder])
+  @@index([createdByUserId, updatedAt])
+  @@map("label_formatter_working_rows")
 }
 
 // ─── App Settings ────────────────────────────────────────────────────────────
