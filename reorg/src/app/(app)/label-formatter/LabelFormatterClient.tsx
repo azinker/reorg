@@ -9,6 +9,7 @@ import {
   Loader2,
   PackageCheck,
   Plus,
+  Save,
   Search,
   Trash2,
   X,
@@ -53,6 +54,7 @@ type WorkingRowsResponse = {
 type WorkingRowsSyncStatus = "loading" | "saved" | "saving" | "error" | "local-only";
 
 const WORKING_ROWS_STORAGE_KEY = "reorg.labelFormatter.workingRows.v1";
+const WORKING_TABLE_DIRTY_ID = "__working_table__";
 
 const EMPTY_MANUAL_ROW: LabelFormatterRow = {
   note: "",
@@ -238,6 +240,7 @@ export function LabelFormatterClient() {
   const [workingRowsHydrated, setWorkingRowsHydrated] = useState(false);
   const [workingRowsCanSave, setWorkingRowsCanSave] = useState(false);
   const [workingRowsSyncStatus, setWorkingRowsSyncStatus] = useState<WorkingRowsSyncStatus>("loading");
+  const [dirtyRowIds, setDirtyRowIds] = useState<Set<string>>(new Set());
 
   const selectedRows = useMemo(() => rows.filter((row) => selectedIds.has(row.id)), [rows, selectedIds]);
   const allSelected = rows.length > 0 && rows.every((row) => selectedIds.has(row.id));
@@ -255,6 +258,7 @@ export function LabelFormatterClient() {
 
         if (cancelled) return;
         setRows(mergeWorkingRows(normalizeStoredRows(json.data), localRows));
+        setDirtyRowIds(new Set(localRows.map((row) => row.id)));
         setWorkingRowsCanSave(true);
         setWorkingRowsSyncStatus("saved");
       } catch {
@@ -293,31 +297,18 @@ export function LabelFormatterClient() {
       // The server-backed draft remains the source of truth when local storage is unavailable.
     }
 
-    if (!workingRowsCanSave) return;
+    if (!workingRowsCanSave || dirtyRowIds.size === 0) return;
 
     const controller = new AbortController();
     const timeout = window.setTimeout(async () => {
-      setWorkingRowsSyncStatus("saving");
-      try {
-        const res = await fetch("/api/label-formatter/working-rows", {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ rows }),
-          signal: controller.signal,
-        });
-        if (!res.ok) throw new Error("Save failed");
-        setWorkingRowsSyncStatus("saved");
-      } catch (error) {
-        if (controller.signal.aborted) return;
-        setWorkingRowsSyncStatus("error");
-      }
+      await saveWorkingRows({ signal: controller.signal, silent: true });
     }, 600);
 
     return () => {
       window.clearTimeout(timeout);
       controller.abort();
     };
-  }, [rows, workingRowsCanSave, workingRowsHydrated]);
+  }, [dirtyRowIds, rows, workingRowsCanSave, workingRowsHydrated]);
 
   useEffect(() => {
     setSelectedIds((current) => {
@@ -337,6 +328,40 @@ export function LabelFormatterClient() {
     }
   }
 
+  async function saveWorkingRows(options?: { signal?: AbortSignal; silent?: boolean }) {
+    if (!workingRowsCanSave) {
+      setWorkingRowsSyncStatus("local-only");
+      if (!options?.silent) {
+        setBanner({ type: "error", message: "Account save is not available. Refresh and try again." });
+      }
+      return;
+    }
+
+    setWorkingRowsSyncStatus("saving");
+    try {
+      const res = await fetch("/api/label-formatter/working-rows", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ rows }),
+        signal: options?.signal,
+      });
+      const json = (await res.json().catch(() => ({}))) as WorkingRowsResponse;
+      if (!res.ok) throw new Error(json.error ?? "Save failed");
+
+      setWorkingRowsSyncStatus("saved");
+      setDirtyRowIds(new Set());
+      if (!options?.silent) {
+        setBanner({ type: "success", message: `Saved ${rows.length} working row${rows.length === 1 ? "" : "s"} to your account.` });
+      }
+    } catch (error) {
+      if (options?.signal?.aborted) return;
+      setWorkingRowsSyncStatus("error");
+      if (!options?.silent) {
+        setBanner({ type: "error", message: "Could not save the working table. Your edits are still visible here; try Save Changes again." });
+      }
+    }
+  }
+
   function addRow(row: WorkingRow, forceDuplicate = false) {
     const duplicate = rows.some((existing) => existing.orderNumber.trim() === row.orderNumber.trim());
     if (duplicate && !forceDuplicate) {
@@ -344,6 +369,7 @@ export function LabelFormatterClient() {
       return;
     }
     setRows((current) => [...current, row]);
+    setDirtyRowIds((current) => new Set(current).add(row.id));
     setBanner({ type: "success", message: `Added ${row.orderNumber}.` });
     setOrderNumber("");
     setNote("");
@@ -386,6 +412,7 @@ export function LabelFormatterClient() {
   }
 
   function updateRow(id: string, patch: Partial<WorkingRow>) {
+    setDirtyRowIds((current) => new Set(current).add(id));
     setRows((current) =>
       current.map((row) =>
         row.id === id ? { ...row, ...patch, updatedAt: new Date().toISOString() } : row,
@@ -394,6 +421,7 @@ export function LabelFormatterClient() {
   }
 
   function updateLineItem(rowId: string, index: number, patch: Partial<LabelFormatterLineItem>) {
+    setDirtyRowIds((current) => new Set(current).add(rowId));
     setRows((current) =>
       current.map((row) => {
         if (row.id !== rowId) return row;
@@ -406,6 +434,12 @@ export function LabelFormatterClient() {
   }
 
   function removeRow(id: string) {
+    setDirtyRowIds((current) => {
+      const next = new Set(current);
+      next.delete(id);
+      next.add(WORKING_TABLE_DIRTY_ID);
+      return next;
+    });
     setRows((current) => current.filter((row) => row.id !== id));
     setSelectedIds((current) => {
       const next = new Set(current);
@@ -416,6 +450,12 @@ export function LabelFormatterClient() {
 
   function removeSelectedRows() {
     if (selectedIds.size === 0) return;
+    setDirtyRowIds((current) => {
+      const next = new Set(current);
+      for (const id of selectedIds) next.delete(id);
+      next.add(WORKING_TABLE_DIRTY_ID);
+      return next;
+    });
     setRows((current) => current.filter((row) => !selectedIds.has(row.id)));
     setSelectedIds(new Set());
     setBanner({
@@ -600,6 +640,15 @@ export function LabelFormatterClient() {
             >
               {workingRowsSyncLabel(workingRowsSyncStatus)}
             </div>
+            <button
+              type="button"
+              onClick={() => void saveWorkingRows()}
+              disabled={rows.length === 0 || dirtyRowIds.size === 0 || workingRowsSyncStatus === "saving" || workingRowsSyncStatus === "loading"}
+              className="inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-md border border-border px-2.5 text-xs font-medium hover:bg-accent disabled:cursor-not-allowed disabled:opacity-45"
+            >
+              {workingRowsSyncStatus === "saving" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+              Save Changes{dirtyRowIds.size > 0 ? ` (${dirtyRowIds.size})` : ""}
+            </button>
             <div className="text-xs text-muted-foreground">
               {selectedRows.length > 0 ? `${selectedRows.length} selected` : "No rows selected"}
             </div>
@@ -632,7 +681,7 @@ export function LabelFormatterClient() {
                 <th className="px-3 py-3">State</th>
                 <th className="px-3 py-3">Zip Code</th>
                 <th className="px-3 py-3">SKU / Quantity Summary</th>
-                <th className="w-16 px-3 py-3"></th>
+                <th className="w-32 px-3 py-3">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
@@ -707,7 +756,22 @@ export function LabelFormatterClient() {
                         </button>
                       </div>
                     </td>
-                    <td className="px-3 py-3 text-right">
+                    <td className="px-3 py-3">
+                      <div className="flex items-center justify-end gap-2">
+                        <button
+                          type="button"
+                          onClick={() => void saveWorkingRows()}
+                          disabled={!dirtyRowIds.has(row.id) || workingRowsSyncStatus === "saving"}
+                          className="inline-flex h-9 w-9 cursor-pointer items-center justify-center rounded-md border border-border text-muted-foreground hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-45"
+                          aria-label={`Save ${row.orderNumber}`}
+                          title="Save row changes"
+                        >
+                          {workingRowsSyncStatus === "saving" && dirtyRowIds.has(row.id) ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <Save className="h-4 w-4" />
+                          )}
+                        </button>
                       <button
                         onClick={() => removeRow(row.id)}
                         className="inline-flex h-9 w-9 cursor-pointer items-center justify-center rounded-md border border-border text-muted-foreground hover:bg-red-500/10 hover:text-red-300"
@@ -715,6 +779,7 @@ export function LabelFormatterClient() {
                       >
                         <Trash2 className="h-4 w-4" />
                       </button>
+                      </div>
                     </td>
                   </tr>
                 ))
