@@ -34,7 +34,7 @@
  *     /events route after the eBay action workers landed.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { cn } from "@/lib/utils";
 import {
@@ -1117,12 +1117,9 @@ export function ThreadView({
 
   // ── Virtualiser setup ──
   const useVirtualTimeline = rows.length > 80;
-  const rowsSignature = useMemo(
-    () => rows.map((row) => `${row.key}:${row.at}`).join("|"),
-    [rows],
-  );
-
   const scrollRef = useRef<HTMLDivElement>(null);
+  const positionedTicketIdRef = useRef<string | null>(null);
+  const [isInitialBottomPlacement, setIsInitialBottomPlacement] = useState(false);
   const virtualizer = useVirtualizer({
     count: rows.length,
     getScrollElement: () => scrollRef.current,
@@ -1134,23 +1131,43 @@ export function ThreadView({
     getItemKey: (i) => rows[i]!.key,
   });
 
-  // Auto-scroll to the bottom (latest message) when the ticket changes,
-  // mirroring how chat clients behave. We do this *after* the virtualiser
-  // has measured at least the first batch of rows so the scroll position
-  // lands accurately.
-  useEffect(() => {
-    if (!ticketId || rows.length === 0) return;
-    const id = requestAnimationFrame(() => {
+  // Jump to the bottom once per ticket open. The scroller is hidden for the
+  // first layout pass so long threads don't visibly race downward while the
+  // virtualizer measures rows.
+  useLayoutEffect(() => {
+    if (!ticketId) {
+      positionedTicketIdRef.current = null;
+      setIsInitialBottomPlacement(false);
+      return;
+    }
+    if (rows.length === 0 || positionedTicketIdRef.current === ticketId) return;
+
+    positionedTicketIdRef.current = ticketId;
+    setIsInitialBottomPlacement(true);
+
+    let cancelled = false;
+    let revealFrame = 0;
+    const jumpToBottom = () => {
       if (useVirtualTimeline) {
         virtualizer.measure();
-        virtualizer.scrollToIndex(rows.length - 1, { align: "end" });
+        virtualizer.scrollToIndex(rows.length - 1, { align: "end", behavior: "auto" });
       } else if (scrollRef.current) {
         scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
       }
+    };
+
+    jumpToBottom();
+    revealFrame = requestAnimationFrame(() => {
+      jumpToBottom();
+      if (!cancelled) setIsInitialBottomPlacement(false);
     });
-    return () => cancelAnimationFrame(id);
+
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(revealFrame);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ticketId, rows.length, rowsSignature, useVirtualTimeline]);
+  }, [ticketId, rows.length, useVirtualTimeline]);
 
   const jumpToTimelineEvent = useCallback(
     (event: SystemEvent) => {
@@ -1253,7 +1270,10 @@ export function ThreadView({
 
       <div
         ref={scrollRef}
-        className="min-h-0 flex-1 scroll-smooth overflow-y-auto bg-background px-4 py-5 sm:px-6"
+        className={cn(
+          "min-h-0 flex-1 overflow-y-auto bg-background px-4 py-5 sm:px-6",
+          isInitialBottomPlacement && "opacity-0",
+        )}
       >
         {rows.length === 0 ? (
           <ThreadEmptyState eventsLoading={eventsLoading} />

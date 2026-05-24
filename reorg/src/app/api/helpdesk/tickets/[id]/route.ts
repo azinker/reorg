@@ -317,13 +317,15 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
   function normalizeBodyForDedup(body: string | null | undefined): string {
     if (!body) return "";
     return body
-      .replace(/<[^>]+>/g, " ")
       .replace(/&nbsp;/gi, " ")
       .replace(/&amp;/gi, "&")
       .replace(/&lt;/gi, "<")
       .replace(/&gt;/gi, ">")
       .replace(/&quot;/gi, '"')
       .replace(/&#39;/gi, "'")
+      .replace(/<br\s*\/?>/gi, " ")
+      .replace(/<\/(p|div|li|tr|td|th|h[1-6])>/gi, " ")
+      .replace(/<[^>]+>/g, "")
       .replace(/\s+/g, " ")
       .trim()
       .toLowerCase();

@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
+  ArrowUpDown,
   Check,
   Download,
   FileSpreadsheet,
@@ -52,6 +53,7 @@ type WorkingRowsResponse = {
 };
 
 type WorkingRowsSyncStatus = "loading" | "saved" | "saving" | "error" | "local-only";
+type NotesSortMode = "none" | "with-notes-first" | "without-notes-first";
 
 const WORKING_ROWS_STORAGE_KEY = "reorg.labelFormatter.workingRows.v1";
 const WORKING_TABLE_DIRTY_ID = "__working_table__";
@@ -241,8 +243,30 @@ export function LabelFormatterClient() {
   const [workingRowsCanSave, setWorkingRowsCanSave] = useState(false);
   const [workingRowsSyncStatus, setWorkingRowsSyncStatus] = useState<WorkingRowsSyncStatus>("loading");
   const [dirtyRowIds, setDirtyRowIds] = useState<Set<string>>(new Set());
+  const [notesSortMode, setNotesSortMode] = useState<NotesSortMode>("none");
 
-  const selectedRows = useMemo(() => rows.filter((row) => selectedIds.has(row.id)), [rows, selectedIds]);
+  const sortedRows = useMemo(() => {
+    if (notesSortMode === "none") return rows;
+    return rows
+      .map((row, index) => ({ row, index }))
+      .sort((a, b) => {
+        const aNote = (a.row.note ?? "").trim();
+        const bNote = (b.row.note ?? "").trim();
+        const aHasNote = aNote.length > 0;
+        const bHasNote = bNote.length > 0;
+        if (aHasNote !== bHasNote) {
+          if (notesSortMode === "with-notes-first") return aHasNote ? -1 : 1;
+          return aHasNote ? 1 : -1;
+        }
+        if (aHasNote && bHasNote) {
+          const noteCompare = aNote.localeCompare(bNote, undefined, { sensitivity: "base", numeric: true });
+          if (noteCompare !== 0) return noteCompare;
+        }
+        return a.index - b.index;
+      })
+      .map(({ row }) => row);
+  }, [notesSortMode, rows]);
+  const selectedRows = useMemo(() => sortedRows.filter((row) => selectedIds.has(row.id)), [sortedRows, selectedIds]);
   const allSelected = rows.length > 0 && rows.every((row) => selectedIds.has(row.id));
 
   useEffect(() => {
@@ -480,8 +504,18 @@ export function LabelFormatterClient() {
     });
   }
 
+  function toggleNotesSort() {
+    setNotesSortMode((current) =>
+      current === "none"
+        ? "with-notes-first"
+        : current === "with-notes-first"
+          ? "without-notes-first"
+          : "none",
+    );
+  }
+
   async function exportRows(mode: "all" | "selected") {
-    const exportSet = mode === "selected" ? selectedRows : rows;
+    const exportSet = mode === "selected" ? selectedRows : sortedRows;
     if (exportSet.length === 0) return;
 
     setExportLoading(mode);
@@ -671,7 +705,16 @@ export function LabelFormatterClient() {
                 <th className="w-12 px-3 py-3">
                   <input type="checkbox" checked={allSelected} onChange={toggleAllSelected} aria-label="Select all rows" />
                 </th>
-                <th className="px-3 py-3">Notes</th>
+                <th className="px-3 py-3" aria-sort={notesSortMode === "none" ? "none" : notesSortMode === "with-notes-first" ? "descending" : "ascending"}>
+                  <button
+                    type="button"
+                    onClick={toggleNotesSort}
+                    className="inline-flex cursor-pointer items-center gap-1 rounded-md px-1 py-0.5 hover:bg-accent hover:text-foreground"
+                  >
+                    Notes
+                    <ArrowUpDown className="h-3.5 w-3.5" />
+                  </button>
+                </th>
                 <th className="px-3 py-3">Order Number</th>
                 <th className="px-3 py-3">Store</th>
                 <th className="px-3 py-3">Buyer Name</th>
@@ -692,7 +735,7 @@ export function LabelFormatterClient() {
                   </td>
                 </tr>
               ) : (
-                rows.map((row) => (
+                sortedRows.map((row) => (
                   <tr key={row.id} className="align-top hover:bg-muted/20">
                     <td className="px-3 py-3">
                       <input type="checkbox" checked={selectedIds.has(row.id)} onChange={() => toggleSelected(row.id)} aria-label={`Select ${row.orderNumber}`} />
@@ -984,13 +1027,19 @@ function ManualModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/60 p-4">
-      <div className="w-full max-w-3xl rounded-lg border border-border bg-card p-5 shadow-xl">
+      <form
+        onSubmit={(event) => {
+          event.preventDefault();
+          onSave();
+        }}
+        className="w-full max-w-3xl rounded-lg border border-border bg-card p-5 shadow-xl"
+      >
         <div className="flex items-start justify-between gap-3">
           <div>
             <h2 className="text-lg font-semibold">Manual Add</h2>
             <p className="mt-1 text-sm text-muted-foreground">Add address and SKU data for an order that was not found automatically.</p>
           </div>
-          <button onClick={onCancel} className="cursor-pointer rounded-md p-1 hover:bg-accent" aria-label="Close">
+          <button type="button" onClick={onCancel} className="cursor-pointer rounded-md p-1 hover:bg-accent" aria-label="Close">
             <X className="h-4 w-4" />
           </button>
         </div>
@@ -1045,10 +1094,10 @@ function ManualModal({
           </button>
         </div>
         <div className="mt-5 flex justify-end gap-2">
-          <button onClick={onCancel} className="h-10 cursor-pointer rounded-md border border-border px-3 text-sm hover:bg-accent">Cancel</button>
-          <button onClick={onSave} className="h-10 cursor-pointer rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground hover:bg-primary/90">Add Row</button>
+          <button type="button" onClick={onCancel} className="h-10 cursor-pointer rounded-md border border-border px-3 text-sm hover:bg-accent">Cancel</button>
+          <button type="submit" className="h-10 cursor-pointer rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground hover:bg-primary/90">Add Row</button>
         </div>
-      </div>
+      </form>
     </div>
   );
 }
