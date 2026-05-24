@@ -6,7 +6,12 @@ import { appendOrUpdateLabelFormatterWorkingRow } from "@/lib/label-formatter/wo
 import type { LabelFormatterLineItem, LabelFormatterSourceStore } from "@/lib/label-formatter/types";
 import { buildEbayConfig } from "@/lib/services/auto-responder-ebay";
 import { getOrderContextCached } from "@/lib/services/helpdesk-order-context-cache";
-import { adjustSkuVaultQuantity, type SkuVaultAdjustmentResult } from "@/lib/services/skuvault";
+import {
+  adjustSkuVaultQuantity,
+  getSkuVaultQuantity,
+  InsufficientSkuVaultQuantityError,
+  type SkuVaultAdjustmentResult,
+} from "@/lib/services/skuvault";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -89,6 +94,15 @@ function mergeLineItems(lines: Array<{ sku: string | null; quantity: number }>):
     bySku.set(sku, (bySku.get(sku) ?? 0) + (Number.isInteger(quantity) && quantity > 0 ? quantity : 1));
   }
   return [...bySku.entries()].map(([sku, quantity]) => ({ sku, quantity }));
+}
+
+function formatInsufficientSkuVaultMessage(
+  shortages: Array<{ sku: string; requestedQuantity: number; availableQuantity: number }>,
+) {
+  const lines = shortages
+    .map((item) => `${item.sku}: needs ${item.requestedQuantity}, only ${item.availableQuantity} left`)
+    .join("; ");
+  return `Cannot add this order to Label Formatter because SkuVault does not have enough inventory. ${lines}. No inventory was deducted and no Label Formatter row was added.`;
 }
 
 export async function POST(request: NextRequest, { params }: RouteParams) {
@@ -177,6 +191,133 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     );
   }
 
+  let skuvault: SkuVaultAdjustmentResult[] = [];
+  let skippedAlreadyDeducted = 0;
+  const linesToDeduct: LabelFormatterLineItem[] = [];
+  for (const line of lineItems) {
+    const deductionEntityId = `${ticket.id}:${line.sku}`;
+    const priorLineDeduction = await db.auditLog.findFirst({
+      where: {
+        action: { in: [SKUVAULT_DEDUCTED_ACTION, LEGACY_INR_SKUVAULT_DEDUCTED_ACTION] },
+        entityType: "HelpdeskTicketSku",
+        entityId: deductionEntityId,
+      },
+      select: { id: true },
+    });
+    if (priorLineDeduction) {
+      skippedAlreadyDeducted += 1;
+      continue;
+    }
+    linesToDeduct.push(line);
+  }
+  const skuvaultAlreadyDeducted = skippedAlreadyDeducted === lineItems.length;
+
+  const quantityChecks = await Promise.all(
+    linesToDeduct.map(async (line) => ({
+      line,
+      current: await getSkuVaultQuantity(line.sku),
+    })),
+  );
+  const shortages = quantityChecks
+    .filter((check) => check.current.quantityOnHand < check.line.quantity)
+    .map((check) => ({
+      sku: check.line.sku,
+      requestedQuantity: check.line.quantity,
+      availableQuantity: check.current.quantityOnHand,
+    }));
+  if (shortages.length > 0) {
+    return NextResponse.json(
+      {
+        error: formatInsufficientSkuVaultMessage(shortages),
+        details: { shortages },
+      },
+      { status: 409 },
+    );
+  }
+
+  try {
+    for (const line of linesToDeduct) {
+      const result = await adjustSkuVaultQuantity({
+        sku: line.sku,
+        quantity: line.quantity,
+        action: "remove",
+      });
+      skuvault.push(result);
+    }
+  } catch (error) {
+    const rollbackErrors: string[] = [];
+    for (const deduction of [...skuvault].reverse()) {
+      try {
+        await adjustSkuVaultQuantity({
+          sku: deduction.sku,
+          quantity: deduction.quantityChanged,
+          action: "add",
+        });
+      } catch (rollbackError) {
+        rollbackErrors.push(
+          rollbackError instanceof Error ? rollbackError.message : `Failed to roll back ${deduction.sku}`,
+        );
+      }
+    }
+
+    if (rollbackErrors.length > 0) {
+      return NextResponse.json(
+        {
+          error: `SkuVault deduction failed and automatic rollback had errors. Check SkuVault before retrying. ${rollbackErrors.join("; ")}`,
+        },
+        { status: 502 },
+      );
+    }
+
+    if (error instanceof InsufficientSkuVaultQuantityError) {
+      return NextResponse.json(
+        {
+          error: formatInsufficientSkuVaultMessage([{
+            sku: error.sku,
+            requestedQuantity: error.requestedQuantity,
+            availableQuantity: error.availableQuantity,
+          }]),
+          details: {
+            shortages: [{
+              sku: error.sku,
+              requestedQuantity: error.requestedQuantity,
+              availableQuantity: error.availableQuantity,
+            }],
+          },
+        },
+        { status: 409 },
+      );
+    }
+
+    return NextResponse.json(
+      {
+        error: "SkuVault deduction failed. No Label Formatter row was added.",
+      },
+      { status: 502 },
+    );
+  }
+
+  for (const result of skuvault) {
+    const line = lineItems.find((item) => item.sku === result.sku);
+    if (!line) continue;
+    const deductionEntityId = `${ticket.id}:${line.sku}`;
+    await db.auditLog.create({
+      data: {
+        userId: actor.userId,
+        action: SKUVAULT_DEDUCTED_ACTION,
+        entityType: "HelpdeskTicketSku",
+        entityId: deductionEntityId,
+        details: {
+          orderNumber: ticket.ebayOrderNumber,
+          ticketId: ticket.id,
+          lineItem: line,
+          inrNoteRequested: parsed.data.inr,
+          result,
+        },
+      },
+    });
+  }
+
   const address = order.shippingAddress;
   const labelResult = await appendOrUpdateLabelFormatterWorkingRow(actor.userId, {
     note: parsed.data.inr ? "INR CASE" : "",
@@ -195,48 +336,6 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     zipCode: address?.postalCode?.trim() ?? "",
     lineItems,
   });
-
-  let skuvault: SkuVaultAdjustmentResult[] = [];
-  let skuvaultAlreadyDeducted = false;
-  let skippedAlreadyDeducted = 0;
-  for (const line of lineItems) {
-    const deductionEntityId = `${ticket.id}:${line.sku}`;
-    const priorLineDeduction = await db.auditLog.findFirst({
-      where: {
-        action: { in: [SKUVAULT_DEDUCTED_ACTION, LEGACY_INR_SKUVAULT_DEDUCTED_ACTION] },
-        entityType: "HelpdeskTicketSku",
-        entityId: deductionEntityId,
-      },
-      select: { id: true },
-    });
-    if (priorLineDeduction) {
-      skippedAlreadyDeducted += 1;
-      continue;
-    }
-
-    const result = await adjustSkuVaultQuantity({
-      sku: line.sku,
-      quantity: line.quantity,
-      action: "remove",
-    });
-    skuvault.push(result);
-    await db.auditLog.create({
-      data: {
-        userId: actor.userId,
-        action: SKUVAULT_DEDUCTED_ACTION,
-        entityType: "HelpdeskTicketSku",
-        entityId: deductionEntityId,
-        details: {
-          orderNumber: ticket.ebayOrderNumber,
-          ticketId: ticket.id,
-          lineItem: line,
-          inrNoteRequested: parsed.data.inr,
-          result,
-        },
-      },
-    });
-  }
-  skuvaultAlreadyDeducted = skippedAlreadyDeducted === lineItems.length;
 
   await db.auditLog.create({
     data: {

@@ -759,7 +759,7 @@ export default function UsersPage() {
                         Help Desk order actions
                       </span>
                       <span className="block text-[11px] text-muted-foreground">
-                        Show the right-rail action for Label Formatter rows and optional SkuVault INR deductions.
+                        Show the right-rail action for Label Formatter rows and SkuVault order deductions.
                       </span>
                     </span>
                   </label>
@@ -1182,7 +1182,7 @@ function EditUserDrawer({
                 Help Desk order actions
               </span>
               <span className="block text-[11px] text-muted-foreground">
-                Show this user the right-rail action for Label Formatter rows and optional SkuVault INR deductions.
+                Show this user the right-rail action for Label Formatter rows and SkuVault order deductions.
               </span>
             </span>
           </label>

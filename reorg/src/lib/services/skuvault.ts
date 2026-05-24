@@ -37,6 +37,22 @@ export type SkuVaultAdjustmentResult = SkuVaultQuantityResult & {
   quantityChanged: number;
 };
 
+export class InsufficientSkuVaultQuantityError extends Error {
+  readonly sku: string;
+  readonly requestedQuantity: number;
+  readonly availableQuantity: number;
+
+  constructor(args: { sku: string; requestedQuantity: number; availableQuantity: number }) {
+    super(
+      `SkuVault does not have enough inventory for ${args.sku}. Requested ${args.requestedQuantity}, but only ${args.availableQuantity} is available.`,
+    );
+    this.name = "InsufficientSkuVaultQuantityError";
+    this.sku = args.sku;
+    this.requestedQuantity = args.requestedQuantity;
+    this.availableQuantity = args.availableQuantity;
+  }
+}
+
 let cachedTokens: SkuVaultTokens | null = null;
 let cachedWarehouse: CachedWarehouse | null = null;
 
@@ -221,6 +237,17 @@ export async function adjustSkuVaultQuantity(args: {
   action: SkuVaultAdjustmentAction;
 }): Promise<SkuVaultAdjustmentResult> {
   const normalizedSku = args.sku.trim();
+  if (args.action === "remove") {
+    const current = await getSkuVaultQuantity(normalizedSku);
+    if (current.quantityOnHand < args.quantity) {
+      throw new InsufficientSkuVaultQuantityError({
+        sku: normalizedSku,
+        requestedQuantity: args.quantity,
+        availableQuantity: current.quantityOnHand,
+      });
+    }
+  }
+
   const tokens = await getTokens();
   const warehouseId = await getWarehouseId();
   const path = args.action === "add" ? "/inventory/addItem" : "/inventory/removeItem";
