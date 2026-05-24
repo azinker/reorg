@@ -234,13 +234,24 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       { status: 409 },
     );
   }
+  const availableQuantityBySku = new Map(
+    quantityChecks.map((check) => [check.line.sku, check.current.quantityOnHand]),
+  );
 
   try {
     for (const line of linesToDeduct) {
+      const currentQuantityOnHand = availableQuantityBySku.get(line.sku);
+      if (currentQuantityOnHand === undefined) {
+        throw new Error(`Missing SkuVault preflight quantity for ${line.sku}.`);
+      }
       const result = await adjustSkuVaultQuantity({
         sku: line.sku,
         quantity: line.quantity,
         action: "remove",
+      }, {
+        currentQuantityOnHand,
+        fetchUpdatedQuantity: false,
+        skipRemoveQuantityCheck: true,
       });
       skuvault.push(result);
     }
@@ -252,6 +263,9 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
           sku: deduction.sku,
           quantity: deduction.quantityChanged,
           action: "add",
+        }, {
+          currentQuantityOnHand: deduction.quantityOnHand,
+          fetchUpdatedQuantity: false,
         });
       } catch (rollbackError) {
         rollbackErrors.push(

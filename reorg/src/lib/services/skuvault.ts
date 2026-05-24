@@ -4,6 +4,8 @@ const SKUVAULT_DEFAULT_WAREHOUSE_ID = 123409;
 const SKUVAULT_LOCATION_CODE = "12126";
 const SKUVAULT_TOKEN_TTL_MS = 55 * 60 * 1000;
 const SKUVAULT_WAREHOUSE_TTL_MS = 6 * 60 * 60 * 1000;
+const SKUVAULT_MIN_REQUEST_SPACING_MS = 125;
+const SKUVAULT_MAX_RETRY_ATTEMPTS = 3;
 const SKUVAULT_RATE_LIMIT_MESSAGE =
   "SkuVault is throttling API calls. Wait a minute and try again.";
 
@@ -21,6 +23,16 @@ type SkuVaultWarehouse = {
 type CachedWarehouse = {
   id: number;
   expiresAt: number;
+};
+
+type SkuVaultAdjustmentOptions = {
+  skipRemoveQuantityCheck?: boolean;
+  currentQuantityOnHand?: number;
+  fetchUpdatedQuantity?: boolean;
+};
+
+type SkuVaultPostOptions = {
+  retryRateLimit?: boolean;
 };
 
 export type SkuVaultAdjustmentAction = "add" | "remove";
@@ -55,6 +67,8 @@ export class InsufficientSkuVaultQuantityError extends Error {
 
 let cachedTokens: SkuVaultTokens | null = null;
 let cachedWarehouse: CachedWarehouse | null = null;
+let skuVaultRequestQueue = Promise.resolve();
+let lastSkuVaultRequestAt = 0;
 
 function requiredEnv(name: string) {
   const value = process.env[name]?.trim();
@@ -93,7 +107,39 @@ function parseSkuVaultError(body: unknown) {
   return null;
 }
 
-async function postSkuVault(path: string, body: Record<string, unknown>) {
+function delay(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function parseRetryAfterMs(value: string | null) {
+  if (!value) return null;
+  const seconds = Number(value);
+  if (Number.isFinite(seconds) && seconds >= 0) return seconds * 1000;
+
+  const dateMs = Date.parse(value);
+  if (Number.isFinite(dateMs)) return Math.max(0, dateMs - Date.now());
+  return null;
+}
+
+async function scheduleSkuVaultRequest<T>(fn: () => Promise<T>) {
+  const run = async () => {
+    const elapsed = Date.now() - lastSkuVaultRequestAt;
+    if (elapsed < SKUVAULT_MIN_REQUEST_SPACING_MS) {
+      await delay(SKUVAULT_MIN_REQUEST_SPACING_MS - elapsed);
+    }
+    lastSkuVaultRequestAt = Date.now();
+    return fn();
+  };
+
+  const next = skuVaultRequestQueue.then(run, run);
+  skuVaultRequestQueue = next.then(
+    () => undefined,
+    () => undefined,
+  );
+  return next;
+}
+
+async function postSkuVaultOnce(path: string, body: Record<string, unknown>) {
   const response = await fetch(`${SKUVAULT_API_ROOT}${path}`, {
     method: "POST",
     headers: {
@@ -106,12 +152,11 @@ async function postSkuVault(path: string, body: Record<string, unknown>) {
 
   const json = await response.json().catch(() => null) as unknown;
   if (response.status === 429) {
-    const retryAfter = response.headers.get("retry-after");
-    throw new Error(
-      retryAfter
-        ? `${SKUVAULT_RATE_LIMIT_MESSAGE} SkuVault says retry after ${retryAfter} seconds.`
-        : SKUVAULT_RATE_LIMIT_MESSAGE,
-    );
+    return {
+      rateLimited: true,
+      retryAfterMs: parseRetryAfterMs(response.headers.get("retry-after")),
+      json,
+    } as const;
   }
   if (!response.ok) {
     throw new Error(parseSkuVaultError(json) ?? `SkuVault request failed (${response.status})`);
@@ -120,7 +165,25 @@ async function postSkuVault(path: string, body: Record<string, unknown>) {
   const apiError = parseSkuVaultError(json);
   if (apiError) throw new Error(apiError);
 
-  return json;
+  return { rateLimited: false, json } as const;
+}
+
+async function postSkuVault(path: string, body: Record<string, unknown>, options: SkuVaultPostOptions = {}) {
+  return scheduleSkuVaultRequest(async () => {
+    const retryRateLimit = options.retryRateLimit ?? true;
+    for (let attempt = 0; attempt <= SKUVAULT_MAX_RETRY_ATTEMPTS; attempt += 1) {
+      const result = await postSkuVaultOnce(path, body);
+      if (!result.rateLimited) return result.json;
+
+      if (!retryRateLimit || attempt === SKUVAULT_MAX_RETRY_ATTEMPTS) {
+        throw new Error(SKUVAULT_RATE_LIMIT_MESSAGE);
+      }
+
+      await delay(result.retryAfterMs ?? 500 * (attempt + 1));
+    }
+
+    throw new Error(SKUVAULT_RATE_LIMIT_MESSAGE);
+  });
 }
 
 async function getTokens() {
@@ -235,16 +298,27 @@ export async function adjustSkuVaultQuantity(args: {
   sku: string;
   quantity: number;
   action: SkuVaultAdjustmentAction;
-}): Promise<SkuVaultAdjustmentResult> {
+}, options: SkuVaultAdjustmentOptions = {}): Promise<SkuVaultAdjustmentResult> {
   const normalizedSku = args.sku.trim();
   if (args.action === "remove") {
-    const current = await getSkuVaultQuantity(normalizedSku);
-    if (current.quantityOnHand < args.quantity) {
+    const currentQuantityOnHand = options.currentQuantityOnHand;
+    if (currentQuantityOnHand !== undefined && currentQuantityOnHand < args.quantity) {
       throw new InsufficientSkuVaultQuantityError({
         sku: normalizedSku,
         requestedQuantity: args.quantity,
-        availableQuantity: current.quantityOnHand,
+        availableQuantity: currentQuantityOnHand,
       });
+    }
+
+    if (!options.skipRemoveQuantityCheck) {
+      const current = await getSkuVaultQuantity(normalizedSku);
+      if (current.quantityOnHand < args.quantity) {
+        throw new InsufficientSkuVaultQuantityError({
+          sku: normalizedSku,
+          requestedQuantity: args.quantity,
+          availableQuantity: current.quantityOnHand,
+        });
+      }
     }
   }
 
@@ -262,7 +336,22 @@ export async function adjustSkuVaultQuantity(args: {
     Note: `reorG SKUVAULT quick ${reason.toLowerCase()}`,
     TenantToken: tokens.tenantToken,
     UserToken: tokens.userToken,
+  }, {
+    retryRateLimit: false,
   });
+
+  if (options.fetchUpdatedQuantity === false && options.currentQuantityOnHand !== undefined) {
+    return {
+      sku: normalizedSku,
+      quantityOnHand: args.action === "add"
+        ? options.currentQuantityOnHand + args.quantity
+        : options.currentQuantityOnHand - args.quantity,
+      warehouse: SKUVAULT_WAREHOUSE_CODE,
+      location: SKUVAULT_LOCATION_CODE,
+      action: args.action,
+      quantityChanged: args.quantity,
+    };
+  }
 
   const updated = await getSkuVaultQuantity(normalizedSku);
   return {
