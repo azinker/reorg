@@ -1141,7 +1141,6 @@ export function ThreadView({
   const scrollRef = useRef<HTMLDivElement>(null);
   const positionedTicketIdRef = useRef<string | null>(null);
   const initialBottomPendingRef = useRef(false);
-  const [isInitialBottomPlacement, setIsInitialBottomPlacement] = useState(false);
   const virtualizer = useVirtualizer({
     count: rows.length,
     getScrollElement: () => scrollRef.current,
@@ -1153,14 +1152,13 @@ export function ThreadView({
     getItemKey: (i) => rows[i]!.key,
   });
 
-  // Jump to the bottom once per ticket open. The scroller is hidden for the
-  // first layout pass so long threads don't visibly race downward while the
-  // virtualizer measures rows.
+  // Jump to the bottom once per ticket open, then keep pinning while the
+  // separately-fetched timeline events hydrate. useLayoutEffect runs before
+  // paint, so this avoids both visible scroll animation and a blank reader.
   useLayoutEffect(() => {
     if (!ticketId) {
       positionedTicketIdRef.current = null;
       initialBottomPendingRef.current = false;
-      setIsInitialBottomPlacement(false);
       return;
     }
     if (rows.length === 0) return;
@@ -1168,7 +1166,6 @@ export function ThreadView({
     if (positionedTicketIdRef.current !== ticketId) {
       positionedTicketIdRef.current = ticketId;
       initialBottomPendingRef.current = true;
-      setIsInitialBottomPlacement(true);
     }
     if (!initialBottomPendingRef.current) return;
 
@@ -1192,7 +1189,6 @@ export function ThreadView({
         jumpToBottom();
         if (!cancelled) {
           initialBottomPendingRef.current = false;
-          setIsInitialBottomPlacement(false);
         }
       });
     });
@@ -1306,10 +1302,7 @@ export function ThreadView({
 
       <div
         ref={scrollRef}
-        className={cn(
-          "min-h-0 flex-1 overflow-y-auto bg-background px-4 py-5 sm:px-6",
-          isInitialBottomPlacement && "opacity-0",
-        )}
+        className="min-h-0 flex-1 overflow-y-auto bg-background px-4 py-5 sm:px-6"
       >
         {rows.length === 0 ? (
           <ThreadEmptyState eventsLoading={eventsLoading} />
