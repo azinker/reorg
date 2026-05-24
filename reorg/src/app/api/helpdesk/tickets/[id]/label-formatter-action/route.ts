@@ -19,11 +19,15 @@ const bodySchema = z.object({
   inr: z.boolean().default(false),
 });
 
+const LABEL_FORMATTER_ACTION = "HELPDESK_ORDER_TO_LABEL_FORMATTER";
+const SKUVAULT_DEDUCTED_ACTION = "HELPDESK_ORDER_SKUVAULT_DEDUCTED_SKU";
+const LEGACY_INR_SKUVAULT_DEDUCTED_ACTION = "HELPDESK_INR_SKUVAULT_DEDUCTED_SKU";
+
 async function getActionStatus(ticketId: string) {
   const [labelLog, skuLogs] = await Promise.all([
     db.auditLog.findFirst({
       where: {
-        action: "HELPDESK_ORDER_TO_LABEL_FORMATTER",
+        action: LABEL_FORMATTER_ACTION,
         entityType: "HelpdeskTicket",
         entityId: ticketId,
       },
@@ -32,7 +36,7 @@ async function getActionStatus(ticketId: string) {
     }),
     db.auditLog.findMany({
       where: {
-        action: "HELPDESK_INR_SKUVAULT_DEDUCTED_SKU",
+        action: { in: [SKUVAULT_DEDUCTED_ACTION, LEGACY_INR_SKUVAULT_DEDUCTED_ACTION] },
         entityType: "HelpdeskTicketSku",
         entityId: { startsWith: `${ticketId}:` },
       },
@@ -166,7 +170,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       { status: 400 },
     );
   }
-  if (parsed.data.inr && lineItems.some((line) => !line.sku.trim())) {
+  if (lineItems.some((line) => !line.sku.trim())) {
     return NextResponse.json(
       { error: "Every line needs a SKU before SkuVault can be deducted." },
       { status: 400 },
@@ -194,51 +198,50 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
 
   let skuvault: SkuVaultAdjustmentResult[] = [];
   let skuvaultAlreadyDeducted = false;
-  if (parsed.data.inr) {
-    let skippedAlreadyDeducted = 0;
-    for (const line of lineItems) {
-      const deductionEntityId = `${ticket.id}:${line.sku}`;
-      const priorLineDeduction = await db.auditLog.findFirst({
-        where: {
-          action: "HELPDESK_INR_SKUVAULT_DEDUCTED_SKU",
-          entityType: "HelpdeskTicketSku",
-          entityId: deductionEntityId,
-        },
-        select: { id: true },
-      });
-      if (priorLineDeduction) {
-        skippedAlreadyDeducted += 1;
-        continue;
-      }
-
-      const result = await adjustSkuVaultQuantity({
-        sku: line.sku,
-        quantity: line.quantity,
-        action: "remove",
-      });
-      skuvault.push(result);
-      await db.auditLog.create({
-        data: {
-          userId: actor.userId,
-          action: "HELPDESK_INR_SKUVAULT_DEDUCTED_SKU",
-          entityType: "HelpdeskTicketSku",
-          entityId: deductionEntityId,
-          details: {
-            orderNumber: ticket.ebayOrderNumber,
-            ticketId: ticket.id,
-            lineItem: line,
-            result,
-          },
-        },
-      });
+  let skippedAlreadyDeducted = 0;
+  for (const line of lineItems) {
+    const deductionEntityId = `${ticket.id}:${line.sku}`;
+    const priorLineDeduction = await db.auditLog.findFirst({
+      where: {
+        action: { in: [SKUVAULT_DEDUCTED_ACTION, LEGACY_INR_SKUVAULT_DEDUCTED_ACTION] },
+        entityType: "HelpdeskTicketSku",
+        entityId: deductionEntityId,
+      },
+      select: { id: true },
+    });
+    if (priorLineDeduction) {
+      skippedAlreadyDeducted += 1;
+      continue;
     }
-    skuvaultAlreadyDeducted = skippedAlreadyDeducted === lineItems.length;
+
+    const result = await adjustSkuVaultQuantity({
+      sku: line.sku,
+      quantity: line.quantity,
+      action: "remove",
+    });
+    skuvault.push(result);
+    await db.auditLog.create({
+      data: {
+        userId: actor.userId,
+        action: SKUVAULT_DEDUCTED_ACTION,
+        entityType: "HelpdeskTicketSku",
+        entityId: deductionEntityId,
+        details: {
+          orderNumber: ticket.ebayOrderNumber,
+          ticketId: ticket.id,
+          lineItem: line,
+          inrNoteRequested: parsed.data.inr,
+          result,
+        },
+      },
+    });
   }
+  skuvaultAlreadyDeducted = skippedAlreadyDeducted === lineItems.length;
 
   await db.auditLog.create({
     data: {
       userId: actor.userId,
-      action: "HELPDESK_ORDER_TO_LABEL_FORMATTER",
+      action: LABEL_FORMATTER_ACTION,
       entityType: "HelpdeskTicket",
       entityId: ticket.id,
       details: {

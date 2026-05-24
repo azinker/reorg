@@ -1336,14 +1336,13 @@ function OrderInfoSection({
       const labelPart = json.data.labelFormatter.created
         ? `Added order ${json.data.orderNumber} to Label Formatter`
         : `Updated the existing Label Formatter row for ${json.data.orderNumber}`;
-      const skuvaultPart = inrChecked
-        ? json.data.skuvault.alreadyDeducted
-          ? "SkuVault was not deducted again because this ticket was already processed as an INR."
-          : `Deducted ${json.data.skuvault.deducted.map((line) => `${line.sku} x${line.quantityChanged}`).join(", ")} from SkuVault.`
-        : "SkuVault was not changed.";
+      const skuvaultPart = json.data.skuvault.alreadyDeducted
+        ? "SkuVault was not deducted again because this ticket was already processed."
+        : `Deducted ${json.data.skuvault.deducted.map((line) => `${line.sku} x${line.quantityChanged}`).join(", ")} from SkuVault.`;
+      const notePart = inrChecked ? " Added INR CASE note." : "";
       setActionBanner({
         type: "success",
-        message: `${labelPart} (${lines}). ${skuvaultPart} Label Formatter now has ${json.data.labelFormatter.totalRows} working rows.`,
+        message: `${labelPart} (${lines}). ${skuvaultPart}${notePart} Label Formatter now has ${json.data.labelFormatter.totalRows} working rows.`,
       });
     } catch (err) {
       setActionBanner({
@@ -1444,7 +1443,7 @@ function OrderInfoSection({
                     Label Formatter action
                   </p>
                   <p className="text-[11px] leading-snug text-muted-foreground">
-                    Adds this order to your Label Formatter working rows. INR also removes the order SKUs from SkuVault.
+                    Adds this order to Label Formatter and deducts the order SKUs from SkuVault. INR only adds the INR CASE note.
                   </p>
                 </div>
               </div>
@@ -1466,7 +1465,7 @@ function OrderInfoSection({
                     </span>
                   ) : (
                     <span className="mt-1 block text-amber-800 dark:text-amber-200">
-                      SkuVault has not been deducted yet. Check INR and run the action to remove the order quantities.
+                      SkuVault has not been deducted yet. Run the action to remove the order quantities.
                     </span>
                   )}
                 </div>
@@ -1478,7 +1477,7 @@ function OrderInfoSection({
                   onChange={(event) => setInrChecked(event.target.checked)}
                   disabled={actionLoading}
                 />
-                INR - deduct SkuVault and note INR CASE
+                Add INR CASE note
               </label>
               <button
                 type="button"
@@ -1487,13 +1486,13 @@ function OrderInfoSection({
                 className="inline-flex h-8 w-full cursor-pointer items-center justify-center gap-1.5 rounded-md bg-emerald-600 px-2 text-xs font-semibold text-white hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {actionLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
-                {inrChecked
-                  ? actionStatus?.labelFormatter.added
-                    ? "Deduct SkuVault + Mark INR"
-                    : "Add + Deduct INR"
-                  : actionStatus?.labelFormatter.added
-                    ? "Refresh Label Formatter Row"
-                    : "Add to Label Formatter"}
+                {actionStatus?.skuvault.deducted
+                  ? inrChecked
+                    ? "Update Row + INR CASE"
+                    : "Refresh Label Formatter Row"
+                  : inrChecked
+                    ? "Add + Deduct + INR CASE"
+                    : "Add + Deduct SkuVault"}
               </button>
               {actionBanner ? (
                 <p
