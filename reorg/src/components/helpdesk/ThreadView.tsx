@@ -801,8 +801,15 @@ export function ThreadView({
   );
 
   const ticketId = ticket?.id ?? null;
-  const [events, setEvents] = useState<SystemEvent[]>([]);
-  const [eventsLoading, setEventsLoading] = useState(false);
+  const [eventsState, setEventsState] = useState<{
+    ticketId: string | null;
+    events: SystemEvent[];
+    loading: boolean;
+  }>({ ticketId: null, events: [], loading: false });
+  const events = eventsState.ticketId === ticketId ? eventsState.events : [];
+  const eventsLoading = ticketId
+    ? eventsState.ticketId !== ticketId || eventsState.loading
+    : false;
   const [highlightedTimelineKey, setHighlightedTimelineKey] = useState<string | null>(null);
   const highlightTimeoutRef = useRef<number | null>(null);
 
@@ -892,25 +899,39 @@ export function ThreadView({
 
   useEffect(() => {
     if (!ticketId) {
-      setEvents([]);
+      setEventsState({ ticketId: null, events: [], loading: false });
       return;
     }
     const ac = new AbortController();
-    setEventsLoading(true);
+    setEventsState({ ticketId, events: [], loading: true });
     fetch(`/api/helpdesk/tickets/${ticketId}/events`, {
       signal: ac.signal,
       credentials: "same-origin",
     })
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
       .then((payload: { data: SystemEvent[] }) => {
-        if (Array.isArray(payload?.data)) setEvents(payload.data);
+        if (ac.signal.aborted) return;
+        setEventsState({
+          ticketId,
+          events: Array.isArray(payload?.data) ? payload.data : [],
+          loading: false,
+        });
       })
       .catch((err: unknown) => {
         if (err instanceof DOMException && err.name === "AbortError") return;
         // eslint-disable-next-line no-console
         console.warn("Failed to load helpdesk events", err);
+        if (!ac.signal.aborted) {
+          setEventsState({ ticketId, events: [], loading: false });
+        }
       })
-      .finally(() => setEventsLoading(false));
+      .finally(() => {
+        if (!ac.signal.aborted) {
+          setEventsState((current) =>
+            current.ticketId === ticketId ? { ...current, loading: false } : current,
+          );
+        }
+      });
     return () => ac.abort();
   }, [ticketId]);
 
@@ -1119,6 +1140,7 @@ export function ThreadView({
   const useVirtualTimeline = rows.length > 80;
   const scrollRef = useRef<HTMLDivElement>(null);
   const positionedTicketIdRef = useRef<string | null>(null);
+  const initialBottomPendingRef = useRef(false);
   const [isInitialBottomPlacement, setIsInitialBottomPlacement] = useState(false);
   const virtualizer = useVirtualizer({
     count: rows.length,
@@ -1137,16 +1159,22 @@ export function ThreadView({
   useLayoutEffect(() => {
     if (!ticketId) {
       positionedTicketIdRef.current = null;
+      initialBottomPendingRef.current = false;
       setIsInitialBottomPlacement(false);
       return;
     }
-    if (rows.length === 0 || positionedTicketIdRef.current === ticketId) return;
+    if (rows.length === 0) return;
 
-    positionedTicketIdRef.current = ticketId;
-    setIsInitialBottomPlacement(true);
+    if (positionedTicketIdRef.current !== ticketId) {
+      positionedTicketIdRef.current = ticketId;
+      initialBottomPendingRef.current = true;
+      setIsInitialBottomPlacement(true);
+    }
+    if (!initialBottomPendingRef.current) return;
 
     let cancelled = false;
     let revealFrame = 0;
+    let settleFrame = 0;
     const jumpToBottom = () => {
       if (useVirtualTimeline) {
         virtualizer.measure();
@@ -1159,15 +1187,23 @@ export function ThreadView({
     jumpToBottom();
     revealFrame = requestAnimationFrame(() => {
       jumpToBottom();
-      if (!cancelled) setIsInitialBottomPlacement(false);
+      if (eventsLoading) return;
+      settleFrame = requestAnimationFrame(() => {
+        jumpToBottom();
+        if (!cancelled) {
+          initialBottomPendingRef.current = false;
+          setIsInitialBottomPlacement(false);
+        }
+      });
     });
 
     return () => {
       cancelled = true;
       cancelAnimationFrame(revealFrame);
+      cancelAnimationFrame(settleFrame);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ticketId, rows.length, useVirtualTimeline]);
+  }, [ticketId, rows.length, events.length, eventsLoading, useVirtualTimeline]);
 
   const jumpToTimelineEvent = useCallback(
     (event: SystemEvent) => {
