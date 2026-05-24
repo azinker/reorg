@@ -15,6 +15,7 @@ interface AppShellProps {
     email: string;
     name: string;
     role: string;
+    helpdeskOrderActionsEnabled?: boolean;
   } | null;
   /**
    * Set of page keys this user is allowed to see in the sidebar. NULL means

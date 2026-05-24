@@ -79,3 +79,89 @@ export async function replaceLabelFormatterWorkingRows(
 
   return listLabelFormatterWorkingRows(userId);
 }
+
+export async function appendOrUpdateLabelFormatterWorkingRow(
+  userId: string,
+  row: LabelFormatterWorkingRowInput,
+): Promise<{ row: LabelFormatterWorkingRowRecord; created: boolean; totalRows: number }> {
+  const result = await db.$transaction(async (tx) => {
+    const existing = await tx.labelFormatterWorkingRow.findFirst({
+      where: {
+        createdByUserId: userId,
+        orderNumber: row.orderNumber,
+        sourceStore: row.sourceStore,
+      },
+      orderBy: { createdAt: "asc" },
+    });
+
+    if (existing) {
+      const nextNote = row.note?.trim()
+        ? row.note.trim()
+        : existing.note ?? "";
+      const updated = await tx.labelFormatterWorkingRow.update({
+        where: { id: existing.id },
+        data: {
+          note: nextNote,
+          buyerName: row.buyerName,
+          addressLine1: row.addressLine1,
+          addressLine2: row.addressLine2 ?? "",
+          city: row.city,
+          state: row.state,
+          zipCode: row.zipCode,
+          lineItems: row.lineItems,
+        },
+      });
+      const totalRows = await tx.labelFormatterWorkingRow.count({
+        where: { createdByUserId: userId },
+      });
+      return { dbRow: updated, created: false, totalRows };
+    }
+
+    const last = await tx.labelFormatterWorkingRow.findFirst({
+      where: { createdByUserId: userId },
+      orderBy: [{ sortOrder: "desc" }, { createdAt: "desc" }],
+      select: { sortOrder: true },
+    });
+    const created = await tx.labelFormatterWorkingRow.create({
+      data: {
+        ...(row.id ? { id: row.id } : {}),
+        createdByUserId: userId,
+        note: row.note ?? "",
+        orderNumber: row.orderNumber,
+        sourceStore: row.sourceStore,
+        buyerName: row.buyerName,
+        addressLine1: row.addressLine1,
+        addressLine2: row.addressLine2 ?? "",
+        city: row.city,
+        state: row.state,
+        zipCode: row.zipCode,
+        lineItems: row.lineItems,
+        sortOrder: (last?.sortOrder ?? -1) + 1,
+      },
+    });
+    const totalRows = await tx.labelFormatterWorkingRow.count({
+      where: { createdByUserId: userId },
+    });
+    return { dbRow: created, created: true, totalRows };
+  });
+
+  return {
+    row: {
+      id: result.dbRow.id,
+      note: result.dbRow.note ?? "",
+      orderNumber: result.dbRow.orderNumber,
+      sourceStore: result.dbRow.sourceStore as LabelFormatterWorkingRowRecord["sourceStore"],
+      buyerName: result.dbRow.buyerName,
+      addressLine1: result.dbRow.addressLine1,
+      addressLine2: result.dbRow.addressLine2 ?? "",
+      city: result.dbRow.city,
+      state: result.dbRow.state,
+      zipCode: result.dbRow.zipCode,
+      lineItems: normalizeLineItems(result.dbRow.lineItems),
+      createdAt: result.dbRow.createdAt,
+      updatedAt: result.dbRow.updatedAt,
+    },
+    created: result.created,
+    totalRows: result.totalRows,
+  };
+}

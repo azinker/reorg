@@ -61,6 +61,7 @@ import {
   Loader2,
   MapPin,
   Package,
+  PackageMinus,
   Phone,
   ShoppingBag,
   Star,
@@ -77,6 +78,7 @@ import {
   type HelpdeskTimelineEvent,
 } from "@/lib/helpdesk/conversation-summary";
 import { Avatar, AvatarStack } from "@/components/ui/avatar";
+import { useCurrentUser } from "@/contexts/current-user-context";
 
 interface ContextPanelProps {
   ticket: HelpdeskTicketDetail | null;
@@ -200,6 +202,30 @@ interface FeedbackSummaryResponse {
     checkedLive: boolean;
     reason?: string;
   };
+}
+
+interface LabelFormatterActionResponse {
+  data?: {
+    orderNumber: string;
+    labelFormatter: {
+      rowId: string;
+      created: boolean;
+      totalRows: number;
+      note: string;
+    };
+    lineItems: Array<{ sku: string; quantity: number }>;
+    skuvault: {
+      deducted: Array<{
+        sku: string;
+        quantityChanged: number;
+        quantityOnHand: number;
+        warehouse: string;
+        location: string;
+      }>;
+      alreadyDeducted: boolean;
+    };
+  };
+  error?: string;
 }
 
 interface UseFeedbackSummaryResult {
@@ -1154,8 +1180,15 @@ function OrderInfoSection({
    *     full address is visible without truncation).
    *   - Products list mirrors eDesk's compact stack: thumbnail + title + SKU
    *     on the left, qty × unit price on the right.
-   */
+  */
   const [open, setOpen] = useState(true);
+  const [inrChecked, setInrChecked] = useState(false);
+  const [actionLoading, setActionLoading] = useState(false);
+  const [actionBanner, setActionBanner] = useState<{
+    type: "success" | "error";
+    message: string;
+  } | null>(null);
+  const currentUser = useCurrentUser();
   const { data: ctx, loading, error } = order;
 
   if (!ticket.ebayOrderNumber && ticket.kind !== "POST_SALES") {
@@ -1228,6 +1261,48 @@ function OrderInfoSection({
             } satisfies OrderContextLineItem,
           ]
         : [];
+  const canRunOrderActions =
+    currentUser?.email?.trim().toLowerCase() === "adam@theperfectpart.net" ||
+    Boolean(currentUser?.helpdeskOrderActionsEnabled);
+
+  async function runLabelFormatterAction() {
+    setActionLoading(true);
+    setActionBanner(null);
+    try {
+      const res = await fetch(`/api/helpdesk/tickets/${ticket.id}/label-formatter-action`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ inr: inrChecked }),
+      });
+      const json = (await res.json().catch(() => ({}))) as LabelFormatterActionResponse;
+      if (!res.ok || !json.data) {
+        throw new Error(json.error ?? "Order action failed.");
+      }
+
+      const lines = json.data.lineItems
+        .map((line) => `${line.sku} x${line.quantity}`)
+        .join(", ");
+      const labelPart = json.data.labelFormatter.created
+        ? `Added order ${json.data.orderNumber} to Label Formatter`
+        : `Updated the existing Label Formatter row for ${json.data.orderNumber}`;
+      const skuvaultPart = inrChecked
+        ? json.data.skuvault.alreadyDeducted
+          ? "SkuVault was not deducted again because this ticket was already processed as an INR."
+          : `Deducted ${json.data.skuvault.deducted.map((line) => `${line.sku} x${line.quantityChanged}`).join(", ")} from SkuVault.`
+        : "SkuVault was not changed.";
+      setActionBanner({
+        type: "success",
+        message: `${labelPart} (${lines}). ${skuvaultPart} Label Formatter now has ${json.data.labelFormatter.totalRows} working rows.`,
+      });
+    } catch (err) {
+      setActionBanner({
+        type: "error",
+        message: err instanceof Error ? err.message : "Order action failed.",
+      });
+    } finally {
+      setActionLoading(false);
+    }
+  }
 
   return (
     <section className="border-b border-hairline bg-card/40">
@@ -1309,6 +1384,52 @@ function OrderInfoSection({
           {/* Body rows — every field gets its own block separated by a hairline
            * divider, so the eye doesn't have to count whitespace to find the
            * next field. This is the layout from the user's screenshot. */}
+          {canRunOrderActions ? (
+            <div className="mb-3 rounded-md border border-emerald-500/25 bg-emerald-500/10 p-2.5">
+              <div className="mb-2 flex items-start gap-2">
+                <PackageMinus className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-700 dark:text-emerald-300" />
+                <div className="min-w-0">
+                  <p className="text-xs font-semibold text-foreground">
+                    Label Formatter action
+                  </p>
+                  <p className="text-[11px] leading-snug text-muted-foreground">
+                    Adds this order to your Label Formatter working rows. INR also removes the order SKUs from SkuVault.
+                  </p>
+                </div>
+              </div>
+              <label className="mb-2 flex cursor-pointer items-center gap-2 text-xs text-foreground">
+                <input
+                  type="checkbox"
+                  checked={inrChecked}
+                  onChange={(event) => setInrChecked(event.target.checked)}
+                  disabled={actionLoading}
+                />
+                INR
+              </label>
+              <button
+                type="button"
+                onClick={() => void runLabelFormatterAction()}
+                disabled={actionLoading || loading || !ctx || productItems.length === 0}
+                className="inline-flex h-8 w-full cursor-pointer items-center justify-center gap-1.5 rounded-md bg-emerald-600 px-2 text-xs font-semibold text-white hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {actionLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+                {inrChecked ? "Add + Deduct INR" : "Add to Label Formatter"}
+              </button>
+              {actionBanner ? (
+                <p
+                  className={cn(
+                    "mt-2 rounded border px-2 py-1.5 text-[11px] leading-snug",
+                    actionBanner.type === "success"
+                      ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-800 dark:text-emerald-200"
+                      : "border-red-500/30 bg-red-500/10 text-red-800 dark:text-red-200",
+                  )}
+                >
+                  {actionBanner.message}
+                </p>
+              ) : null}
+            </div>
+          ) : null}
+
           <div className="divide-y divide-hairline rounded-md border border-hairline bg-surface/25 shadow-sm">
             {/* Ordered + Shipped on a single row, side-by-side, mirrors eDesk. */}
             <div className="grid grid-cols-2 gap-2 px-3 py-2.5 text-sm">

@@ -7,6 +7,7 @@ export type CurrentUser = {
   email: string;
   name: string;
   role: string;
+  helpdeskOrderActionsEnabled?: boolean;
 };
 
 const CurrentUserContext = createContext<CurrentUser | null>(null);

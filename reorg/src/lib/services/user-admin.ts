@@ -11,6 +11,7 @@ export async function createManagedUser(input: {
   role: Role;
   pagePermissions?: PageKey[] | null;
   catalogPermissions?: CatalogPermissions | null;
+  helpdeskOrderActionsEnabled?: boolean;
   createdById: string;
 }) {
   const email = input.email.trim().toLowerCase();
@@ -38,6 +39,9 @@ export async function createManagedUser(input: {
                 : (input.catalogPermissions as unknown as Prisma.InputJsonValue),
           }
         : {}),
+      ...(input.helpdeskOrderActionsEnabled !== undefined
+        ? { helpdeskOrderActionsEnabled: input.helpdeskOrderActionsEnabled }
+        : {}),
     },
     select: {
       id: true,
@@ -62,6 +66,9 @@ export async function createManagedUser(input: {
           : {}),
         ...(input.catalogPermissions !== undefined
           ? { catalogPermissions: input.catalogPermissions }
+          : {}),
+        ...(input.helpdeskOrderActionsEnabled !== undefined
+          ? { helpdeskOrderActionsEnabled: input.helpdeskOrderActionsEnabled }
           : {}),
       },
     },
@@ -176,6 +183,7 @@ export async function updateManagedUserAsAdmin(input: {
   role?: Role;
   pagePermissions?: PageKey[] | null;
   catalogPermissions?: CatalogPermissions | null;
+  helpdeskOrderActionsEnabled?: boolean;
   password?: string;
 }) {
   const data: Prisma.UserUpdateInput = {};
@@ -200,6 +208,9 @@ export async function updateManagedUserAsAdmin(input: {
         ? Prisma.JsonNull
         : (input.catalogPermissions as unknown as Prisma.InputJsonValue);
   }
+  if (input.helpdeskOrderActionsEnabled !== undefined) {
+    data.helpdeskOrderActionsEnabled = input.helpdeskOrderActionsEnabled;
+  }
   if (typeof input.password === "string" && input.password.trim()) {
     data.passwordHash = await bcrypt.hash(input.password, 10);
   }
@@ -218,6 +229,7 @@ export async function updateManagedUserAsAdmin(input: {
       role: true,
       pagePermissions: true,
       catalogPermissions: true,
+      helpdeskOrderActionsEnabled: true,
       updatedAt: true,
     },
   });
@@ -236,6 +248,9 @@ export async function updateManagedUserAsAdmin(input: {
           : {}),
         ...(input.catalogPermissions !== undefined
           ? { catalogPermissions: input.catalogPermissions }
+          : {}),
+        ...(input.helpdeskOrderActionsEnabled !== undefined
+          ? { helpdeskOrderActionsEnabled: input.helpdeskOrderActionsEnabled }
           : {}),
       },
     },

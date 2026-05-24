@@ -107,6 +107,7 @@ export interface Actor {
   role: "ADMIN" | "OPERATOR";
   pagePermissions: string[] | null;
   catalogPermissions: unknown | null;
+  helpdeskOrderActionsEnabled: boolean;
   /** True iff an admin is currently impersonating someone else. */
   isImpersonating: boolean;
   /**
@@ -144,7 +145,11 @@ export async function getActor(): Promise<Actor | null> {
     // No impersonation cookie — return the real user as the actor.
     const me = await db.user.findUnique({
       where: { id: realUserId },
-      select: { pagePermissions: true, catalogPermissions: true },
+      select: {
+        pagePermissions: true,
+        catalogPermissions: true,
+        helpdeskOrderActionsEnabled: true,
+      },
     });
     return {
       userId: realUserId,
@@ -153,6 +158,7 @@ export async function getActor(): Promise<Actor | null> {
       role: realRole,
       pagePermissions: (me?.pagePermissions as string[] | null) ?? null,
       catalogPermissions: me?.catalogPermissions ?? null,
+      helpdeskOrderActionsEnabled: me?.helpdeskOrderActionsEnabled ?? false,
       isImpersonating: false,
       realUserId,
       realEmail,
@@ -172,6 +178,7 @@ export async function getActor(): Promise<Actor | null> {
       role: realRole,
       pagePermissions: null,
       catalogPermissions: null,
+      helpdeskOrderActionsEnabled: false,
       isImpersonating: false,
       realUserId,
       realEmail,
@@ -188,6 +195,7 @@ export async function getActor(): Promise<Actor | null> {
       role: true,
       pagePermissions: true,
       catalogPermissions: true,
+      helpdeskOrderActionsEnabled: true,
     },
   });
 
@@ -199,6 +207,7 @@ export async function getActor(): Promise<Actor | null> {
       role: realRole,
       pagePermissions: null,
       catalogPermissions: null,
+      helpdeskOrderActionsEnabled: false,
       isImpersonating: false,
       realUserId,
       realEmail,
@@ -213,6 +222,7 @@ export async function getActor(): Promise<Actor | null> {
     role: target.role as "ADMIN" | "OPERATOR",
     pagePermissions: (target.pagePermissions as string[] | null) ?? null,
     catalogPermissions: target.catalogPermissions ?? null,
+    helpdeskOrderActionsEnabled: target.helpdeskOrderActionsEnabled,
     isImpersonating: true,
     realUserId,
     realEmail,

@@ -42,6 +42,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
               email: actor.email,
               name: actor.name,
               role: actor.role,
+              helpdeskOrderActionsEnabled: actor.helpdeskOrderActionsEnabled,
             }
           : null
       }

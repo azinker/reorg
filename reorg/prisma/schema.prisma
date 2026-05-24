@@ -297,6 +297,10 @@ model User {
   /// dropdown still lets the agent override per-message; this is just the
   /// default the dropdown is initialised to. NULL = use the global default.
   helpdeskDefaultSendStatus String? @db.VarChar(16)
+  /// Allows the Help Desk right rail to add order rows to Label Formatter and,
+  /// when explicitly selected, deduct order SKUs from SkuVault. Adam is also
+  /// allowed by email as a built-in admin fallback.
+  helpdeskOrderActionsEnabled Boolean @default(false)
 
   accounts              Account[]
   sessions              Session[]

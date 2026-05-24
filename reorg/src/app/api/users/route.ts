@@ -20,6 +20,7 @@ const createUserSchema = z.object({
   role: z.enum(["ADMIN", "OPERATOR"]),
   pagePermissions: z.unknown().optional(),
   catalogPermissions: z.unknown().optional(),
+  helpdeskOrderActionsEnabled: z.boolean().optional().default(false),
 });
 
 export async function GET() {
@@ -43,6 +44,7 @@ export async function GET() {
         role: true,
         pagePermissions: true,
         catalogPermissions: true,
+        helpdeskOrderActionsEnabled: true,
         createdAt: true,
         updatedAt: true,
       },
@@ -99,6 +101,7 @@ export async function GET() {
           role: u.role,
           catalogPermissions: u.catalogPermissions,
         }),
+        helpdeskOrderActionsEnabled: u.helpdeskOrderActionsEnabled,
         createdAt: u.createdAt.toISOString(),
         updatedAt: u.updatedAt.toISOString(),
       })),
@@ -181,6 +184,7 @@ export async function POST(request: NextRequest) {
       email,
       pagePermissions,
       catalogPermissions,
+      helpdeskOrderActionsEnabled: parsed.data.helpdeskOrderActionsEnabled,
       createdById: session.user.id,
     });
 

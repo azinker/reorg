@@ -55,6 +55,7 @@ interface ManagedUser {
   role: "ADMIN" | "OPERATOR";
   pagePermissions: string[] | null;
   catalogPermissions: CatalogPermissions;
+  helpdeskOrderActionsEnabled: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -268,6 +269,7 @@ export default function UsersPage() {
   const [newUserCatalogReadOnly, setNewUserCatalogReadOnly] = useState(false);
   const [newUserCatalogHiddenColumns, setNewUserCatalogHiddenColumns] =
     useState<Set<string>>(new Set());
+  const [newUserHelpdeskOrderActions, setNewUserHelpdeskOrderActions] = useState(false);
 
   async function loadUsers() {
     setLoading(true);
@@ -359,6 +361,7 @@ export default function UsersPage() {
 
     try {
       const body: Record<string, unknown> = { ...newUserForm };
+      body.helpdeskOrderActionsEnabled = newUserHelpdeskOrderActions;
       if (newUserForm.role === "OPERATOR") {
         body.pagePermissions =
           newUserAccessMode === "default"
@@ -390,6 +393,7 @@ export default function UsersPage() {
       setNewUserAllowedPages(new Set());
       setNewUserCatalogReadOnly(false);
       setNewUserCatalogHiddenColumns(new Set());
+      setNewUserHelpdeskOrderActions(false);
       setBanner({ type: "success", message: "User created successfully." });
       await loadUsers();
     } catch (createError) {
@@ -743,6 +747,22 @@ export default function UsersPage() {
                       />
                     </div>
                   ) : null}
+                  <label className="flex items-start gap-2 rounded-lg border border-border bg-background/50 p-3 text-xs">
+                    <input
+                      type="checkbox"
+                      checked={newUserHelpdeskOrderActions}
+                      onChange={(event) => setNewUserHelpdeskOrderActions(event.target.checked)}
+                      className="mt-0.5"
+                    />
+                    <span>
+                      <span className="font-semibold text-foreground">
+                        Help Desk order actions
+                      </span>
+                      <span className="block text-[11px] text-muted-foreground">
+                        Show the right-rail action for Label Formatter rows and optional SkuVault INR deductions.
+                      </span>
+                    </span>
+                  </label>
                 </div>
 
                 <button
@@ -821,6 +841,12 @@ export default function UsersPage() {
                             <span className="mt-1 flex items-center gap-1 text-orange-700 dark:text-orange-300">
                               <Lock className="h-3 w-3" />
                               {catalogSummary}
+                            </span>
+                          ) : null}
+                          {user.helpdeskOrderActionsEnabled ? (
+                            <span className="mt-1 flex items-center gap-1 text-emerald-700 dark:text-emerald-300">
+                              <ShieldCheck className="h-3 w-3" />
+                              Help Desk order actions
                             </span>
                           ) : null}
                         </td>
@@ -1001,6 +1027,9 @@ function EditUserDrawer({
   const [catalogHiddenColumns, setCatalogHiddenColumns] = useState<Set<string>>(
     new Set(initialCatalogPermissions.hiddenColumns),
   );
+  const [helpdeskOrderActions, setHelpdeskOrderActions] = useState(
+    user.helpdeskOrderActionsEnabled,
+  );
   const [saving, setSaving] = useState(false);
 
   // Always-allowed pages are visible to everyone — show them as on but disabled.
@@ -1028,6 +1057,9 @@ function EditUserDrawer({
       if (name.trim() && name.trim() !== (user.name ?? "")) body.name = name.trim();
       if (role !== user.role) body.role = role;
       if (password.trim()) body.password = password.trim();
+      if (helpdeskOrderActions !== user.helpdeskOrderActionsEnabled) {
+        body.helpdeskOrderActionsEnabled = helpdeskOrderActions;
+      }
 
       // Only send pagePermissions when the user is/will-be an OPERATOR. The
       // admin role overrides anything sent here, so don't litter the audit
@@ -1136,6 +1168,23 @@ function EditUserDrawer({
                 Password must be at least 8 characters.
               </p>
             ) : null}
+          </label>
+
+          <label className="flex items-start gap-2 rounded-lg border border-border bg-background/50 p-3 text-xs">
+            <input
+              type="checkbox"
+              checked={helpdeskOrderActions}
+              onChange={(event) => setHelpdeskOrderActions(event.target.checked)}
+              className="mt-0.5"
+            />
+            <span>
+              <span className="font-semibold text-foreground">
+                Help Desk order actions
+              </span>
+              <span className="block text-[11px] text-muted-foreground">
+                Show this user the right-rail action for Label Formatter rows and optional SkuVault INR deductions.
+              </span>
+            </span>
           </label>
 
           {role === "OPERATOR" ? (

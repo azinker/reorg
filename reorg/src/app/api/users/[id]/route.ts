@@ -34,6 +34,7 @@ const patchSchema = z.object({
   // accept null for "reset to operator default").
   pagePermissions: z.unknown().optional(),
   catalogPermissions: z.unknown().optional(),
+  helpdeskOrderActionsEnabled: z.boolean().optional(),
 });
 
 export async function PATCH(
@@ -141,6 +142,7 @@ export async function PATCH(
       role: parsed.data.role,
       pagePermissions,
       catalogPermissions,
+      helpdeskOrderActionsEnabled: parsed.data.helpdeskOrderActionsEnabled,
       password: parsed.data.password,
     });
 
