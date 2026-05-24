@@ -1,8 +1,12 @@
 const REORG_BASE_URL = "https://reorg.theperfectpart.net";
+const LOOKUP_DEBOUNCE_MS = 450;
 
 const skuInput = document.getElementById("sku");
 const quantityInput = document.getElementById("quantity");
 const onHand = document.getElementById("onHand");
+const beforeQty = document.getElementById("beforeQty");
+const changeQty = document.getElementById("changeQty");
+const afterQty = document.getElementById("afterQty");
 const stockCard = document.getElementById("stockCard");
 const statusEl = document.getElementById("status");
 const addButton = document.getElementById("add");
@@ -10,7 +14,9 @@ const removeButton = document.getElementById("remove");
 
 let lookupTimer = null;
 let activeLookup = null;
-let lastLookupSku = "";
+let activeLookupId = 0;
+let lastLoadedSku = "";
+let currentQuantity = null;
 
 function setStatus(message, type = "") {
   statusEl.textContent = message;
@@ -24,7 +30,35 @@ function setBusy(isBusy) {
   quantityInput.disabled = isBusy;
 }
 
+function resetMetrics() {
+  beforeQty.textContent = "-";
+  changeQty.textContent = "-";
+  afterQty.textContent = "-";
+  beforeQty.className = "";
+  changeQty.className = "";
+  afterQty.className = "";
+}
+
+function formatQuantity(quantity) {
+  const numberValue = Number(quantity);
+  return Number.isFinite(numberValue) ? String(numberValue) : "-";
+}
+
+function setChange(quantity, action) {
+  const numberValue = Number(quantity);
+  if (!Number.isFinite(numberValue)) {
+    changeQty.textContent = "-";
+    changeQty.className = "";
+    return;
+  }
+
+  const signed = action === "remove" ? -numberValue : numberValue;
+  changeQty.textContent = signed > 0 ? `+${signed}` : String(signed);
+  changeQty.className = signed < 0 ? "negative" : "positive";
+}
+
 function setOnHand(quantity) {
+  currentQuantity = Number.isFinite(quantity) ? quantity : null;
   onHand.textContent = Number.isFinite(quantity) ? String(quantity) : "-";
   stockCard.classList.remove("good", "low", "muted");
   if (!Number.isFinite(quantity)) {
@@ -37,33 +71,44 @@ function setOnHand(quantity) {
 }
 
 async function apiFetch(path, options = {}) {
+  const headers = {
+    ...(options.body ? { "Content-Type": "application/json" } : {}),
+    ...(options.headers || {}),
+  };
   const response = await fetch(`${REORG_BASE_URL}${path}`, {
     ...options,
     credentials: "include",
-    headers: {
-      "Content-Type": "application/json",
-      ...(options.headers || {}),
-    },
+    headers,
   });
   const json = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new Error(json.error || `Request failed (${response.status})`);
+    const error = new Error(json.error || `Request failed (${response.status})`);
+    error.details = json.details;
+    throw error;
   }
   return json.data;
 }
 
-async function lookupQuantity() {
+function resetForSkuEdit() {
+  lastLoadedSku = "";
+  setOnHand(null);
+  resetMetrics();
+}
+
+async function lookupQuantity({ force = false } = {}) {
   const sku = skuInput.value.trim();
   if (!sku) {
-    setOnHand(null);
+    if (activeLookup) activeLookup.abort();
+    resetForSkuEdit();
     setStatus("Enter a SKU to load current quantity.");
     return;
   }
-  if (sku === lastLookupSku) return;
-  lastLookupSku = sku;
+  if (!force && sku === lastLoadedSku && currentQuantity !== null) return;
 
   if (activeLookup) activeLookup.abort();
   const controller = new AbortController();
+  const lookupId = activeLookupId + 1;
+  activeLookupId = lookupId;
   activeLookup = controller;
 
   setStatus("Loading current quantity...");
@@ -71,15 +116,19 @@ async function lookupQuantity() {
     const data = await apiFetch(`/api/skuvault/quantity?sku=${encodeURIComponent(sku)}`, {
       method: "GET",
       signal: controller.signal,
-      headers: {},
     });
+    if (lookupId !== activeLookupId) return;
+    lastLoadedSku = data.sku;
     setOnHand(Number(data.quantityOnHand));
-    setStatus(`Current stock loaded for ${data.sku}.`, "ok");
-    chrome.storage.local.set({ lastSku: sku }).catch(() => {});
+    resetMetrics();
+    setStatus(`Current quantity for ${data.sku}: ${data.quantityOnHand}.`, "ok");
   } catch (error) {
     if (error.name === "AbortError") return;
-    setOnHand(null);
+    if (lookupId !== activeLookupId) return;
+    resetForSkuEdit();
     setStatus(error.message || "Could not load quantity.", "error");
+  } finally {
+    if (lookupId === activeLookupId) activeLookup = null;
   }
 }
 
@@ -87,7 +136,18 @@ function scheduleLookup() {
   window.clearTimeout(lookupTimer);
   lookupTimer = window.setTimeout(() => {
     lookupQuantity();
-  }, 900);
+  }, LOOKUP_DEBOUNCE_MS);
+}
+
+function renderAdjustment(data) {
+  const previous = Number(data.previousQuantityOnHand);
+  const changed = Number(data.quantityChanged);
+  const after = Number(data.quantityOnHand);
+  beforeQty.textContent = formatQuantity(previous);
+  setChange(changed, data.action);
+  afterQty.textContent = formatQuantity(after);
+  afterQty.className = "";
+  setOnHand(after);
 }
 
 async function adjust(action) {
@@ -104,32 +164,40 @@ async function adjust(action) {
     return;
   }
 
+  window.clearTimeout(lookupTimer);
+  if (activeLookup) activeLookup.abort();
+  activeLookup = null;
+  activeLookupId += 1;
+
   setBusy(true);
-  setStatus(`${action === "add" ? "Adding" : "Removing"} ${quantity}...`);
+  setStatus(`${action === "add" ? "Adding" : "Removing"} ${quantity} for ${sku}...`);
   try {
     const data = await apiFetch("/api/skuvault/adjust", {
       method: "POST",
       body: JSON.stringify({ sku, quantity, action }),
     });
-    setOnHand(Number(data.quantityOnHand));
+    lastLoadedSku = data.sku;
+    renderAdjustment(data);
     setStatus(
-      `${action === "add" ? "Added" : "Removed"} ${quantity}. On hand is now ${data.quantityOnHand}.`,
+      `${action === "add" ? "Added" : "Removed"} ${quantity} for ${data.sku}. Before ${data.previousQuantityOnHand}, after ${data.quantityOnHand}.`,
       "ok",
     );
-    chrome.storage.local.set({ lastSku: sku }).catch(() => {});
   } catch (error) {
-    lastLookupSku = "";
+    lastLoadedSku = "";
     setStatus(error.message || "SkuVault update failed.", "error");
   } finally {
     setBusy(false);
   }
 }
 
-skuInput.addEventListener("input", scheduleLookup);
+skuInput.addEventListener("input", () => {
+  resetForSkuEdit();
+  scheduleLookup();
+});
 skuInput.addEventListener("keydown", (event) => {
   if (event.key === "Enter") {
     event.preventDefault();
-    lookupQuantity();
+    lookupQuantity({ force: true });
   }
 });
 quantityInput.addEventListener("keydown", (event) => {
@@ -141,12 +209,8 @@ quantityInput.addEventListener("keydown", (event) => {
 addButton.addEventListener("click", () => adjust("add"));
 removeButton.addEventListener("click", () => adjust("remove"));
 
-chrome.storage.local.get(["lastSku"]).then((result) => {
-  if (typeof result.lastSku === "string" && result.lastSku.trim()) {
-    skuInput.value = result.lastSku.trim();
-    setStatus("Press Enter or edit the SKU to load current quantity.");
-    skuInput.focus();
-  } else {
-    skuInput.focus();
-  }
-}).catch(() => skuInput.focus());
+skuInput.value = "";
+quantityInput.value = "1";
+setOnHand(null);
+resetMetrics();
+skuInput.focus();

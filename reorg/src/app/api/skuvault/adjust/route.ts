@@ -3,7 +3,11 @@ import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { isAuthBypassEnabled } from "@/lib/app-env";
 import { db } from "@/lib/db";
-import { adjustSkuVaultQuantity } from "@/lib/services/skuvault";
+import {
+  adjustSkuVaultQuantity,
+  getSkuVaultQuantity,
+  InsufficientSkuVaultQuantityError,
+} from "@/lib/services/skuvault";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -56,7 +60,12 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const data = await adjustSkuVaultQuantity(parsed.data);
+    const before = await getSkuVaultQuantity(parsed.data.sku);
+    const data = await adjustSkuVaultQuantity(parsed.data, {
+      currentQuantityOnHand: before.quantityOnHand,
+      fetchUpdatedQuantity: false,
+      skipRemoveQuantityCheck: true,
+    });
     await db.auditLog.create({
       data: {
         userId: userId ?? undefined,
@@ -70,13 +79,36 @@ export async function POST(request: NextRequest) {
           resultingQuantityOnHand: data.quantityOnHand,
           warehouse: data.warehouse,
           location: data.location,
+          previousQuantityOnHand: before.quantityOnHand,
         },
       },
     }).catch(() => {});
 
-    return withExtensionCors(request, NextResponse.json({ data }));
+    return withExtensionCors(request, NextResponse.json({
+      data: {
+        ...data,
+        previousQuantityOnHand: before.quantityOnHand,
+      },
+    }));
   } catch (error) {
     console.error("[skuvault/adjust] failed", error);
+    if (error instanceof InsufficientSkuVaultQuantityError) {
+      return withExtensionCors(
+        request,
+        NextResponse.json(
+          {
+            error: `Cannot remove ${error.requestedQuantity} from ${error.sku}. Only ${error.availableQuantity} is available.`,
+            details: {
+              sku: error.sku,
+              requestedQuantity: error.requestedQuantity,
+              availableQuantity: error.availableQuantity,
+            },
+          },
+          { status: 409 },
+        ),
+      );
+    }
+
     return withExtensionCors(
       request,
       NextResponse.json(

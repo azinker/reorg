@@ -11,7 +11,7 @@
       <header>
         <div>
           <h1>SKUVAULT</h1>
-          <p>WH3 · Location 12126</p>
+          <p>WH3 - Location 12126</p>
         </div>
         <a href="https://reorg.theperfectpart.net/chrome-extension" target="_blank" rel="noreferrer">reorG</a>
       </header>
@@ -22,8 +22,25 @@
       </label>
 
       <section id="stockCard" class="stock muted" aria-live="polite">
-        <span class="label">On hand</span>
-        <strong id="onHand">-</strong>
+        <div>
+          <span class="label">Current quantity</span>
+          <strong id="onHand">-</strong>
+        </div>
+      </section>
+
+      <section class="metrics" aria-label="Last adjustment">
+        <div>
+          <span>Before</span>
+          <strong id="beforeQty">-</strong>
+        </div>
+        <div>
+          <span>Change</span>
+          <strong id="changeQty">-</strong>
+        </div>
+        <div>
+          <span>After</span>
+          <strong id="afterQty">-</strong>
+        </div>
       </section>
 
       <label>

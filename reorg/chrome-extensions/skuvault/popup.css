@@ -5,7 +5,7 @@
 
 body {
   margin: 0;
-  min-width: 320px;
+  min-width: 340px;
   background: #0f172a;
   color: #f8fafc;
 }
@@ -77,12 +77,53 @@ input:focus {
 }
 
 .stock .label {
+  display: block;
   color: #cbd5e1;
   font-size: 12px;
 }
 
 .stock strong {
-  font-size: 24px;
+  display: block;
+  font-size: 30px;
+  line-height: 1.05;
+  margin-top: 2px;
+}
+
+.metrics {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(3, 1fr);
+}
+
+.metrics div {
+  background: rgba(2, 6, 23, 0.72);
+  border: 1px solid #334155;
+  border-radius: 8px;
+  min-width: 0;
+  padding: 8px;
+}
+
+.metrics span {
+  color: #94a3b8;
+  display: block;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.metrics strong {
+  display: block;
+  font-size: 18px;
+  line-height: 1.1;
+  margin-top: 4px;
+  overflow-wrap: anywhere;
+}
+
+.metrics strong.positive {
+  color: #86efac;
+}
+
+.metrics strong.negative {
+  color: #fca5a5;
 }
 
 .stock.good {
@@ -137,7 +178,8 @@ button:disabled {
 }
 
 .status {
-  min-height: 16px;
+  line-height: 1.35;
+  min-height: 32px;
 }
 
 .status.ok {
