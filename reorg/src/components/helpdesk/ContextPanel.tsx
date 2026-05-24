@@ -224,6 +224,29 @@ interface LabelFormatterActionResponse {
       }>;
       alreadyDeducted: boolean;
     };
+    status: LabelFormatterActionStatus;
+  };
+  error?: string;
+}
+
+interface LabelFormatterActionStatus {
+  labelFormatter: {
+    added: boolean;
+    addedAt: string | null;
+    lastDetails: unknown;
+  };
+  skuvault: {
+    deducted: boolean;
+    deductedAt: string | null;
+    skuCount: number;
+    rows: Array<{ sku: string; deductedAt: string; details: unknown }>;
+  };
+}
+
+interface LabelFormatterActionStatusResponse {
+  data?: {
+    orderNumber: string | null;
+    status: LabelFormatterActionStatus;
   };
   error?: string;
 }
@@ -1188,8 +1211,39 @@ function OrderInfoSection({
     type: "success" | "error";
     message: string;
   } | null>(null);
+  const [actionStatus, setActionStatus] = useState<LabelFormatterActionStatus | null>(null);
+  const [actionStatusLoading, setActionStatusLoading] = useState(false);
   const currentUser = useCurrentUser();
+  const canRunOrderActions =
+    currentUser?.email?.trim().toLowerCase() === "adam@theperfectpart.net" ||
+    Boolean(currentUser?.helpdeskOrderActionsEnabled);
   const { data: ctx, loading, error } = order;
+
+  useEffect(() => {
+    if (!canRunOrderActions || !ticket.ebayOrderNumber) {
+      setActionStatus(null);
+      return;
+    }
+    const controller = new AbortController();
+    setActionStatusLoading(true);
+    fetch(`/api/helpdesk/tickets/${ticket.id}/label-formatter-action`, {
+      cache: "no-store",
+      signal: controller.signal,
+    })
+      .then(async (res) => {
+        const json = (await res.json().catch(() => ({}))) as LabelFormatterActionStatusResponse;
+        if (!res.ok || !json.data) throw new Error(json.error ?? "Could not load order action status.");
+        setActionStatus(json.data.status);
+      })
+      .catch((err: unknown) => {
+        if (controller.signal.aborted) return;
+        if (err instanceof DOMException && err.name === "AbortError") return;
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setActionStatusLoading(false);
+      });
+    return () => controller.abort();
+  }, [canRunOrderActions, ticket.ebayOrderNumber, ticket.id]);
 
   if (!ticket.ebayOrderNumber && ticket.kind !== "POST_SALES") {
     // Pre-sales inquiry with no order — hide the section entirely.
@@ -1261,10 +1315,6 @@ function OrderInfoSection({
             } satisfies OrderContextLineItem,
           ]
         : [];
-  const canRunOrderActions =
-    currentUser?.email?.trim().toLowerCase() === "adam@theperfectpart.net" ||
-    Boolean(currentUser?.helpdeskOrderActionsEnabled);
-
   async function runLabelFormatterAction() {
     setActionLoading(true);
     setActionBanner(null);
@@ -1278,6 +1328,7 @@ function OrderInfoSection({
       if (!res.ok || !json.data) {
         throw new Error(json.error ?? "Order action failed.");
       }
+      setActionStatus(json.data.status);
 
       const lines = json.data.lineItems
         .map((line) => `${line.sku} x${line.quantity}`)
@@ -1397,6 +1448,29 @@ function OrderInfoSection({
                   </p>
                 </div>
               </div>
+              {actionStatusLoading ? (
+                <p className="mb-2 inline-flex items-center gap-1 text-[11px] text-muted-foreground">
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                  Checking prior action status...
+                </p>
+              ) : actionStatus?.labelFormatter.added ? (
+                <div className="mb-2 rounded border border-emerald-500/30 bg-emerald-500/10 px-2 py-1.5 text-[11px] leading-snug text-emerald-800 dark:text-emerald-200">
+                  Already added to Label Formatter
+                  {actionStatus.labelFormatter.addedAt
+                    ? ` on ${formatShortDate(actionStatus.labelFormatter.addedAt)}`
+                    : ""}
+                  . This stays recorded here even if the row is later removed from Label Formatter.
+                  {actionStatus.skuvault.deducted ? (
+                    <span className="mt-1 block">
+                      SkuVault deducted for {actionStatus.skuvault.skuCount} SKU{actionStatus.skuvault.skuCount === 1 ? "" : "s"}.
+                    </span>
+                  ) : (
+                    <span className="mt-1 block text-amber-800 dark:text-amber-200">
+                      SkuVault has not been deducted yet. Check INR and run the action to remove the order quantities.
+                    </span>
+                  )}
+                </div>
+              ) : null}
               <label className="mb-2 flex cursor-pointer items-center gap-2 text-xs text-foreground">
                 <input
                   type="checkbox"
@@ -1404,7 +1478,7 @@ function OrderInfoSection({
                   onChange={(event) => setInrChecked(event.target.checked)}
                   disabled={actionLoading}
                 />
-                INR
+                INR - deduct SkuVault and note INR CASE
               </label>
               <button
                 type="button"
@@ -1413,7 +1487,13 @@ function OrderInfoSection({
                 className="inline-flex h-8 w-full cursor-pointer items-center justify-center gap-1.5 rounded-md bg-emerald-600 px-2 text-xs font-semibold text-white hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {actionLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
-                {inrChecked ? "Add + Deduct INR" : "Add to Label Formatter"}
+                {inrChecked
+                  ? actionStatus?.labelFormatter.added
+                    ? "Deduct SkuVault + Mark INR"
+                    : "Add + Deduct INR"
+                  : actionStatus?.labelFormatter.added
+                    ? "Refresh Label Formatter Row"
+                    : "Add to Label Formatter"}
               </button>
               {actionBanner ? (
                 <p

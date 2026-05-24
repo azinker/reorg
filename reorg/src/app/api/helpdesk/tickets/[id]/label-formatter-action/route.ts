@@ -19,6 +19,47 @@ const bodySchema = z.object({
   inr: z.boolean().default(false),
 });
 
+async function getActionStatus(ticketId: string) {
+  const [labelLog, skuLogs] = await Promise.all([
+    db.auditLog.findFirst({
+      where: {
+        action: "HELPDESK_ORDER_TO_LABEL_FORMATTER",
+        entityType: "HelpdeskTicket",
+        entityId: ticketId,
+      },
+      orderBy: { createdAt: "desc" },
+      select: { createdAt: true, details: true },
+    }),
+    db.auditLog.findMany({
+      where: {
+        action: "HELPDESK_INR_SKUVAULT_DEDUCTED_SKU",
+        entityType: "HelpdeskTicketSku",
+        entityId: { startsWith: `${ticketId}:` },
+      },
+      orderBy: { createdAt: "asc" },
+      select: { entityId: true, createdAt: true, details: true },
+    }),
+  ]);
+
+  return {
+    labelFormatter: {
+      added: Boolean(labelLog),
+      addedAt: labelLog?.createdAt.toISOString() ?? null,
+      lastDetails: labelLog?.details ?? null,
+    },
+    skuvault: {
+      deducted: skuLogs.length > 0,
+      deductedAt: skuLogs.at(-1)?.createdAt.toISOString() ?? null,
+      skuCount: skuLogs.length,
+      rows: skuLogs.map((log) => ({
+        sku: log.entityId?.split(":").slice(1).join(":") ?? "",
+        deductedAt: log.createdAt.toISOString(),
+        details: log.details,
+      })),
+    },
+  };
+}
+
 function canUseHelpdeskOrderActions(actor: {
   email: string;
   helpdeskOrderActionsEnabled: boolean;
@@ -159,7 +200,6 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       const deductionEntityId = `${ticket.id}:${line.sku}`;
       const priorLineDeduction = await db.auditLog.findFirst({
         where: {
-          userId: actor.userId,
           action: "HELPDESK_INR_SKUVAULT_DEDUCTED_SKU",
           entityType: "HelpdeskTicketSku",
           entityId: deductionEntityId,
@@ -227,6 +267,36 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         deducted: skuvault,
         alreadyDeducted: skuvaultAlreadyDeducted,
       },
+      status: await getActionStatus(ticket.id),
+    },
+  });
+}
+
+export async function GET(_request: NextRequest, { params }: RouteParams) {
+  const actor = await getActor();
+  if (!actor) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  if (!canUseHelpdeskOrderActions(actor)) {
+    return NextResponse.json(
+      { error: "This Help Desk order action is not enabled for your user." },
+      { status: 403 },
+    );
+  }
+
+  const { id } = await params;
+  const ticket = await db.helpdeskTicket.findUnique({
+    where: { id },
+    select: { id: true, ebayOrderNumber: true },
+  });
+  if (!ticket) {
+    return NextResponse.json({ error: "Ticket not found." }, { status: 404 });
+  }
+
+  return NextResponse.json({
+    data: {
+      orderNumber: ticket.ebayOrderNumber,
+      status: await getActionStatus(ticket.id),
     },
   });
 }
