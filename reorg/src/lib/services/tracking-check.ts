@@ -448,6 +448,132 @@ function formatLatestScan(row: AuditRow) {
   return [location, date, time].filter(Boolean).join(" - ") || null;
 }
 
+const STATE_CODES = [
+  "AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "FL", "GA", "HI", "IA", "ID",
+  "IL", "IN", "KS", "KY", "LA", "MA", "MD", "ME", "MI", "MN", "MO", "MS", "MT",
+  "NC", "ND", "NE", "NH", "NJ", "NM", "NV", "NY", "OH", "OK", "OR", "PA", "RI",
+  "SC", "SD", "TN", "TX", "UT", "VA", "VT", "WA", "WI", "WV", "WY", "DC", "PR",
+  "GU",
+] as const;
+
+const STATE_SET = new Set<string>(STATE_CODES);
+
+const STATE_NEIGHBORS: Record<string, string[]> = {
+  AL: ["FL", "GA", "MS", "TN"],
+  AZ: ["CA", "CO", "NM", "NV", "UT"],
+  AR: ["LA", "MO", "MS", "OK", "TN", "TX"],
+  CA: ["AZ", "NV", "OR"],
+  CO: ["AZ", "KS", "NE", "NM", "OK", "UT", "WY"],
+  CT: ["MA", "NY", "RI"],
+  DC: ["MD", "VA"],
+  DE: ["MD", "NJ", "PA"],
+  FL: ["AL", "GA"],
+  GA: ["AL", "FL", "NC", "SC", "TN"],
+  IA: ["IL", "MN", "MO", "NE", "SD", "WI"],
+  ID: ["MT", "NV", "OR", "UT", "WA", "WY"],
+  IL: ["IA", "IN", "KY", "MO", "WI"],
+  IN: ["IL", "KY", "MI", "OH"],
+  KS: ["CO", "MO", "NE", "OK"],
+  KY: ["IL", "IN", "MO", "OH", "TN", "VA", "WV"],
+  LA: ["AR", "MS", "TX"],
+  MA: ["CT", "NH", "NY", "RI", "VT"],
+  MD: ["DC", "DE", "PA", "VA", "WV"],
+  ME: ["NH"],
+  MI: ["IN", "OH", "WI"],
+  MN: ["IA", "ND", "SD", "WI"],
+  MO: ["AR", "IA", "IL", "KS", "KY", "NE", "OK", "TN"],
+  MS: ["AL", "AR", "LA", "TN"],
+  MT: ["ID", "ND", "SD", "WY"],
+  NC: ["GA", "SC", "TN", "VA"],
+  ND: ["MN", "MT", "SD"],
+  NE: ["CO", "IA", "KS", "MO", "SD", "WY"],
+  NH: ["MA", "ME", "VT"],
+  NJ: ["DE", "NY", "PA"],
+  NM: ["AZ", "CO", "OK", "TX", "UT"],
+  NV: ["AZ", "CA", "ID", "OR", "UT"],
+  NY: ["CT", "MA", "NJ", "PA", "VT"],
+  OH: ["IN", "KY", "MI", "PA", "WV"],
+  OK: ["AR", "CO", "KS", "MO", "NM", "TX"],
+  OR: ["CA", "ID", "NV", "WA"],
+  PA: ["DE", "MD", "NJ", "NY", "OH", "WV"],
+  RI: ["CT", "MA"],
+  SC: ["GA", "NC"],
+  SD: ["IA", "MN", "MT", "ND", "NE", "WY"],
+  TN: ["AL", "AR", "GA", "KY", "MO", "MS", "NC", "VA"],
+  TX: ["AR", "LA", "NM", "OK"],
+  UT: ["AZ", "CO", "ID", "NM", "NV", "WY"],
+  VA: ["DC", "KY", "MD", "NC", "TN", "WV"],
+  VT: ["MA", "NH", "NY"],
+  WA: ["ID", "OR"],
+  WI: ["IA", "IL", "MI", "MN"],
+  WV: ["KY", "MD", "OH", "PA", "VA"],
+  WY: ["CO", "ID", "MT", "NE", "SD", "UT"],
+};
+
+const ZIP_STATE_RANGES: Array<[number, number, string]> = [
+  [6, 9, "PR"], [10, 27, "MA"], [28, 29, "RI"], [30, 38, "NH"], [39, 49, "ME"],
+  [50, 59, "VT"], [60, 69, "CT"], [70, 89, "NJ"], [100, 149, "NY"], [150, 196, "PA"],
+  [197, 199, "DE"], [200, 205, "DC"], [206, 219, "MD"], [220, 246, "VA"], [247, 268, "WV"],
+  [270, 289, "NC"], [290, 299, "SC"], [300, 319, "GA"], [320, 349, "FL"], [350, 369, "AL"],
+  [370, 385, "TN"], [386, 397, "MS"], [398, 399, "GA"], [400, 427, "KY"], [430, 459, "OH"],
+  [460, 479, "IN"], [480, 499, "MI"], [500, 528, "IA"], [530, 549, "WI"], [550, 567, "MN"],
+  [570, 577, "SD"], [580, 588, "ND"], [590, 599, "MT"], [600, 629, "IL"], [630, 658, "MO"],
+  [660, 679, "KS"], [680, 693, "NE"], [700, 714, "LA"], [716, 729, "AR"], [730, 749, "OK"],
+  [750, 799, "TX"], [800, 816, "CO"], [820, 831, "WY"], [832, 838, "ID"], [840, 847, "UT"],
+  [850, 865, "AZ"], [870, 884, "NM"], [889, 898, "NV"], [900, 961, "CA"], [967, 968, "HI"],
+  [970, 979, "OR"], [980, 994, "WA"], [995, 999, "AK"],
+];
+
+function inferStateFromZip(zip: string | null) {
+  const zip5 = first5Zip(zip);
+  if (!zip5) return null;
+  const prefix = Number(zip5.slice(0, 3));
+  const range = ZIP_STATE_RANGES.find(([min, max]) => prefix >= min && prefix <= max);
+  return range?.[2] ?? null;
+}
+
+function inferStateFromLocation(city: string | null, state: string | null, zip: string | null) {
+  const explicit = normalize(state);
+  if (explicit && STATE_SET.has(explicit)) return explicit;
+
+  const cityText = normalize(city);
+  if (cityText) {
+    const token = cityText.split(" ").find((part) => STATE_SET.has(part));
+    if (token) return token;
+  }
+
+  return inferStateFromZip(zip);
+}
+
+type TransitConfidence = "HIGH" | "MILD" | "WRONG" | "";
+
+function getTransitConfidence(row: AuditRow): TransitConfidence {
+  const shipState = inferStateFromLocation(row.orderCity, row.orderState, row.orderZip);
+  const scanState = inferStateFromLocation(row.scanCity, row.scanState, row.scanZip);
+  if (!shipState || !scanState) return "";
+  if (scanState === shipState) return "HIGH";
+  if (scanState === "FL" || STATE_NEIGHBORS[shipState]?.includes(scanState)) return "MILD";
+  return "WRONG";
+}
+
+function styleTransitConfidenceCell(cell: ExcelJS.Cell, confidence: TransitConfidence) {
+  const colors: Record<Exclude<TransitConfidence, "">, string> = {
+    HIGH: "FF1F8A4C",
+    MILD: "FFF2C94C",
+    WRONG: "FFE5484D",
+  };
+  if (!confidence) return;
+  cell.fill = {
+    type: "pattern",
+    pattern: "solid",
+    fgColor: { argb: colors[confidence] },
+  };
+  cell.font = {
+    bold: true,
+    color: { argb: confidence === "MILD" ? "FF111827" : "FFFFFFFF" },
+  };
+}
+
 async function fetchTrackingDetailsOnce(url: string, browserHeaders: Record<string, string>) {
   const response = await fetch(url, {
     headers: {
@@ -554,19 +680,23 @@ async function buildWorkbook(auditRows: AuditRow[], inputFileNames: string[]) {
     { header: "Ship To City, State, ZIP", key: "shipTo", width: 34 },
     { header: "Latest eBay Tracking Event", key: "scanEvent", width: 34 },
     { header: "Latest Scan", key: "latestScan", width: 44 },
+    { header: "Transit Confidence", key: "transitConfidence", width: 18 },
   ];
-  inTransitRows.forEach((row) =>
-    inTransitSheet.addRow({
+  inTransitRows.forEach((row) => {
+    const transitConfidence = getTransitConfidence(row);
+    const sheetRow = inTransitSheet.addRow({
       store: row.store,
       orderId: row.orderId,
       trackingNumber: row.trackingNumber,
       shipTo: formatLocation(row.orderCity, row.orderState, row.orderZip),
       scanEvent: row.scanEvent ?? row.trackingStatus,
       latestScan: formatLatestScan(row),
-    }),
-  );
+      transitConfidence,
+    });
+    styleTransitConfidenceCell(sheetRow.getCell(7), transitConfidence);
+  });
   inTransitSheet.views = [{ state: "frozen", ySplit: 1 }];
-  inTransitSheet.autoFilter = "A1:F1";
+  inTransitSheet.autoFilter = "A1:G1";
 
   const nonEbaySheet = out.addWorksheet("Non eBay Orders");
   nonEbaySheet.columns = [
