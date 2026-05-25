@@ -33,6 +33,7 @@ export type PageKey =
   | "sync"
   | "manage-orders"
   | "label-formatter"
+  | "tracking-check"
   | "ship-orders"
   | "auto-responder"
   | "help-desk"
@@ -69,6 +70,7 @@ export interface NavPage {
     | "Wallet"
     | "RefreshCw"
     | "PackageCheck"
+    | "MapPinned"
     | "MessageSquareText"
     | "LifeBuoy"
     | "Plug"
@@ -85,6 +87,8 @@ export interface NavPage {
     | "Settings";
   /** Hidden from non-admins regardless of pagePermissions. */
   adminOnly?: boolean;
+  /** Visible only to Adam's account. */
+  adamOnly?: boolean;
   /** Always visible to every signed-in user. Cannot be revoked. */
   alwaysAllow?: boolean;
   /** Short tooltip describing what the page does (used in the editor). */
@@ -129,6 +133,15 @@ export const NAV_PAGES: NavPage[] = [
     label: "Label Formatter",
     icon: "PackageCheck",
     description: "Look up eBay resend orders and export LabelCrow Excel plus 4x6 packing slips.",
+  },
+  {
+    key: "tracking-check",
+    href: "/tracking-check",
+    label: "Tracking Check",
+    icon: "MapPinned",
+    adminOnly: true,
+    adamOnly: true,
+    description: "Upload LabelCrow workbooks and compare eBay ship-to locations against delivery scans.",
   },
   {
     key: "catalog-health",

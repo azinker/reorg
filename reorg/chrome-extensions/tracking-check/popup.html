@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Tracking Check Helper</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <main>
+      <header>
+        <div class="mark">reorG</div>
+        <h1>Tracking Check Helper</h1>
+      </header>
+
+      <label>
+        Store
+        <select id="store">
+          <option value="tpp">TPP eBay</option>
+          <option value="tt">TT eBay</option>
+        </select>
+      </label>
+
+      <label>
+        Tracking page URL
+        <input id="trackingUrl" type="url" />
+      </label>
+
+      <button id="download" type="button">Download session file</button>
+
+      <p id="status" role="status"></p>
+      <p class="hint">
+        Run this in normal Chrome for TPP and in Incognito for TT. The file contains
+        temporary eBay session cookies, so use it only inside reorG Tracking Check.
+      </p>
+    </main>
+    <script src="popup.js"></script>
+  </body>
+</html>

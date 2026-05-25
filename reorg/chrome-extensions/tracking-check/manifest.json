@@ -1,0 +1,13 @@
+{
+  "manifest_version": 3,
+  "name": "reorG Tracking Check Helper",
+  "version": "1.0.0",
+  "description": "Creates eBay tracking session files for reorG Tracking Check.",
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Tracking Check Helper"
+  },
+  "permissions": ["activeTab", "cookies", "downloads", "tabs"],
+  "host_permissions": ["https://www.ebay.com/*", "https://*.ebay.com/*"],
+  "incognito": "split"
+}

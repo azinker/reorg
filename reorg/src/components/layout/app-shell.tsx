@@ -54,6 +54,7 @@ export function AppShell({
         <div className="hidden lg:flex">
           <Sidebar
             userRole={user?.role ?? null}
+            userEmail={user?.email ?? null}
             allowedPageKeys={allowedPageKeys}
           />
         </div>
@@ -75,6 +76,7 @@ export function AppShell({
           <Sidebar
             mobile
             userRole={user?.role ?? null}
+            userEmail={user?.email ?? null}
             allowedPageKeys={allowedPageKeys}
             onNavigate={() => setMobileOpen(false)}
           />

@@ -33,6 +33,7 @@ import {
   MessageSquareText,
   LifeBuoy,
   Lock,
+  MapPinned,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import {
@@ -59,6 +60,7 @@ const ICON_COMPONENTS: Record<NavPage["icon"], React.ComponentType<{ className?:
   Wallet,
   RefreshCw,
   PackageCheck,
+  MapPinned,
   MessageSquareText,
   LifeBuoy,
   Plug,
@@ -86,6 +88,7 @@ interface SidebarProps {
    * sees everything except admin-only pages).
    */
   allowedPageKeys?: string[] | null;
+  userEmail?: string | null;
 }
 
 export function Sidebar({
@@ -93,6 +96,7 @@ export function Sidebar({
   onNavigate,
   userRole,
   allowedPageKeys,
+  userEmail,
 }: SidebarProps) {
   const pathname = usePathname();
   const [collapsed, setCollapsed] = useState(false);
@@ -134,8 +138,11 @@ export function Sidebar({
           )
         : (allowedPageKeys as PageKey[]),
     );
+    const isAdam = userEmail?.trim().toLowerCase() === "adam@theperfectpart.net";
     return NAV_PAGES.filter(
-      (item) => userRole !== "OPERATOR" || !item.adminOnly,
+      (item) =>
+        (userRole !== "OPERATOR" || !item.adminOnly) &&
+        (!item.adamOnly || isAdam),
     ).map((item) => ({
       item,
       isLocked: !allowed.has(item.key),

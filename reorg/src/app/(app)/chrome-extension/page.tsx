@@ -12,12 +12,13 @@ import {
   Puzzle,
   ToggleLeft,
   Warehouse,
+  MapPinned,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const PRODUCTION_ORIGIN = "https://reorg.theperfectpart.net";
 
-type ExtensionId = "catalog-link" | "sale-history" | "skuvault";
+type ExtensionId = "catalog-link" | "sale-history" | "skuvault" | "tracking-check";
 
 const EXTENSIONS: Array<{
   id: ExtensionId;
@@ -70,6 +71,20 @@ const EXTENSIONS: Array<{
       "Enter a quantity, then click ADD or REMOVE.",
     ],
   },
+  {
+    id: "tracking-check",
+    name: "Tracking Check Helper",
+    filename: "reorg-tracking-check-helper.zip",
+    accent: "bg-cyan-700 text-white hover:bg-cyan-800",
+    icon: MapPinned,
+    description:
+      "Creates temporary eBay session text files so Tracking Check can read scan history from your logged-in browser.",
+    usage: [
+      "Run it in normal Chrome while logged into TPP eBay.",
+      "Enable it in Incognito and run it there while logged into TT eBay.",
+      "Upload both downloaded .txt files on the Tracking Check page.",
+    ],
+  },
 ];
 
 export default function ChromeExtensionPage() {
@@ -115,7 +130,7 @@ export default function ChromeExtensionPage() {
       </div>
 
       <div className="mx-auto w-full max-w-5xl space-y-8 px-6 py-8">
-        <section className="grid gap-4 lg:grid-cols-3">
+        <section className="grid gap-4 lg:grid-cols-4">
           {EXTENSIONS.map((extension) => {
             const Icon = extension.icon;
             const isDownloading = downloading === extension.id;
@@ -169,6 +184,7 @@ export default function ChromeExtensionPage() {
               ["Enable Developer mode", "Turn on Developer mode using the toggle in the top-right on the extensions page."],
               ["Load unpacked", "Click Load unpacked and choose the folder whose immediate children include manifest.json."],
               ["Pin the extension", "Click the Chrome puzzle icon and pin whichever extension you use often."],
+              ["Allow Incognito when needed", "For Tracking Check Helper, open Details on the extension and turn on Allow in Incognito for the TT browser window."],
               ["Reload after updates", "After downloading a newer ZIP, remove the old unpacked extension or click Reload after replacing files."],
             ].map(([title, body], index) => (
               <li key={title} className="flex gap-3 rounded-lg border border-border bg-card/30 p-4">
@@ -219,7 +235,7 @@ export default function ChromeExtensionPage() {
           <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
             Using each extension
           </h2>
-          <div className="mt-4 grid gap-4 lg:grid-cols-3">
+          <div className="mt-4 grid gap-4 lg:grid-cols-4">
             {EXTENSIONS.map((extension) => (
               <article key={extension.id} className="rounded-lg border border-border bg-card/30 p-4">
                 <h3 className="text-sm font-semibold text-foreground">{extension.name}</h3>

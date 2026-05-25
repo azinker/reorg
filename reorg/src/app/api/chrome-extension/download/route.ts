@@ -24,6 +24,10 @@ const EXTENSION_PACKAGES = {
     root: "chrome-extensions/skuvault",
     filename: "skuvault-quick-adjust-extension.zip",
   },
+  "tracking-check": {
+    root: "chrome-extensions/tracking-check",
+    filename: "reorg-tracking-check-helper.zip",
+  },
 } as const;
 
 type ExtensionPackageId = keyof typeof EXTENSION_PACKAGES;
