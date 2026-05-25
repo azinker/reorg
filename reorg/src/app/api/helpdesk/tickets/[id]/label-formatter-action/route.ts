@@ -191,6 +191,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     );
   }
 
+  const statusBeforeAction = await getActionStatus(ticket.id);
   let skuvault: SkuVaultAdjustmentResult[] = [];
   let skippedAlreadyDeducted = 0;
   const linesToDeduct: LabelFormatterLineItem[] = [];
@@ -375,6 +376,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       labelFormatter: {
         rowId: labelResult.row.id,
         created: labelResult.created,
+        previouslyAdded: statusBeforeAction.labelFormatter.added,
         totalRows: labelResult.totalRows,
         note: labelResult.row.note,
       },

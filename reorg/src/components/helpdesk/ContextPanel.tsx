@@ -210,6 +210,7 @@ interface LabelFormatterActionResponse {
     labelFormatter: {
       rowId: string;
       created: boolean;
+      previouslyAdded: boolean;
       totalRows: number;
       note: string;
     };
@@ -1333,12 +1334,19 @@ function OrderInfoSection({
       const lines = json.data.lineItems
         .map((line) => `${line.sku} x${line.quantity}`)
         .join(", ");
-      const labelPart = json.data.labelFormatter.created
+      const labelPart = json.data.labelFormatter.previouslyAdded
+        ? `Order ${json.data.orderNumber} was already added to the Label Formatter list`
+        : json.data.labelFormatter.created
         ? `Added order ${json.data.orderNumber} to Label Formatter`
         : `Updated the existing Label Formatter row for ${json.data.orderNumber}`;
-      const skuvaultPart = json.data.skuvault.alreadyDeducted
-        ? "SkuVault was not deducted again because this ticket was already processed."
-        : `Deducted ${json.data.skuvault.deducted.map((line) => `${line.sku} x${line.quantityChanged}`).join(", ")} from SkuVault.`;
+      const deductedLines = json.data.skuvault.deducted
+        .map((line) => `${line.sku} x${line.quantityChanged}`)
+        .join(", ");
+      const skuvaultPart = deductedLines
+        ? `Deducted ${deductedLines} from SkuVault.`
+        : json.data.skuvault.alreadyDeducted || json.data.status.skuvault.deducted
+          ? "SkuVault was already deducted for this ticket, so it was not deducted again."
+          : "SkuVault deduction is still not recorded for this ticket.";
       const notePart = inrChecked ? " Added INR CASE note." : "";
       setActionBanner({
         type: "success",
@@ -1486,13 +1494,17 @@ function OrderInfoSection({
                 className="inline-flex h-8 w-full cursor-pointer items-center justify-center gap-1.5 rounded-md bg-emerald-600 px-2 text-xs font-semibold text-white hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {actionLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
-                {actionStatus?.skuvault.deducted
+                {actionStatus?.labelFormatter.added
                   ? inrChecked
-                    ? "Update Row + INR CASE"
-                    : "Refresh Label Formatter Row"
-                  : inrChecked
-                    ? "Add + Deduct + INR CASE"
-                    : "Add + Deduct SkuVault"}
+                    ? "Already Added + INR CASE"
+                    : "Already Added To List"
+                  : actionStatus?.skuvault.deducted
+                    ? inrChecked
+                      ? "Re-add + INR CASE"
+                      : "Re-add to Label Formatter"
+                    : inrChecked
+                      ? "Add + Deduct + INR CASE"
+                      : "Add + Deduct SkuVault"}
               </button>
               {actionBanner ? (
                 <p
