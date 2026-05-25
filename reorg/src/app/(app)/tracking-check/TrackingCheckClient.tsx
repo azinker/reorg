@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   CheckCircle2,
   Download,
@@ -28,6 +28,13 @@ function fileListLabel(files: File[]) {
   return `${files.length} files selected`;
 }
 
+function formatDuration(ms: number) {
+  const seconds = Math.max(0, Math.ceil(ms / 1000));
+  const minutes = Math.floor(seconds / 60);
+  const remainder = seconds % 60;
+  return `${minutes}:${String(remainder).padStart(2, "0")}`;
+}
+
 export function TrackingCheckClient() {
   const [xlsxFiles, setXlsxFiles] = useState<File[]>([]);
   const [curlFiles, setCurlFiles] = useState<File[]>([]);
@@ -35,6 +42,8 @@ export function TrackingCheckClient() {
   const [error, setError] = useState<string | null>(null);
   const [summary, setSummary] = useState<Summary | null>(null);
   const [lastFilename, setLastFilename] = useState<string | null>(null);
+  const [startedAt, setStartedAt] = useState<number | null>(null);
+  const [now, setNow] = useState<number>(() => Date.now());
   const xlsxInputRef = useRef<HTMLInputElement>(null);
   const curlInputRef = useRef<HTMLInputElement>(null);
 
@@ -43,9 +52,50 @@ export function TrackingCheckClient() {
     [curlFiles.length, running, xlsxFiles.length],
   );
 
+  const estimatedDurationMs = useMemo(() => {
+    const totalBytes = xlsxFiles.reduce((sum, file) => sum + file.size, 0);
+    const totalMb = totalBytes / 1_000_000;
+    return Math.round(
+      Math.min(
+        12 * 60_000,
+        Math.max(45_000, 35_000 + xlsxFiles.length * 28_000 + curlFiles.length * 4_000 + totalMb * 8_000),
+      ),
+    );
+  }, [curlFiles.length, xlsxFiles]);
+
+  useEffect(() => {
+    if (!running) return;
+    const timer = window.setInterval(() => setNow(Date.now()), 500);
+    return () => window.clearInterval(timer);
+  }, [running]);
+
+  const progress = useMemo(() => {
+    if (!running || !startedAt) {
+      return {
+        percent: 0,
+        elapsedMs: 0,
+        remainingMs: estimatedDurationMs,
+        label: "Ready",
+      };
+    }
+    const elapsedMs = Math.max(0, now - startedAt);
+    const ratio = elapsedMs / estimatedDurationMs;
+    const percent = Math.min(95, Math.max(3, Math.round((1 - Math.exp(-ratio * 2.4)) * 100)));
+    const remainingMs = Math.max(0, estimatedDurationMs - elapsedMs);
+    return {
+      percent,
+      elapsedMs,
+      remainingMs,
+      label: elapsedMs >= estimatedDurationMs ? "Finalizing workbook..." : "Checking eBay tracking scans...",
+    };
+  }, [estimatedDurationMs, now, running, startedAt]);
+
   async function runCheck() {
     if (!canRun) return;
     setRunning(true);
+    const start = Date.now();
+    setStartedAt(start);
+    setNow(start);
     setError(null);
     setSummary(null);
     setLastFilename(null);
@@ -90,6 +140,7 @@ export function TrackingCheckClient() {
       setError(err instanceof Error ? err.message : "Tracking Check failed.");
     } finally {
       setRunning(false);
+      setStartedAt(null);
     }
   }
 
@@ -196,6 +247,41 @@ export function TrackingCheckClient() {
                   <div className="mt-1 text-xl font-semibold text-foreground">{value}</div>
                 </div>
               ))}
+            </div>
+          ) : null}
+
+          {running ? (
+            <div className="rounded-lg border border-emerald-500/25 bg-emerald-500/10 p-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <div className="text-sm font-semibold text-foreground">{progress.label}</div>
+                  <div className="mt-1 text-xs text-muted-foreground">
+                    Estimate scales with selected files: {xlsxFiles.length} workbook
+                    {xlsxFiles.length === 1 ? "" : "s"} selected.
+                  </div>
+                </div>
+                <div className="text-right text-xs text-muted-foreground">
+                  <div>
+                    Elapsed <span className="font-mono text-foreground">{formatDuration(progress.elapsedMs)}</span>
+                  </div>
+                  <div>
+                    ETA{" "}
+                    <span className="font-mono text-foreground">
+                      {progress.remainingMs > 0 ? formatDuration(progress.remainingMs) : "finalizing"}
+                    </span>
+                  </div>
+                </div>
+              </div>
+              <div className="mt-3 h-3 overflow-hidden rounded-full bg-background">
+                <div
+                  className="h-full rounded-full bg-emerald-500 transition-[width] duration-500 ease-out"
+                  style={{ width: `${progress.percent}%` }}
+                />
+              </div>
+              <div className="mt-2 flex justify-between text-xs text-muted-foreground">
+                <span>{progress.percent}%</span>
+                <span>Estimated total {formatDuration(estimatedDurationMs)}</span>
+              </div>
             </div>
           ) : null}
 
