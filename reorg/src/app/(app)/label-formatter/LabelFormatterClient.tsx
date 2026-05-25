@@ -52,10 +52,10 @@ type WorkingRowsResponse = {
   error?: string;
 };
 
-type WorkingRowsSyncStatus = "loading" | "saved" | "saving" | "error" | "local-only";
+type WorkingRowsSyncStatus = "loading" | "saved" | "saving" | "error";
 type NotesSortMode = "none" | "with-notes-first" | "without-notes-first";
 
-const WORKING_ROWS_STORAGE_KEY = "reorg.labelFormatter.workingRows.v1";
+const LEGACY_WORKING_ROWS_STORAGE_KEY = "reorg.labelFormatter.workingRows.v1";
 const WORKING_TABLE_DIRTY_ID = "__working_table__";
 
 const EMPTY_MANUAL_ROW: LabelFormatterRow = {
@@ -129,47 +129,11 @@ function normalizeStoredRows(value: unknown): WorkingRow[] {
   });
 }
 
-function rowTimestamp(row: WorkingRow) {
-  const value = row.updatedAt || row.createdAt;
-  const time = Date.parse(value);
-  return Number.isFinite(time) ? time : 0;
-}
-
-function rowMergeKey(row: WorkingRow) {
-  const orderNumber = row.orderNumber.trim().toLowerCase();
-  if (!orderNumber) return "";
-  return `${row.sourceStore}:${orderNumber}`;
-}
-
-function mergeWorkingRows(serverRows: WorkingRow[], localRows: WorkingRow[]) {
-  const merged = [...serverRows];
-
-  for (const localRow of localRows) {
-    const key = rowMergeKey(localRow);
-    const existingIndex = merged.findIndex((row) =>
-      row.id === localRow.id || (key && rowMergeKey(row) === key),
-    );
-
-    if (existingIndex === -1) {
-      merged.push(localRow);
-      continue;
-    }
-
-    if (rowTimestamp(localRow) > rowTimestamp(merged[existingIndex])) {
-      merged[existingIndex] = localRow;
-    }
-  }
-
-  return merged;
-}
-
-function readLocalWorkingRows() {
+function clearLegacyLocalWorkingRows() {
   try {
-    const storedRows = window.localStorage.getItem(WORKING_ROWS_STORAGE_KEY);
-    return storedRows ? normalizeStoredRows(JSON.parse(storedRows)) : [];
+    window.localStorage.removeItem(LEGACY_WORKING_ROWS_STORAGE_KEY);
   } catch {
-    window.localStorage.removeItem(WORKING_ROWS_STORAGE_KEY);
-    return [];
+    // Account-backed rows remain the source of truth when local storage is unavailable.
   }
 }
 
@@ -181,8 +145,6 @@ function workingRowsSyncLabel(status: WorkingRowsSyncStatus) {
       return "Saving";
     case "saved":
       return "Saved to account";
-    case "local-only":
-      return "Saved in this browser only";
     case "error":
       return "Sync error";
   }
@@ -273,31 +235,23 @@ export function LabelFormatterClient() {
     let cancelled = false;
 
     async function hydrateWorkingRows() {
-      const localRows = readLocalWorkingRows();
-
       try {
         const res = await fetch("/api/label-formatter/working-rows", { cache: "no-store" });
         const json = (await res.json()) as WorkingRowsResponse;
         if (!res.ok || !json.data) throw new Error(json.error ?? "Failed to load working rows.");
 
         if (cancelled) return;
-        setRows(mergeWorkingRows(normalizeStoredRows(json.data), localRows));
-        setDirtyRowIds(new Set(localRows.map((row) => row.id)));
+        clearLegacyLocalWorkingRows();
+        setRows(normalizeStoredRows(json.data));
+        setDirtyRowIds(new Set());
         setWorkingRowsCanSave(true);
         setWorkingRowsSyncStatus("saved");
       } catch {
         if (cancelled) return;
-        if (localRows.length > 0) {
-          setRows(localRows);
-          setWorkingRowsSyncStatus("local-only");
-          setBanner({
-            type: "warning",
-            message: "Loaded rows saved in this browser, but account sync is unavailable right now.",
-          });
-        } else {
-          setWorkingRowsSyncStatus("error");
-          setBanner({ type: "error", message: "Could not load Label Formatter working rows." });
-        }
+        setRows([]);
+        setDirtyRowIds(new Set());
+        setWorkingRowsSyncStatus("error");
+        setBanner({ type: "error", message: "Could not load Label Formatter working rows. Refresh and try again." });
         setWorkingRowsCanSave(false);
       } finally {
         if (!cancelled) setWorkingRowsHydrated(true);
@@ -314,12 +268,6 @@ export function LabelFormatterClient() {
 
   useEffect(() => {
     if (!workingRowsHydrated) return;
-
-    try {
-      window.localStorage.setItem(WORKING_ROWS_STORAGE_KEY, JSON.stringify(rows));
-    } catch {
-      // The server-backed draft remains the source of truth when local storage is unavailable.
-    }
 
     if (!workingRowsCanSave || dirtyRowIds.size === 0) return;
 
@@ -354,7 +302,7 @@ export function LabelFormatterClient() {
 
   async function saveWorkingRows(options?: { signal?: AbortSignal; silent?: boolean }) {
     if (!workingRowsCanSave) {
-      setWorkingRowsSyncStatus("local-only");
+      setWorkingRowsSyncStatus("error");
       if (!options?.silent) {
         setBanner({ type: "error", message: "Account save is not available. Refresh and try again." });
       }
@@ -372,6 +320,7 @@ export function LabelFormatterClient() {
       const json = (await res.json().catch(() => ({}))) as WorkingRowsResponse;
       if (!res.ok) throw new Error(json.error ?? "Save failed");
 
+      clearLegacyLocalWorkingRows();
       setWorkingRowsSyncStatus("saved");
       setDirtyRowIds(new Set());
       if (!options?.silent) {
@@ -668,7 +617,7 @@ export function LabelFormatterClient() {
                 "text-xs",
                 workingRowsSyncStatus === "saved" && "text-emerald-300",
                 workingRowsSyncStatus === "saving" && "text-muted-foreground",
-                (workingRowsSyncStatus === "loading" || workingRowsSyncStatus === "local-only") && "text-amber-300",
+                workingRowsSyncStatus === "loading" && "text-amber-300",
                 workingRowsSyncStatus === "error" && "text-red-300",
               )}
             >
