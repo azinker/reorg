@@ -66,7 +66,10 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json({ error: "Invalid working rows", details: parsed.error.flatten() }, { status: 400 });
     }
 
-    const rows = await replaceLabelFormatterWorkingRows(actorUserId, parsed.data.rows);
+    const clientLoadedAt = parsed.data.clientLoadedAt ? new Date(parsed.data.clientLoadedAt) : null;
+    const rows = await replaceLabelFormatterWorkingRows(actorUserId, parsed.data.rows, {
+      clientLoadedAt: clientLoadedAt && !Number.isNaN(clientLoadedAt.valueOf()) ? clientLoadedAt : null,
+    });
     return NextResponse.json({ data: rows.map(serializeRow) });
   } catch (error) {
     console.error("[label-formatter/working-rows] PUT failed", error);

@@ -28,7 +28,10 @@ const LABEL_FORMATTER_ACTION = "HELPDESK_ORDER_TO_LABEL_FORMATTER";
 const SKUVAULT_DEDUCTED_ACTION = "HELPDESK_ORDER_SKUVAULT_DEDUCTED_SKU";
 const LEGACY_INR_SKUVAULT_DEDUCTED_ACTION = "HELPDESK_INR_SKUVAULT_DEDUCTED_SKU";
 
-async function getActionStatus(ticketId: string) {
+async function getActionStatus(
+  ticketId: string,
+  options?: { userId: string; orderNumber: string; sourceStore: LabelFormatterSourceStore },
+) {
   const [labelLog, skuLogs] = await Promise.all([
     db.auditLog.findFirst({
       where: {
@@ -49,12 +52,38 @@ async function getActionStatus(ticketId: string) {
       select: { entityId: true, createdAt: true, details: true },
     }),
   ]);
+  const [workingRow, exportRow] = options
+    ? await Promise.all([
+        db.labelFormatterWorkingRow.findFirst({
+          where: {
+            createdByUserId: options.userId,
+            orderNumber: options.orderNumber,
+            sourceStore: options.sourceStore,
+          },
+          select: { id: true, createdAt: true, updatedAt: true },
+        }),
+        db.labelFormatterExportRow.findFirst({
+          where: {
+            orderNumber: options.orderNumber,
+            sourceStore: options.sourceStore,
+            batch: { createdByUserId: options.userId },
+          },
+          orderBy: { createdAt: "desc" },
+          select: { id: true, createdAt: true, batch: { select: { id: true, createdAt: true } } },
+        }),
+      ])
+    : [null, null];
 
   return {
     labelFormatter: {
       added: Boolean(labelLog),
       addedAt: labelLog?.createdAt.toISOString() ?? null,
       lastDetails: labelLog?.details ?? null,
+      currentWorkingRow: Boolean(workingRow),
+      currentWorkingRowId: workingRow?.id ?? null,
+      exported: Boolean(exportRow),
+      exportedAt: exportRow?.batch.createdAt.toISOString() ?? null,
+      exportBatchId: exportRow?.batch.id ?? null,
     },
     skuvault: {
       deducted: skuLogs.length > 0,
@@ -191,7 +220,12 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     );
   }
 
-  const statusBeforeAction = await getActionStatus(ticket.id);
+  const sourceStore = sourceStoreForPlatform(platform);
+  const statusBeforeAction = await getActionStatus(ticket.id, {
+    userId: actor.userId,
+    orderNumber: ticket.ebayOrderNumber,
+    sourceStore,
+  });
   let skuvault: SkuVaultAdjustmentResult[] = [];
   let skippedAlreadyDeducted = 0;
   const linesToDeduct: LabelFormatterLineItem[] = [];
@@ -337,7 +371,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
   const labelResult = await appendOrUpdateLabelFormatterWorkingRow(actor.userId, {
     note: parsed.data.inr ? "INR CASE" : "",
     orderNumber: order.orderId || ticket.ebayOrderNumber,
-    sourceStore: sourceStoreForPlatform(platform),
+    sourceStore,
     buyerName:
       address?.name?.trim() ||
       order.buyerName?.trim() ||
@@ -385,7 +419,11 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         deducted: skuvault,
         alreadyDeducted: skuvaultAlreadyDeducted,
       },
-      status: await getActionStatus(ticket.id),
+      status: await getActionStatus(ticket.id, {
+        userId: actor.userId,
+        orderNumber: ticket.ebayOrderNumber,
+        sourceStore,
+      }),
     },
   });
 }
@@ -405,16 +443,25 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
   const { id } = await params;
   const ticket = await db.helpdeskTicket.findUnique({
     where: { id },
-    select: { id: true, ebayOrderNumber: true },
+    select: { id: true, ebayOrderNumber: true, integration: { select: { platform: true } } },
   });
   if (!ticket) {
     return NextResponse.json({ error: "Ticket not found." }, { status: 404 });
   }
 
+  const sourceStore = ticket.ebayOrderNumber
+    ? sourceStoreForPlatform(ticket.integration.platform)
+    : "MANUAL";
   return NextResponse.json({
     data: {
       orderNumber: ticket.ebayOrderNumber,
-      status: await getActionStatus(ticket.id),
+      status: ticket.ebayOrderNumber
+        ? await getActionStatus(ticket.id, {
+            userId: actor.userId,
+            orderNumber: ticket.ebayOrderNumber,
+            sourceStore,
+          })
+        : await getActionStatus(ticket.id),
     },
   });
 }

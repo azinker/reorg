@@ -50,16 +50,27 @@ export async function listLabelFormatterWorkingRows(userId: string): Promise<Lab
 export async function replaceLabelFormatterWorkingRows(
   userId: string,
   rows: LabelFormatterWorkingRowInput[],
+  options?: { clientLoadedAt?: Date | null },
 ): Promise<LabelFormatterWorkingRowRecord[]> {
   await db.$transaction(async (tx) => {
+    const incomingIds = rows.flatMap((row) => (row.id ? [row.id] : []));
+    const rowsAddedAfterClientLoad = options?.clientLoadedAt
+      ? await tx.labelFormatterWorkingRow.findMany({
+          where: {
+            createdByUserId: userId,
+            createdAt: { gt: options.clientLoadedAt },
+            ...(incomingIds.length > 0 ? { id: { notIn: incomingIds } } : {}),
+          },
+          orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
+        })
+      : [];
+
     await tx.labelFormatterWorkingRow.deleteMany({
       where: { createdByUserId: userId },
     });
 
-    if (rows.length === 0) return;
-
-    await tx.labelFormatterWorkingRow.createMany({
-      data: rows.map((row, index) => ({
+    const rowsToWrite = [
+      ...rows.map((row, index) => ({
         ...(row.id ? { id: row.id } : {}),
         createdByUserId: userId,
         note: row.note ?? "",
@@ -74,6 +85,27 @@ export async function replaceLabelFormatterWorkingRows(
         lineItems: row.lineItems,
         sortOrder: index,
       })),
+      ...rowsAddedAfterClientLoad.map((row, index) => ({
+        id: row.id,
+        createdByUserId: row.createdByUserId,
+        note: row.note ?? "",
+        orderNumber: row.orderNumber,
+        sourceStore: row.sourceStore,
+        buyerName: row.buyerName,
+        addressLine1: row.addressLine1,
+        addressLine2: row.addressLine2 ?? "",
+        city: row.city,
+        state: row.state,
+        zipCode: row.zipCode,
+        lineItems: normalizeLineItems(row.lineItems),
+        sortOrder: rows.length + index,
+      })),
+    ];
+
+    if (rowsToWrite.length === 0) return;
+
+    await tx.labelFormatterWorkingRow.createMany({
+      data: rowsToWrite,
     });
   });
 

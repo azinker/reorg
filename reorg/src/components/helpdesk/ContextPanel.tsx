@@ -235,6 +235,11 @@ interface LabelFormatterActionStatus {
     added: boolean;
     addedAt: string | null;
     lastDetails: unknown;
+    currentWorkingRow: boolean;
+    currentWorkingRowId: string | null;
+    exported: boolean;
+    exportedAt: string | null;
+    exportBatchId: string | null;
   };
   skuvault: {
     deducted: boolean;
@@ -1461,12 +1466,32 @@ function OrderInfoSection({
                   Checking prior action status...
                 </p>
               ) : actionStatus?.labelFormatter.added ? (
-                <div className="mb-2 rounded border border-emerald-500/30 bg-emerald-500/10 px-2 py-1.5 text-[11px] leading-snug text-emerald-800 dark:text-emerald-200">
-                  Already added to Label Formatter
+                <div
+                  className={cn(
+                    "mb-2 rounded border px-2 py-1.5 text-[11px] leading-snug",
+                    actionStatus.labelFormatter.currentWorkingRow || actionStatus.labelFormatter.exported
+                      ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-800 dark:text-emerald-200"
+                      : "border-amber-500/40 bg-amber-500/10 text-amber-900 dark:text-amber-100",
+                  )}
+                >
+                  {actionStatus.labelFormatter.currentWorkingRow
+                    ? "Already added to Label Formatter"
+                    : actionStatus.labelFormatter.exported
+                      ? "Already exported from Label Formatter"
+                      : "Previously added, but not currently in the Label Formatter working table"}
                   {actionStatus.labelFormatter.addedAt
                     ? ` on ${formatShortDate(actionStatus.labelFormatter.addedAt)}`
                     : ""}
-                  . This stays recorded here even if the row is later removed from Label Formatter.
+                  .
+                  {!actionStatus.labelFormatter.currentWorkingRow && !actionStatus.labelFormatter.exported ? (
+                    <span className="mt-1 block">
+                      Click Restore below to put it back without deducting SkuVault again.
+                    </span>
+                  ) : (
+                    <span className="mt-1 block">
+                      This stays recorded here even if the row is later removed from Label Formatter.
+                    </span>
+                  )}
                   {actionStatus.skuvault.deducted ? (
                     <span className="mt-1 block">
                       SkuVault deducted for {actionStatus.skuvault.skuCount} SKU{actionStatus.skuvault.skuCount === 1 ? "" : "s"}.
@@ -1494,7 +1519,11 @@ function OrderInfoSection({
                 className="inline-flex h-8 w-full cursor-pointer items-center justify-center gap-1.5 rounded-md bg-emerald-600 px-2 text-xs font-semibold text-white hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {actionLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
-                {actionStatus?.labelFormatter.added
+                {actionStatus?.labelFormatter.added && !actionStatus.labelFormatter.currentWorkingRow && !actionStatus.labelFormatter.exported
+                  ? inrChecked
+                    ? "Restore + INR CASE"
+                    : "Restore to Label Formatter"
+                  : actionStatus?.labelFormatter.added
                   ? inrChecked
                     ? "Already Added + INR CASE"
                     : "Already Added To List"

@@ -206,6 +206,7 @@ export function LabelFormatterClient() {
   const [workingRowsSyncStatus, setWorkingRowsSyncStatus] = useState<WorkingRowsSyncStatus>("loading");
   const [dirtyRowIds, setDirtyRowIds] = useState<Set<string>>(new Set());
   const [notesSortMode, setNotesSortMode] = useState<NotesSortMode>("none");
+  const [workingRowsLoadedAt, setWorkingRowsLoadedAt] = useState<string | null>(null);
 
   const sortedRows = useMemo(() => {
     if (notesSortMode === "none") return rows;
@@ -243,12 +244,14 @@ export function LabelFormatterClient() {
         if (cancelled) return;
         clearLegacyLocalWorkingRows();
         setRows(normalizeStoredRows(json.data));
+        setWorkingRowsLoadedAt(new Date().toISOString());
         setDirtyRowIds(new Set());
         setWorkingRowsCanSave(true);
         setWorkingRowsSyncStatus("saved");
       } catch {
         if (cancelled) return;
         setRows([]);
+        setWorkingRowsLoadedAt(null);
         setDirtyRowIds(new Set());
         setWorkingRowsSyncStatus("error");
         setBanner({ type: "error", message: "Could not load Label Formatter working rows. Refresh and try again." });
@@ -314,13 +317,14 @@ export function LabelFormatterClient() {
       const res = await fetch("/api/label-formatter/working-rows", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ rows }),
+        body: JSON.stringify({ rows, clientLoadedAt: workingRowsLoadedAt ?? undefined }),
         signal: options?.signal,
       });
       const json = (await res.json().catch(() => ({}))) as WorkingRowsResponse;
       if (!res.ok) throw new Error(json.error ?? "Save failed");
 
       clearLegacyLocalWorkingRows();
+      setWorkingRowsLoadedAt(new Date().toISOString());
       setWorkingRowsSyncStatus("saved");
       setDirtyRowIds(new Set());
       if (!options?.silent) {
