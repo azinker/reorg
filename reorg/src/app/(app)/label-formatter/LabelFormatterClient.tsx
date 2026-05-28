@@ -52,6 +52,18 @@ type WorkingRowsResponse = {
   error?: string;
 };
 
+type InvalidExportRow = {
+  rowIndex: number;
+  orderNumber?: string;
+  field?: string;
+  message: string;
+};
+
+type ExportErrorResponse = {
+  error?: string;
+  invalidRows?: InvalidExportRow[];
+};
+
 type WorkingRowsSyncStatus = "loading" | "saved" | "saving" | "error";
 type NotesSortMode = "none" | "with-notes-first" | "without-notes-first";
 
@@ -186,6 +198,20 @@ function validateManualRow(row: LabelFormatterRow) {
     return "Add at least one SKU with a positive quantity.";
   }
   return null;
+}
+
+function formatExportErrorMessage(json: ExportErrorResponse) {
+  const firstInvalidRow = json.invalidRows?.[0];
+  if (!firstInvalidRow) return json.error ?? "Export failed.";
+
+  const orderLabel = firstInvalidRow.orderNumber?.trim()
+    ? `, order ${firstInvalidRow.orderNumber.trim()}`
+    : "";
+  const fieldLabel = firstInvalidRow.field ? `${firstInvalidRow.field}: ` : "";
+  const extraCount = (json.invalidRows?.length ?? 1) - 1;
+  const extraLabel = extraCount > 0 ? ` (${extraCount} more issue${extraCount === 1 ? "" : "s"} after this.)` : "";
+
+  return `Invalid export. Fix row ${firstInvalidRow.rowIndex}${orderLabel}: ${fieldLabel}${firstInvalidRow.message}.${extraLabel}`;
 }
 
 export function LabelFormatterClient() {
@@ -480,8 +506,8 @@ export function LabelFormatterClient() {
         body: JSON.stringify({ mode, rows: exportSet }),
       });
       if (!res.ok) {
-        const json = (await res.json().catch(() => ({}))) as { error?: string };
-        setBanner({ type: "error", message: json.error ?? "Export failed." });
+        const json = (await res.json().catch(() => ({}))) as ExportErrorResponse;
+        setBanner({ type: "error", message: formatExportErrorMessage(json) });
         return;
       }
       const blob = await res.blob();
