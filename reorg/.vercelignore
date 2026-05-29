@@ -5,3 +5,4 @@
 .env.staging.verify
 .env.backup.before-staging
 node_modules
+reports

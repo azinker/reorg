@@ -1,7 +1,7 @@
 import { db } from "@/lib/db";
 import type { LabelFormatterLineItem, LabelFormatterWorkingRowInput } from "@/lib/label-formatter/types";
 
-export type LabelFormatterWorkingRowRecord = LabelFormatterWorkingRowInput & {
+export type LabelFormatterWorkingRowRecord = Omit<LabelFormatterWorkingRowInput, "createdAt" | "updatedAt"> & {
   id: string;
   createdAt: Date;
   updatedAt: Date;
@@ -22,6 +22,29 @@ function normalizeLineItems(value: unknown): LabelFormatterLineItem[] {
   });
 
   return rows.length > 0 ? rows : [{ sku: "", quantity: 1 }];
+}
+
+function parseDate(value: string | undefined): Date | null {
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.valueOf()) ? null : date;
+}
+
+export function filterRowsForNonStaleReplace(
+  rows: LabelFormatterWorkingRowInput[],
+  existingIds: Set<string>,
+  clientLoadedAt?: Date | null,
+): LabelFormatterWorkingRowInput[] {
+  if (!clientLoadedAt) return rows;
+
+  return rows.filter((row) => {
+    if (!row.id || existingIds.has(row.id)) return true;
+
+    const rowCreatedAt = parseDate(row.createdAt);
+    if (!rowCreatedAt) return false;
+
+    return rowCreatedAt > clientLoadedAt;
+  });
 }
 
 export async function listLabelFormatterWorkingRows(userId: string): Promise<LabelFormatterWorkingRowRecord[]> {
@@ -53,7 +76,13 @@ export async function replaceLabelFormatterWorkingRows(
   options?: { clientLoadedAt?: Date | null },
 ): Promise<LabelFormatterWorkingRowRecord[]> {
   await db.$transaction(async (tx) => {
-    const incomingIds = rows.flatMap((row) => (row.id ? [row.id] : []));
+    const existingRows = await tx.labelFormatterWorkingRow.findMany({
+      where: { createdByUserId: userId },
+      select: { id: true },
+    });
+    const existingIds = new Set(existingRows.map((row) => row.id));
+    const rowsToReplace = filterRowsForNonStaleReplace(rows, existingIds, options?.clientLoadedAt);
+    const incomingIds = rowsToReplace.flatMap((row) => (row.id ? [row.id] : []));
     const rowsAddedAfterClientLoad = options?.clientLoadedAt
       ? await tx.labelFormatterWorkingRow.findMany({
           where: {
@@ -70,7 +99,7 @@ export async function replaceLabelFormatterWorkingRows(
     });
 
     const rowsToWrite = [
-      ...rows.map((row, index) => ({
+      ...rowsToReplace.map((row, index) => ({
         ...(row.id ? { id: row.id } : {}),
         createdByUserId: userId,
         note: row.note ?? "",
@@ -98,7 +127,7 @@ export async function replaceLabelFormatterWorkingRows(
         state: row.state,
         zipCode: row.zipCode,
         lineItems: normalizeLineItems(row.lineItems),
-        sortOrder: rows.length + index,
+        sortOrder: rowsToReplace.length + index,
       })),
     ];
 

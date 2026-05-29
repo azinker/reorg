@@ -80,6 +80,8 @@ export const labelFormatterWorkingRowSchema = z.object({
   state: draftString(40),
   zipCode: draftString(40),
   lineItems: z.array(labelFormatterWorkingLineItemSchema).min(1).max(100),
+  createdAt: z.string().datetime().optional(),
+  updatedAt: z.string().datetime().optional(),
 });
 
 export const labelFormatterWorkingRowsSaveSchema = z.object({
