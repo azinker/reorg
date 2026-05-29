@@ -79,6 +79,7 @@ import {
 } from "@/lib/helpdesk/conversation-summary";
 import { Avatar, AvatarStack } from "@/components/ui/avatar";
 import { useCurrentUser } from "@/contexts/current-user-context";
+import { canUseHelpdeskOrderActionsPermission } from "@/lib/helpdesk/order-actions-permission";
 
 interface ContextPanelProps {
   ticket: HelpdeskTicketDetail | null;
@@ -1220,9 +1221,7 @@ function OrderInfoSection({
   const [actionStatus, setActionStatus] = useState<LabelFormatterActionStatus | null>(null);
   const [actionStatusLoading, setActionStatusLoading] = useState(false);
   const currentUser = useCurrentUser();
-  const canRunOrderActions =
-    currentUser?.email?.trim().toLowerCase() === "adam@theperfectpart.net" ||
-    Boolean(currentUser?.helpdeskOrderActionsEnabled);
+  const canRunOrderActions = canUseHelpdeskOrderActionsPermission(currentUser ?? {});
   const { data: ctx, loading, error } = order;
 
   useEffect(() => {

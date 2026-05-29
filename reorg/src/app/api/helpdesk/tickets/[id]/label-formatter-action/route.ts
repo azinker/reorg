@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { db } from "@/lib/db";
+import { canUseHelpdeskOrderActionsPermission } from "@/lib/helpdesk/order-actions-permission";
 import { getActor } from "@/lib/impersonation";
 import { appendOrUpdateLabelFormatterWorkingRow } from "@/lib/label-formatter/working-rows";
 import type { LabelFormatterLineItem, LabelFormatterSourceStore } from "@/lib/label-formatter/types";
@@ -102,10 +103,7 @@ function canUseHelpdeskOrderActions(actor: {
   email: string;
   helpdeskOrderActionsEnabled: boolean;
 }) {
-  return (
-    actor.email.trim().toLowerCase() === "adam@theperfectpart.net" ||
-    actor.helpdeskOrderActionsEnabled
-  );
+  return canUseHelpdeskOrderActionsPermission(actor);
 }
 
 function sourceStoreForPlatform(platform: string): LabelFormatterSourceStore {
