@@ -46,7 +46,7 @@ export async function GET() {
   }
 
   try {
-    const rows = await listLabelFormatterWorkingRows(actorUserId);
+    const rows = await listLabelFormatterWorkingRows();
     return NextResponse.json({ data: rows.map(serializeRow) });
   } catch (error) {
     console.error("[label-formatter/working-rows] GET failed", error);
@@ -69,6 +69,7 @@ export async function PUT(request: NextRequest) {
     const clientLoadedAt = parsed.data.clientLoadedAt ? new Date(parsed.data.clientLoadedAt) : null;
     const rows = await replaceLabelFormatterWorkingRows(actorUserId, parsed.data.rows, {
       clientLoadedAt: clientLoadedAt && !Number.isNaN(clientLoadedAt.valueOf()) ? clientLoadedAt : null,
+      clientKnownRowIds: parsed.data.clientKnownRowIds,
     });
     return NextResponse.json({ data: rows.map(serializeRow) });
   } catch (error) {

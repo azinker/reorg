@@ -47,9 +47,8 @@ export function filterRowsForNonStaleReplace(
   });
 }
 
-export async function listLabelFormatterWorkingRows(userId: string): Promise<LabelFormatterWorkingRowRecord[]> {
+export async function listLabelFormatterWorkingRows(): Promise<LabelFormatterWorkingRowRecord[]> {
   const rows = await db.labelFormatterWorkingRow.findMany({
-    where: { createdByUserId: userId },
     orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
   });
 
@@ -73,35 +72,35 @@ export async function listLabelFormatterWorkingRows(userId: string): Promise<Lab
 export async function replaceLabelFormatterWorkingRows(
   userId: string,
   rows: LabelFormatterWorkingRowInput[],
-  options?: { clientLoadedAt?: Date | null },
+  options?: { clientLoadedAt?: Date | null; clientKnownRowIds?: string[] },
 ): Promise<LabelFormatterWorkingRowRecord[]> {
   await db.$transaction(async (tx) => {
     const existingRows = await tx.labelFormatterWorkingRow.findMany({
-      where: { createdByUserId: userId },
-      select: { id: true },
+      orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
     });
     const existingIds = new Set(existingRows.map((row) => row.id));
+    const existingOwnerById = new Map(existingRows.map((row) => [row.id, row.createdByUserId]));
+    const clientKnownIds = options?.clientKnownRowIds
+      ? new Set(options.clientKnownRowIds)
+      : null;
     const rowsToReplace = filterRowsForNonStaleReplace(rows, existingIds, options?.clientLoadedAt);
     const incomingIds = rowsToReplace.flatMap((row) => (row.id ? [row.id] : []));
-    const rowsAddedAfterClientLoad = options?.clientLoadedAt
-      ? await tx.labelFormatterWorkingRow.findMany({
-          where: {
-            createdByUserId: userId,
-            createdAt: { gt: options.clientLoadedAt },
-            ...(incomingIds.length > 0 ? { id: { notIn: incomingIds } } : {}),
-          },
-          orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
-        })
-      : [];
+    const incomingIdSet = new Set(incomingIds);
+    const rowsToPreserve = existingRows.filter((row) => {
+      if (incomingIdSet.has(row.id)) return false;
+      if (!clientKnownIds) return true;
+      if (!clientKnownIds.has(row.id)) return true;
+      return Boolean(options?.clientLoadedAt && row.createdAt > options.clientLoadedAt);
+    });
 
     await tx.labelFormatterWorkingRow.deleteMany({
-      where: { createdByUserId: userId },
+      where: {},
     });
 
     const rowsToWrite = [
       ...rowsToReplace.map((row, index) => ({
         ...(row.id ? { id: row.id } : {}),
-        createdByUserId: userId,
+        createdByUserId: row.id ? existingOwnerById.get(row.id) ?? userId : userId,
         note: row.note ?? "",
         orderNumber: row.orderNumber,
         sourceStore: row.sourceStore,
@@ -114,7 +113,7 @@ export async function replaceLabelFormatterWorkingRows(
         lineItems: row.lineItems,
         sortOrder: index,
       })),
-      ...rowsAddedAfterClientLoad.map((row, index) => ({
+      ...rowsToPreserve.map((row, index) => ({
         id: row.id,
         createdByUserId: row.createdByUserId,
         note: row.note ?? "",
@@ -138,7 +137,7 @@ export async function replaceLabelFormatterWorkingRows(
     });
   });
 
-  return listLabelFormatterWorkingRows(userId);
+  return listLabelFormatterWorkingRows();
 }
 
 export async function appendOrUpdateLabelFormatterWorkingRow(
@@ -148,7 +147,6 @@ export async function appendOrUpdateLabelFormatterWorkingRow(
   const result = await db.$transaction(async (tx) => {
     const existing = await tx.labelFormatterWorkingRow.findFirst({
       where: {
-        createdByUserId: userId,
         orderNumber: row.orderNumber,
         sourceStore: row.sourceStore,
       },
@@ -173,13 +171,12 @@ export async function appendOrUpdateLabelFormatterWorkingRow(
         },
       });
       const totalRows = await tx.labelFormatterWorkingRow.count({
-        where: { createdByUserId: userId },
+        where: {},
       });
       return { dbRow: updated, created: false, totalRows };
     }
 
     const last = await tx.labelFormatterWorkingRow.findFirst({
-      where: { createdByUserId: userId },
       orderBy: [{ sortOrder: "desc" }, { createdAt: "desc" }],
       select: { sortOrder: true },
     });
@@ -201,7 +198,7 @@ export async function appendOrUpdateLabelFormatterWorkingRow(
       },
     });
     const totalRows = await tx.labelFormatterWorkingRow.count({
-      where: { createdByUserId: userId },
+      where: {},
     });
     return { dbRow: created, created: true, totalRows };
   });

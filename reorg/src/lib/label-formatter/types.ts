@@ -87,6 +87,7 @@ export const labelFormatterWorkingRowSchema = z.object({
 export const labelFormatterWorkingRowsSaveSchema = z.object({
   rows: z.array(labelFormatterWorkingRowSchema).max(500),
   clientLoadedAt: z.string().datetime().optional(),
+  clientKnownRowIds: z.array(draftString(80)).max(500).optional(),
 });
 
 export type LabelFormatterWorkingRowInput = z.infer<typeof labelFormatterWorkingRowSchema>;

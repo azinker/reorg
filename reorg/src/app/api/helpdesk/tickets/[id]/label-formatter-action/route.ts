@@ -31,7 +31,7 @@ const LEGACY_INR_SKUVAULT_DEDUCTED_ACTION = "HELPDESK_INR_SKUVAULT_DEDUCTED_SKU"
 
 async function getActionStatus(
   ticketId: string,
-  options?: { userId: string; orderNumber: string; sourceStore: LabelFormatterSourceStore },
+  options?: { orderNumber: string; sourceStore: LabelFormatterSourceStore },
 ) {
   const [labelLog, skuLogs] = await Promise.all([
     db.auditLog.findFirst({
@@ -57,7 +57,6 @@ async function getActionStatus(
     ? await Promise.all([
         db.labelFormatterWorkingRow.findFirst({
           where: {
-            createdByUserId: options.userId,
             orderNumber: options.orderNumber,
             sourceStore: options.sourceStore,
           },
@@ -67,7 +66,6 @@ async function getActionStatus(
           where: {
             orderNumber: options.orderNumber,
             sourceStore: options.sourceStore,
-            batch: { createdByUserId: options.userId },
           },
           orderBy: { createdAt: "desc" },
           select: { id: true, createdAt: true, batch: { select: { id: true, createdAt: true } } },
@@ -220,7 +218,6 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
 
   const sourceStore = sourceStoreForPlatform(platform);
   const statusBeforeAction = await getActionStatus(ticket.id, {
-    userId: actor.userId,
     orderNumber: ticket.ebayOrderNumber,
     sourceStore,
   });
@@ -418,7 +415,6 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         alreadyDeducted: skuvaultAlreadyDeducted,
       },
       status: await getActionStatus(ticket.id, {
-        userId: actor.userId,
         orderNumber: ticket.ebayOrderNumber,
         sourceStore,
       }),
@@ -455,7 +451,6 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
       orderNumber: ticket.ebayOrderNumber,
       status: ticket.ebayOrderNumber
         ? await getActionStatus(ticket.id, {
-            userId: actor.userId,
             orderNumber: ticket.ebayOrderNumber,
             sourceStore,
           })

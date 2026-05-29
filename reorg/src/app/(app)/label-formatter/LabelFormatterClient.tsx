@@ -233,6 +233,7 @@ export function LabelFormatterClient() {
   const [dirtyRowIds, setDirtyRowIds] = useState<Set<string>>(new Set());
   const [notesSortMode, setNotesSortMode] = useState<NotesSortMode>("none");
   const [workingRowsLoadedAt, setWorkingRowsLoadedAt] = useState<string | null>(null);
+  const [workingRowsKnownIds, setWorkingRowsKnownIds] = useState<string[]>([]);
 
   const sortedRows = useMemo(() => {
     if (notesSortMode === "none") return rows;
@@ -269,8 +270,10 @@ export function LabelFormatterClient() {
 
         if (cancelled) return;
         clearLegacyLocalWorkingRows();
-        setRows(normalizeStoredRows(json.data));
+        const serverRows = normalizeStoredRows(json.data);
+        setRows(serverRows);
         setWorkingRowsLoadedAt(new Date().toISOString());
+        setWorkingRowsKnownIds(serverRows.map((row) => row.id));
         setDirtyRowIds(new Set());
         setWorkingRowsCanSave(true);
         setWorkingRowsSyncStatus("saved");
@@ -278,6 +281,7 @@ export function LabelFormatterClient() {
         if (cancelled) return;
         setRows([]);
         setWorkingRowsLoadedAt(null);
+        setWorkingRowsKnownIds([]);
         setDirtyRowIds(new Set());
         setWorkingRowsSyncStatus("error");
         setBanner({ type: "error", message: "Could not load Label Formatter working rows. Refresh and try again." });
@@ -343,18 +347,25 @@ export function LabelFormatterClient() {
       const res = await fetch("/api/label-formatter/working-rows", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ rows, clientLoadedAt: workingRowsLoadedAt ?? undefined }),
+        body: JSON.stringify({
+          rows,
+          clientLoadedAt: workingRowsLoadedAt ?? undefined,
+          clientKnownRowIds: workingRowsKnownIds,
+        }),
         signal: options?.signal,
       });
       const json = (await res.json().catch(() => ({}))) as WorkingRowsResponse;
-      if (!res.ok) throw new Error(json.error ?? "Save failed");
+      if (!res.ok || !json.data) throw new Error(json.error ?? "Save failed");
 
       clearLegacyLocalWorkingRows();
+      const savedRows = normalizeStoredRows(json.data);
+      setRows(savedRows);
       setWorkingRowsLoadedAt(new Date().toISOString());
+      setWorkingRowsKnownIds(savedRows.map((row) => row.id));
       setWorkingRowsSyncStatus("saved");
       setDirtyRowIds(new Set());
       if (!options?.silent) {
-        setBanner({ type: "success", message: `Saved ${rows.length} working row${rows.length === 1 ? "" : "s"} to your account.` });
+        setBanner({ type: "success", message: `Saved ${savedRows.length} working row${savedRows.length === 1 ? "" : "s"} to your account.` });
       }
     } catch (error) {
       if (options?.signal?.aborted) return;
