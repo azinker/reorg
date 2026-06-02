@@ -165,6 +165,77 @@ async function bigCommerceFetchWithRetry(
   return res;
 }
 
+export function parseBigCommerceJsonArray<T>(
+  body: string,
+  context: string,
+): T[] {
+  const trimmed = body.trim();
+  if (!trimmed) return [];
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(trimmed);
+  } catch {
+    throw new Error(`${context} returned invalid JSON.`);
+  }
+
+  if (!Array.isArray(parsed)) {
+    throw new Error(`${context} returned unexpected JSON shape.`);
+  }
+
+  return parsed as T[];
+}
+
+export function parseBigCommerceJsonObject(
+  body: string,
+  context: string,
+): Record<string, unknown> {
+  const trimmed = body.trim();
+  if (!trimmed) {
+    throw new Error(`${context} returned an empty response body.`);
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(trimmed);
+  } catch {
+    throw new Error(`${context} returned invalid JSON.`);
+  }
+
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error(`${context} returned unexpected JSON shape.`);
+  }
+
+  return parsed as Record<string, unknown>;
+}
+
+function formatBigCommerceErrorBody(body: string): string {
+  const trimmed = body.trim();
+  if (!trimmed) return "empty response body";
+
+  try {
+    const parsed = JSON.parse(trimmed) as unknown;
+    if (Array.isArray(parsed)) {
+      const messages = parsed
+        .map((entry) => {
+          if (!entry || typeof entry !== "object") return "";
+          const record = entry as Record<string, unknown>;
+          return String(record.message ?? record.title ?? "").trim();
+        })
+        .filter(Boolean);
+      return messages.join("; ") || trimmed;
+    }
+    if (parsed && typeof parsed === "object") {
+      const record = parsed as Record<string, unknown>;
+      return String(record.message ?? record.title ?? record.error ?? trimmed);
+    }
+  } catch {
+    // Use raw text below.
+  }
+
+  return trimmed;
+}
+
 /**
  * Shopify-specific fetch that retries on 429 (rate limit) using the
  * Retry-After header value (or a default back-off).
@@ -718,9 +789,19 @@ async function queryBcOrder(
 
   if (!orderRes.ok) return { found: false, orderId: null, products: [], addressId: null };
 
-  const addrData = addrRes.ok ? (JSON.parse(addrRes.body) as Array<Record<string, unknown>>) : [];
+  const addrData = addrRes.ok
+    ? parseBigCommerceJsonArray<Record<string, unknown>>(
+        addrRes.body,
+        `BigCommerce order ${normalizedOrderId} shipping addresses`,
+      )
+    : [];
   const addressId = addrData.length > 0 ? (Number(addrData[0]!.id) || null) : null;
-  const prodData = prodRes.ok ? (JSON.parse(prodRes.body) as Array<Record<string, unknown>>) : [];
+  const prodData = prodRes.ok
+    ? parseBigCommerceJsonArray<Record<string, unknown>>(
+        prodRes.body,
+        `BigCommerce order ${normalizedOrderId} products`,
+      )
+    : [];
   const products: BcOrderProduct[] = prodData.map((p) => ({
     order_product_id: Number(p.id),
     quantity: Number(p.quantity),
@@ -1244,11 +1325,7 @@ async function shipBigCommerce(
       continue;
     }
 
-    let detail = res.body;
-    try {
-      const parsed = JSON.parse(res.body) as Array<Record<string, unknown>>;
-      detail = parsed.map((e) => String(e.message ?? e.title ?? "")).join("; ");
-    } catch { /* use raw */ }
+    const detail = formatBigCommerceErrorBody(res.body);
     lastError = new Error(`BigCommerce shipment failed (${res.status}): ${detail}`);
     break;
   }
@@ -1450,7 +1527,10 @@ async function replaceBigCommerceShipmentTracking(
     throw new Error(`BigCommerce list shipments failed (${listRes.status}): ${listRes.body}`);
   }
 
-  const shipments = JSON.parse(listRes.body) as Array<{ id: number }>;
+  const shipments = parseBigCommerceJsonArray<{ id: number }>(
+    listRes.body,
+    `BigCommerce order ${orderId} shipments list`,
+  );
   if (!shipments.length) {
     await shipBigCommerce(storeHash, accessToken, orderId, trackingNumber, products, addressId);
     return;
@@ -1463,7 +1543,10 @@ async function replaceBigCommerceShipmentTracking(
     throw new Error(`BigCommerce get shipment failed (${detailRes.status}): ${detailRes.body}`);
   }
 
-  const shipmentDetail = JSON.parse(detailRes.body) as Record<string, unknown>;
+  const shipmentDetail = parseBigCommerceJsonObject(
+    detailRes.body,
+    `BigCommerce order ${orderId} shipment ${shipmentId}`,
+  );
 
   // BC rejects PUT bodies that omit `shipping_provider` when `tracking_carrier` exists — it must match the shipment's carrier family.
   // Sending raw GET `shipping_provider` can be invalid for PUT (wrong slug); derive a known enum value instead.
@@ -1486,13 +1569,7 @@ async function replaceBigCommerceShipmentTracking(
   });
 
   if (!putRes.ok) {
-    let errDetail = putRes.body;
-    try {
-      const parsed = JSON.parse(putRes.body) as Array<Record<string, unknown>>;
-      errDetail = parsed.map((e) => String(e.message ?? e.title ?? "")).join("; ");
-    } catch {
-      /* raw */
-    }
+    const errDetail = formatBigCommerceErrorBody(putRes.body);
     throw new Error(`BigCommerce shipment PUT failed (${putRes.status}): ${errDetail}`);
   }
 }
