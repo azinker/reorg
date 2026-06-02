@@ -191,6 +191,11 @@ export function ShipOrdersPanel() {
   const failedRows = rows.filter((r): r is { phase: "failed"; data: ShipApiResult } => r.phase === "failed");
   const verifiedCount = shippedRows.filter((r) => r.data.verificationStatus === "verified").length;
   const mismatchCount = shippedRows.filter((r) => r.data.verificationStatus === "mismatch").length;
+  const appendedEbayRows = shippedRows.filter(
+    (r) => r.data.trackingAppendApplied && (r.data.platform === "TPP_EBAY" || r.data.platform === "TT_EBAY"),
+  );
+  const appendedTppCount = appendedEbayRows.filter((r) => r.data.platform === "TPP_EBAY").length;
+  const appendedTtCount = appendedEbayRows.filter((r) => r.data.platform === "TT_EBAY").length;
 
   // ─── Identify ─────────────────────────────────────────────────────────────
 
@@ -262,7 +267,7 @@ export function ShipOrdersPanel() {
           const res = await fetch("/api/ship-orders/execute", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ orders: chunk, batchId }),
+            body: JSON.stringify({ orders: chunk, batchId, replaceExistingTracking: true }),
           });
           const json = (await res.json()) as {
             data?: { results: ShipApiResult[]; autoResponderStatus?: { queued: number; skipped: number; error?: string } };
@@ -451,6 +456,22 @@ export function ShipOrdersPanel() {
         />
       )}
 
+      {allDone && appendedEbayRows.length > 0 && (
+        <div className="rounded border border-sky-500/30 bg-sky-500/10 px-4 py-3 text-sky-200">
+          <div className="flex items-start gap-2">
+            <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" />
+            <div className="space-y-1">
+              <div className="text-sm font-medium">
+                {appendedEbayRows.length} eBay tracking number{appendedEbayRows.length !== 1 ? "s" : ""} needed the 42084326 prefix because eBay reported the original tracking was already used.
+              </div>
+              <div className="text-xs text-sky-200/75">
+                TPP eBay: {appendedTppCount} | TT eBay: {appendedTtCount}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Results table */}
       {hasResults && (
         <div className="rounded-lg border border-white/10 bg-white/5 overflow-hidden">
@@ -626,13 +647,22 @@ function OrderRow({ row }: { row: RowState }) {
 // ─── Verification display ─────────────────────────────────────────────────────
 
 function VerificationInfo({ result }: { result: ShipResult }) {
-  const { trackingNumber, verifiedTrackingNumber, verificationStatus } = result;
+  const { trackingNumber, verifiedTrackingNumber, verificationStatus, originalTrackingNumber, trackingAppendApplied } = result;
+
+  const appendNote = trackingAppendApplied && originalTrackingNumber ? (
+    <div className="text-xs text-sky-300/75">
+      Original {originalTrackingNumber}; submitted with 42084326 prefix
+    </div>
+  ) : null;
 
   if (verificationStatus === "verified") {
     return (
-      <div className="flex items-center gap-1.5">
-        <span className="font-mono text-xs text-emerald-300">{verifiedTrackingNumber ?? trackingNumber}</span>
-        <span className="text-xs text-emerald-400/70">confirmed on eBay</span>
+      <div className="space-y-0.5">
+        <div className="flex items-center gap-1.5">
+          <span className="font-mono text-xs text-emerald-300">{verifiedTrackingNumber ?? trackingNumber}</span>
+          <span className="text-xs text-emerald-400/70">confirmed on eBay</span>
+        </div>
+        {appendNote}
       </div>
     );
   }
@@ -649,6 +679,7 @@ function VerificationInfo({ result }: { result: ShipResult }) {
           <span className="text-xs text-amber-400/80">On eBay:</span>
           <span className="font-mono text-xs text-amber-300">{verifiedTrackingNumber}</span>
         </div>
+        {appendNote}
       </div>
     );
   }
@@ -656,13 +687,19 @@ function VerificationInfo({ result }: { result: ShipResult }) {
   if (verificationStatus === "mismatch" && !verifiedTrackingNumber) {
     // CompleteSale had warnings — tracking likely not applied
     return (
-      <div className="font-mono text-xs text-amber-300/80">{trackingNumber}</div>
+      <div className="space-y-0.5">
+        <div className="font-mono text-xs text-amber-300/80">{trackingNumber}</div>
+        {appendNote}
+      </div>
     );
   }
 
   // unverified — submitted OK but GetOrders didn't return tracking (BC, Shopify, or eBay read-back timing)
   return (
-    <div className="font-mono text-xs text-white/50">{trackingNumber}</div>
+    <div className="space-y-0.5">
+      <div className="font-mono text-xs text-white/50">{trackingNumber}</div>
+      {appendNote}
+    </div>
   );
 }
 

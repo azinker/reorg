@@ -26,6 +26,7 @@ const SITE_ID = "0";
 const COMPAT_LEVEL = "1199";
 const REQUEST_TIMEOUT_MS = 30_000;
 const CARRIER = "USPS";
+const EBAY_DUPLICATE_TRACKING_PREFIX = "42084326";
 
 /** Max eBay order IDs per single GetOrders call. */
 const EBAY_IDENTIFY_BATCH_SIZE = 20;
@@ -33,6 +34,8 @@ const EBAY_IDENTIFY_BATCH_SIZE = 20;
 const EBAY_VERIFY_BATCH_SIZE = 20;
 /** Concurrent CompleteSale / shipment API calls during execute phase (eBay + BC). */
 const EXECUTE_CONCURRENCY = 20;
+/** BigCommerce shipment PUT/list bursts throttle — replacing tracking hits multiple endpoints per order. */
+const BC_REPLACE_TRACKING_CONCURRENCY = 4;
 /** Concurrent GetOrders batches during identify and verify phases. */
 const IDENTIFY_CONCURRENCY = 10;
 /** Shopify allows 2 calls/second sustained (leaky bucket 40). Keep concurrency low. */
@@ -90,6 +93,10 @@ export type ShipResult = {
   platform: Platform | null;
   success: boolean;
   error?: string;
+  /** Original user-entered tracking when eBay required the duplicate-tracking ZIP prefix workaround. */
+  originalTrackingNumber?: string;
+  /** True when eBay rejected the original tracking as already used and the prefixed value was submitted. */
+  trackingAppendApplied?: boolean;
   /** Non-fatal eBay warning messages returned alongside Ack=Warning (e.g. "tracking number invalid format"). */
   ebayWarnings?: string[];
   /** Tracking number confirmed on the marketplace after shipping (may differ if eBay silently ignores update). */
@@ -141,6 +148,21 @@ async function fetchWithTimeout(
   } finally {
     clearTimeout(timeout);
   }
+}
+
+/** BC Management API bursts can return HTTP 429; used for reads during identify + shipment updates. */
+async function bigCommerceFetchWithRetry(
+  url: string,
+  headers: Record<string, string>,
+  extra?: Omit<RequestInit, "headers">,
+): Promise<{ ok: boolean; status: number; body: string }> {
+  const MAX = 12;
+  let res = await fetchWithTimeout(url, { headers, ...extra });
+  for (let attempt = 2; attempt <= MAX && res.status === 429; attempt++) {
+    await new Promise((r) => setTimeout(r, Math.min(2500 * attempt, 45_000)));
+    res = await fetchWithTimeout(url, { headers, ...extra });
+  }
+  return res;
 }
 
 /**
@@ -403,6 +425,7 @@ interface AmazonIdentifyResult {
 async function identifyAmazonOrder(
   refreshToken: string,
   orderNumber: string,
+  opts?: { allowAlreadyShipped?: boolean },
 ): Promise<AmazonIdentifyResult> {
   const lwaToken = await getAmazonLwaToken(refreshToken);
 
@@ -426,8 +449,13 @@ async function identifyAmazonOrder(
     return { found: false, error: `Order not found in Amazon account. API returned: ${ordersRes.body.slice(0, 300)}` };
   }
 
+  const canceledStatuses = new Set(["Canceled", "Cancelled"]);
+  if (canceledStatuses.has(matched.OrderStatus)) {
+    return { found: false, error: `Amazon order ${orderNumber} is canceled (${matched.OrderStatus})` };
+  }
+
   const awaitingStatuses = new Set(["Unshipped", "PartiallyShipped"]);
-  if (!awaitingStatuses.has(matched.OrderStatus)) {
+  if (!opts?.allowAlreadyShipped && !awaitingStatuses.has(matched.OrderStatus)) {
     return { found: false, error: `Amazon order ${orderNumber} status is "${matched.OrderStatus}" (not awaiting shipment)` };
   }
 
@@ -465,6 +493,7 @@ async function shipAmazon(
   trackingNumber: string,
   marketplaceId: string,
   orderItems: AmazonOrderItem[],
+  shippingMethod?: string,
 ): Promise<void> {
   const lwaToken = await getAmazonLwaToken(refreshToken);
 
@@ -473,7 +502,7 @@ async function shipAmazon(
     packageDetail: {
       packageReferenceId: "1",
       carrierCode: CARRIER,
-      shippingMethod: "Ground",
+      shippingMethod: shippingMethod ?? "Ground",
       trackingNumber,
       shipDate: new Date().toISOString(),
       orderItems: orderItems.map((item) => ({
@@ -505,10 +534,25 @@ async function shipAmazon(
 // ─── Parsing ──────────────────────────────────────────────────────────────────
 
 /** eBay order numbers look like: `01-14458-12363` */
-const EBAY_ORDER_REGEX = /^\d{2}-\d{5}-\d{5}$/;
+export const EBAY_ORDER_REGEX = /^\d{2}-\d{5}-\d{5}$/;
 
 /** Amazon order numbers look like: `114-3941689-8772232` */
-const AMAZON_ORDER_REGEX = /^\d{3}-\d{7}-\d{7}$/;
+export const AMAZON_ORDER_REGEX = /^\d{3}-\d{7}-\d{7}$/;
+
+function normalizeDecoratedNumericOrder(raw: string): string | null {
+  let value = raw.replace(/^\uFEFF/, "").trim();
+  value = value.replace(/^(?:order|bigcommerce|bc)\s*[:#-]?\s*/i, "");
+  value = value.replace(/^#/, "");
+  value = value.replace(/,/g, "");
+  if (!/^\d+$/.test(value)) return null;
+  if (Number(value) <= 0) return null;
+  return value;
+}
+
+function normalizeShopifyOrderName(raw: string): string {
+  const numeric = normalizeDecoratedNumericOrder(raw);
+  return numeric ?? raw.replace(/^\uFEFF/, "").trim().replace(/^#/, "");
+}
 
 export function parseInputLines(raw: string): ParsedLine[] {
   return raw
@@ -520,8 +564,19 @@ export function parseInputLines(raw: string): ParsedLine[] {
       // order numbers and tracking numbers never contain spaces themselves.
       const parts = line.split(/\s+/).filter(Boolean);
       if (parts.length < 2) return [];
-      const orderNumber = parts[0]!;
-      const trackingNumber = parts[1]!;
+      let orderNumber = parts[0]!;
+      let trackingNumber = parts[1]!;
+
+      if (/^(?:order|bigcommerce|bc)$/i.test(orderNumber) && parts.length >= 3) {
+        orderNumber = parts[1]!;
+        trackingNumber = parts[2]!;
+      }
+
+      const compactNumeric = normalizeDecoratedNumericOrder(orderNumber);
+      if (compactNumeric && !EBAY_ORDER_REGEX.test(orderNumber) && !AMAZON_ORDER_REGEX.test(orderNumber)) {
+        orderNumber = compactNumeric;
+      }
+
       return orderNumber && trackingNumber ? [{ orderNumber, trackingNumber }] : [];
     });
 }
@@ -637,6 +692,7 @@ async function identifyEbayOrders(
 
 interface BcOrderResult {
   found: boolean;
+  orderId: string | null;
   products: BcOrderProduct[];
   addressId: number | null;
 }
@@ -646,22 +702,21 @@ async function queryBcOrder(
   accessToken: string,
   orderId: string,
 ): Promise<BcOrderResult> {
-  const numId = Number(orderId);
-  if (!Number.isFinite(numId) || numId <= 0) return { found: false, products: [], addressId: null };
+  const normalizedOrderId = normalizeDecoratedNumericOrder(orderId);
+  if (!normalizedOrderId) return { found: false, orderId: null, products: [], addressId: null };
 
+  const bcHeaders: Record<string, string> = {
+    "X-Auth-Token": accessToken,
+    Accept: "application/json",
+  };
+  const base = `https://api.bigcommerce.com/stores/${storeHash}`;
   const [orderRes, addrRes, prodRes] = await Promise.all([
-    fetchWithTimeout(`https://api.bigcommerce.com/stores/${storeHash}/v2/orders/${numId}`, {
-      headers: { "X-Auth-Token": accessToken, Accept: "application/json" },
-    }),
-    fetchWithTimeout(`https://api.bigcommerce.com/stores/${storeHash}/v2/orders/${numId}/shipping_addresses`, {
-      headers: { "X-Auth-Token": accessToken, Accept: "application/json" },
-    }),
-    fetchWithTimeout(`https://api.bigcommerce.com/stores/${storeHash}/v2/orders/${numId}/products`, {
-      headers: { "X-Auth-Token": accessToken, Accept: "application/json" },
-    }),
+    bigCommerceFetchWithRetry(`${base}/v2/orders/${normalizedOrderId}`, bcHeaders),
+    bigCommerceFetchWithRetry(`${base}/v2/orders/${normalizedOrderId}/shipping_addresses`, bcHeaders),
+    bigCommerceFetchWithRetry(`${base}/v2/orders/${normalizedOrderId}/products`, bcHeaders),
   ]);
 
-  if (!orderRes.ok) return { found: false, products: [], addressId: null };
+  if (!orderRes.ok) return { found: false, orderId: null, products: [], addressId: null };
 
   const addrData = addrRes.ok ? (JSON.parse(addrRes.body) as Array<Record<string, unknown>>) : [];
   const addressId = addrData.length > 0 ? (Number(addrData[0]!.id) || null) : null;
@@ -671,7 +726,7 @@ async function queryBcOrder(
     quantity: Number(p.quantity),
   }));
 
-  return { found: true, products, addressId };
+  return { found: true, orderId: normalizedOrderId, products, addressId };
 }
 
 // ─── Shopify identification ───────────────────────────────────────────────────
@@ -682,8 +737,11 @@ async function queryShopifyOrder(
   apiVersion: string,
   orderNumber: string,
 ): Promise<{ found: boolean; platformOrderId: string | null }> {
+  const orderName = normalizeShopifyOrderName(orderNumber);
+  if (!orderName) return { found: false, platformOrderId: null };
+
   const res = await shopifyFetch(
-    `https://${storeDomain}/admin/api/${apiVersion}/orders.json?name=%23${encodeURIComponent(orderNumber)}&status=any&limit=5`,
+    `https://${storeDomain}/admin/api/${apiVersion}/orders.json?name=%23${encodeURIComponent(orderName)}&status=any&limit=5`,
     { headers: { "X-Shopify-Access-Token": accessToken, Accept: "application/json" } },
   );
   if (!res.ok) return { found: false, platformOrderId: null };
@@ -693,9 +751,17 @@ async function queryShopifyOrder(
   return { found: true, platformOrderId: String(orders[0]!.id ?? "") };
 }
 
+export type IdentifyOrdersOptions = {
+  /** When true, Amazon orders in Shipped (etc.) remain identifiable so tracking can be replaced via confirmShipment. */
+  amazonAllowAlreadyShipped?: boolean;
+};
+
 // ─── identifyOrders ───────────────────────────────────────────────────────────
 
-export async function identifyOrders(lines: ParsedLine[]): Promise<IdentifyResult[]> {
+export async function identifyOrders(
+  lines: ParsedLine[],
+  options?: IdentifyOrdersOptions,
+): Promise<IdentifyResult[]> {
   if (lines.length === 0) return [];
 
   const integrations = await db.integration.findMany({
@@ -733,7 +799,9 @@ export async function identifyOrders(lines: ParsedLine[]): Promise<IdentifyResul
       await runConcurrently(amazonLines, AMAZON_CONCURRENCY, async (line) => {
         const { orderNumber, trackingNumber } = line;
         try {
-          const result = await identifyAmazonOrder(refreshToken, orderNumber);
+          const result = await identifyAmazonOrder(refreshToken, orderNumber, {
+            allowAlreadyShipped: options?.amazonAllowAlreadyShipped ?? false,
+          });
           if (result.found && result.orderId) {
             amazonResultMap.set(orderNumber, {
               orderNumber,
@@ -798,7 +866,7 @@ export async function identifyOrders(lines: ParsedLine[]): Promise<IdentifyResul
               (bcRow.config as Record<string, unknown>).accessToken as string,
               orderNumber,
             )
-          : Promise.resolve({ found: false, products: [], addressId: null }),
+          : Promise.resolve({ found: false, orderId: null, products: [], addressId: null }),
         shopifyRow
           ? queryShopifyOrder(
               (shopifyRow.config as Record<string, unknown>).storeDomain as string,
@@ -816,7 +884,7 @@ export async function identifyOrders(lines: ParsedLine[]): Promise<IdentifyResul
           trackingNumber,
           platform: "BIGCOMMERCE",
           integrationId: bcRow.id,
-          platformOrderId: orderNumber,
+          platformOrderId: bcResult.orderId ?? orderNumber,
           bcProducts: bcResult.products,
           bcAddressId: bcResult.addressId ?? undefined,
           status: "found",
@@ -1053,6 +1121,26 @@ async function verifyEbayShipments(
 
 // ─── Platform shipment execution ──────────────────────────────────────────────
 
+function compactTrackingNumber(trackingNumber: string): string {
+  return trackingNumber.trim().replace(/\s+/g, "");
+}
+
+function buildPrefixedEbayTrackingNumber(trackingNumber: string): string | null {
+  const compact = compactTrackingNumber(trackingNumber);
+  if (!compact || compact.startsWith(EBAY_DUPLICATE_TRACKING_PREFIX)) return null;
+  return `${EBAY_DUPLICATE_TRACKING_PREFIX}${compact}`;
+}
+
+function isEbayDuplicateTrackingMessage(message: string): boolean {
+  const text = message.toLowerCase();
+  if (!text.includes("tracking")) return false;
+  if (text.includes("another seller") || text.includes("different seller")) return true;
+  return (
+    (text.includes("already") || text.includes("previously")) &&
+    (text.includes("used") || text.includes("uploaded") || text.includes("submitted"))
+  );
+}
+
 async function shipEbay(
   integrationId: string,
   config: EbayConfig,
@@ -1240,12 +1328,189 @@ async function shipShopify(
   );
 }
 
+/**
+ * POST /fulfillments/{id}/update_tracking.json on the newest fulfillment for this order.
+ * Returns false when there are no fulfillments yet — caller creates one via {@link shipShopify}.
+ */
+async function updateShopifyFulfillmentTracking(
+  storeDomain: string,
+  accessToken: string,
+  apiVersion: string,
+  platformOrderId: string,
+  trackingNumber: string,
+): Promise<boolean> {
+  const headers = {
+    "X-Shopify-Access-Token": accessToken,
+    "Content-Type": "application/json",
+    Accept: "application/json",
+  };
+
+  const listRes = await shopifyFetch(
+    `https://${storeDomain}/admin/api/${apiVersion}/orders/${platformOrderId}/fulfillments.json`,
+    { headers },
+  );
+  if (!listRes.ok) {
+    throw new Error(`Shopify list fulfillments failed (${listRes.status}): ${listRes.body}`);
+  }
+
+  const data = JSON.parse(listRes.body) as { fulfillments?: Array<{ id: number }> };
+  const fulfillments = data.fulfillments ?? [];
+  if (fulfillments.length === 0) return false;
+
+  const fulfillmentId = fulfillments.reduce((a, b) => (a.id > b.id ? a : b)).id;
+
+  const upd = await shopifyFetch(
+    `https://${storeDomain}/admin/api/${apiVersion}/fulfillments/${fulfillmentId}/update_tracking.json`,
+    {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        fulfillment: {
+          notify_customer: true,
+          tracking_info: { number: trackingNumber, company: CARRIER },
+        },
+      }),
+    },
+  );
+  if (!upd.ok) {
+    throw new Error(`Shopify update_tracking failed (${upd.status}): ${upd.body}`);
+  }
+  return true;
+}
+
+async function shipShopifyReplaceTracking(
+  storeDomain: string,
+  accessToken: string,
+  apiVersion: string,
+  platformOrderId: string,
+  trackingNumber: string,
+): Promise<void> {
+  const updated = await updateShopifyFulfillmentTracking(
+    storeDomain,
+    accessToken,
+    apiVersion,
+    platformOrderId,
+    trackingNumber,
+  );
+  if (!updated) {
+    await shipShopify(storeDomain, accessToken, apiVersion, platformOrderId, trackingNumber);
+  }
+}
+
+/** Values accepted by PUT `/orders/{id}/shipments/{id}` per BC docs (extend if API returns new slugs). */
+const BC_PUT_SHIPPING_PROVIDER = new Set([
+  "auspost",
+  "canadapost",
+  "endicia",
+  "usps",
+  "fedex",
+  "ups",
+  "upsready",
+  "upsonline",
+  "shipperhq",
+  "royalmail",
+]);
+
+function resolveBigCommercePutShippingProvider(shipmentDetail: Record<string, unknown>): string {
+  const spRaw = shipmentDetail.shipping_provider;
+  if (typeof spRaw === "string") {
+    const sp = spRaw.trim().toLowerCase();
+    if (sp && BC_PUT_SHIPPING_PROVIDER.has(sp)) return sp;
+  }
+
+  const tcRaw = shipmentDetail.tracking_carrier;
+  const tc = typeof tcRaw === "string" ? tcRaw.trim().toLowerCase() : "";
+  if (tc && BC_PUT_SHIPPING_PROVIDER.has(tc)) return tc;
+
+  if (tc.includes("usps") || tc.includes("postal") || tc.includes("stamps") || tc.includes("endicia")) {
+    return "usps";
+  }
+  if (tc.includes("fedex")) return "fedex";
+  if (tc.includes("ups")) return "ups";
+
+  return "usps";
+}
+
+async function replaceBigCommerceShipmentTracking(
+  storeHash: string,
+  accessToken: string,
+  orderId: string,
+  trackingNumber: string,
+  products: BcOrderProduct[],
+  addressId?: number,
+): Promise<void> {
+  const listUrl = `https://api.bigcommerce.com/stores/${storeHash}/v2/orders/${orderId}/shipments`;
+  const headers: Record<string, string> = {
+    "X-Auth-Token": accessToken,
+    Accept: "application/json",
+  };
+
+  const listRes = await bigCommerceFetchWithRetry(listUrl, headers);
+  if (!listRes.ok) {
+    throw new Error(`BigCommerce list shipments failed (${listRes.status}): ${listRes.body}`);
+  }
+
+  const shipments = JSON.parse(listRes.body) as Array<{ id: number }>;
+  if (!shipments.length) {
+    await shipBigCommerce(storeHash, accessToken, orderId, trackingNumber, products, addressId);
+    return;
+  }
+
+  const shipmentId = shipments.reduce((a, b) => (a.id > b.id ? a : b)).id;
+
+  const detailRes = await bigCommerceFetchWithRetry(`${listUrl}/${shipmentId}`, headers);
+  if (!detailRes.ok) {
+    throw new Error(`BigCommerce get shipment failed (${detailRes.status}): ${detailRes.body}`);
+  }
+
+  const shipmentDetail = JSON.parse(detailRes.body) as Record<string, unknown>;
+
+  // BC rejects PUT bodies that omit `shipping_provider` when `tracking_carrier` exists — it must match the shipment's carrier family.
+  // Sending raw GET `shipping_provider` can be invalid for PUT (wrong slug); derive a known enum value instead.
+  const putPayload: Record<string, unknown> = {
+    tracking_number: trackingNumber,
+    shipping_provider: resolveBigCommercePutShippingProvider(shipmentDetail),
+  };
+
+  const putBody = JSON.stringify(putPayload);
+  const putUrl = `${listUrl}/${shipmentId}`;
+
+  const putHeaders: Record<string, string> = {
+    ...headers,
+    "Content-Type": "application/json",
+  };
+
+  const putRes = await bigCommerceFetchWithRetry(putUrl, putHeaders, {
+    method: "PUT",
+    body: putBody,
+  });
+
+  if (!putRes.ok) {
+    let errDetail = putRes.body;
+    try {
+      const parsed = JSON.parse(putRes.body) as Array<Record<string, unknown>>;
+      errDetail = parsed.map((e) => String(e.message ?? e.title ?? "")).join("; ");
+    } catch {
+      /* raw */
+    }
+    throw new Error(`BigCommerce shipment PUT failed (${putRes.status}): ${errDetail}`);
+  }
+}
+
 // ─── executeShipments ─────────────────────────────────────────────────────────
+
+export type ExecuteShipmentsOptions = {
+  /** When true, Shopify and BigCommerce update existing fulfillments/shipments when present instead of always POSTing new rows. */
+  replaceExistingTracking?: boolean;
+  /** Amazon Orders API confirmShipment `packageDetail.shippingMethod` override (UI often shows “Other”). */
+  amazonShippingMethod?: string;
+};
 
 export async function executeShipments(
   orders: IdentifiedOrder[],
   actorUserId: string,
   batchId?: string,
+  options?: ExecuteShipmentsOptions,
 ): Promise<{ results: ShipResult[]; autoResponderStatus: { queued: number; skipped: number; error?: string } }> {
   const integrationIds = [...new Set(orders.map((o) => o.integrationId))];
   const integrations = await db.integration.findMany({
@@ -1267,9 +1532,17 @@ export async function executeShipments(
 
   // Phase 1: Execute all shipments concurrently.
   // Shopify has a strict 2 calls/second rate limit so Shopify + Amazon orders run at
-  // SHOPIFY_CONCURRENCY; eBay and BC run at the higher EXECUTE_CONCURRENCY.
+  // SHOPIFY_CONCURRENCY; eBay and BC POST paths run at EXECUTE_CONCURRENCY.
+  // BC tracking-replacement does list + GET + PUT per order — run at BC_REPLACE_TRACKING_CONCURRENCY.
+  const bcReplaceTrackingOrders = orders.map((o, i) => ({ order: o, index: i })).filter(
+    ({ order }) => order.platform === "BIGCOMMERCE" && Boolean(options?.replaceExistingTracking),
+  );
+
   const fastOrders = orders.map((o, i) => ({ order: o, index: i })).filter(
-    ({ order }) => order.platform !== "SHOPIFY" && order.platform !== "AMAZON",
+    ({ order }) =>
+      order.platform !== "SHOPIFY" &&
+      order.platform !== "AMAZON" &&
+      !(order.platform === "BIGCOMMERCE" && options?.replaceExistingTracking),
   );
   const shopifyOrders = orders.map((o, i) => ({ order: o, index: i })).filter(
     ({ order }) => order.platform === "SHOPIFY",
@@ -1292,41 +1565,104 @@ export async function executeShipments(
         return;
       }
 
+      let submittedTrackingNumber = order.trackingNumber;
+      let originalTrackingNumber: string | undefined;
+      let trackingAppendApplied = false;
+
       try {
         const cfg = integration.config as Record<string, unknown>;
 
         if (order.platform === "TPP_EBAY" || order.platform === "TT_EBAY") {
           const ebayConfig = buildEbayConfig(cfg);
           ebayConfigMap.set(order.integrationId, ebayConfig);
-          const { warnings } = await shipEbay(order.integrationId, ebayConfig, order.platformOrderId, order.trackingNumber);
-          successfulEbayOrders.push({ orderNumber: order.orderNumber, trackingNumber: order.trackingNumber, integrationId: order.integrationId, platformOrderId: order.platformOrderId, index });
+          let warnings: string[] = [];
+
+          try {
+            ({ warnings } = await shipEbay(order.integrationId, ebayConfig, order.platformOrderId, submittedTrackingNumber));
+          } catch (error) {
+            const message = error instanceof Error ? error.message : "Unknown error";
+            const prefixedTracking = buildPrefixedEbayTrackingNumber(submittedTrackingNumber);
+            if (!isEbayDuplicateTrackingMessage(message) || !prefixedTracking) throw error;
+
+            originalTrackingNumber = submittedTrackingNumber;
+            submittedTrackingNumber = prefixedTracking;
+            trackingAppendApplied = true;
+            ({ warnings } = await shipEbay(order.integrationId, ebayConfig, order.platformOrderId, submittedTrackingNumber));
+          }
+
+          if (!trackingAppendApplied && warnings.some(isEbayDuplicateTrackingMessage)) {
+            const prefixedTracking = buildPrefixedEbayTrackingNumber(submittedTrackingNumber);
+            if (prefixedTracking) {
+              originalTrackingNumber = submittedTrackingNumber;
+              submittedTrackingNumber = prefixedTracking;
+              trackingAppendApplied = true;
+              ({ warnings } = await shipEbay(order.integrationId, ebayConfig, order.platformOrderId, submittedTrackingNumber));
+            }
+          }
+
+          successfulEbayOrders.push({ orderNumber: order.orderNumber, trackingNumber: submittedTrackingNumber, integrationId: order.integrationId, platformOrderId: order.platformOrderId, index });
+          results[index] = {
+            orderNumber: order.orderNumber,
+            trackingNumber: submittedTrackingNumber,
+            platform: order.platform,
+            success: true,
+            verificationStatus: "unverified",
+            ...(originalTrackingNumber ? { originalTrackingNumber } : {}),
+            ...(trackingAppendApplied ? { trackingAppendApplied } : {}),
+            ...(warnings.length > 0 ? { ebayWarnings: warnings } : {}),
+          };
+        } else if (order.platform === "BIGCOMMERCE") {
+          if (options?.replaceExistingTracking) {
+            await replaceBigCommerceShipmentTracking(
+              cfg.storeHash as string,
+              cfg.accessToken as string,
+              order.platformOrderId,
+              order.trackingNumber,
+              order.bcProducts ?? [],
+              order.bcAddressId,
+            );
+          } else {
+            await shipBigCommerce(
+              cfg.storeHash as string,
+              cfg.accessToken as string,
+              order.platformOrderId,
+              order.trackingNumber,
+              order.bcProducts ?? [],
+              order.bcAddressId,
+            );
+          }
           results[index] = {
             orderNumber: order.orderNumber,
             trackingNumber: order.trackingNumber,
             platform: order.platform,
             success: true,
             verificationStatus: "unverified",
-            ...(warnings.length > 0 ? { ebayWarnings: warnings } : {}),
           };
-        } else if (order.platform === "BIGCOMMERCE") {
-          await shipBigCommerce(
-            cfg.storeHash as string,
-            cfg.accessToken as string,
-            order.platformOrderId,
-            order.trackingNumber,
-            order.bcProducts ?? [],
-            order.bcAddressId,
-          );
-          results[index] = { orderNumber: order.orderNumber, trackingNumber: order.trackingNumber, platform: order.platform, success: true, verificationStatus: "unverified" };
         } else if (order.platform === "SHOPIFY") {
-          await shipShopify(
-            cfg.storeDomain as string,
-            cfg.accessToken as string,
-            (cfg.apiVersion as string) || "2026-01",
-            order.platformOrderId,
-            order.trackingNumber,
-          );
-          results[index] = { orderNumber: order.orderNumber, trackingNumber: order.trackingNumber, platform: order.platform, success: true, verificationStatus: "unverified" };
+          if (options?.replaceExistingTracking) {
+            await shipShopifyReplaceTracking(
+              cfg.storeDomain as string,
+              cfg.accessToken as string,
+              (cfg.apiVersion as string) || "2026-01",
+              order.platformOrderId,
+              order.trackingNumber,
+            );
+          } else {
+            await shipShopify(
+              cfg.storeDomain as string,
+              cfg.accessToken as string,
+              (cfg.apiVersion as string) || "2026-01",
+              order.platformOrderId,
+              order.trackingNumber,
+            );
+          }
+          results[index] = {
+            orderNumber: order.orderNumber,
+            trackingNumber: order.trackingNumber,
+            platform: order.platform,
+            success: true,
+            verificationStatus: "unverified",
+          };
         } else if (order.platform === "AMAZON") {
           if (!order.amazonOrderItems?.length) {
             throw new Error("Amazon order items not cached — re-identify the order and try again.");
@@ -1337,6 +1673,7 @@ export async function executeShipments(
             order.trackingNumber,
             order.amazonMarketplaceId ?? AMAZON_MARKETPLACE_ID_US,
             order.amazonOrderItems,
+            options?.amazonShippingMethod,
           );
           results[index] = { orderNumber: order.orderNumber, trackingNumber: order.trackingNumber, platform: order.platform, success: true, verificationStatus: "unverified" };
         }
@@ -1344,7 +1681,7 @@ export async function executeShipments(
         // Record outbound push in Public Network Transfer
         const bodyEstimate = JSON.stringify({
           orderId: order.platformOrderId,
-          trackingNumber: order.trackingNumber,
+          trackingNumber: submittedTrackingNumber,
           carrier: CARRIER,
         }).length;
         void recordNetworkTransferSample({
@@ -1361,26 +1698,52 @@ export async function executeShipments(
             entityType: "order",
             entityId: order.orderNumber,
             userId: actorUserId,
-            details: { platform: order.platform, platformOrderId: order.platformOrderId, trackingNumber: order.trackingNumber, carrier: CARRIER },
+            details: {
+              platform: order.platform,
+              platformOrderId: order.platformOrderId,
+              trackingNumber: submittedTrackingNumber,
+              originalTrackingNumber,
+              trackingAppendApplied,
+              carrier: CARRIER,
+              replaceExistingTracking: Boolean(options?.replaceExistingTracking),
+              amazonShippingMethod: options?.amazonShippingMethod,
+            },
           },
         });
       } catch (err) {
         const message = err instanceof Error ? err.message : "Unknown error";
-        results[index] = { orderNumber: order.orderNumber, trackingNumber: order.trackingNumber, platform: order.platform, success: false, error: message };
+        results[index] = {
+          orderNumber: order.orderNumber,
+          trackingNumber: submittedTrackingNumber,
+          platform: order.platform,
+          success: false,
+          error: message,
+          ...(originalTrackingNumber ? { originalTrackingNumber } : {}),
+          ...(trackingAppendApplied ? { trackingAppendApplied } : {}),
+        };
         await db.auditLog.create({
           data: {
             action: "ship_order_failed",
             entityType: "order",
             entityId: order.orderNumber,
             userId: actorUserId,
-            details: { platform: order.platform, platformOrderId: order.platformOrderId, trackingNumber: order.trackingNumber, error: message },
+            details: {
+              platform: order.platform,
+              platformOrderId: order.platformOrderId,
+              trackingNumber: submittedTrackingNumber,
+              originalTrackingNumber,
+              trackingAppendApplied,
+              error: message,
+            },
           },
         });
       }
   };
 
-  // eBay + BC: high concurrency (generous rate limits)
+  // eBay + BC normal POST + TT etc.: higher concurrency
   await runConcurrently(fastOrders, EXECUTE_CONCURRENCY, executeOne);
+  // BC tracking replacement (list + GET + PUT): gentle concurrency for rate limits
+  await runConcurrently(bcReplaceTrackingOrders, BC_REPLACE_TRACKING_CONCURRENCY, executeOne);
   // Shopify: 2 concurrent to stay under 2 calls/sec
   await runConcurrently(shopifyOrders, SHOPIFY_CONCURRENCY, executeOne);
   // Amazon: 1 at a time with built-in 429 retry to respect 0.5 req/sec limit

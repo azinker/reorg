@@ -40,6 +40,8 @@ const orderSchema = z.object({
 
 const bodySchema = z.object({
   orders: z.array(orderSchema).min(1).max(1000),
+  replaceExistingTracking: z.boolean().optional(),
+  amazonShippingMethod: z.string().trim().min(1).max(80).optional(),
 });
 
 async function getSystemUser() {
@@ -78,7 +80,10 @@ export async function POST(request: NextRequest) {
     }));
 
     const batchId = (json as { batchId?: string }).batchId ?? undefined;
-    const { results, autoResponderStatus } = await executeShipments(orders, actorUserId, batchId);
+    const { results, autoResponderStatus } = await executeShipments(orders, actorUserId, batchId, {
+      replaceExistingTracking: parsed.data.replaceExistingTracking ?? true,
+      amazonShippingMethod: parsed.data.amazonShippingMethod,
+    });
 
     return NextResponse.json({ data: { results, autoResponderStatus } });
   } catch (error) {
