@@ -24,6 +24,9 @@ Use this reference when configuring reorG. Copy `.env.example` to `.env` and fil
 | `HELPDESK_RESEND_REPLY_DOMAIN` | Inbound subdomain used for ticket-specific Help Desk Reply-To addresses | Resend Inbound domain setup | Yes (for Help Desk reply routing) | `reply.theperfectpart.net` |
 | `HELPDESK_RESEND_WEBHOOK_SECRET` | Resend webhook signing secret for inbound Help Desk replies | Resend webhook details page | Yes (for Help Desk reply routing) | `whsec_xxxxxxxxxxxxx` |
 | `HELPDESK_EMAIL_REPLY_SECRET` | Optional HMAC secret for signed ticket Reply-To addresses. Falls back to `AUTH_SECRET` if blank. | You generate it | Recommended | Long random string |
+| **LabelCrow** |
+| `LABELCROW_API_KEY` | API key used by Help Desk to generate return postage labels | LabelCrow account/API settings | Yes (for return labels) | `lc_live_xxxxxxxxxxxxx` |
+| `LABELCROW_USPS_GROUND_SERIES_ID` | Optional override for the USPS Ground 9302 LabelCrow series | LabelCrow API/docs | Optional | `13` |
 | **eBay – TPP (The Perfect Part)** |
 | `EBAY_TPP_APP_ID` | eBay app ID for TPP account | [eBay Developer Portal](https://developer.ebay.com) | Yes (if using TPP) | Alphanumeric string |
 | `EBAY_TPP_CERT_ID` | eBay certificate ID for TPP | eBay Developer Portal | Yes (if using TPP) | Alphanumeric string |

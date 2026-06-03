@@ -56,8 +56,10 @@ import {
   Check,
   ChevronDown,
   Copy,
+  Download,
   ExternalLink,
   FileWarning,
+  FileText,
   Loader2,
   MapPin,
   Package,
@@ -258,6 +260,37 @@ interface LabelFormatterActionStatusResponse {
   error?: string;
 }
 
+interface ReturnLabelSummary {
+  id: string;
+  orderNumber: string;
+  trackingNumber: string;
+  carrier: string;
+  serviceClass: string;
+  providerKey: string;
+  seriesCode: string;
+  weightLbs: number;
+  createdAt: string;
+  openUrl: string;
+  downloadUrl: string;
+}
+
+interface ReturnLabelsResponse {
+  data?: {
+    labels: ReturnLabelSummary[];
+  };
+  error?: string;
+  code?: string;
+}
+
+interface GenerateReturnLabelResponse {
+  data?: {
+    label: ReturnLabelSummary;
+    labels: ReturnLabelSummary[];
+  };
+  error?: string;
+  code?: string;
+}
+
 interface UseFeedbackSummaryResult {
   data: FeedbackSummaryResponse["data"] | null;
   loading: boolean;
@@ -386,6 +419,7 @@ function ContextPanelInner({ ticket, containerWidth, dividerCls }: InnerProps) {
               order={order.data}
               feedback={feedback}
             />
+            <ReturnLabelSection ticket={ticket} />
             <RelatedSection ticket={ticket} related={related} />
           </>
         )}
@@ -478,6 +512,7 @@ interface UseOrderContextResult {
 const orderContextCache = new Map<string, OrderContext | null>();
 const relatedCache = new Map<string, RelatedResponse>();
 const feedbackSummaryCache = new Map<string, FeedbackSummaryResponse["data"]>();
+const returnLabelCache = new Map<string, ReturnLabelSummary[]>();
 
 function orderContextCacheKey(ticket: HelpdeskTicketDetail): string {
   return `${ticket.id}|${ticket.ebayOrderNumber ?? ""}`;
@@ -599,6 +634,83 @@ function useFeedbackSummary(
 }
 
 // ── Related-tickets hook (shared between CustomerCard + RelatedSection) ────
+
+function returnLabelCacheKey(ticket: HelpdeskTicketDetail): string {
+  return `${ticket.id}|${ticket.ebayOrderNumber ?? ""}`;
+}
+
+function useReturnLabels(ticket: HelpdeskTicketDetail, enabled: boolean) {
+  const cacheKey = returnLabelCacheKey(ticket);
+  const cached = returnLabelCache.get(cacheKey) ?? [];
+  const [labels, setLabels] = useState<ReturnLabelSummary[]>(cached);
+  const [loading, setLoading] = useState(false);
+  const [generating, setGenerating] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!enabled || !ticket.ebayOrderNumber) {
+      setLabels([]);
+      setLoading(false);
+      setError(null);
+      return;
+    }
+    const nextCacheKey = returnLabelCacheKey(ticket);
+    const cachedForTicket = returnLabelCache.get(nextCacheKey) ?? [];
+    setLabels(cachedForTicket);
+    setLoading(cachedForTicket.length === 0);
+    setError(null);
+    const ac = new AbortController();
+    void (async () => {
+      try {
+        const res = await fetch(`/api/helpdesk/tickets/${ticket.id}/return-labels`, {
+          cache: "no-store",
+          signal: ac.signal,
+        });
+        const json = (await res.json().catch(() => ({}))) as ReturnLabelsResponse;
+        if (!res.ok || !json.data) {
+          throw new Error(json.error ?? "Could not load return labels.");
+        }
+        if (ac.signal.aborted) return;
+        setLabels(json.data.labels);
+        returnLabelCache.set(nextCacheKey, json.data.labels);
+      } catch (err) {
+        if (ac.signal.aborted) return;
+        if (err instanceof DOMException && err.name === "AbortError") return;
+        setError(err instanceof Error ? err.message : "Could not load return labels.");
+      } finally {
+        if (!ac.signal.aborted) setLoading(false);
+      }
+    })();
+    return () => ac.abort();
+  }, [cacheKey, enabled, ticket.ebayOrderNumber, ticket.id]);
+
+  async function generate(force: boolean): Promise<ReturnLabelSummary> {
+    setGenerating(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/helpdesk/tickets/${ticket.id}/return-labels`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ force }),
+      });
+      const json = (await res.json().catch(() => ({}))) as GenerateReturnLabelResponse;
+      if (!res.ok || !json.data) {
+        throw new Error(json.error ?? "Return label generation failed.");
+      }
+      setLabels(json.data.labels);
+      returnLabelCache.set(returnLabelCacheKey(ticket), json.data.labels);
+      return json.data.label;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Return label generation failed.";
+      setError(message);
+      throw new Error(message);
+    } finally {
+      setGenerating(false);
+    }
+  }
+
+  return { labels, loading, generating, error, generate };
+}
 
 interface UseRelatedResult {
   /** Compact summary for the customer card (orderCount + earliestTicketAt). */
@@ -1807,6 +1919,110 @@ function OrderInfoSection({
 }
 
 // ── Related tickets ────────────────────────────────────────────────────────
+
+function ReturnLabelSection({ ticket }: { ticket: HelpdeskTicketDetail }) {
+  const currentUser = useCurrentUser();
+  const canGenerate = canUseHelpdeskOrderActionsPermission(currentUser ?? {});
+  const isEbay = ticket.channel === "TPP_EBAY" || ticket.channel === "TT_EBAY";
+  const enabled = canGenerate && isEbay && Boolean(ticket.ebayOrderNumber);
+  const { labels, loading, generating, error, generate } = useReturnLabels(ticket, enabled);
+  const [banner, setBanner] = useState<string | null>(null);
+
+  if (!enabled) return null;
+
+  async function onGenerateClick() {
+    setBanner(null);
+    const hasExisting = labels.length > 0;
+    if (
+      hasExisting &&
+      !window.confirm(
+        "A return label was already generated for this ticket. Do you wish to generate another one?",
+      )
+    ) {
+      return;
+    }
+
+    const popup = window.open("about:blank", "_blank");
+    if (popup) popup.opener = null;
+    try {
+      const label = await generate(hasExisting);
+      if (popup) {
+        popup.location.href = label.openUrl;
+      } else {
+        window.open(label.openUrl, "_blank", "noopener,noreferrer");
+      }
+      setBanner(`Generated return label ${label.trackingNumber}.`);
+    } catch (err) {
+      popup?.close();
+      setBanner(err instanceof Error ? err.message : "Return label generation failed.");
+    }
+  }
+
+  return (
+    <section className="border-b border-hairline bg-card/40 px-4 py-3">
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <FileText className="h-3.5 w-3.5 text-brand" />
+          <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+            Return Label
+          </h3>
+        </div>
+        {loading ? (
+          <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground">
+            <Loader2 className="h-3 w-3 animate-spin" />
+            Checking
+          </span>
+        ) : null}
+      </div>
+      <button
+        type="button"
+        onClick={() => void onGenerateClick()}
+        disabled={generating}
+        className="inline-flex h-8 w-full cursor-pointer items-center justify-center gap-1.5 rounded-md bg-brand px-2 text-xs font-semibold text-primary-foreground hover:bg-brand/90 disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        {generating ? (
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+        ) : (
+          <FileText className="h-3.5 w-3.5" />
+        )}
+        Generate Return Label
+      </button>
+
+      {labels.length > 0 ? (
+        <div className="mt-2 space-y-1.5">
+          {labels.map((label) => (
+            <a
+              key={label.id}
+              href={label.downloadUrl}
+              className="flex min-w-0 cursor-pointer items-center gap-2 rounded-md border border-hairline bg-surface px-2.5 py-2 text-xs text-foreground shadow-sm transition-colors hover:border-brand/30 hover:bg-surface-2"
+            >
+              <Download className="h-3.5 w-3.5 shrink-0 text-brand" />
+              <span className="min-w-0 flex-1 truncate font-mono font-semibold">
+                {label.trackingNumber}
+              </span>
+              <span className="shrink-0 text-[10px] text-muted-foreground">
+                {formatShortDate(label.createdAt)}
+              </span>
+            </a>
+          ))}
+        </div>
+      ) : null}
+
+      {banner || error ? (
+        <p
+          className={cn(
+            "mt-2 rounded border px-2 py-1.5 text-[11px] leading-snug",
+            banner?.startsWith("Generated")
+              ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-800 dark:text-emerald-200"
+              : "border-red-500/30 bg-red-500/10 text-red-800 dark:text-red-200",
+          )}
+        >
+          {banner ?? error}
+        </p>
+      ) : null}
+    </section>
+  );
+}
 
 function FeedbackSection({
   ticket,
