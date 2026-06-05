@@ -258,6 +258,7 @@ export function LabelFormatterClient() {
   }, [notesSortMode, rows]);
   const selectedRows = useMemo(() => sortedRows.filter((row) => selectedIds.has(row.id)), [sortedRows, selectedIds]);
   const allSelected = rows.length > 0 && rows.every((row) => selectedIds.has(row.id));
+  const workingRowsBusy = workingRowsSyncStatus === "saving" || workingRowsSyncStatus === "loading";
 
   useEffect(() => {
     let cancelled = false;
@@ -376,6 +377,47 @@ export function LabelFormatterClient() {
     }
   }
 
+  async function deleteWorkingRows(rowIds: string[], successMessage: string) {
+    if (!workingRowsCanSave) {
+      setDirtyRowIds((current) => new Set(current).add(WORKING_TABLE_DIRTY_ID));
+      setWorkingRowsSyncStatus("error");
+      setBanner({ type: "error", message: "Account save is not available. Refresh and try again." });
+      return;
+    }
+
+    const idsToDelete = [...new Set(rowIds)].filter(Boolean);
+    if (idsToDelete.length === 0) return;
+
+    setWorkingRowsSyncStatus("saving");
+    try {
+      const res = await fetch("/api/label-formatter/working-rows", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ rowIds: idsToDelete }),
+        keepalive: true,
+      });
+      const json = (await res.json().catch(() => ({}))) as WorkingRowsResponse;
+      if (!res.ok || !json.data) throw new Error(json.error ?? "Delete failed");
+
+      clearLegacyLocalWorkingRows();
+      const deletedIds = new Set(idsToDelete);
+      setWorkingRowsLoadedAt(new Date().toISOString());
+      setWorkingRowsKnownIds((current) => current.filter((id) => !deletedIds.has(id)));
+      setDirtyRowIds((current) => {
+        const next = new Set(current);
+        for (const id of deletedIds) next.delete(id);
+        next.delete(WORKING_TABLE_DIRTY_ID);
+        return next;
+      });
+      setWorkingRowsSyncStatus("saved");
+      setBanner({ type: "success", message: successMessage });
+    } catch {
+      setDirtyRowIds((current) => new Set(current).add(WORKING_TABLE_DIRTY_ID));
+      setWorkingRowsSyncStatus("error");
+      setBanner({ type: "error", message: "Could not save the deletion. The rows are hidden here; use Save Changes or refresh and try again." });
+    }
+  }
+
   function addRow(row: WorkingRow, forceDuplicate = false) {
     const duplicate = rows.some((existing) => existing.orderNumber.trim() === row.orderNumber.trim());
     if (duplicate && !forceDuplicate) {
@@ -448,34 +490,23 @@ export function LabelFormatterClient() {
   }
 
   function removeRow(id: string) {
-    setDirtyRowIds((current) => {
-      const next = new Set(current);
-      next.delete(id);
-      next.add(WORKING_TABLE_DIRTY_ID);
-      return next;
-    });
+    const row = rows.find((currentRow) => currentRow.id === id);
     setRows((current) => current.filter((row) => row.id !== id));
     setSelectedIds((current) => {
       const next = new Set(current);
       next.delete(id);
       return next;
     });
+    void deleteWorkingRows([id], row ? `Deleted ${row.orderNumber} and saved the working table.` : "Deleted row and saved the working table.");
   }
 
   function removeSelectedRows() {
     if (selectedIds.size === 0) return;
-    setDirtyRowIds((current) => {
-      const next = new Set(current);
-      for (const id of selectedIds) next.delete(id);
-      next.add(WORKING_TABLE_DIRTY_ID);
-      return next;
-    });
+    const selectedCount = selectedIds.size;
+    const idsToRemove = [...selectedIds];
     setRows((current) => current.filter((row) => !selectedIds.has(row.id)));
     setSelectedIds(new Set());
-    setBanner({
-      type: "success",
-      message: `Removed ${selectedIds.size} selected row${selectedIds.size === 1 ? "" : "s"}.`,
-    });
+    void deleteWorkingRows(idsToRemove, `Deleted ${selectedCount} selected row${selectedCount === 1 ? "" : "s"} and saved the working table.`);
   }
 
   function toggleSelected(id: string) {
@@ -667,7 +698,7 @@ export function LabelFormatterClient() {
             <button
               type="button"
               onClick={() => void saveWorkingRows()}
-              disabled={rows.length === 0 || dirtyRowIds.size === 0 || workingRowsSyncStatus === "saving" || workingRowsSyncStatus === "loading"}
+              disabled={dirtyRowIds.size === 0 || workingRowsBusy}
               className="inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-md border border-border px-2.5 text-xs font-medium hover:bg-accent disabled:cursor-not-allowed disabled:opacity-45"
             >
               {workingRowsSyncStatus === "saving" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
@@ -680,7 +711,8 @@ export function LabelFormatterClient() {
               <button
                 type="button"
                 onClick={removeSelectedRows}
-                className="inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-md border border-red-500/30 bg-red-500/10 px-2.5 text-xs font-medium text-red-300 hover:bg-red-500/20"
+                disabled={workingRowsBusy}
+                className="inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-md border border-red-500/30 bg-red-500/10 px-2.5 text-xs font-medium text-red-300 hover:bg-red-500/20 disabled:cursor-not-allowed disabled:opacity-45"
               >
                 <Trash2 className="h-3.5 w-3.5" />
                 Delete Selected
@@ -794,7 +826,7 @@ export function LabelFormatterClient() {
                         <button
                           type="button"
                           onClick={() => void saveWorkingRows()}
-                          disabled={!dirtyRowIds.has(row.id) || workingRowsSyncStatus === "saving"}
+                          disabled={!dirtyRowIds.has(row.id) || workingRowsBusy}
                           className="inline-flex h-9 w-9 cursor-pointer items-center justify-center rounded-md border border-border text-muted-foreground hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-45"
                           aria-label={`Save ${row.orderNumber}`}
                           title="Save row changes"
@@ -806,8 +838,10 @@ export function LabelFormatterClient() {
                           )}
                         </button>
                       <button
+                        type="button"
                         onClick={() => removeRow(row.id)}
-                        className="inline-flex h-9 w-9 cursor-pointer items-center justify-center rounded-md border border-border text-muted-foreground hover:bg-red-500/10 hover:text-red-300"
+                        disabled={workingRowsBusy}
+                        className="inline-flex h-9 w-9 cursor-pointer items-center justify-center rounded-md border border-border text-muted-foreground hover:bg-red-500/10 hover:text-red-300 disabled:cursor-not-allowed disabled:opacity-45"
                         aria-label={`Delete ${row.orderNumber}`}
                       >
                         <Trash2 className="h-4 w-4" />

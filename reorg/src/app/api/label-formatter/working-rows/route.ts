@@ -2,8 +2,9 @@ import { NextResponse, type NextRequest } from "next/server";
 import { auth } from "@/lib/auth";
 import { isAuthBypassEnabled } from "@/lib/app-env";
 import { db } from "@/lib/db";
-import { labelFormatterWorkingRowsSaveSchema } from "@/lib/label-formatter/types";
+import { labelFormatterWorkingRowsDeleteSchema, labelFormatterWorkingRowsSaveSchema } from "@/lib/label-formatter/types";
 import {
+  deleteLabelFormatterWorkingRows,
   listLabelFormatterWorkingRows,
   replaceLabelFormatterWorkingRows,
   type LabelFormatterWorkingRowRecord,
@@ -46,7 +47,7 @@ export async function GET() {
   }
 
   try {
-    const rows = await listLabelFormatterWorkingRows();
+    const rows = await listLabelFormatterWorkingRows(actorUserId);
     return NextResponse.json({ data: rows.map(serializeRow) });
   } catch (error) {
     console.error("[label-formatter/working-rows] GET failed", error);
@@ -75,5 +76,25 @@ export async function PUT(request: NextRequest) {
   } catch (error) {
     console.error("[label-formatter/working-rows] PUT failed", error);
     return NextResponse.json({ error: "Failed to save Label Formatter working rows." }, { status: 500 });
+  }
+}
+
+export async function DELETE(request: NextRequest) {
+  const actorUserId = await getActorUserId();
+  if (!actorUserId) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  try {
+    const parsed = labelFormatterWorkingRowsDeleteSchema.safeParse(await request.json());
+    if (!parsed.success) {
+      return NextResponse.json({ error: "Invalid working row deletion", details: parsed.error.flatten() }, { status: 400 });
+    }
+
+    const rows = await deleteLabelFormatterWorkingRows(actorUserId, parsed.data.rowIds);
+    return NextResponse.json({ data: rows.map(serializeRow) });
+  } catch (error) {
+    console.error("[label-formatter/working-rows] DELETE failed", error);
+    return NextResponse.json({ error: "Failed to delete Label Formatter working rows." }, { status: 500 });
   }
 }

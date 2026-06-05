@@ -47,8 +47,9 @@ export function filterRowsForNonStaleReplace(
   });
 }
 
-export async function listLabelFormatterWorkingRows(): Promise<LabelFormatterWorkingRowRecord[]> {
+export async function listLabelFormatterWorkingRows(userId: string): Promise<LabelFormatterWorkingRowRecord[]> {
   const rows = await db.labelFormatterWorkingRow.findMany({
+    where: { createdByUserId: userId },
     orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
   });
 
@@ -76,10 +77,10 @@ export async function replaceLabelFormatterWorkingRows(
 ): Promise<LabelFormatterWorkingRowRecord[]> {
   await db.$transaction(async (tx) => {
     const existingRows = await tx.labelFormatterWorkingRow.findMany({
+      where: { createdByUserId: userId },
       orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
     });
     const existingIds = new Set(existingRows.map((row) => row.id));
-    const existingOwnerById = new Map(existingRows.map((row) => [row.id, row.createdByUserId]));
     const clientKnownIds = options?.clientKnownRowIds
       ? new Set(options.clientKnownRowIds)
       : null;
@@ -94,13 +95,13 @@ export async function replaceLabelFormatterWorkingRows(
     });
 
     await tx.labelFormatterWorkingRow.deleteMany({
-      where: {},
+      where: { createdByUserId: userId },
     });
 
     const rowsToWrite = [
       ...rowsToReplace.map((row, index) => ({
         ...(row.id ? { id: row.id } : {}),
-        createdByUserId: row.id ? existingOwnerById.get(row.id) ?? userId : userId,
+        createdByUserId: userId,
         note: row.note ?? "",
         orderNumber: row.orderNumber,
         sourceStore: row.sourceStore,
@@ -137,7 +138,24 @@ export async function replaceLabelFormatterWorkingRows(
     });
   });
 
-  return listLabelFormatterWorkingRows();
+  return listLabelFormatterWorkingRows(userId);
+}
+
+export async function deleteLabelFormatterWorkingRows(
+  userId: string,
+  rowIds: string[],
+): Promise<LabelFormatterWorkingRowRecord[]> {
+  const uniqueRowIds = [...new Set(rowIds.map((id) => id.trim()).filter(Boolean))];
+  if (uniqueRowIds.length === 0) return listLabelFormatterWorkingRows(userId);
+
+  await db.labelFormatterWorkingRow.deleteMany({
+    where: {
+      createdByUserId: userId,
+      id: { in: uniqueRowIds },
+    },
+  });
+
+  return listLabelFormatterWorkingRows(userId);
 }
 
 export async function appendOrUpdateLabelFormatterWorkingRow(
@@ -147,6 +165,7 @@ export async function appendOrUpdateLabelFormatterWorkingRow(
   const result = await db.$transaction(async (tx) => {
     const existing = await tx.labelFormatterWorkingRow.findFirst({
       where: {
+        createdByUserId: userId,
         orderNumber: row.orderNumber,
         sourceStore: row.sourceStore,
       },
@@ -171,12 +190,13 @@ export async function appendOrUpdateLabelFormatterWorkingRow(
         },
       });
       const totalRows = await tx.labelFormatterWorkingRow.count({
-        where: {},
+        where: { createdByUserId: userId },
       });
       return { dbRow: updated, created: false, totalRows };
     }
 
     const last = await tx.labelFormatterWorkingRow.findFirst({
+      where: { createdByUserId: userId },
       orderBy: [{ sortOrder: "desc" }, { createdAt: "desc" }],
       select: { sortOrder: true },
     });
@@ -198,7 +218,7 @@ export async function appendOrUpdateLabelFormatterWorkingRow(
       },
     });
     const totalRows = await tx.labelFormatterWorkingRow.count({
-      where: {},
+      where: { createdByUserId: userId },
     });
     return { dbRow: created, created: true, totalRows };
   });

@@ -90,6 +90,10 @@ export const labelFormatterWorkingRowsSaveSchema = z.object({
   clientKnownRowIds: z.array(draftString(80)).max(500).optional(),
 });
 
+export const labelFormatterWorkingRowsDeleteSchema = z.object({
+  rowIds: z.array(draftString(80).min(1)).min(1).max(500),
+});
+
 export type LabelFormatterWorkingRowInput = z.infer<typeof labelFormatterWorkingRowSchema>;
 export type LabelFormatterWorkingRowsSaveInput = z.infer<typeof labelFormatterWorkingRowsSaveSchema>;
 
