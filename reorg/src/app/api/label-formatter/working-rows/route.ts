@@ -47,7 +47,7 @@ export async function GET() {
   }
 
   try {
-    const rows = await listLabelFormatterWorkingRows(actorUserId);
+    const rows = await listLabelFormatterWorkingRows();
     return NextResponse.json({ data: rows.map(serializeRow) });
   } catch (error) {
     console.error("[label-formatter/working-rows] GET failed", error);

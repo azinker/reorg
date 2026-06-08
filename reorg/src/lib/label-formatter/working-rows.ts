@@ -47,13 +47,22 @@ export function filterRowsForNonStaleReplace(
   });
 }
 
-export async function listLabelFormatterWorkingRows(userId: string): Promise<LabelFormatterWorkingRowRecord[]> {
-  const rows = await db.labelFormatterWorkingRow.findMany({
-    where: { createdByUserId: userId },
-    orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
-  });
-
-  return rows.map((row) => ({
+function serializeWorkingRow(row: {
+  id: string;
+  note: string | null;
+  orderNumber: string;
+  sourceStore: string;
+  buyerName: string;
+  addressLine1: string;
+  addressLine2: string | null;
+  city: string;
+  state: string;
+  zipCode: string;
+  lineItems: unknown;
+  createdAt: Date;
+  updatedAt: Date;
+}): LabelFormatterWorkingRowRecord {
+  return {
     id: row.id,
     note: row.note ?? "",
     orderNumber: row.orderNumber,
@@ -67,20 +76,28 @@ export async function listLabelFormatterWorkingRows(userId: string): Promise<Lab
     lineItems: normalizeLineItems(row.lineItems),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
-  }));
+  };
+}
+
+export async function listLabelFormatterWorkingRows(): Promise<LabelFormatterWorkingRowRecord[]> {
+  const rows = await db.labelFormatterWorkingRow.findMany({
+    orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
+  });
+
+  return rows.map(serializeWorkingRow);
 }
 
 export async function replaceLabelFormatterWorkingRows(
-  userId: string,
+  actorUserId: string,
   rows: LabelFormatterWorkingRowInput[],
   options?: { clientLoadedAt?: Date | null; clientKnownRowIds?: string[] },
 ): Promise<LabelFormatterWorkingRowRecord[]> {
   await db.$transaction(async (tx) => {
     const existingRows = await tx.labelFormatterWorkingRow.findMany({
-      where: { createdByUserId: userId },
       orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
     });
     const existingIds = new Set(existingRows.map((row) => row.id));
+    const existingById = new Map(existingRows.map((row) => [row.id, row]));
     const clientKnownIds = options?.clientKnownRowIds
       ? new Set(options.clientKnownRowIds)
       : null;
@@ -94,14 +111,23 @@ export async function replaceLabelFormatterWorkingRows(
       return Boolean(options?.clientLoadedAt && row.createdAt > options.clientLoadedAt);
     });
 
-    await tx.labelFormatterWorkingRow.deleteMany({
-      where: { createdByUserId: userId },
-    });
+    const desiredIds = new Set([
+      ...rowsToReplace.flatMap((row) => (row.id ? [row.id] : [])),
+      ...rowsToPreserve.map((row) => row.id),
+    ]);
+    const idsToDelete = existingRows
+      .filter((row) => !desiredIds.has(row.id))
+      .map((row) => row.id);
 
-    const rowsToWrite = [
-      ...rowsToReplace.map((row, index) => ({
-        ...(row.id ? { id: row.id } : {}),
-        createdByUserId: userId,
+    if (idsToDelete.length > 0) {
+      await tx.labelFormatterWorkingRow.deleteMany({
+        where: { id: { in: idsToDelete } },
+      });
+    }
+
+    for (const [index, row] of rowsToReplace.entries()) {
+      const existing = row.id ? existingById.get(row.id) : null;
+      const data = {
         note: row.note ?? "",
         orderNumber: row.orderNumber,
         sourceStore: row.sourceStore,
@@ -113,59 +139,56 @@ export async function replaceLabelFormatterWorkingRows(
         zipCode: row.zipCode,
         lineItems: row.lineItems,
         sortOrder: index,
-      })),
-      ...rowsToPreserve.map((row, index) => ({
-        id: row.id,
-        createdByUserId: row.createdByUserId,
-        note: row.note ?? "",
-        orderNumber: row.orderNumber,
-        sourceStore: row.sourceStore,
-        buyerName: row.buyerName,
-        addressLine1: row.addressLine1,
-        addressLine2: row.addressLine2 ?? "",
-        city: row.city,
-        state: row.state,
-        zipCode: row.zipCode,
-        lineItems: normalizeLineItems(row.lineItems),
-        sortOrder: rowsToReplace.length + index,
-      })),
-    ];
+      };
 
-    if (rowsToWrite.length === 0) return;
+      if (existing) {
+        await tx.labelFormatterWorkingRow.update({
+          where: { id: existing.id },
+          data,
+        });
+      } else {
+        await tx.labelFormatterWorkingRow.create({
+          data: {
+            ...(row.id ? { id: row.id } : {}),
+            createdByUserId: actorUserId,
+            ...data,
+          },
+        });
+      }
+    }
 
-    await tx.labelFormatterWorkingRow.createMany({
-      data: rowsToWrite,
-    });
+    for (const [index, row] of rowsToPreserve.entries()) {
+      await tx.labelFormatterWorkingRow.update({
+        where: { id: row.id },
+        data: { sortOrder: rowsToReplace.length + index },
+      });
+    }
   });
 
-  return listLabelFormatterWorkingRows(userId);
+  return listLabelFormatterWorkingRows();
 }
 
 export async function deleteLabelFormatterWorkingRows(
-  userId: string,
+  _actorUserId: string,
   rowIds: string[],
 ): Promise<LabelFormatterWorkingRowRecord[]> {
   const uniqueRowIds = [...new Set(rowIds.map((id) => id.trim()).filter(Boolean))];
-  if (uniqueRowIds.length === 0) return listLabelFormatterWorkingRows(userId);
+  if (uniqueRowIds.length === 0) return listLabelFormatterWorkingRows();
 
   await db.labelFormatterWorkingRow.deleteMany({
-    where: {
-      createdByUserId: userId,
-      id: { in: uniqueRowIds },
-    },
+    where: { id: { in: uniqueRowIds } },
   });
 
-  return listLabelFormatterWorkingRows(userId);
+  return listLabelFormatterWorkingRows();
 }
 
 export async function appendOrUpdateLabelFormatterWorkingRow(
-  userId: string,
+  actorUserId: string,
   row: LabelFormatterWorkingRowInput,
 ): Promise<{ row: LabelFormatterWorkingRowRecord; created: boolean; totalRows: number }> {
   const result = await db.$transaction(async (tx) => {
     const existing = await tx.labelFormatterWorkingRow.findFirst({
       where: {
-        createdByUserId: userId,
         orderNumber: row.orderNumber,
         sourceStore: row.sourceStore,
       },
@@ -189,21 +212,18 @@ export async function appendOrUpdateLabelFormatterWorkingRow(
           lineItems: row.lineItems,
         },
       });
-      const totalRows = await tx.labelFormatterWorkingRow.count({
-        where: { createdByUserId: userId },
-      });
+      const totalRows = await tx.labelFormatterWorkingRow.count();
       return { dbRow: updated, created: false, totalRows };
     }
 
     const last = await tx.labelFormatterWorkingRow.findFirst({
-      where: { createdByUserId: userId },
       orderBy: [{ sortOrder: "desc" }, { createdAt: "desc" }],
       select: { sortOrder: true },
     });
     const created = await tx.labelFormatterWorkingRow.create({
       data: {
         ...(row.id ? { id: row.id } : {}),
-        createdByUserId: userId,
+        createdByUserId: actorUserId,
         note: row.note ?? "",
         orderNumber: row.orderNumber,
         sourceStore: row.sourceStore,
@@ -217,28 +237,12 @@ export async function appendOrUpdateLabelFormatterWorkingRow(
         sortOrder: (last?.sortOrder ?? -1) + 1,
       },
     });
-    const totalRows = await tx.labelFormatterWorkingRow.count({
-      where: { createdByUserId: userId },
-    });
+    const totalRows = await tx.labelFormatterWorkingRow.count();
     return { dbRow: created, created: true, totalRows };
   });
 
   return {
-    row: {
-      id: result.dbRow.id,
-      note: result.dbRow.note ?? "",
-      orderNumber: result.dbRow.orderNumber,
-      sourceStore: result.dbRow.sourceStore as LabelFormatterWorkingRowRecord["sourceStore"],
-      buyerName: result.dbRow.buyerName,
-      addressLine1: result.dbRow.addressLine1,
-      addressLine2: result.dbRow.addressLine2 ?? "",
-      city: result.dbRow.city,
-      state: result.dbRow.state,
-      zipCode: result.dbRow.zipCode,
-      lineItems: normalizeLineItems(result.dbRow.lineItems),
-      createdAt: result.dbRow.createdAt,
-      updatedAt: result.dbRow.updatedAt,
-    },
+    row: serializeWorkingRow(result.dbRow),
     created: result.created,
     totalRows: result.totalRows,
   };

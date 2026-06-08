@@ -156,7 +156,7 @@ function workingRowsSyncLabel(status: WorkingRowsSyncStatus) {
     case "saving":
       return "Saving";
     case "saved":
-      return "Saved to account";
+      return "Shared list saved";
     case "error":
       return "Sync error";
   }
@@ -366,7 +366,7 @@ export function LabelFormatterClient() {
       setWorkingRowsSyncStatus("saved");
       setDirtyRowIds(new Set());
       if (!options?.silent) {
-        setBanner({ type: "success", message: `Saved ${savedRows.length} working row${savedRows.length === 1 ? "" : "s"} to your account.` });
+        setBanner({ type: "success", message: `Saved ${savedRows.length} shared working row${savedRows.length === 1 ? "" : "s"}.` });
       }
     } catch (error) {
       if (options?.signal?.aborted) return;
@@ -497,7 +497,7 @@ export function LabelFormatterClient() {
       next.delete(id);
       return next;
     });
-    void deleteWorkingRows([id], row ? `Deleted ${row.orderNumber} and saved the working table.` : "Deleted row and saved the working table.");
+    void deleteWorkingRows([id], row ? `Deleted ${row.orderNumber} from the shared working table.` : "Deleted row from the shared working table.");
   }
 
   function removeSelectedRows() {
@@ -506,7 +506,7 @@ export function LabelFormatterClient() {
     const idsToRemove = [...selectedIds];
     setRows((current) => current.filter((row) => !selectedIds.has(row.id)));
     setSelectedIds(new Set());
-    void deleteWorkingRows(idsToRemove, `Deleted ${selectedCount} selected row${selectedCount === 1 ? "" : "s"} and saved the working table.`);
+    void deleteWorkingRows(idsToRemove, `Deleted ${selectedCount} selected row${selectedCount === 1 ? "" : "s"} from the shared working table.`);
   }
 
   function toggleSelected(id: string) {
