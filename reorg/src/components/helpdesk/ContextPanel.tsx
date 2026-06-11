@@ -65,6 +65,8 @@ import {
   Package,
   PackageMinus,
   Phone,
+  ReceiptText,
+  ShieldCheck,
   ShoppingBag,
   Star,
   StickyNote,
@@ -196,6 +198,8 @@ interface FeedbackSummaryItem {
   leftAt: string;
   source: "mirror" | "live";
   isAutomated: boolean;
+  /** Set when this feedback was later removed from eBay. */
+  removedAt?: string | null;
 }
 
 interface FeedbackSummaryResponse {
@@ -203,6 +207,8 @@ interface FeedbackSummaryResponse {
     state: FeedbackSummaryState;
     items: FeedbackSummaryItem[];
     checkedLive: boolean;
+    /** "Feedback Removal Approved" notifications found for this order. */
+    removals?: { at: string }[];
     reason?: string;
   };
 }
@@ -1906,9 +1912,50 @@ function OrderInfoSection({
                 )}
               >
                 <span className="font-semibold text-foreground">Total</span>
-                <span className="font-semibold text-foreground">
+                <span
+                  className={cn(
+                    "font-semibold",
+                    ctx.refundCents != null && ctx.refundCents > 0
+                      ? "text-muted-foreground line-through decoration-amber-500/70"
+                      : "text-foreground",
+                  )}
+                >
                   {formatMoney(ctx.totalCents, ctx.currency)}
                 </span>
+              </div>
+            ) : null}
+            {ctx?.refundCents != null && ctx.refundCents > 0 ? (
+              // Refund block — only appears when eBay reports a refund on the
+              // order. Shows the refunded amount and the buyer's net so the
+              // agent never has to do the math (or open eBay) to know what
+              // the buyer actually ended up paying.
+              <div className="mt-2 space-y-1.5 rounded-md border border-amber-500/30 bg-amber-500/5 px-2.5 py-2">
+                <div className="flex items-center justify-between gap-2 text-xs">
+                  <span className="inline-flex items-center gap-1 font-semibold text-amber-700 dark:text-amber-300">
+                    <ReceiptText className="h-3.5 w-3.5" />
+                    {ctx.totalCents != null && ctx.refundCents >= ctx.totalCents
+                      ? "Fully Refunded"
+                      : "Partially Refunded"}
+                    {ctx.refundStatus && ctx.refundStatus !== "Success" ? (
+                      <span className="font-medium text-muted-foreground">
+                        ({ctx.refundStatus})
+                      </span>
+                    ) : null}
+                  </span>
+                  <span className="font-semibold tabular-nums text-amber-700 dark:text-amber-300">
+                    -{formatMoney(ctx.refundCents, ctx.currency)}
+                  </span>
+                </div>
+                {ctx.buyerNetCents != null ? (
+                  <div className="flex items-center justify-between gap-2 border-t border-amber-500/20 pt-1.5 text-sm">
+                    <span className="font-semibold text-foreground">
+                      Net After Refund
+                    </span>
+                    <span className="font-semibold tabular-nums text-foreground">
+                      {formatMoney(ctx.buyerNetCents, ctx.currency)}
+                    </span>
+                  </div>
+                ) : null}
               </div>
             ) : null}
           </div>
@@ -2024,6 +2071,151 @@ function ReturnLabelSection({ ticket }: { ticket: HelpdeskTicketDetail }) {
   );
 }
 
+/**
+ * One entry in the feedback history list: either feedback that was left
+ * (buyer-authored or automated) or a "Feedback Removal Approved" event.
+ * Rendered oldest-first so the section reads as the actual story:
+ * "buyer left negative → eBay approved removal".
+ */
+type FeedbackHistoryEntry =
+  | { type: "feedback"; at: string; item: FeedbackSummaryItem }
+  | { type: "removal"; at: string };
+
+function buildFeedbackHistory(
+  data: FeedbackSummaryResponse["data"] | null,
+): FeedbackHistoryEntry[] {
+  if (!data) return [];
+  const entries: FeedbackHistoryEntry[] = data.items.map((item) => ({
+    type: "feedback" as const,
+    at: item.leftAt,
+    item,
+  }));
+  for (const removal of data.removals ?? []) {
+    entries.push({ type: "removal", at: removal.at });
+  }
+  return entries.sort(
+    (a, b) => new Date(a.at).getTime() - new Date(b.at).getTime(),
+  );
+}
+
+function FeedbackHistoryItemCard({
+  item,
+  leaveBy,
+}: {
+  item: FeedbackSummaryItem;
+  leaveBy: Date | null;
+}) {
+  const kindLabel = item.kind.charAt(0) + item.kind.slice(1).toLowerCase();
+  const removed = Boolean(item.removedAt);
+  return (
+    <div
+      className={cn(
+        "rounded-md border border-hairline bg-surface/50 p-2",
+        removed && "border-dashed",
+      )}
+    >
+      <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
+        <span className="inline-flex items-center gap-1.5">
+          <span
+            className={cn(
+              "rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider",
+              item.isAutomated
+                ? "bg-sky-500/15 text-sky-700 dark:text-sky-300"
+                : item.kind === "POSITIVE"
+                ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
+                : item.kind === "NEGATIVE"
+                  ? "bg-red-500/15 text-red-700 dark:text-red-300"
+                  : "bg-amber-500/15 text-amber-700 dark:text-amber-300",
+            )}
+          >
+            {item.isAutomated ? "Automated by eBay" : `Buyer ${kindLabel}`}
+          </span>
+          {removed ? (
+            <span className="rounded-full bg-surface-2 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+              Removed
+            </span>
+          ) : null}
+        </span>
+        <span className="text-[10px] text-muted-foreground">
+          {formatFeedbackDate(item.leftAt)}
+        </span>
+      </div>
+      <p className="mt-1 text-xs font-medium text-foreground">
+        {item.isAutomated
+          ? `Automated eBay ${kindLabel} Feedback`
+          : `Buyer-authored ${kindLabel} Feedback`}
+      </p>
+      {!removed ? (
+        <p
+          className={cn(
+            "mt-1 rounded border px-2 py-1.5 text-[11px] leading-relaxed",
+            item.isAutomated
+              ? "border-sky-500/25 bg-sky-500/10 text-sky-700 dark:text-sky-200"
+              : "border-emerald-500/20 bg-emerald-500/10 text-emerald-700 dark:text-emerald-200",
+          )}
+        >
+          {item.isAutomated
+            ? "This positive feedback was left by the automated eBay feedback rule, not directly by the buyer. The buyer may still replace it with their own feedback."
+            : "This feedback was left directly by the buyer, not the automated eBay feedback rule."}
+        </p>
+      ) : null}
+      {typeof item.starRating === "number" && item.starRating > 0 ? (
+        <p className="mt-1 text-xs text-foreground">
+          Rating: {item.starRating}/5
+        </p>
+      ) : null}
+      {item.comment ? (
+        <p
+          className={cn(
+            "mt-1 line-clamp-4 text-xs leading-relaxed",
+            removed ? "text-muted-foreground line-through" : "text-foreground",
+          )}
+        >
+          "{item.comment}"
+        </p>
+      ) : (
+        <p className="mt-1 text-xs text-muted-foreground">
+          Feedback was left without a public comment.
+        </p>
+      )}
+      {item.sellerResponse ? (
+        <p className="mt-1 line-clamp-3 text-[11px] leading-relaxed text-muted-foreground">
+          Seller response: {item.sellerResponse}
+        </p>
+      ) : null}
+      {item.isAutomated && !removed && leaveBy ? (
+        <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
+          Buyer can still change this by leaving their own feedback until{" "}
+          <span className="font-medium text-foreground">
+            {formatFeedbackDeadline(leaveBy)}
+          </span>
+          .
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+function FeedbackRemovalCard({ at }: { at: string }) {
+  return (
+    <div className="rounded-md border border-emerald-500/30 bg-emerald-500/5 p-2">
+      <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
+        <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-emerald-700 dark:text-emerald-300">
+          <ShieldCheck className="h-3 w-3" />
+          Feedback Removal Approved
+        </span>
+        <span className="text-[10px] text-muted-foreground">
+          {formatFeedbackDate(at)}
+        </span>
+      </div>
+      <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
+        eBay approved the removal request and removed this feedback, including
+        the ratings.
+      </p>
+    </div>
+  );
+}
+
 function FeedbackSection({
   ticket,
   order,
@@ -2036,12 +2228,11 @@ function FeedbackSection({
   const isEbay = ticket.channel === "TPP_EBAY" || ticket.channel === "TT_EBAY";
   if (!isEbay || !ticket.ebayOrderNumber) return null;
 
+  const history = buildFeedbackHistory(feedback.data ?? null);
   const first = feedback.data?.items[0] ?? null;
   const state = feedback.data?.state ?? "UNKNOWN";
   const leaveBy = feedbackLeaveByDate(ticket, order);
-  const feedbackKindLabel = first
-    ? first.kind.charAt(0) + first.kind.slice(1).toLowerCase()
-    : "";
+  const hasRemoval = (feedback.data?.removals?.length ?? 0) > 0;
 
   return (
     <section className="border-b border-hairline bg-card/40 px-4 py-3">
@@ -2068,76 +2259,23 @@ function FeedbackSection({
         <p className="text-xs text-amber-700 dark:text-amber-300">
           Feedback lookup unavailable.
         </p>
-      ) : first ? (
-        <div className="rounded-md border border-hairline bg-surface/50 p-2">
-          <div className="flex items-center justify-between gap-2">
-            <span
-              className={cn(
-                "rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider",
-                first.isAutomated
-                  ? "bg-sky-500/15 text-sky-700 dark:text-sky-300"
-                  : first.kind === "POSITIVE"
-                  ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
-                  : first.kind === "NEGATIVE"
-                    ? "bg-red-500/15 text-red-700 dark:text-red-300"
-                    : "bg-amber-500/15 text-amber-700 dark:text-amber-300",
-              )}
-            >
-              {first.isAutomated
-                ? "Automated by eBay"
-                : `Buyer ${feedbackKindLabel}`}
-            </span>
-            <span className="text-[10px] text-muted-foreground">
-              {formatFeedbackDate(first.leftAt)}
-            </span>
-          </div>
-          {first.isAutomated ? (
-            <p className="mt-1 text-xs font-medium text-foreground">
-              Automated eBay {feedbackKindLabel} Feedback
-            </p>
-          ) : (
-            <p className="mt-1 text-xs font-medium text-foreground">
-              Buyer-authored {feedbackKindLabel} Feedback
-            </p>
+      ) : history.length > 0 ? (
+        <div className="space-y-1.5">
+          {history.map((entry, idx) =>
+            entry.type === "feedback" ? (
+              <FeedbackHistoryItemCard
+                key={`fb-${entry.item.id}`}
+                item={entry.item}
+                leaveBy={leaveBy}
+              />
+            ) : (
+              <FeedbackRemovalCard key={`rm-${idx}`} at={entry.at} />
+            ),
           )}
-          <p
-            className={cn(
-              "mt-1 rounded border px-2 py-1.5 text-[11px] leading-relaxed",
-              first.isAutomated
-                ? "border-sky-500/25 bg-sky-500/10 text-sky-700 dark:text-sky-200"
-                : "border-emerald-500/20 bg-emerald-500/10 text-emerald-700 dark:text-emerald-200",
-            )}
-          >
-            {first.isAutomated
-              ? "This positive feedback was left by the automated eBay feedback rule, not directly by the buyer. The buyer may still replace it with their own feedback."
-              : "This feedback was left directly by the buyer, not the automated eBay feedback rule."}
-          </p>
-          {typeof first.starRating === "number" && first.starRating > 0 ? (
-            <p className="mt-1 text-xs text-foreground">
-              Rating: {first.starRating}/5
-            </p>
-          ) : null}
-          {first.comment ? (
-            <p className="mt-1 line-clamp-4 text-xs leading-relaxed text-foreground">
-              "{first.comment}"
-            </p>
-          ) : (
-            <p className="mt-1 text-xs text-muted-foreground">
-              Feedback was left without a public comment.
-            </p>
-          )}
-          {first.sellerResponse ? (
-            <p className="mt-1 line-clamp-3 text-[11px] leading-relaxed text-muted-foreground">
-              Seller response: {first.sellerResponse}
-            </p>
-          ) : null}
-          {first.isAutomated && leaveBy ? (
-            <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
-              Buyer can still change this by leaving their own feedback until{" "}
-              <span className="font-medium text-foreground">
-                {formatFeedbackDeadline(leaveBy)}
-              </span>
-              .
+          {hasRemoval && (feedback.data?.items.length ?? 0) === 0 ? (
+            <p className="text-[11px] leading-relaxed text-muted-foreground">
+              The original feedback text wasn't captured before eBay removed
+              it, so only the removal is shown here.
             </p>
           ) : null}
         </div>

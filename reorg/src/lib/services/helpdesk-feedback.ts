@@ -4,6 +4,8 @@ import type {
   EbayOrderContext,
   EbayOrderContextLineItem,
 } from "@/lib/services/auto-responder-ebay";
+import { db } from "@/lib/db";
+import { SYSTEM_MESSAGE_TYPES } from "@/lib/helpdesk/from-ebay-detect";
 import { getEbayAccessToken } from "@/lib/services/helpdesk-ebay";
 import { recordNetworkTransferSample } from "@/lib/services/network-transfer-samples";
 
@@ -28,6 +30,19 @@ export interface HelpdeskFeedbackSnapshot {
   leftAt: string;
   source: "mirror" | "live";
   isAutomated: boolean;
+  /**
+   * ISO timestamp of the "Feedback Removal Approved" eBay notification when
+   * this feedback was later removed from eBay. Derived at read time from the
+   * order's system tickets — never persisted, so it stays correct even for
+   * historical data. Null when the feedback is still live on eBay.
+   */
+  removedAt?: string | null;
+}
+
+/** A "Feedback Removal Approved" notification found for an order. */
+export interface FeedbackRemovalNotice {
+  at: string;
+  ebayItemId: string | null;
 }
 
 function escapeXml(str: string): string {
@@ -291,4 +306,91 @@ export async function fetchEbayFeedbackForOrderContext(args: {
     ),
   );
   return uniqueSnapshots(batches.flat());
+}
+
+// ─── Feedback removal history ────────────────────────────────────────────────
+
+/**
+ * Find "Feedback Removal Approved" eBay notifications for an order.
+ *
+ * Removal notifications arrive as SYSTEM tickets (threadKey
+ * `sys:ord:<order>|type:FEEDBACK_REMOVAL_APPROVED`). Read-only: we look at
+ * the stored notification message, never call eBay. The email body includes
+ * "Item ID: ..." which lets us scope a removal to a specific line item when
+ * an order has several.
+ */
+export async function findFeedbackRemovalNotices(args: {
+  integrationId: string;
+  ebayOrderNumber: string;
+}): Promise<FeedbackRemovalNotice[]> {
+  const tickets = await db.helpdeskTicket.findMany({
+    where: {
+      integrationId: args.integrationId,
+      ebayOrderNumber: args.ebayOrderNumber,
+      systemMessageType: SYSTEM_MESSAGE_TYPES.FEEDBACK_REMOVAL_APPROVED,
+    },
+    select: {
+      createdAt: true,
+      messages: {
+        where: { deletedAt: null },
+        orderBy: { sentAt: "asc" },
+        take: 5,
+        select: { sentAt: true, bodyText: true },
+      },
+    },
+    take: 10,
+  });
+
+  const notices: FeedbackRemovalNotice[] = [];
+  for (const ticket of tickets) {
+    if (ticket.messages.length === 0) {
+      notices.push({ at: ticket.createdAt.toISOString(), ebayItemId: null });
+      continue;
+    }
+    for (const message of ticket.messages) {
+      const itemId =
+        /Item\s+ID\s*:?\s*(\d{9,15})/i.exec(message.bodyText ?? "")?.[1] ?? null;
+      notices.push({
+        at: (message.sentAt ?? ticket.createdAt).toISOString(),
+        ebayItemId: itemId,
+      });
+    }
+  }
+  return notices.sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime());
+}
+
+/**
+ * Annotate feedback snapshots with `removedAt` using the order's removal
+ * notices. A removal applies to buyer-authored (non-automated) feedback left
+ * BEFORE the notice arrived; when the notice names an item id we only mark
+ * feedback on that item. Each notice marks at most one snapshot (the most
+ * recent eligible one) so a re-left feedback after a removal stays live.
+ */
+export function applyFeedbackRemovals(
+  snapshots: HelpdeskFeedbackSnapshot[],
+  notices: FeedbackRemovalNotice[],
+): HelpdeskFeedbackSnapshot[] {
+  if (notices.length === 0) {
+    return snapshots.map((s) => ({ ...s, removedAt: s.removedAt ?? null }));
+  }
+  const out = snapshots.map((s) => ({ ...s, removedAt: s.removedAt ?? null }));
+  for (const notice of notices) {
+    const noticeMs = new Date(notice.at).getTime();
+    const eligible = out
+      .filter(
+        (s) =>
+          !s.removedAt &&
+          !s.isAutomated &&
+          new Date(s.leftAt).getTime() <= noticeMs &&
+          (!notice.ebayItemId ||
+            !s.ebayItemId ||
+            s.ebayItemId === notice.ebayItemId),
+      )
+      .sort(
+        (a, b) => new Date(b.leftAt).getTime() - new Date(a.leftAt).getTime(),
+      );
+    const target = eligible[0];
+    if (target) target.removedAt = notice.at;
+  }
+  return out;
 }

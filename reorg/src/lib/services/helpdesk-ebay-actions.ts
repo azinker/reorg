@@ -340,7 +340,10 @@ async function listFeedback(args: {
           r.FeedbackResponse != null && String(r.FeedbackResponse).trim()
             ? String(r.FeedbackResponse)
             : null,
-        ebayOrderNumber: typeof r.OrderLineItemID === "string" ? null : null,
+        // GetFeedback never returns the "26-xxxxx-xxxxx" order number — only
+        // ItemID/TransactionID. The order linkage is resolved later in
+        // syncFeedbackForIntegration via the matching HelpdeskTicket.
+        ebayOrderNumber: null,
         ebayItemId: r.ItemID != null ? String(r.ItemID) : null,
         buyerUserId: r.CommentingUser != null ? String(r.CommentingUser) : null,
         leftAt: r.CommentTime ? new Date(String(r.CommentTime)) : new Date(),
@@ -405,6 +408,55 @@ async function findTicketIdForLinkage(args: {
     select: { id: true },
   });
   return ticket?.id ?? null;
+}
+
+/**
+ * Feedback-specific linkage: GetFeedback rows carry ItemID + buyer but never
+ * the "26-xxxxx-xxxxx" order number. Resolve BOTH the ticket id AND the order
+ * number from the matching conversation ticket so the mirror row becomes
+ * queryable by order (right-rail Feedback section + timeline pills match on
+ * ebayOrderNumber first).
+ */
+async function findFeedbackLinkage(args: {
+  integrationId: string;
+  ebayItemId: string | null;
+  buyerUserId: string | null;
+}): Promise<{ ticketId: string | null; ebayOrderNumber: string | null }> {
+  if (args.buyerUserId && args.ebayItemId) {
+    const ticket = await db.helpdeskTicket.findFirst({
+      where: {
+        integrationId: args.integrationId,
+        ebayItemId: args.ebayItemId,
+        buyerUserId: {
+          equals: args.buyerUserId,
+          mode: Prisma.QueryMode.insensitive,
+        },
+      },
+      // Prefer the ticket that actually has an order linked.
+      orderBy: [{ ebayOrderNumber: { sort: "desc", nulls: "last" } }, { createdAt: "desc" }],
+      select: { id: true, ebayOrderNumber: true },
+    });
+    if (ticket) {
+      return { ticketId: ticket.id, ebayOrderNumber: ticket.ebayOrderNumber };
+    }
+  }
+  if (args.buyerUserId) {
+    const ticket = await db.helpdeskTicket.findFirst({
+      where: {
+        integrationId: args.integrationId,
+        buyerUserId: {
+          equals: args.buyerUserId,
+          mode: Prisma.QueryMode.insensitive,
+        },
+      },
+      orderBy: { createdAt: "desc" },
+      select: { id: true, ebayOrderNumber: true },
+    });
+    if (ticket) {
+      return { ticketId: ticket.id, ebayOrderNumber: ticket.ebayOrderNumber };
+    }
+  }
+  return { ticketId: null, ebayOrderNumber: null };
 }
 
 // ─── Upsert workers ──────────────────────────────────────────────────────────
@@ -664,14 +716,17 @@ async function syncFeedbackForIntegration(
     if (entries.length === 0) break;
     for (const entry of entries) {
       if (!entry.externalId) continue;
-      const ticketId = entry.ebayOrderNumber
-        ? await findTicketIdForLinkage({
-            integrationId: integration.id,
-            ebayOrderNumber: entry.ebayOrderNumber,
-            ebayItemId: entry.ebayItemId,
-            buyerUserId: entry.buyerUserId,
-          })
-        : null;
+      // GetFeedback rows never carry the "26-xxxxx-xxxxx" order number, so
+      // resolve both the ticket AND order number from the conversation
+      // ticket that matches this item + buyer. Without this the mirror row
+      // is invisible to the right-rail Feedback section and the timeline
+      // (both match on ebayOrderNumber / ticketId).
+      const linkage = await findFeedbackLinkage({
+        integrationId: integration.id,
+        ebayItemId: entry.ebayItemId,
+        buyerUserId: entry.buyerUserId,
+      });
+      const ebayOrderNumber = entry.ebayOrderNumber ?? linkage.ebayOrderNumber;
       await db.helpdeskFeedback.upsert({
         where: {
           integrationId_externalId: {
@@ -681,25 +736,25 @@ async function syncFeedbackForIntegration(
         },
         create: {
           integrationId: integration.id,
-          ticketId,
+          ticketId: linkage.ticketId,
           externalId: entry.externalId,
           kind: entry.kind,
           starRating: entry.starRating,
           comment: entry.comment,
           sellerResponse: entry.sellerResponse,
-          ebayOrderNumber: entry.ebayOrderNumber,
+          ebayOrderNumber,
           ebayItemId: entry.ebayItemId,
           buyerUserId: entry.buyerUserId,
           leftAt: entry.leftAt,
           rawData: entry.raw as Prisma.InputJsonValue,
         },
         update: {
-          ticketId: entry.ebayOrderNumber ? ticketId ?? undefined : undefined,
+          ticketId: linkage.ticketId ?? undefined,
           kind: entry.kind,
           starRating: entry.starRating,
           comment: entry.comment,
           sellerResponse: entry.sellerResponse,
-          ebayOrderNumber: entry.ebayOrderNumber,
+          ebayOrderNumber: ebayOrderNumber ?? undefined,
           ebayItemId: entry.ebayItemId,
           buyerUserId: entry.buyerUserId,
           leftAt: entry.leftAt,

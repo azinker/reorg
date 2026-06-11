@@ -1,11 +1,14 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { Prisma } from "@prisma/client";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { buildEbayConfig } from "@/lib/services/auto-responder-ebay";
 import { getOrderContextCached } from "@/lib/services/helpdesk-order-context-cache";
 import {
+  applyFeedbackRemovals,
   feedbackMirrorToSnapshot,
   fetchEbayFeedbackForOrderContext,
+  findFeedbackRemovalNotices,
 } from "@/lib/services/helpdesk-feedback";
 
 export const runtime = "nodejs";
@@ -57,22 +60,53 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
     });
   }
 
+  // Mirror rows from GetFeedback never carry the "26-xxxxx-xxxxx" order
+  // number directly (eBay doesn't return it), so match by order number OR
+  // direct ticket linkage OR (item + buyer) — the latter covers every
+  // historical mirror row synced before order-number backfill existed.
+  const mirrorOr: Prisma.HelpdeskFeedbackWhereInput[] = [
+    { ebayOrderNumber: ticket.ebayOrderNumber },
+    { ticketId: ticket.id },
+  ];
+  if (ticket.ebayItemId && ticket.buyerUserId) {
+    mirrorOr.push({
+      ebayItemId: ticket.ebayItemId,
+      buyerUserId: {
+        equals: ticket.buyerUserId,
+        mode: Prisma.QueryMode.insensitive,
+      },
+    });
+  }
   const mirrorRows = await db.helpdeskFeedback.findMany({
     where: {
       integrationId: ticket.integrationId,
-      ebayOrderNumber: ticket.ebayOrderNumber,
+      OR: mirrorOr,
     },
     orderBy: { leftAt: "desc" },
     take: 20,
   });
   const mirrorSnapshots = mirrorRows.map(feedbackMirrorToSnapshot);
 
+  // Removal history is derived from the order's "Feedback Removal Approved"
+  // system tickets — read-only, no eBay call. Non-fatal on failure.
+  let removalNotices: Awaited<ReturnType<typeof findFeedbackRemovalNotices>> = [];
+  try {
+    removalNotices = await findFeedbackRemovalNotices({
+      integrationId: ticket.integrationId,
+      ebayOrderNumber: ticket.ebayOrderNumber,
+    });
+  } catch (err) {
+    console.warn("[helpdesk/feedback] removal notice lookup failed", err);
+  }
+  const removals = removalNotices.map((n) => ({ at: n.at }));
+
   if (mirrorSnapshots.length > 0) {
     return NextResponse.json({
       data: {
         state: "LEFT",
-        items: mirrorSnapshots,
+        items: applyFeedbackRemovals(mirrorSnapshots, removalNotices),
         checkedLive: false,
+        removals,
       },
     });
   }
@@ -91,6 +125,7 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
           state: "UNKNOWN",
           items: [],
           checkedLive: false,
+          removals,
           reason: "Order context unavailable.",
         },
       });
@@ -104,8 +139,9 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
     return NextResponse.json({
       data: {
         state: live.length > 0 ? "LEFT" : "NOT_LEFT",
-        items: live,
+        items: applyFeedbackRemovals(live, removalNotices),
         checkedLive: true,
+        removals,
       },
     });
   } catch (err) {
@@ -118,6 +154,7 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
         state: "UNKNOWN",
         items: [],
         checkedLive: false,
+        removals,
         reason: "Feedback lookup failed.",
       },
     });

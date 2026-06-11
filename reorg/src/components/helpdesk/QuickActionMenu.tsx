@@ -98,8 +98,8 @@ export function QuickActionMenu({
         onClick={() => setOpen((v) => !v)}
         disabled={disabled}
         className={cn(
-          "inline-flex h-7 items-center gap-1 rounded-md border border-hairline bg-surface px-2 text-xs text-foreground shadow-sm transition-colors hover:border-brand/35 hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/30 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer",
-          open && "bg-surface-2",
+          "inline-flex h-7 items-center gap-1 rounded-md border border-amber-500/35 bg-amber-500/10 px-2 text-xs text-amber-700 shadow-sm transition-colors hover:border-amber-500/55 hover:bg-amber-500/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500/30 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer dark:text-amber-300",
+          open && "bg-amber-500/20",
         )}
       >
         <Zap className="h-3 w-3" />

@@ -1470,7 +1470,13 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
     const caseMirrorOr: Prisma.HelpdeskCaseWhereInput[] = [
       { ticketId: { in: relatedTicketIds } },
     ];
-    const feedbackMirrorOr: Prisma.HelpdeskFeedbackWhereInput[] = [];
+    // Feedback mirror rows synced from GetFeedback never carry the
+    // "26-xxxxx-xxxxx" order number (eBay doesn't return it), so we also
+    // match by ticket linkage and by (item + buyer) — that pair is how the
+    // sync links feedback to conversations in the first place.
+    const feedbackMirrorOr: Prisma.HelpdeskFeedbackWhereInput[] = [
+      { ticketId: { in: relatedTicketIds } },
+    ];
     const cancellationMirrorOr: Prisma.HelpdeskCancellationWhereInput[] = [
       { ticketId: { in: relatedTicketIds } },
     ];
@@ -1478,6 +1484,16 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
       caseMirrorOr.push(orderMirrorFilter);
       feedbackMirrorOr.push(orderMirrorFilter);
       cancellationMirrorOr.push(orderMirrorFilter);
+    }
+    if (exists.integration && exists.ebayItemId && exists.buyerUserId) {
+      feedbackMirrorOr.push({
+        integrationId: exists.integration.id,
+        ebayItemId: exists.ebayItemId,
+        buyerUserId: {
+          equals: exists.buyerUserId,
+          mode: Prisma.QueryMode.insensitive,
+        },
+      });
     }
     if (buyerMirrorFilter) {
       caseMirrorOr.push(buyerMirrorFilter);

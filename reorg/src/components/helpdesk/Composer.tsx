@@ -834,6 +834,7 @@ export function Composer({
             disabled={!canReply(ticket)}
             onClick={() => setMode("REPLY")}
             icon={<MessageSquareText className="h-3 w-3" />}
+            tone="reply"
           >
             Reply
           </ModeTab>
@@ -841,6 +842,7 @@ export function Composer({
             active={mode === "NOTE"}
             onClick={() => setMode("NOTE")}
             icon={<StickyNote className="h-3 w-3" />}
+            tone="note"
           >
             Note
           </ModeTab>
@@ -852,6 +854,7 @@ export function Composer({
               window.setTimeout(() => externalToRef.current?.focus(), 0);
             }}
             icon={<Mail className="h-3 w-3" />}
+            tone="external"
           >
             External
           </ModeTab>
@@ -1197,7 +1200,7 @@ export function Composer({
                       : "Outbound attachments are disabled in Global Settings."
                   }
                   className={cn(
-                    "inline-flex h-7 items-center gap-1 rounded-md border border-hairline bg-surface px-2 text-xs text-foreground shadow-sm transition-colors hover:border-brand/35 hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer",
+                    "inline-flex h-7 items-center gap-1 rounded-md border border-sky-500/35 bg-sky-500/10 px-2 text-xs text-sky-700 shadow-sm transition-colors hover:border-sky-500/55 hover:bg-sky-500/20 disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer dark:text-sky-300",
                     !attachmentFlagEnabled && "opacity-60",
                   )}
                 >
@@ -1211,7 +1214,7 @@ export function Composer({
               disabled={!!pending}
               onAssigned={onSent}
             />
-            <label className="inline-flex h-7 items-center gap-1 rounded-md border border-hairline-strong/70 bg-surface px-2 text-[11px] text-foreground/70">
+            <label className="inline-flex h-7 items-center gap-1 rounded-md border border-emerald-500/35 bg-emerald-500/10 px-2 text-[11px] text-emerald-700 transition-colors hover:border-emerald-500/55 dark:text-emerald-300">
               <Clock3 className="h-3.5 w-3.5" />
               Delay
               <input
@@ -1221,7 +1224,7 @@ export function Composer({
                 value={sendDelaySeconds}
                 onChange={(e) => updateSendDelaySeconds(Number(e.target.value))}
                 disabled={sendDelayOverride != null || !!pending}
-                className="h-5 w-9 rounded border border-hairline bg-card px-1 text-center text-[11px] text-foreground outline-none focus:border-brand/50 disabled:opacity-50"
+                className="h-5 w-9 rounded border border-emerald-500/35 bg-card px-1 text-center text-[11px] text-foreground outline-none focus:border-emerald-500/60 disabled:opacity-50"
                 aria-label="Send Delay Seconds"
               />
               <span>s</span>
@@ -1953,19 +1956,46 @@ function canSelectEmail(enableResendExternal: boolean): boolean {
   return enableResendExternal;
 }
 
+/**
+ * Per-mode accent colors so the three composer modes are visually distinct
+ * at a glance: Reply = sky (outbound to buyer), Note = amber (internal),
+ * External = violet (email). Inactive tabs keep a faint tinted icon so the
+ * color language is learnable without shouting.
+ */
+const MODE_TAB_TONES = {
+  reply: {
+    active:
+      "bg-sky-500/15 text-sky-700 dark:text-sky-300 ring-1 ring-inset ring-sky-500/30",
+    idleIcon: "text-sky-600/70 dark:text-sky-400/70",
+  },
+  note: {
+    active:
+      "bg-amber-500/15 text-amber-700 dark:text-amber-300 ring-1 ring-inset ring-amber-500/30",
+    idleIcon: "text-amber-600/70 dark:text-amber-400/70",
+  },
+  external: {
+    active:
+      "bg-violet-500/15 text-violet-700 dark:text-violet-300 ring-1 ring-inset ring-violet-500/30",
+    idleIcon: "text-violet-600/70 dark:text-violet-400/70",
+  },
+} as const;
+
 function ModeTab({
   active,
   disabled,
   onClick,
   icon,
+  tone,
   children,
 }: {
   active: boolean;
   disabled?: boolean;
   onClick: () => void;
   icon: React.ReactNode;
+  tone: keyof typeof MODE_TAB_TONES;
   children: React.ReactNode;
 }) {
+  const tones = MODE_TAB_TONES[tone];
   return (
     <button
       type="button"
@@ -1974,12 +2004,12 @@ function ModeTab({
       className={cn(
         "inline-flex items-center gap-1 rounded-md px-2 py-1 font-medium transition-colors cursor-pointer",
         active
-          ? "bg-surface-2 text-foreground"
+          ? tones.active
           : "text-foreground/70 hover:text-foreground hover:bg-surface-2",
         disabled && "opacity-45 cursor-not-allowed hover:bg-transparent",
       )}
     >
-      {icon}
+      <span className={cn(!active && !disabled && tones.idleIcon)}>{icon}</span>
       {children}
     </button>
   );
