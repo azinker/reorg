@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { HelpdeskFeedbackKind } from "@prisma/client";
 import {
   applyFeedbackRemovals,
+  filterFeedbackSnapshotsToOrder,
   isEbayAutomatedFeedbackComment,
   isEbayAutomatedFeedbackSnapshot,
   suppressReplacedAutomatedFeedback,
@@ -176,4 +177,60 @@ test("suppressReplacedAutomatedFeedback treats missing item ids as order-wide", 
   ]);
   assert.equal(out.length, 1);
   assert.equal(out[0]!.isAutomated, false);
+});
+
+// ─── filterFeedbackSnapshotsToOrder ──────────────────────────────────────────
+// Same buyer, same listing, two orders: feedback must be split by the
+// transaction id each piece of feedback was left on.
+
+test("filterFeedbackSnapshotsToOrder keeps only this order's transactions", () => {
+  const out = filterFeedbackSnapshotsToOrder(
+    [
+      snapshot({ id: "this", externalId: "this", transactionId: "111", ebayOrderNumber: null }),
+      snapshot({ id: "other", externalId: "other", transactionId: "999", ebayOrderNumber: null }),
+    ],
+    {
+      ebayOrderNumber: "22-14652-54249",
+      lineItems: [{ transactionId: "111", orderLineItemId: "226335769140-111" }],
+    },
+  );
+  assert.deepEqual(out.map((s) => s.id), ["this"]);
+});
+
+test("filterFeedbackSnapshotsToOrder matches via orderLineItemId too", () => {
+  const out = filterFeedbackSnapshotsToOrder(
+    [
+      snapshot({
+        id: "a",
+        externalId: "a",
+        transactionId: null,
+        orderLineItemId: "226335769140-111",
+        ebayOrderNumber: null,
+      }),
+    ],
+    {
+      ebayOrderNumber: "22-14652-54249",
+      lineItems: [{ transactionId: null, orderLineItemId: "226335769140-111" }],
+    },
+  );
+  assert.equal(out.length, 1);
+});
+
+test("filterFeedbackSnapshotsToOrder falls back to order number without transaction info", () => {
+  const out = filterFeedbackSnapshotsToOrder(
+    [
+      snapshot({ id: "mine", externalId: "mine", ebayOrderNumber: "22-14652-54249" }),
+      snapshot({ id: "other", externalId: "other", ebayOrderNumber: "16-14695-46545" }),
+    ],
+    { ebayOrderNumber: "22-14652-54249", lineItems: null },
+  );
+  assert.deepEqual(out.map((s) => s.id), ["mine"]);
+});
+
+test("filterFeedbackSnapshotsToOrder keeps snapshots when nothing is comparable", () => {
+  const out = filterFeedbackSnapshotsToOrder(
+    [snapshot({ transactionId: null, orderLineItemId: null, ebayOrderNumber: null })],
+    { ebayOrderNumber: "22-14652-54249", lineItems: [] },
+  );
+  assert.equal(out.length, 1);
 });

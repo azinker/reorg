@@ -422,8 +422,15 @@ async function findFeedbackLinkage(args: {
   ebayItemId: string | null;
   buyerUserId: string | null;
 }): Promise<{ ticketId: string | null; ebayOrderNumber: string | null }> {
+  // IMPORTANT: feedback is per order line (transaction), but GetFeedback
+  // only gives us ItemID + buyer. If the buyer bought the SAME listing on
+  // MORE THAN ONE order, item+buyer cannot tell the orders apart — stamping
+  // a guessed order number would attach the feedback to the wrong order.
+  // In that ambiguous case we leave the row unlinked; the read paths
+  // (feedback route / events route) resolve it exactly via the rawData
+  // TransactionID against the order context's line items.
   if (args.buyerUserId && args.ebayItemId) {
-    const ticket = await db.helpdeskTicket.findFirst({
+    const tickets = await db.helpdeskTicket.findMany({
       where: {
         integrationId: args.integrationId,
         ebayItemId: args.ebayItemId,
@@ -432,16 +439,23 @@ async function findFeedbackLinkage(args: {
           mode: Prisma.QueryMode.insensitive,
         },
       },
-      // Prefer the ticket that actually has an order linked.
       orderBy: [{ ebayOrderNumber: { sort: "desc", nulls: "last" } }, { createdAt: "desc" }],
       select: { id: true, ebayOrderNumber: true },
+      take: 10,
     });
-    if (ticket) {
+    const distinctOrders = new Set(
+      tickets.map((t) => t.ebayOrderNumber).filter((o): o is string => !!o),
+    );
+    if (tickets.length > 0 && distinctOrders.size <= 1) {
+      const ticket = tickets[0];
       return { ticketId: ticket.id, ebayOrderNumber: ticket.ebayOrderNumber };
+    }
+    if (distinctOrders.size > 1) {
+      return { ticketId: null, ebayOrderNumber: null };
     }
   }
   if (args.buyerUserId) {
-    const ticket = await db.helpdeskTicket.findFirst({
+    const tickets = await db.helpdeskTicket.findMany({
       where: {
         integrationId: args.integrationId,
         buyerUserId: {
@@ -451,8 +465,13 @@ async function findFeedbackLinkage(args: {
       },
       orderBy: { createdAt: "desc" },
       select: { id: true, ebayOrderNumber: true },
+      take: 10,
     });
-    if (ticket) {
+    const distinctOrders = new Set(
+      tickets.map((t) => t.ebayOrderNumber).filter((o): o is string => !!o),
+    );
+    if (tickets.length > 0 && distinctOrders.size <= 1) {
+      const ticket = tickets[0];
       return { ticketId: ticket.id, ebayOrderNumber: ticket.ebayOrderNumber };
     }
   }

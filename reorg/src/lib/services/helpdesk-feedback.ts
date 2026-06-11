@@ -31,6 +31,14 @@ export interface HelpdeskFeedbackSnapshot {
   source: "mirror" | "live";
   isAutomated: boolean;
   /**
+   * eBay TransactionID / OrderLineItemID the feedback was left on. Feedback
+   * on eBay is per order line (transaction), so these are the ONLY exact way
+   * to tell two orders apart when the same buyer bought the same listing
+   * twice. Null for legacy rows synced before this field existed.
+   */
+  transactionId?: string | null;
+  orderLineItemId?: string | null;
+  /**
    * ISO timestamp of the "Feedback Removal Approved" eBay notification when
    * this feedback was later removed from eBay. Derived at read time from the
    * order's system tickets — never persisted, so it stays correct even for
@@ -100,6 +108,23 @@ function mapFeedbackKind(value: unknown): HelpdeskFeedbackKind {
   return HelpdeskFeedbackKind.POSITIVE;
 }
 
+/**
+ * Pull TransactionID / OrderLineItemID out of a raw GetFeedback row.
+ * eBay uses TransactionID "0" for non-order feedback — treat it as null.
+ */
+function extractFeedbackTransaction(rawData: unknown): {
+  transactionId: string | null;
+  orderLineItemId: string | null;
+} {
+  const raw = (rawData ?? {}) as Record<string, unknown>;
+  const tx = text(raw.TransactionID);
+  const oli = text(raw.OrderLineItemID);
+  return {
+    transactionId: tx && tx !== "0" ? tx : null,
+    orderLineItemId: oli && !oli.endsWith("-0") ? oli : null,
+  };
+}
+
 function normalizeFeedbackComment(value: string | null | undefined): string {
   return (value ?? "")
     .trim()
@@ -138,6 +163,7 @@ function rowToSnapshot(
   if (!Number.isFinite(leftAtDate.getTime())) return null;
   const kind = mapFeedbackKind(row.CommentType);
   const comment = text(row.CommentText);
+  const { transactionId, orderLineItemId } = extractFeedbackTransaction(row);
 
   return {
     id: `live:${externalId}`,
@@ -155,6 +181,8 @@ function rowToSnapshot(
       kind,
       comment,
     }),
+    transactionId,
+    orderLineItemId,
   };
 }
 
@@ -192,8 +220,12 @@ export function feedbackMirrorToSnapshot(
     | "ebayItemId"
     | "buyerUserId"
     | "leftAt"
-  >,
+  > &
+    Partial<Pick<HelpdeskFeedback, "rawData">>,
 ): HelpdeskFeedbackSnapshot {
+  const { transactionId, orderLineItemId } = extractFeedbackTransaction(
+    row.rawData,
+  );
   return {
     id: row.id,
     externalId: row.externalId,
@@ -207,7 +239,51 @@ export function feedbackMirrorToSnapshot(
     leftAt: row.leftAt.toISOString(),
     source: "mirror",
     isAutomated: isEbayAutomatedFeedbackSnapshot(row),
+    transactionId,
+    orderLineItemId,
   };
+}
+
+/**
+ * Scope feedback snapshots to ONE order.
+ *
+ * eBay feedback is left per order line (transaction). When the same buyer
+ * buys the same listing on two different orders, item+buyer matching alone
+ * pulls BOTH orders' feedback into one ticket. Given the order's line items
+ * (with their TransactionID / OrderLineItemID), keep only the snapshots
+ * that belong to this order:
+ *
+ * 1. Snapshot has a transaction id AND we know the order's transactions →
+ *    keep only on an exact transaction match.
+ * 2. Otherwise fall back to order-number equality when both sides know it.
+ * 3. When neither side has anything to compare, keep the snapshot — hiding
+ *    real feedback is worse than occasionally showing an ambiguous one.
+ */
+export function filterFeedbackSnapshotsToOrder(
+  snapshots: HelpdeskFeedbackSnapshot[],
+  order: {
+    ebayOrderNumber: string | null;
+    lineItems?:
+      | Pick<EbayOrderContextLineItem, "transactionId" | "orderLineItemId">[]
+      | null;
+  },
+): HelpdeskFeedbackSnapshot[] {
+  const txKeys = new Set<string>();
+  for (const line of order.lineItems ?? []) {
+    if (line.transactionId) txKeys.add(String(line.transactionId));
+    if (line.orderLineItemId) txKeys.add(String(line.orderLineItemId));
+  }
+  return snapshots.filter((snapshot) => {
+    const tx = snapshot.transactionId ?? null;
+    const oli = snapshot.orderLineItemId ?? null;
+    if (txKeys.size > 0 && (tx || oli)) {
+      return (tx != null && txKeys.has(tx)) || (oli != null && txKeys.has(oli));
+    }
+    if (order.ebayOrderNumber && snapshot.ebayOrderNumber) {
+      return snapshot.ebayOrderNumber === order.ebayOrderNumber;
+    }
+    return true;
+  });
 }
 
 function feedbackFilterXml(line: EbayOrderContextLineItem): string | null {

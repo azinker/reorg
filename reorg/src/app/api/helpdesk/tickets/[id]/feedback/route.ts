@@ -2,12 +2,16 @@ import { NextResponse, type NextRequest } from "next/server";
 import { Prisma } from "@prisma/client";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { buildEbayConfig } from "@/lib/services/auto-responder-ebay";
+import {
+  buildEbayConfig,
+  type EbayOrderContext,
+} from "@/lib/services/auto-responder-ebay";
 import { getOrderContextCached } from "@/lib/services/helpdesk-order-context-cache";
 import {
   applyFeedbackRemovals,
   feedbackMirrorToSnapshot,
   fetchEbayFeedbackForOrderContext,
+  filterFeedbackSnapshotsToOrder,
   findFeedbackRemovalNotices,
   suppressReplacedAutomatedFeedback,
 } from "@/lib/services/helpdesk-feedback";
@@ -86,7 +90,38 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
     orderBy: { leftAt: "desc" },
     take: 20,
   });
-  const mirrorSnapshots = mirrorRows.map(feedbackMirrorToSnapshot);
+
+  // Feedback on eBay is per order line (transaction). When the buyer bought
+  // the SAME listing on two different orders, the (item + buyer) fallback
+  // above matches both orders' feedback — so we scope the mirror rows to
+  // this order's transactions using the cached order context. The context is
+  // shared with the right rail (in-flight deduped), so this is one eBay call
+  // at most across the whole ticket open.
+  let order: EbayOrderContext | null = null;
+  let config: ReturnType<typeof buildEbayConfig> | null = null;
+  try {
+    config = buildEbayConfig({ config: ticket.integration.config });
+    order =
+      (await getOrderContextCached(
+        ticket.integration.id,
+        config,
+        ticket.ebayOrderNumber,
+        { awaitFresh: true },
+      )) ?? null;
+  } catch (err) {
+    console.warn(
+      "[helpdesk/feedback] order context lookup failed",
+      err instanceof Error ? err.message : err,
+    );
+  }
+
+  const mirrorSnapshots = filterFeedbackSnapshotsToOrder(
+    mirrorRows.map(feedbackMirrorToSnapshot),
+    {
+      ebayOrderNumber: ticket.ebayOrderNumber,
+      lineItems: order?.lineItems ?? null,
+    },
+  );
 
   // Removal history is derived from the order's "Feedback Removal Approved"
   // system tickets — read-only, no eBay call. Non-fatal on failure.
@@ -118,14 +153,7 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
   }
 
   try {
-    const config = buildEbayConfig({ config: ticket.integration.config });
-    const order = await getOrderContextCached(
-      ticket.integration.id,
-      config,
-      ticket.ebayOrderNumber,
-      { awaitFresh: true },
-    );
-    if (!order) {
+    if (!order || !config) {
       return NextResponse.json({
         data: {
           state: "UNKNOWN",

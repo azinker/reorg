@@ -42,6 +42,7 @@ import { getOrderContextCached } from "@/lib/services/helpdesk-order-context-cac
 import {
   feedbackMirrorToSnapshot,
   fetchEbayFeedbackForOrderContext,
+  filterFeedbackSnapshotsToOrder,
   suppressReplacedAutomatedFeedback,
   type HelpdeskFeedbackSnapshot,
 } from "@/lib/services/helpdesk-feedback";
@@ -1520,9 +1521,15 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
         take: 50,
       }),
     ]);
-    let feedbackSnapshots: HelpdeskFeedbackSnapshot[] = feedback.map(
-      feedbackMirrorToSnapshot,
-    );
+    // Scope feedback to THIS order's transactions — when the buyer bought
+    // the same listing on two orders, the (item + buyer) match above pulls
+    // both orders' feedback. The order context (when cached) carries the
+    // line-item transaction ids needed for the exact split.
+    let feedbackSnapshots: HelpdeskFeedbackSnapshot[] =
+      filterFeedbackSnapshotsToOrder(feedback.map(feedbackMirrorToSnapshot), {
+        ebayOrderNumber: exists.ebayOrderNumber ?? null,
+        lineItems: orderCtxForEvents?.lineItems ?? null,
+      });
     if (
       feedbackSnapshots.length === 0 &&
       isEbay &&
