@@ -42,6 +42,7 @@ import { getOrderContextCached } from "@/lib/services/helpdesk-order-context-cac
 import {
   feedbackMirrorToSnapshot,
   fetchEbayFeedbackForOrderContext,
+  suppressReplacedAutomatedFeedback,
   type HelpdeskFeedbackSnapshot,
 } from "@/lib/services/helpdesk-feedback";
 
@@ -1612,6 +1613,10 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
         });
       }
     }
+
+    // Buyer-authored feedback REPLACES the automated entry on eBay — drop
+    // superseded automated snapshots so the timeline pills match reality.
+    feedbackSnapshots = suppressReplacedAutomatedFeedback(feedbackSnapshots);
 
     for (const f of feedbackSnapshots) {
       const ratingLabel =

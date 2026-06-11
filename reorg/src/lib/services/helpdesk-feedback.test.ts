@@ -5,6 +5,7 @@ import {
   applyFeedbackRemovals,
   isEbayAutomatedFeedbackComment,
   isEbayAutomatedFeedbackSnapshot,
+  suppressReplacedAutomatedFeedback,
   type HelpdeskFeedbackSnapshot,
 } from "@/lib/services/helpdesk-feedback";
 
@@ -115,4 +116,64 @@ test("applyFeedbackRemovals scopes by item id and marks one snapshot per notice"
   const b = out.find((s) => s.id === "b")!;
   assert.equal(a.removedAt, null);
   assert.equal(b.removedAt, "2026-06-10T21:19:36.000Z");
+});
+
+function automated(
+  overrides: Partial<HelpdeskFeedbackSnapshot> = {},
+): HelpdeskFeedbackSnapshot {
+  return snapshot({
+    id: "fb-auto",
+    externalId: "ext-auto",
+    kind: HelpdeskFeedbackKind.POSITIVE,
+    comment: "Order delivered on time with no issues",
+    isAutomated: true,
+    leftAt: "2026-05-20T12:00:00.000Z",
+    ...overrides,
+  });
+}
+
+test("suppressReplacedAutomatedFeedback drops automated when buyer authored later", () => {
+  const out = suppressReplacedAutomatedFeedback([
+    automated(),
+    snapshot({ leftAt: "2026-06-11T00:00:00.000Z" }),
+  ]);
+  assert.equal(out.length, 1);
+  assert.equal(out[0]!.isAutomated, false);
+});
+
+test("suppressReplacedAutomatedFeedback keeps automated when no buyer feedback exists", () => {
+  const out = suppressReplacedAutomatedFeedback([automated()]);
+  assert.equal(out.length, 1);
+  assert.equal(out[0]!.isAutomated, true);
+});
+
+test("suppressReplacedAutomatedFeedback keeps automated left AFTER the buyer feedback", () => {
+  // buyer negative (later removed) → automated positive posted afterwards.
+  const out = suppressReplacedAutomatedFeedback([
+    snapshot({ leftAt: "2026-05-01T00:00:00.000Z", removedAt: "2026-05-02T00:00:00.000Z" }),
+    automated({ leftAt: "2026-05-20T12:00:00.000Z" }),
+  ]);
+  assert.equal(out.length, 2);
+});
+
+test("suppressReplacedAutomatedFeedback scopes by item id", () => {
+  const out = suppressReplacedAutomatedFeedback([
+    automated({ id: "auto-111", externalId: "auto-111", ebayItemId: "111" }),
+    automated({ id: "auto-222", externalId: "auto-222", ebayItemId: "222" }),
+    snapshot({ ebayItemId: "111", leftAt: "2026-06-11T00:00:00.000Z" }),
+  ]);
+  // Buyer replaced item 111's automated entry; item 222's stays.
+  assert.deepEqual(
+    out.map((s) => s.id).sort(),
+    ["auto-222", "fb-1"],
+  );
+});
+
+test("suppressReplacedAutomatedFeedback treats missing item ids as order-wide", () => {
+  const out = suppressReplacedAutomatedFeedback([
+    automated({ ebayItemId: null }),
+    snapshot({ ebayItemId: "111", leftAt: "2026-06-11T00:00:00.000Z" }),
+  ]);
+  assert.equal(out.length, 1);
+  assert.equal(out[0]!.isAutomated, false);
 });

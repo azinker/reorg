@@ -394,3 +394,31 @@ export function applyFeedbackRemovals(
   }
   return out;
 }
+
+/**
+ * When a buyer authors their own feedback, eBay REPLACES the automated
+ * feedback that our auto-feedback rule had left — the automated entry no
+ * longer exists on eBay. Mirror rows (and stale live reads) can still carry
+ * both, which makes the UI show "Automated + Buyer" side by side. This
+ * helper drops any automated snapshot that was superseded by a buyer-authored
+ * snapshot for the same item (or order-wide when item ids are missing).
+ *
+ * Time-aware on purpose: a buyer feedback that was left BEFORE an automated
+ * one (e.g. buyer negative → removed → automated positive posted later) does
+ * NOT suppress the later automated entry — that automated feedback is real.
+ */
+export function suppressReplacedAutomatedFeedback(
+  snapshots: HelpdeskFeedbackSnapshot[],
+): HelpdeskFeedbackSnapshot[] {
+  const buyerAuthored = snapshots.filter((s) => !s.isAutomated);
+  if (buyerAuthored.length === 0) return snapshots;
+  return snapshots.filter((s) => {
+    if (!s.isAutomated) return true;
+    const automatedMs = new Date(s.leftAt).getTime();
+    return !buyerAuthored.some(
+      (b) =>
+        (!b.ebayItemId || !s.ebayItemId || b.ebayItemId === s.ebayItemId) &&
+        new Date(b.leftAt).getTime() >= automatedMs,
+    );
+  });
+}

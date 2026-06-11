@@ -9,6 +9,7 @@ import {
   feedbackMirrorToSnapshot,
   fetchEbayFeedbackForOrderContext,
   findFeedbackRemovalNotices,
+  suppressReplacedAutomatedFeedback,
 } from "@/lib/services/helpdesk-feedback";
 
 export const runtime = "nodejs";
@@ -104,7 +105,12 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
     return NextResponse.json({
       data: {
         state: "LEFT",
-        items: applyFeedbackRemovals(mirrorSnapshots, removalNotices),
+        // Buyer-authored feedback REPLACES the automated entry on eBay, so a
+        // superseded automated snapshot must not render alongside it.
+        items: applyFeedbackRemovals(
+          suppressReplacedAutomatedFeedback(mirrorSnapshots),
+          removalNotices,
+        ),
         checkedLive: false,
         removals,
       },
@@ -139,7 +145,10 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
     return NextResponse.json({
       data: {
         state: live.length > 0 ? "LEFT" : "NOT_LEFT",
-        items: applyFeedbackRemovals(live, removalNotices),
+        items: applyFeedbackRemovals(
+          suppressReplacedAutomatedFeedback(live),
+          removalNotices,
+        ),
         checkedLive: true,
         removals,
       },

@@ -412,7 +412,11 @@ function ContextPanelInner({ ticket, containerWidth, dividerCls }: InnerProps) {
               ticket={ticket}
             />
             {ticket.kind === "POST_SALES" || !!ticket.ebayOrderNumber ? (
-              <OrderInfoSection ticket={ticket} order={order} />
+              <OrderInfoSection
+                ticket={ticket}
+                order={order}
+                events={timeline.data}
+              />
             ) : ticket.listingInfo ? (
               // Pre-sales (no order yet) but the buyer is messaging from a
               // specific listing — show a "Product Inquiry" card so the
@@ -1308,9 +1312,11 @@ function CaseStatusDatum({ label, value }: { label: string; value: string }) {
 function OrderInfoSection({
   ticket,
   order,
+  events,
 }: {
   ticket: HelpdeskTicketDetail;
   order: UseOrderContextResult;
+  events: HelpdeskTimelineEvent[];
 }) {
   /**
    * Order Info card — fully eDesk-aligned now:
@@ -1389,6 +1395,58 @@ function OrderInfoSection({
     ? formatAddressMultiline(ctx.shippingAddress)
     : null;
   const buyerPhone = ctx?.shippingAddress?.phone?.trim() || null;
+
+  // ── Refund derivation ────────────────────────────────────────────────────
+  // Three shapes the agent can hit:
+  //   1. eBay reports a refund on the order (MonetaryDetails) — direct
+  //      seller refunds, partial or full. `ctx.refundCents` is set.
+  //   2. The order was refunded through a return/INAD case — eBay zeroes
+  //      AmountPaid so the order context says Total $0.00 with NO refund
+  //      amount. We reconstruct the original from the line items so the
+  //      agent isn't staring at a confusing bare "$0.00".
+  //   3. No refund at all — render the plain total.
+  // The case attribution ("via Return Case") comes from the same timeline
+  // events the Case Status section uses.
+  const caseSummary = buildCaseStatusSummary(events, ticket.messages);
+  const caseRefundSource =
+    caseSummary && caseSummary.status === "Refunded" ? caseSummary.title : null;
+  const lineItemsSubtotalCents = (() => {
+    const lines = ctx?.lineItems ?? [];
+    if (lines.length === 0) return null;
+    let sum = 0;
+    for (const line of lines) {
+      if (line.unitPriceCents == null || line.quantity == null) return null;
+      sum += line.unitPriceCents * line.quantity;
+    }
+    return sum > 0 ? sum : null;
+  })();
+  const reportedRefundCents =
+    ctx?.refundCents != null && ctx.refundCents > 0 ? ctx.refundCents : null;
+  // Inferred full refund: eBay says $0 collected but the items weren't free.
+  const zeroTotalWithValue =
+    ctx?.totalCents === 0 &&
+    reportedRefundCents == null &&
+    lineItemsSubtotalCents != null;
+  const inferredCaseRefund = zeroTotalWithValue && caseRefundSource != null;
+  const inferredOriginalCents = zeroTotalWithValue
+    ? lineItemsSubtotalCents! + (ctx?.shippingCents ?? 0)
+    : null;
+  // What the Total row shows: the reconstructed original when we inferred a
+  // case refund, otherwise eBay's own number.
+  const displayTotalCents = inferredCaseRefund
+    ? inferredOriginalCents
+    : ctx?.totalCents ?? null;
+  const displayRefundCents = reportedRefundCents ?? (inferredCaseRefund ? inferredOriginalCents : null);
+  const displayNetCents =
+    reportedRefundCents != null
+      ? ctx?.buyerNetCents ?? null
+      : inferredCaseRefund
+        ? 0
+        : null;
+  const refundIsFull =
+    displayRefundCents != null &&
+    displayTotalCents != null &&
+    displayRefundCents >= displayTotalCents;
   const fallbackListing =
     ticket.listingInfo && ticket.ebayItemId === ticket.listingInfo.itemId
       ? ticket.listingInfo
@@ -1900,7 +1958,7 @@ function OrderInfoSection({
                 </span>
               </div>
             ) : null}
-            {ctx?.totalCents != null ? (
+            {displayTotalCents != null ? (
               <div
                 className={cn(
                   "flex items-center justify-between border-t border-hairline pt-2 text-sm",
@@ -1911,48 +1969,62 @@ function OrderInfoSection({
                 <span
                   className={cn(
                     "font-semibold",
-                    ctx.refundCents != null && ctx.refundCents > 0
+                    displayRefundCents != null
                       ? "text-muted-foreground line-through decoration-amber-500/70"
                       : "text-foreground",
                   )}
                 >
-                  {formatMoney(ctx.totalCents, ctx.currency)}
+                  {formatMoney(displayTotalCents, ctx?.currency)}
                 </span>
               </div>
             ) : null}
-            {ctx?.refundCents != null && ctx.refundCents > 0 ? (
-              // Refund block — only appears when eBay reports a refund on the
-              // order. Shows the refunded amount and the buyer's net so the
-              // agent never has to do the math (or open eBay) to know what
-              // the buyer actually ended up paying.
+            {displayRefundCents != null ? (
+              // Refund block — appears when eBay reports a refund on the
+              // order (direct refunds) OR when the order context shows $0.00
+              // collected and the ticket's return/INAD case is refunded
+              // (case refunds zero out AmountPaid without a refund line).
+              // Shows the refunded amount, where it came from, and the
+              // buyer's net so the agent never has to do the math (or open
+              // eBay) to know what the buyer actually ended up paying.
               <div className="mt-2 space-y-1.5 rounded-md border border-amber-500/30 bg-amber-500/5 px-2.5 py-2">
                 <div className="flex items-center justify-between gap-2 text-xs">
                   <span className="inline-flex items-center gap-1 font-semibold text-amber-700 dark:text-amber-300">
                     <ReceiptText className="h-3.5 w-3.5" />
-                    {ctx.totalCents != null && ctx.refundCents >= ctx.totalCents
-                      ? "Fully Refunded"
-                      : "Partially Refunded"}
-                    {ctx.refundStatus && ctx.refundStatus !== "Success" ? (
+                    {refundIsFull ? "Fully Refunded" : "Partially Refunded"}
+                    {ctx?.refundStatus && ctx.refundStatus !== "Success" ? (
                       <span className="font-medium text-muted-foreground">
                         ({ctx.refundStatus})
                       </span>
                     ) : null}
                   </span>
                   <span className="font-semibold tabular-nums text-amber-700 dark:text-amber-300">
-                    -{formatMoney(ctx.refundCents, ctx.currency)}
+                    -{formatMoney(displayRefundCents, ctx?.currency)}
                   </span>
                 </div>
-                {ctx.buyerNetCents != null ? (
+                <p className="text-[11px] leading-snug text-muted-foreground">
+                  {caseRefundSource
+                    ? `Refunded to the buyer via the ${caseRefundSource.toLowerCase()} on eBay.`
+                    : "Refunded to the buyer on eBay (outside a return case)."}
+                </p>
+                {displayNetCents != null ? (
                   <div className="flex items-center justify-between gap-2 border-t border-amber-500/20 pt-1.5 text-sm">
                     <span className="font-semibold text-foreground">
                       Net After Refund
                     </span>
                     <span className="font-semibold tabular-nums text-foreground">
-                      {formatMoney(ctx.buyerNetCents, ctx.currency)}
+                      {formatMoney(displayNetCents, ctx?.currency)}
                     </span>
                   </div>
                 ) : null}
               </div>
+            ) : zeroTotalWithValue ? (
+              // $0.00 collected, items weren't free, but we can't pin it to
+              // a refunded case — say SOMETHING so the bare zero isn't
+              // mistaken for a pricing bug.
+              <p className="mt-1.5 text-[11px] leading-snug text-muted-foreground">
+                eBay reports $0.00 collected for this order — it was likely
+                refunded or cancelled.
+              </p>
             ) : null}
           </div>
         </div>
@@ -2151,8 +2223,8 @@ function FeedbackHistoryItemCard({
           )}
         >
           {item.isAutomated
-            ? "This positive feedback was left by the automated eBay feedback rule, not directly by the buyer. The buyer may still replace it with their own feedback."
-            : "This feedback was left directly by the buyer, not the automated eBay feedback rule."}
+            ? "Automated eBay Feedback."
+            : "Feedback left directly by the buyer."}
         </p>
       ) : null}
       {typeof item.starRating === "number" && item.starRating > 0 ? (
