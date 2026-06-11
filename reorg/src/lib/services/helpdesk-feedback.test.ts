@@ -170,6 +170,29 @@ test("suppressReplacedAutomatedFeedback scopes by item id", () => {
   );
 });
 
+test("suppressReplacedAutomatedFeedback scopes by transaction id within one listing", () => {
+  // One variation listing, four order lines: buyer feedback on two lines
+  // must NOT hide the automated feedback that lives on the other two.
+  const out = suppressReplacedAutomatedFeedback([
+    snapshot({ id: "buyer-314", externalId: "b314", transactionId: "314", leftAt: "2026-05-12T01:08:03.000Z" }),
+    automated({ id: "auto-614", externalId: "a614", transactionId: "614", leftAt: "2026-05-20T17:53:45.000Z" }),
+    snapshot({ id: "buyer-714", externalId: "b714", transactionId: "714", leftAt: "2026-05-20T23:52:48.000Z" }),
+    automated({ id: "auto-514", externalId: "a514", transactionId: "514", leftAt: "2026-05-22T17:53:39.000Z" }),
+  ]);
+  assert.deepEqual(
+    out.map((s) => s.id).sort(),
+    ["auto-514", "auto-614", "buyer-314", "buyer-714"],
+  );
+});
+
+test("suppressReplacedAutomatedFeedback drops automated replaced on the SAME transaction", () => {
+  const out = suppressReplacedAutomatedFeedback([
+    automated({ id: "auto", externalId: "a", transactionId: "111", leftAt: "2026-05-20T00:00:00.000Z" }),
+    snapshot({ id: "buyer", externalId: "b", transactionId: "111", leftAt: "2026-05-21T00:00:00.000Z" }),
+  ]);
+  assert.deepEqual(out.map((s) => s.id), ["buyer"]);
+});
+
 test("suppressReplacedAutomatedFeedback treats missing item ids as order-wide", () => {
   const out = suppressReplacedAutomatedFeedback([
     automated({ ebayItemId: null }),

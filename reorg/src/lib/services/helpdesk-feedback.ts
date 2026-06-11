@@ -477,7 +477,13 @@ export function applyFeedbackRemovals(
  * longer exists on eBay. Mirror rows (and stale live reads) can still carry
  * both, which makes the UI show "Automated + Buyer" side by side. This
  * helper drops any automated snapshot that was superseded by a buyer-authored
- * snapshot for the same item (or order-wide when item ids are missing).
+ * snapshot for the same order line.
+ *
+ * Replacement happens PER TRANSACTION on eBay: an order with four line items
+ * (e.g. four variations of one listing) can legitimately carry buyer feedback
+ * on two lines AND automated feedback on the other two at the same time. So
+ * when both snapshots have a transaction id we require an exact match; the
+ * item-id comparison only applies to legacy rows without transaction info.
  *
  * Time-aware on purpose: a buyer feedback that was left BEFORE an automated
  * one (e.g. buyer negative → removed → automated positive posted later) does
@@ -491,10 +497,12 @@ export function suppressReplacedAutomatedFeedback(
   return snapshots.filter((s) => {
     if (!s.isAutomated) return true;
     const automatedMs = new Date(s.leftAt).getTime();
-    return !buyerAuthored.some(
-      (b) =>
-        (!b.ebayItemId || !s.ebayItemId || b.ebayItemId === s.ebayItemId) &&
-        new Date(b.leftAt).getTime() >= automatedMs,
-    );
+    return !buyerAuthored.some((b) => {
+      const sameLine =
+        b.transactionId && s.transactionId
+          ? b.transactionId === s.transactionId
+          : !b.ebayItemId || !s.ebayItemId || b.ebayItemId === s.ebayItemId;
+      return sameLine && new Date(b.leftAt).getTime() >= automatedMs;
+    });
   });
 }
