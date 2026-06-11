@@ -471,8 +471,20 @@ async function sendEbayReply(
     fromName = author?.name ?? author?.email ?? fromName;
   }
   await db.$transaction(async (tx) => {
-    await tx.helpdeskMessage.create({
-      data: {
+    // Upsert instead of create: eBay has already accepted the send at this
+    // point, and the inbound Commerce-Message sweep polls frequently enough
+    // that it can ingest the just-sent message (as `cm:<id>`) *before* this
+    // transaction runs. With a hard create, losing that race throws a
+    // (ticketId, externalId) unique-constraint error, the job gets marked
+    // FAILED, and the UI shows "Last reply failed" for a message the buyer
+    // actually received — and a manual Retry would double-send. On conflict
+    // we claim the sweep's anonymized row by stamping agent attribution
+    // (author + name) onto it; the body is identical so it stays untouched.
+    await tx.helpdeskMessage.upsert({
+      where: {
+        ticketId_externalId: { ticketId: job.ticketId, externalId },
+      },
+      create: {
         ticketId: job.ticketId,
         direction: HelpdeskMessageDirection.OUTBOUND,
         // EBAY_UI because the message originated via Commerce Message API
@@ -500,6 +512,11 @@ async function sendEbayReply(
           messageMedia: messageMedia ?? [],
         },
         rawMedia: messageMedia ?? [],
+      },
+      update: {
+        // Attribution-only update — never rewrite the message body.
+        authorUserId: job.authorUserId,
+        fromName,
       },
     });
 
@@ -737,8 +754,17 @@ async function sendExternalEmail(
   const providerSnapshot = await lookupResendProviderSnapshot(resend, externalId);
   const sentAt = new Date();
   await db.$transaction(async (tx) => {
-    await tx.helpdeskMessage.create({
-      data: {
+    // Upsert for the same reason as the eBay path: Resend has already
+    // accepted the email, so a duplicate-row conflict must not fail the
+    // job (the recipient already has the message).
+    await tx.helpdeskMessage.upsert({
+      where: {
+        ticketId_externalId: {
+          ticketId: job.ticketId,
+          externalId: externalId ?? `outbound:${job.id}`,
+        },
+      },
+      create: {
         ticketId: job.ticketId,
         direction: HelpdeskMessageDirection.OUTBOUND,
         source: HelpdeskMessageSource.EXTERNAL_EMAIL,
@@ -768,6 +794,11 @@ async function sendExternalEmail(
             storageKey: a.storageKey,
           })),
         },
+      },
+      update: {
+        // Attribution-only update — never rewrite the message body.
+        authorUserId: job.authorUserId,
+        fromName: formattedFrom,
       },
     });
 
