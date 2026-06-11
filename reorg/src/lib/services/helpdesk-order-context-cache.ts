@@ -35,6 +35,10 @@ interface CacheEntry {
 
 const CACHE_TTL_MS = 5 * 60 * 1000;
 const cache = new Map<string, CacheEntry>();
+// Concurrent cold-cache callers (the order-context route is hit by both
+// the Context Panel and the Composer on ticket open) share one live
+// eBay fetch instead of firing duplicates.
+const inflight = new Map<string, Promise<EbayOrderContext | null>>();
 
 function key(integrationId: string, orderId: string): string {
   return `${integrationId}:${orderId}`;
@@ -87,15 +91,25 @@ export async function getOrderContextCached(
   if (cached !== undefined) return cached;
   if (!options.awaitFresh) return undefined;
 
-  try {
-    const ctx = await fetchEbayOrderContext(integrationId, config, orderId);
-    writeOrderContextCache(integrationId, orderId, ctx);
-    return ctx;
-  } catch (err) {
-    console.warn(
-      "[helpdesk-order-context-cache] live fetch failed",
-      err instanceof Error ? err.message : err,
-    );
-    return null;
-  }
+  const k = key(integrationId, orderId);
+  const pending = inflight.get(k);
+  if (pending) return pending;
+
+  const promise = (async () => {
+    try {
+      const ctx = await fetchEbayOrderContext(integrationId, config, orderId);
+      writeOrderContextCache(integrationId, orderId, ctx);
+      return ctx;
+    } catch (err) {
+      console.warn(
+        "[helpdesk-order-context-cache] live fetch failed",
+        err instanceof Error ? err.message : err,
+      );
+      return null;
+    } finally {
+      inflight.delete(k);
+    }
+  })();
+  inflight.set(k, promise);
+  return promise;
 }

@@ -1249,7 +1249,7 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
         exists.integration.id,
         config,
         exists.ebayOrderNumber,
-        { awaitFresh: true },
+        { awaitFresh: false },
       );
       orderCtxForEvents = ctx;
       if (ctx) {
@@ -1536,7 +1536,7 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
             exists.integration.id,
             config,
             exists.ebayOrderNumber,
-            { awaitFresh: true },
+            { awaitFresh: false },
           );
         }
         if (ctx) {

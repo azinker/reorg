@@ -70,6 +70,7 @@ import {
 } from "@/components/helpdesk/HelpdeskSettingsDialog";
 import { normalizeExternalEmailDraft } from "@/lib/helpdesk/external-email-fields";
 import { useHelpdeskTimelineEvents } from "@/hooks/use-helpdesk-timeline-events";
+import { fetchOrderContextShared } from "@/components/helpdesk/order-context-client";
 import { buildConversationSummary } from "@/lib/helpdesk/conversation-summary";
 
 type ComposerMode = "REPLY" | "NOTE" | "EXTERNAL";
@@ -323,19 +324,15 @@ export function Composer({
   // {{trackingNumber}} template token resolves correctly. We only fetch when
   // the ticket has an eBay order number — pre-sales / non-eBay channels
   // would just get a null payload back from the server and waste a round-
-  // trip. Aborts cleanly on ticket change so a fast clicker doesn't see
-  // stale tracking flash into a different ticket.
+  // trip. Goes through the shared deduped client so this rides the same
+  // network request the Context Panel fires on ticket open instead of
+  // duplicating it.
   useEffect(() => {
     if (!ticket.ebayOrderNumber) return;
-    const ac = new AbortController();
+    let cancelled = false;
     void (async () => {
       try {
-        const res = await fetch(
-          `/api/helpdesk/tickets/${ticket.id}/order-context`,
-          { cache: "no-store", signal: ac.signal },
-        );
-        if (!res.ok) return;
-        const j = (await res.json()) as {
+        const j = (await fetchOrderContextShared(ticket.id)) as {
           data: {
             trackingNumber: string | null;
             trackingCarrier: string | null;
@@ -343,7 +340,7 @@ export function Composer({
             shippingAddress: { name: string | null } | null;
           } | null;
         };
-        if (ac.signal.aborted || !j.data) return;
+        if (cancelled || !j.data) return;
         setOrderTracking({
           number: j.data.trackingNumber ?? null,
           carrier: j.data.trackingCarrier ?? null,
@@ -354,7 +351,9 @@ export function Composer({
         // Best-effort: tracking is a nice-to-have for templates, not required.
       }
     })();
-    return () => ac.abort();
+    return () => {
+      cancelled = true;
+    };
   }, [ticket.id, ticket.ebayOrderNumber]);
 
   // Track preference changes from Settings dialog while the composer is

@@ -258,6 +258,7 @@ export default function HelpDeskClient() {
     goPrevPage,
     error,
     refresh,
+    refreshSelectedTicket,
     selectedTicketId,
     setSelectedTicketId,
     selectedTicket,
@@ -718,6 +719,7 @@ export default function HelpDeskClient() {
                   prevTicket={prevTicket}
                   nextTicket={nextTicket}
                   onSent={refreshAfterTicketMutation}
+                  onOutboundTick={refreshSelectedTicket}
                   onResolveAdvanceChoice={onResolveAdvanceChoice}
                   agentFolders={agentFolders}
                 />
@@ -785,6 +787,7 @@ export default function HelpDeskClient() {
                 prevTicket={prevTicket}
                 nextTicket={nextTicket}
                 onSent={refreshAfterTicketMutation}
+                onOutboundTick={refreshSelectedTicket}
                 onResolveAdvanceChoice={onResolveAdvanceChoice}
                 agentFolders={agentFolders}
               />

@@ -34,7 +34,7 @@
  *     /events route after the eBay action workers landed.
  */
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { cn } from "@/lib/utils";
 import {
@@ -77,6 +77,7 @@ import type {
 } from "@/hooks/use-helpdesk";
 import { Composer } from "@/components/helpdesk/Composer";
 import { Attachments } from "@/components/helpdesk/Attachments";
+import { useHelpdeskTimelineEvents } from "@/hooks/use-helpdesk-timeline-events";
 import { Avatar } from "@/components/ui/avatar";
 import { SafeHtml } from "@/components/helpdesk/SafeHtml";
 import {
@@ -90,6 +91,11 @@ interface ThreadViewProps {
   safeMode: boolean;
   syncStatus: HelpdeskSyncStatus | null;
   onSent: () => void;
+  /**
+   * Narrow ticket-detail refetch used by the outbound countdown poll.
+   * Falls back to `onSent` (full refresh) when not provided.
+   */
+  onOutboundTick?: () => void;
   showHeader?: boolean;
 }
 
@@ -787,6 +793,7 @@ export function ThreadView({
   safeMode,
   syncStatus,
   onSent,
+  onOutboundTick,
   showHeader = true,
 }: ThreadViewProps) {
   void safeMode;
@@ -801,15 +808,15 @@ export function ThreadView({
   );
 
   const ticketId = ticket?.id ?? null;
-  const [eventsState, setEventsState] = useState<{
-    ticketId: string | null;
-    events: SystemEvent[];
-    loading: boolean;
-  }>({ ticketId: null, events: [], loading: false });
-  const events = eventsState.ticketId === ticketId ? eventsState.events : [];
-  const eventsLoading = ticketId
-    ? eventsState.ticketId !== ticketId || eventsState.loading
-    : false;
+  // Timeline events come from the shared hook so ThreadView, ContextPanel
+  // and Composer all ride one deduped /events fetch (and one cache) per
+  // ticket — previously each component fired its own request, tripling
+  // the heaviest helpdesk read on every ticket open. The hook hydrates
+  // from cache on ticket switch, which also kills the brief empty-pill
+  // flash + double scroll jump the old reset-to-[] approach caused.
+  const timelineEvents = useHelpdeskTimelineEvents(ticketId);
+  const events = timelineEvents.data as unknown as SystemEvent[];
+  const eventsLoading = ticketId ? timelineEvents.loading : false;
   const [highlightedTimelineKey, setHighlightedTimelineKey] = useState<string | null>(null);
   const highlightTimeoutRef = useRef<number | null>(null);
 
@@ -896,44 +903,6 @@ export function ThreadView({
       document.body.style.overflow = originalOverflow;
     };
   }, [lightbox, closeLightbox, lightboxNext, lightboxPrev]);
-
-  useEffect(() => {
-    if (!ticketId) {
-      setEventsState({ ticketId: null, events: [], loading: false });
-      return;
-    }
-    const ac = new AbortController();
-    setEventsState({ ticketId, events: [], loading: true });
-    fetch(`/api/helpdesk/tickets/${ticketId}/events`, {
-      signal: ac.signal,
-      credentials: "same-origin",
-    })
-      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
-      .then((payload: { data: SystemEvent[] }) => {
-        if (ac.signal.aborted) return;
-        setEventsState({
-          ticketId,
-          events: Array.isArray(payload?.data) ? payload.data : [],
-          loading: false,
-        });
-      })
-      .catch((err: unknown) => {
-        if (err instanceof DOMException && err.name === "AbortError") return;
-        // eslint-disable-next-line no-console
-        console.warn("Failed to load helpdesk events", err);
-        if (!ac.signal.aborted) {
-          setEventsState({ ticketId, events: [], loading: false });
-        }
-      })
-      .finally(() => {
-        if (!ac.signal.aborted) {
-          setEventsState((current) =>
-            current.ticketId === ticketId ? { ...current, loading: false } : current,
-          );
-        }
-      });
-    return () => ac.abort();
-  }, [ticketId]);
 
   const notableEvents = useMemo(
     () => events.filter(isTimelineStoryEvent),
@@ -1035,8 +1004,13 @@ export function ThreadView({
 
   useEffect(() => {
     if (!ticketId || !activeOutboundRefreshSignature) return;
+    // Prefer the narrow ticket-detail refetch: polling the full refresh
+    // cascade (inbox + counts + sync status) every 5s for the duration of
+    // the send delay thrashed the entire list view for no benefit — only
+    // this ticket's pending job status can change here.
+    const tick = onOutboundTick ?? onSent;
     const interval = window.setInterval(() => {
-      onSent();
+      tick();
     }, 5_000);
     const timeout = window.setTimeout(() => {
       window.clearInterval(interval);
@@ -1045,7 +1019,7 @@ export function ThreadView({
       window.clearInterval(interval);
       window.clearTimeout(timeout);
     };
-  }, [ticketId, activeOutboundRefreshSignature, onSent]);
+  }, [ticketId, activeOutboundRefreshSignature, onSent, onOutboundTick]);
 
   // Build a single, day-bucketed timeline. Day separators get injected as
   // their own item type so the virtualiser treats them like any other row.
@@ -1137,7 +1111,11 @@ export function ThreadView({
   }, [ticket, events, pendingOutboundJobs]);
 
   // ── Virtualiser setup ──
-  const useVirtualTimeline = rows.length > 80;
+  // Threshold lowered from 80 → 30: a 60-row thread was paying full
+  // SafeHtml sanitisation + translation-panel mounts for every message up
+  // front even though only ~5 fit on screen. Virtualised threads also
+  // only mount (and auto-translate) the rows actually scrolled into view.
+  const useVirtualTimeline = rows.length > 30;
   const scrollRef = useRef<HTMLDivElement>(null);
   const positionedTicketIdRef = useRef<string | null>(null);
   const initialBottomPendingRef = useRef(false);
@@ -1777,7 +1755,13 @@ function pendingJobMeta(job: HelpdeskPendingOutboundJob) {
   };
 }
 
-function TimelineItem({
+// Memoized: parent-level state changes (lightbox open/close, highlight
+// ring, retry spinners, prefs broadcasts) used to re-render every visible
+// bubble — including SafeHtml sanitisation and translation panels — even
+// though the row props were unchanged. All props are stable references
+// (rows useMemo, useCallback handlers, memoized accent), so the default
+// shallow compare skips untouched rows.
+const TimelineItem = memo(function TimelineItem({
   row,
   buyerInitial,
   agentAccent,
@@ -2332,7 +2316,7 @@ function TimelineItem({
       </div>
     </div>
   );
-}
+});
 
 function isString(value: string | null | undefined): value is string {
   return typeof value === "string" && value.trim().length > 0;

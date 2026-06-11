@@ -83,6 +83,13 @@ interface TicketReaderProps {
   prevTicket?: HelpdeskTicketSummary | null;
   nextTicket?: HelpdeskTicketSummary | null;
   onSent: () => void;
+  /**
+   * Narrow refetch of just the open ticket's detail. Used by ThreadView's
+   * outbound-job countdown poll so a queued reply doesn't trigger the full
+   * inbox refresh cascade every 5 seconds. Falls back to `onSent` when
+   * not provided.
+   */
+  onOutboundTick?: () => void;
   onResolveAdvanceChoice?: (ticketId: string, advance: boolean) => void;
   agentFolders?: { id: string; name: string; color: string }[];
 }
@@ -101,6 +108,7 @@ export function TicketReader({
   prevTicket = null,
   nextTicket = null,
   onSent,
+  onOutboundTick,
   onResolveAdvanceChoice,
   agentFolders = [],
 }: TicketReaderProps) {
@@ -444,6 +452,7 @@ export function TicketReader({
               safeMode={safeMode}
               syncStatus={syncStatus}
               onSent={onSent}
+              onOutboundTick={onOutboundTick}
               showHeader={false}
             />
           }

@@ -1,4 +1,4 @@
-import { NextResponse, type NextRequest } from "next/server";
+import { NextResponse, after, type NextRequest } from "next/server";
 import { z } from "zod";
 import {
   HelpdeskOutboundStatus,
@@ -558,53 +558,64 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
   // Prefetch (hover/focus) never stamps — otherwise moving the cursor
   // across a dozen rows would create a dozen "opened by Adam" timeline
   // rows. Only explicit clicks (which load without ?prefetch=1) stamp.
-  const thirtyMinutesAgo = new Date(Date.now() - 30 * 60_000);
-  const recentOpen = isPrefetch
-    ? ({ id: "prefetch-skip" } as const)
-    : await db.auditLog.findFirst({
-        where: {
-          action: "HELPDESK_TICKET_OPENED",
-          entityType: "HelpdeskTicket",
-          entityId: ticket.id,
-          userId: session.user.id,
-          createdAt: { gte: thirtyMinutesAgo },
-        },
-        select: { id: true },
-      });
-  if (!recentOpen) {
-    // Find the most recent prior open by this agent (any time).
-    const lastOpen = await db.auditLog.findFirst({
-      where: {
-        action: "HELPDESK_TICKET_OPENED",
-        entityType: "HelpdeskTicket",
-        entityId: ticket.id,
-        userId: session.user.id,
-      },
-      orderBy: { createdAt: "desc" },
-      select: { createdAt: true },
+  //
+  // The whole stamp runs via `after()` so the ticket JSON (which gates
+  // first paint of the thread) is never held up by audit bookkeeping —
+  // the timeline row is best-effort and a few ms of lag is invisible.
+  if (!isPrefetch) {
+    const openedTicketId = ticket.id;
+    const openedTicketUpdatedAt = ticket.updatedAt;
+    const openedByUserId = session.user.id;
+    after(async () => {
+      try {
+        const thirtyMinutesAgo = new Date(Date.now() - 30 * 60_000);
+        const recentOpen = await db.auditLog.findFirst({
+          where: {
+            action: "HELPDESK_TICKET_OPENED",
+            entityType: "HelpdeskTicket",
+            entityId: openedTicketId,
+            userId: openedByUserId,
+            createdAt: { gte: thirtyMinutesAgo },
+          },
+          select: { id: true },
+        });
+        if (recentOpen) return;
+
+        // Find the most recent prior open by this agent (any time).
+        const lastOpen = await db.auditLog.findFirst({
+          where: {
+            action: "HELPDESK_TICKET_OPENED",
+            entityType: "HelpdeskTicket",
+            entityId: openedTicketId,
+            userId: openedByUserId,
+          },
+          orderBy: { createdAt: "desc" },
+          select: { createdAt: true },
+        });
+
+        // Activity gate: only stamp if SOMETHING new happened on this
+        // ticket since the previous open. We check the ticket's
+        // updatedAt (covers status changes, assignment, tag changes,
+        // unreadCount bumps from new messages) — that's denormalized
+        // for exactly this kind of cheap "anything changed?" probe.
+        if (lastOpen && openedTicketUpdatedAt <= lastOpen.createdAt) return;
+
+        await db.auditLog.create({
+          data: {
+            userId: openedByUserId,
+            action: "HELPDESK_TICKET_OPENED",
+            entityType: "HelpdeskTicket",
+            entityId: openedTicketId,
+            details: {},
+          },
+        });
+      } catch (err) {
+        console.warn(
+          "[helpdesk] failed to stamp ticket-opened audit row",
+          err instanceof Error ? err.message : err,
+        );
+      }
     });
-
-    let shouldStamp = true;
-    if (lastOpen) {
-      // Activity gate: only stamp if SOMETHING new happened on this
-      // ticket since the previous open. We check the ticket's
-      // updatedAt (covers status changes, assignment, tag changes,
-      // unreadCount bumps from new messages) — that's denormalized
-      // for exactly this kind of cheap "anything changed?" probe.
-      shouldStamp = ticket.updatedAt > lastOpen.createdAt;
-    }
-
-    if (shouldStamp) {
-      await db.auditLog.create({
-        data: {
-          userId: session.user.id,
-          action: "HELPDESK_TICKET_OPENED",
-          entityType: "HelpdeskTicket",
-          entityId: ticket.id,
-          details: {},
-        },
-      });
-    }
   }
 
   // ── Listing enrichment.

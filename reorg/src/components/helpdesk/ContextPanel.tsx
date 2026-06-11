@@ -82,6 +82,7 @@ import {
   type HelpdeskTimelineEvent,
 } from "@/lib/helpdesk/conversation-summary";
 import { Avatar, AvatarStack } from "@/components/ui/avatar";
+import { fetchOrderContextShared } from "@/components/helpdesk/order-context-client";
 import { useCurrentUser } from "@/contexts/current-user-context";
 import { canUseHelpdeskOrderActionsPermission } from "@/lib/helpdesk/order-actions-permission";
 
@@ -555,33 +556,28 @@ function useOrderContext(ticket: HelpdeskTicketDetail): UseOrderContextResult {
     const cached = orderContextCache.get(nextCacheKey) ?? null;
     setState({ cacheKey: nextCacheKey, data: cached });
     // Always refresh, but don't show the spinner if we already have something
-    // on screen — feels "snappy" rather than "loading".
+    // on screen — feels "snappy" rather than "loading". The fetch goes
+    // through the shared deduped client so the Composer's parallel request
+    // for the same ticket rides this network call instead of duplicating it.
     setLoading(!cached);
     setError(null);
-    const ac = new AbortController();
+    let cancelled = false;
     void (async () => {
       try {
-        const res = await fetch(
-          `/api/helpdesk/tickets/${ticket.id}/order-context`,
-          { cache: "no-store", signal: ac.signal },
-        );
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const j = (await res.json()) as OrderContextResponse;
-        if (ac.signal.aborted) return;
+        const j = (await fetchOrderContextShared(ticket.id)) as OrderContextResponse;
+        if (cancelled) return;
         setState({ cacheKey: nextCacheKey, data: j.data });
         orderContextCache.set(nextCacheKey, j.data);
         if (!j.data && j.reason) setError(j.reason);
       } catch (err) {
-        if (ac.signal.aborted) return;
-        // Fetch was aborted by navigation — treat as benign.
-        if (err instanceof DOMException && err.name === "AbortError") return;
+        if (cancelled) return;
         setError(err instanceof Error ? err.message : String(err));
       } finally {
-        if (!ac.signal.aborted) setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     })();
     return () => {
-      ac.abort();
+      cancelled = true;
     };
   }, [ticket.id, ticket.ebayOrderNumber]);
 

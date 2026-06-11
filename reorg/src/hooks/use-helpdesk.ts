@@ -292,6 +292,12 @@ interface UseHelpdeskReturn {
   pageSize: number;
   error: string | null;
   refresh: () => void;
+  /**
+   * Narrow silent refetch of just the selected ticket's detail. Cheaper
+   * than `refresh()` — used by the outbound-job countdown poll so a queued
+   * reply doesn't refetch the whole inbox every 5 seconds.
+   */
+  refreshSelectedTicket: () => void;
   selectedTicketId: string | null;
   setSelectedTicketId: (id: string | null) => void;
   selectedTicket: HelpdeskTicketDetail | null;
@@ -482,10 +488,36 @@ export function useHelpdesk(args: UseHelpdeskArgs): UseHelpdeskReturn {
         setSnapshot((prev) => {
           const startCursors = prev.startCursors.slice();
           startCursors[targetIndex] = cursor;
+          // Reuse the previous row object when a ticket is byte-identical so
+          // row references stay stable across the 60s poll — and when the
+          // whole page is unchanged, keep the previous snapshot object so
+          // React skips the list re-render entirely (the most common poll
+          // outcome is "nothing changed").
+          const prevById = new Map(prev.tickets.map((t) => [t.id, t]));
+          let allSame = true;
+          const nextTickets = (ticketsJson.data ?? []).map((t) => {
+            const old = prevById.get(t.id);
+            if (old && JSON.stringify(old) === JSON.stringify(t)) return old;
+            allSame = false;
+            return t;
+          });
+          if (
+            allSame &&
+            prev.pageIndex === targetIndex &&
+            prev.tickets.length === nextTickets.length &&
+            prev.tickets.every((t, i) => t === nextTickets[i]) &&
+            prev.nextCursor === (ticketsJson.nextCursor ?? null) &&
+            prev.totalCount === (ticketsJson.totalCount ?? 0) &&
+            prev.startCursors[targetIndex] === cursor
+          ) {
+            // Keep cache freshness bookkeeping without re-rendering.
+            setInbox(filterKey, { ...prev, fetchedAt: Date.now() });
+            return prev;
+          }
           const next: InboxPageSnapshot = {
             pageIndex: targetIndex,
             startCursors,
-            tickets: ticketsJson.data ?? [],
+            tickets: nextTickets,
             nextCursor: ticketsJson.nextCursor ?? null,
             totalCount: ticketsJson.totalCount ?? 0,
             totalPages: Math.max(1, ticketsJson.totalPages ?? 1),
@@ -579,7 +611,18 @@ export function useHelpdesk(args: UseHelpdeskArgs): UseHelpdeskReturn {
         if (!res.ok) throw new Error(`Ticket ${res.status}`);
         const json = (await res.json()) as { data: HelpdeskTicketDetail };
         if (requestId !== selectedRequestIdRef.current) return;
-        setSelectedTicket(json.data);
+        // Skip the state update when the payload is byte-identical to what
+        // is already on screen. Silent refreshes land every 60s (and every
+        // 5s while an outbound job is pending); replacing the object
+        // reference each time forced the entire thread + virtualizer to
+        // re-render and re-measure for no visible change.
+        setSelectedTicket((prev) =>
+          prev &&
+          prev.id === json.data.id &&
+          JSON.stringify(prev) === JSON.stringify(json.data)
+            ? prev
+            : json.data,
+        );
         setDetail(id, json.data);
 
         // Auto-mark-read: when an agent opens an unread ticket, mark it read
@@ -631,11 +674,27 @@ export function useHelpdesk(args: UseHelpdeskArgs): UseHelpdeskReturn {
         setError(err instanceof Error ? err.message : String(err));
       } finally {
         if (requestId !== selectedRequestIdRef.current) return;
-        if (!silent && !cached) setSelectedLoading(false);
+        // Always clear the spinner once the latest request settles. The old
+        // `!cached` guard captured the cache state from request start, which
+        // could leave the skeleton stuck after a fast ticket-switch race.
+        if (!silent) setSelectedLoading(false);
       }
     },
     [],
   );
+
+  /**
+   * Narrow refetch of just the selected ticket's detail (messages, notes,
+   * pending outbound jobs). Used by the outbound-job countdown poll in
+   * ThreadView — the previous behaviour called the full `refresh()` cascade
+   * (inbox page + counts + sync status + detail) every 5 seconds while a
+   * reply was queued, which thrashed the whole list view for the duration
+   * of the send delay.
+   */
+  const refreshSelectedTicket = useCallback(() => {
+    const id = selectedTicketIdRef.current;
+    if (id) void loadSelected(id, { silent: true });
+  }, [loadSelected]);
 
   const loadSyncStatus = useCallback(async () => {
     // Reuse the aux abort controller so a fresh page load cancels any prior
@@ -810,6 +869,7 @@ export function useHelpdesk(args: UseHelpdeskArgs): UseHelpdeskReturn {
     pageSize: PAGE_SIZE,
     error,
     refresh,
+    refreshSelectedTicket,
     selectedTicketId,
     setSelectedTicketId,
     selectedTicket,
