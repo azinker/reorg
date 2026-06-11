@@ -1152,7 +1152,15 @@ export function ThreadView({
     let settleFrame = 0;
     const jumpToBottom = () => {
       if (useVirtualTimeline) {
-        virtualizer.measure();
+        // DO NOT call virtualizer.measure() here. measure() wipes the whole
+        // item-size cache, and rows that are ALREADY mounted never get
+        // re-measured (ResizeObserver only fires on size change, and React
+        // only re-runs the measureElement ref on mount). Mid-hydration that
+        // left mounted rows positioned by the 120px estimate while their
+        // real height was much taller — message bubbles rendered on top of
+        // each other until the ticket was closed and reopened. scrollToIndex
+        // works off current measurements, and the rAF retries below refine
+        // the bottom position as newly mounted rows report their real size.
         virtualizer.scrollToIndex(rows.length - 1, { align: "end", behavior: "auto" });
       } else if (scrollRef.current) {
         scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
