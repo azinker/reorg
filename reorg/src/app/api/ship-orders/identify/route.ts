@@ -9,6 +9,15 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
+/**
+ * Upper bound for a SINGLE identify call. The UI chunks well below this
+ * (IDENTIFY_CHUNK_SIZE in ShipOrdersPanel), so this only caps oversized
+ * direct/manual requests to keep one serverless invocation inside its time
+ * budget. Raised past the old 1000 because eBay lookups are batched and the
+ * numeric paths are the real constraint, not the total count.
+ */
+const MAX_ORDERS_PER_IDENTIFY_REQUEST = 2000;
+
 const bodySchema = z.object({
   /** Raw pasted text — one order+tracking pair per line, tab or double-space separated. */
   lines: z.string().min(1).max(200_000),
@@ -50,9 +59,17 @@ export async function POST(request: NextRequest) {
         { status: 400 },
       );
     }
-    if (parsedLines.length > 1000) {
+    // Per-request safety bound only. The Ship Orders UI chunks large pastes
+    // client-side (IDENTIFY_CHUNK_SIZE) so there is no limit on how many
+    // orders a user can identify in one batch — each call just stays small
+    // enough to finish inside the serverless time budget. This guard protects
+    // a single invocation (e.g. a direct API call) from timing out on the
+    // low-concurrency BigCommerce/Shopify/Amazon lookups.
+    if (parsedLines.length > MAX_ORDERS_PER_IDENTIFY_REQUEST) {
       return NextResponse.json(
-        { error: "At most 1000 orders per request." },
+        {
+          error: `At most ${MAX_ORDERS_PER_IDENTIFY_REQUEST} orders per request. Split larger batches into multiple requests (the Ship Orders page does this automatically).`,
+        },
         { status: 400 },
       );
     }

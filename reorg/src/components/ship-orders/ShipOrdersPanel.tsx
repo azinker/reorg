@@ -26,6 +26,16 @@ import type { Platform } from "@prisma/client";
 /** Orders sent per execute API call. Gives real progress ticks without too many round-trips. */
 const SHIP_CHUNK_SIZE = 25;
 
+/**
+ * Order+tracking lines sent per identify API call. Chunking client-side is
+ * what lets the user paste an unlimited number of orders: each request stays
+ * small enough to finish well inside the serverless time budget (the numeric
+ * BigCommerce/Shopify lookups run at low concurrency), and results stream in
+ * chunk-by-chunk instead of blocking on one giant call. Mirror of the
+ * execute phase, which already chunks at SHIP_CHUNK_SIZE.
+ */
+const IDENTIFY_CHUNK_SIZE = 200;
+
 // ─── Platform badges ──────────────────────────────────────────────────────────
 
 const PLATFORM_META: Record<Platform, { label: string; color: string }> = {
@@ -60,13 +70,15 @@ type ProgressState = {
 
 function ProgressBar({ progress }: { progress: ProgressState }) {
   const pct =
-    progress.phase === "identifying" || progress.total === 0
+    progress.total === 0
       ? null
       : Math.round((progress.done / progress.total) * 100);
 
   const label =
     progress.phase === "identifying"
-      ? "Identifying orders…"
+      ? progress.total === 0
+        ? "Identifying orders…"
+        : `Identifying ${progress.done} / ${progress.total} orders…`
       : progress.done === 0
         ? `Preparing ${progress.total} orders…`
         : `${progress.done} / ${progress.total} orders shipped`;
@@ -203,28 +215,67 @@ export function ShipOrdersPanel() {
     if (!rawInput.trim()) return;
     setIdentifyError(null);
     setIdentifying(true);
-    setProgress({ phase: "identifying", done: 0, total: 0 });
     setRows([]);
 
-    try {
-      const res = await fetch("/api/ship-orders/identify", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ lines: rawInput }),
-      });
-      const json = (await res.json()) as {
-        data?: { results: IdentifyApiResult[] };
-        error?: string;
-      };
+    // Split into non-empty lines and chunk so we never send one oversized
+    // request. Each chunk is identified independently and its results stream
+    // into the table as they arrive — there is no upper bound on paste size.
+    const lines = rawInput
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .filter(Boolean);
+    const totalLines = lines.length;
+    const chunks: string[][] = [];
+    for (let i = 0; i < lines.length; i += IDENTIFY_CHUNK_SIZE) {
+      chunks.push(lines.slice(i, i + IDENTIFY_CHUNK_SIZE));
+    }
 
-      if (!res.ok || !json.data) {
-        setIdentifyError(json.error ?? "Failed to identify orders");
-        return;
+    setProgress({ phase: "identifying", done: 0, total: totalLines });
+
+    let done = 0;
+    let anySuccess = false;
+    let lastError: string | null = null;
+
+    try {
+      for (const chunk of chunks) {
+        try {
+          const res = await fetch("/api/ship-orders/identify", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ lines: chunk.join("\n") }),
+          });
+          const json = (await res.json()) as {
+            data?: { results: IdentifyApiResult[] };
+            error?: string;
+          };
+
+          if (res.ok && json.data) {
+            anySuccess = true;
+            const newRows = json.data.results.map(
+              (r) => ({ phase: "identified" as const, data: r }),
+            );
+            // Append progressively so the user watches the table fill in.
+            setRows((prev) => [...prev, ...newRows]);
+          } else {
+            lastError = json.error ?? "Failed to identify orders";
+          }
+        } catch {
+          lastError = "Network error — could not reach server";
+        }
+
+        done += chunk.length;
+        setProgress({ phase: "identifying", done, total: totalLines });
       }
 
-      setRows(json.data.results.map((r) => ({ phase: "identified" as const, data: r })));
-    } catch {
-      setIdentifyError("Network error — could not reach server");
+      // Only surface an error if nothing came back at all; a single failed
+      // chunk in a large paste shouldn't discard the orders that did resolve.
+      if (!anySuccess && lastError) {
+        setIdentifyError(lastError);
+      } else if (lastError) {
+        setIdentifyError(
+          `Some orders could not be identified (${lastError}). The rest are listed below.`,
+        );
+      }
     } finally {
       setIdentifying(false);
       setProgress(null);
