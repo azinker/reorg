@@ -12,7 +12,7 @@
  * on this page — every action lives on the detail page behind the safety gate.
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import {
   ArrowLeft,
@@ -101,6 +101,7 @@ export default function ReturnsListClient() {
 
   const [syncing, setSyncing] = useState(false);
   const [syncMsg, setSyncMsg] = useState<string | null>(null);
+  const [lastSyncAt, setLastSyncAt] = useState<Date | null>(null);
 
   // Live-write toggle (returns_live_writes). Default LOCKED.
   const [liveWrites, setLiveWrites] = useState<boolean | null>(null);
@@ -140,6 +141,14 @@ export default function ReturnsListClient() {
     void load();
   }, [load]);
 
+  // Keep a stable handle to the latest loader so the auto-sync interval can
+  // refresh the list (with whatever filters are active) without re-subscribing
+  // every time a filter changes.
+  const loadRef = useRef(load);
+  useEffect(() => {
+    loadRef.current = load;
+  }, [load]);
+
   // Load live-write setting once.
   useEffect(() => {
     let cancelled = false;
@@ -175,7 +184,7 @@ export default function ReturnsListClient() {
     }
   }
 
-  async function onSync() {
+  const runSync = useCallback(async () => {
     setSyncing(true);
     setSyncMsg(null);
     try {
@@ -185,24 +194,41 @@ export default function ReturnsListClient() {
         summaries?: { upserted: number; errors: string[] }[];
         error?: string;
       } | null;
+      if (res.status === 403) {
+        setForbidden(true);
+        return;
+      }
       if (!res.ok || json?.ok === false) {
         throw new Error(json?.error ?? `Sync failed (${res.status})`);
       }
       const summaries = json?.summaries ?? [];
       const upserted = summaries.reduce((acc, s) => acc + (s.upserted ?? 0), 0);
       const errs = summaries.flatMap((s) => s.errors ?? []);
+      setLastSyncAt(new Date());
       setSyncMsg(
         errs.length > 0
           ? `Synced ${upserted} return(s); ${errs.length} issue(s): ${errs.join("; ")}`
-          : `Synced ${upserted} return(s).`,
+          : null,
       );
-      await load();
+      await loadRef.current();
     } catch (e) {
       setSyncMsg(e instanceof Error ? e.message : "Sync failed");
     } finally {
       setSyncing(false);
     }
-  }
+  }, []);
+
+  // Auto-sync: run once on mount ("right away"), then every 15 minutes while
+  // the page is open. A server cron also runs every 15 min so the mirror stays
+  // fresh even when nobody has this page open. Sync is idempotent (upsert on
+  // returnId), so overlap with the cron is harmless. runSync is stable (it
+  // reads the latest loader via loadRef), so filter changes never re-trigger
+  // a full eBay sync.
+  useEffect(() => {
+    void runSync();
+    const id = setInterval(() => void runSync(), 15 * 60 * 1000);
+    return () => clearInterval(id);
+  }, [runSync]);
 
   function applySearch() {
     setPage(1);
@@ -244,20 +270,20 @@ export default function ReturnsListClient() {
         >
           <ArrowLeft className="h-3 w-3" /> Back to Help Desk
         </Link>
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={onSync}
-            disabled={syncing}
-            className="inline-flex items-center gap-1.5 rounded-md border border-hairline bg-surface px-3 py-1.5 text-xs font-medium text-foreground hover:bg-surface-2 disabled:opacity-50 cursor-pointer"
-          >
-            {syncing ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            ) : (
-              <RefreshCw className="h-3.5 w-3.5" />
-            )}
-            Sync now
-          </button>
+        <div
+          className="inline-flex items-center gap-1.5 rounded-md border border-hairline bg-surface px-3 py-1.5 text-xs font-medium text-muted-foreground"
+          title="Returns sync runs automatically every 15 minutes (and on a server cron even when this page is closed)."
+        >
+          {syncing ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin text-brand" />
+          ) : (
+            <RefreshCw className="h-3.5 w-3.5 text-emerald-500" />
+          )}
+          {syncing
+            ? "Syncing…"
+            : lastSyncAt
+              ? `Auto-sync · synced ${fmtAgo(lastSyncAt.toISOString())}`
+              : "Auto-syncs every 15 min"}
         </div>
       </div>
 
@@ -376,26 +402,32 @@ export default function ReturnsListClient() {
             ))}
           </select>
         </Field>
-        <Field label="Search (Return ID, order, buyer, item)">
-          <div className="flex">
-            <input
-              value={searchInput}
-              onChange={(e) => setSearchInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") applySearch();
-              }}
-              placeholder="Search…"
-              className="h-9 w-56 rounded-l-md border border-r-0 border-hairline bg-surface px-2 text-sm text-foreground"
-            />
-            <button
-              type="button"
-              onClick={applySearch}
-              className="inline-flex h-9 items-center rounded-r-md border border-hairline bg-surface-2 px-2.5 text-sm text-foreground hover:bg-surface cursor-pointer"
-            >
-              <Search className="h-4 w-4" />
-            </button>
-          </div>
-        </Field>
+      </div>
+
+      {/* Search — own full-width row below the filters */}
+      <div className="mb-4 rounded-xl border border-hairline bg-card p-3">
+        <span className="mb-1 block text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+          Search (Return ID, order number, buyer, item title)
+        </span>
+        <div className="flex w-full">
+          <input
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") applySearch();
+            }}
+            placeholder="Search returns…"
+            className="h-9 w-full min-w-0 flex-1 rounded-l-md border border-r-0 border-hairline bg-surface px-3 text-sm text-foreground"
+          />
+          <button
+            type="button"
+            onClick={applySearch}
+            className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-r-md border border-hairline bg-surface-2 px-4 text-sm font-medium text-foreground hover:bg-surface cursor-pointer"
+          >
+            <Search className="h-4 w-4" />
+            Search
+          </button>
+        </div>
       </div>
 
       {syncMsg ? (

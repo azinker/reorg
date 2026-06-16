@@ -22,6 +22,10 @@
       "schedule": "* * * * *"
     },
     {
+      "path": "/api/cron/helpdesk-returns-sync",
+      "schedule": "*/15 * * * *"
+    },
+    {
       "path": "/api/cron/helpdesk-housekeeping",
       "schedule": "0 6 * * *"
     }

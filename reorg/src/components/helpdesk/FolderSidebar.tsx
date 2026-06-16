@@ -508,15 +508,6 @@ export function FolderSidebar({
           ))}
         </ul>
 
-        {/* Section C2: Return Cases — separate route (eBay Post-Order returns).
-         * Admin-only in v1. Links out of the inbox state machine to its own
-         * page; the badge shows open returns needing a seller action. */}
-        {isAdmin ? (
-          <ul className="mt-2 space-y-0.5">
-            <ReturnCasesNavItem />
-          </ul>
-        ) : null}
-
         {/* Section D: Tags drawer — system / state machine folders */}
         <div className="mt-2">
           <SectionDisclosure
@@ -559,6 +550,21 @@ export function FolderSidebar({
             />
           ) : null}
         </div>
+
+        {/* Section F: Return Cases — its own section (eBay Post-Order returns).
+         * Admin-only in v1. Sits below Agent Folders behind a separator so it
+         * reads as a distinct area, separate from the inbox state machine. The
+         * badge shows open returns that need a seller action. */}
+        {isAdmin ? (
+          <div className="mt-3 border-t border-hairline pt-3">
+            <p className="px-2 pb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70">
+              Returns
+            </p>
+            <ul className="space-y-0.5">
+              <ReturnCasesNavItem />
+            </ul>
+          </div>
+        ) : null}
       </nav>
 
       <div className="mt-auto border-t border-hairline bg-card/80 p-2 text-sm">
