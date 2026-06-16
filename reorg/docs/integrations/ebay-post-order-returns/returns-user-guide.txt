@@ -1,0 +1,16 @@
+URL: https://developer.ebay.com/api-docs/user-guides/static/post-order-user-guide/post-order-returns.html
+STATUS: 403
+TITLE: Error Page | eBay
+
+SORRY
+
+Something went wrong on our end
+
+0.17fc3117.1781643973.1de83e1d
+
+Please go back and try again
+or go to eBay Homepage.
+
+Go to homepage
+
+Copyright © 1995-2026 eBay Inc. All Rights Reserved.

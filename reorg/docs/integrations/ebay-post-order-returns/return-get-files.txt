@@ -1,0 +1,226 @@
+URL: https://developer.ebay.com/Devzone/post-order/post-order_v2_return-returnId_files__get.html
+STATUS: 200
+TITLE: Get Return Files - eBay Post-Order API Reference
+
+eBay Post-Order APIVersion 2.9.0
+Join
+Develop
+Grow
+Updates
+Support
+User Guide Making a Call API Reference Release Notes
+ 
+Get Return Files
+GET /post-order/v2/return/{returnId}/files
+
+Use this method to retrieve information about the files associated with a return request.
+
+
+This method is not supported in the Sandbox environment.
+Input Output Samples Change History
+Input
+
+See also Samples.
+
+Resource URI (production)
+GET https://api.ebay.com/post-order/v2/return/{returnId}/files
+URI parameters
+Parameter	Type	Required?	Meaning
+returnId	string	Required	The unique eBay-assigned ID of the return request. The returnId value is required as part of the call URI to identify the return request for which files are being retrieved.
+
+
+
+HTTP request headers
+
+All requests made to eBay REST operations require you to provide the authorization HTTP header for authentication.
+See HTTP request headers for details.
+
+
+
+
+Authorization
+
+This call uses standard authorization tokens. See Making a Call for details.
+
+Payload model
+
+This call has no request payload.
+
+
+
+Input Output Samples Change History
+Output
+
+See also Samples.
+
+Payload model
+
+Note: For information about the error fields and how to work with them, see Error Handling.
+
+The following lists all fields that could be included in the response.
+
+Supported response formats: application/json, application/xml
+
+For more information:
+- See GetFileResponse for a description of the response structure
+- See the following table for descriptions of each of the data elements returned
+- See the Samples for an example of the response format
+
+{ /* GetFileResponse */
+"files": [
+    { /* ReturnFileType */
+    "creationDate":
+        { /* DateTime */
+        "formattedValue": string,
+        "value": datetime
+        },
+    "fileData": string,
+    "fileFormat": string,
+    "fileId": string,
+    "fileName": string,
+    "filePurpose": string,
+    "fileStatus": string,
+    "resizedFileData": string,
+    "secureUrl": string,
+    "submitter": string
+    }
+    /* More ReturnFileType nodes here */
+  ]
+}
+
+Response field descriptions
+
+
+
+Output Container/Field	Type	Occurrence	Meaning
+files	array of ReturnFileType	Conditionally	This array consists of details on one or more files associated with the return request or return draft specified in the request. If there are no files associated with the specified return request or return draft, this container will not be returned.
+files.creationDate	DateTime	Conditionally	The timestamp in this container indicates when the file was attached to the return request or return request draft.
+files.creationDate
+  .formattedValue	string	Conditionally	Reserved for future use.
+files.creationDate.value	datetime	Conditionally	This timestamp indicates the date and time when an action or event occurred.
+
+The timestamp is formatted as an ISO 8601 string, which is based on the 24-hour Coordinated Universal Time (UTC) clock.
+
+Format: [YYYY]-[MM]-[DD]T[hh]:[mm]:[ss].[sss]Z
+Example: 2022-03-20T00:00:00.000Z
+files.fileData	string	Conditionally	This field is the base64-encoded binary representation of the file associated with the return request or return request draft. This field is always returned for each file that is attached to a return request or return request draft.
+files.fileFormat	string	Conditionally	This enumeration value indicates the file type (like .GIF or .JPG). This field is always returned for each file that is attached to a return request or return request draft.
+
+Applicable values are from FileFormatEnum:See fileFormat.
+Code so that your app gracefully handles any future changes to this list.
+files.fileId	string	Conditionally	This is the unique eBay-assigned ID of a file that is associated with the return request or return request draft. This field is always returned for each file that is attached to a return request or return request draft.
+files.fileName	string	Conditionally	This field contains the name of the uploaded file. This field will be returned if the user has specified a name for the file.
+files.filePurpose	string	Conditionally	This enumeration value indicates the file's purpose. Files attached to return requests or return request drafts may provide more information about the condition of the item, about the buyer's refund, or about shipment tracking or shipping label. This field is always returned for each file that is attached to a return request or draft.
+
+Applicable values are from FilePurposeEnum:
+
+
+ITEM_RELATED
+This enumeration value indicates that the file is intended to provide more information about the item. For example, in a case where the buyer and seller are in disagreement over the condition of the item, the buyer or seller may provide a photo of the item that visually shows the condition of the item.
+LABEL_RELATED
+This enumeration value indicates that the file is intended to provide more information about a shipping label or shipment tracking information. For example, in a case where the buyer and seller are in disagreement over whether shipment tracking information has been provided or not, the buyer or seller may provide a photo of the shipping label itself, or they may provide a file that proves a package has been shipped or delivered.
+REFUND_RELATED
+This enumeration value indicates that the file is intended to provide more information about a buyer refund. For example, in a case where the buyer is saying that they have not recieved their refund, the seller may provide a file that proves that a refund has been issued.
+UNKNOWN
+This enumeration value should not be used in a Submit/Upload File request, but it is possible that this value may get returned in a response if the purpose of the file is not known.
+
+Code so that your app gracefully handles any future changes to this list.
+files.fileStatus	string	Conditionally	This enumeration value indicates the current status of the file. This field is always returned for each file that is attached to a return request or return request draft.
+
+Applicable values are from FileStatusEnum:
+
+
+CREATED
+This enumeration value indicates that the file has been created, but has yet to be associated with a return request or draft.
+DELETED
+This enumeration value indicates that the file has been removed, or unassociated with a return request or draft.
+PUBLISHED
+This enumeration value indicates that the file has been associated with a return request or draft.
+UNKNOWN
+This enumeration value indicates that the status of the file is unknown.
+
+Code so that your app gracefully handles any future changes to this list.
+files.resizedFileData	string	Conditionally	This field is the base64-encoded binary representation of the file associated with the return request or return request draft. This field is returned for each file that is attached to a return request or return request draft that has been resized.
+files.secureUrl	string	Conditionally	This field contains the URL where the uploaded file can be viewed.
+files.submitter	string	Conditionally	This enumeration value indicates which party (buyer or seller) submitted the file. This field is always returned for each file that is attached to a return request or return request draft.
+
+Applicable values are from ReturnUserRoleEnum:
+
+
+BUYER
+This enumeration value indicates that the buyer performed the action on the return request.
+EBAY
+This enumeration value indicates that eBay customer support performed the action on the return request.
+OTHER
+This enumeration value indicates that it is unknown who/what performed the action on the return request.
+SELLER
+This enumeration value indicates that the seller performed the action on the return request.
+SYSTEM
+This enumeration value indicates that the action on the return request was an automated action initiated by eBay's system.
+
+Code so that your app gracefully handles any future changes to this list.
+null
+
+
+
+
+
+Input Output Samples Change History
+Samples
+
+New to making API calls? Please see Making a Call.
+
+Note: Some item IDs, user IDs, or other data in these samples might no longer be active on eBay. If necessary, you can substitute current eBay data in your requests.
+
+Sample: Retrieve Files
+
+Retrieve the files that were uploaded to support a return.
+
+Description
+
+This operation requests the data and supporting information for all files that are associated with the specified return.
+
+Input
+
+The returnId parameter is required to identify the return for which files are being retrieved. This call has no request payload.
+
+URL format. See also the non-wrapped version of this URL.
+
+GET https://api.sandbox.ebay.com/post-order/v2/return/5********1/files
+
+
+Output
+
+The response contains the identifier and the data for one JPEG file that was uploaded by the buyer to illustrate the condition of the item for which the return request was submitted. The file data is truncated for readability in this sample.
+
+JSON format.
+{
+  files : [ 
+  {
+    fileId : "5********2",
+    fileData : "/9j/4*********************D/7***Q ... G**************************P/2Q==",
+    filePurpose : "ITEM_RELATED",
+    fileStatus : "CREATED",
+    submitter : "BUYER",
+    fileFormat : "JPEG",
+    creationDate : 
+    {
+      value : "2015/08/13 15:49:28.000.-0700"
+    }
+  } 
+  ]
+}
+
+
+
+
+
+
+
+Input Output Samples Change History
+Change History
+Change Date	Description
+
+FAQs Developer Community Forum Developer Technical Support APIs API License Agreement
+
+Copyright 1999-2026 eBay Inc. All rights reserved. User agreement, Privacy policy, Cookies.

@@ -1,0 +1,1814 @@
+URL: https://developer.ebay.com/Devzone/post-order/enumindex.html
+STATUS: 200
+TITLE: Enumeration Index - API Reference - Post-Order API
+
+eBay Post-Order APIVersion 2.9.0
+Join
+Develop
+Grow
+Updates
+Support
+User Guide Making a Call API Reference Release Notes
+ 
+Enumeration Index
+
+This is a list of all enumeration values in the schema. The same enumeration value name may be used by several calls.
+
+A
+
+A  B  C  D  E  F  G  H  I  J  K  L  M  N  O  P  Q  R  S  T  U  V  W  X  Y  Z 
+
+Enum name	Code list(s) with this enum value	Used by
+ACCEPT_PARTIAL_REFUND	
+DecisionEnum	/post-order/v2/return/{returnId}/decide POST
+
+ACCEPT_REPLACEMENT_OFFER	
+DecisionEnum	/post-order/v2/return/{returnId}/decide POST
+
+ALL_OPEN	
+ReturnCountFilterEnum	/post-order/v2/return/search GET
+
+ALL_OPEN_REPLACEMENT	
+ReturnCountFilterEnum	/post-order/v2/return/search GET
+
+ALL_OPEN_RETURN	
+ReturnCountFilterEnum	/post-order/v2/return/search GET
+
+AMERICAN_EXPRESS	
+FundingMethodBrandEnum	/post-order/v2/cancellation/{cancelId} GET
+/post-order/v2/casemanagement/{caseId} GET
+/post-order/v2/inquiry/{inquiryId} GET
+/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+APPLICATION	
+ErrorCategory	/post-order/v2/cancellation POST
+
+APPROVE	
+DecisionEnum	/post-order/v2/return/{returnId}/decide POST
+
+APPROVE_WITHOUT_EBAY_LABEL	
+DecisionEnum	/post-order/v2/return/{returnId}/decide POST
+
+AU_LABEL	
+LabelActionEnum	/post-order/v2/return/{returnId}/add_shipping_label POST
+
+AU_PARCELPOINT	
+RlspTypeEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+AU_PARCELPOINT_AUPOST	
+RlspTypeEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+AU_PARCELPOINT_AUPOST_DROP	
+RlspTypeEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+AU_PARCELPOINT_COURIER_PICKUP	
+RlspTypeEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+AUTO_APPROVE_REMORSE	
+ActivityOptionEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+AUTO_PARTIAL_REFUNDED	
+CloseReturnReasonEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+AUTO_REFUND	
+ReturnRefundInitiatorEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+AUTO_REFUND_INITIATED	
+ReturnStateEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+AUTO_REFUNDED	
+CloseReturnReasonEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+AVAILABLE_FUNDS	
+FundingMethodTypeEnum	/post-order/v2/cancellation/{cancelId} GET
+/post-order/v2/casemanagement/{caseId} GET
+/post-order/v2/inquiry/{inquiryId} GET
+/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+B
+
+A  B  C  D  E  F  G  H  I  J  K  L  M  N  O  P  Q  R  S  T  U  V  W  X  Y  Z 
+
+Enum name	Code list(s) with this enum value	Used by
+BMP	
+FileFormatEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+/post-order/v2/return/{returnId}/files GET
+
+BUYER	
+PartyEnum	/post-order/v2/cancellation/search GET
+/post-order/v2/cancellation/{cancelId} GET
+ReturnUserRoleEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+/post-order/v2/return/{returnId}/files GET
+UserPartyEnum	/post-order/v2/casemanagement/{caseId} GET
+/post-order/v2/inquiry/{inquiryId} GET
+
+BUYER_ACCEPT_LESS_THAN_FULL_REFUND	
+CloseReturnReasonEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+BUYER_ACCEPT_LESS_THAN_FULL_REFUND_AS_PAYOUT	
+CloseReturnReasonEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+BUYER_ACCEPT_REPLACEMENT_OFFER	
+ActivityOptionEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+BUYER_ACCEPTS_NON_PAYPAL_PARTIAL_REFUND	
+ActivityOptionEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+BUYER_ACCEPTS_PARTIAL_REFUND	
+ActivityOptionEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+BUYER_CLOSE_RETURN	
+ActivityOptionEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+BUYER_CLOSED	
+CloseReturnReasonEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+BUYER_CREATE_RETURN	
+ActivityOptionEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+BUYER_DECLINE_PARTIAL_REFUND	
+ActivityOptionEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+BUYER_DECLINE_REPLACEMENT_OFFER	
+ActivityOptionEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+BUYER_ESCALATE	
+ActivityOptionEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+BUYER_MARK_AS_RECEIVED	
+ActivityOptionEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+BUYER_MARK_REFUND_RECEIVED	
+ActivityOptionEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+BUYER_MARK_RETURN_SHIPPED	
+ActivityOptionEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+BUYER_NO_ACTION	
+CloseReturnReasonEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+BUYER_NO_LONGER_WANTS_RETURN	
+BuyerCloseReturnReasonEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+BUYER_PARTIAL_REFUND_AS_PAYOUT	
+CloseReturnReasonEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+BUYER_PAYOUT	
+CloseReturnReasonEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+MoneyMovementTypeEnum	/post-order/v2/cancellation/{cancelId} GET
+
+BUYER_PAYOUT_FAILED	
+CloseReturnReasonEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+BUYER_PRINT_SHIPPING_LABEL	
+ActivityOptionEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+BUYER_PROVIDE_LABEL	
+ActivityOptionEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+BUYER_PROVIDE_TRACKING_INFO	
+ActivityOptionEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+BUYER_RECEIVED_REFUND	
+BuyerCloseReturnReasonEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+BUYER_RECEIVED_REPLACEMENT	
+BuyerCloseReturnReasonEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+BUYER_REFUND_AS_PAYOUT	
+CloseReturnReasonEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+BUYER_SEND_MESSAGE	
+ActivityOptionEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+BUYER_STARTED_RETURN_ACCIDENTALLY	
+BuyerCloseReturnReasonEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+BUYER_UPDATE_TRACKING	
+ActivityOptionEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+BUYER_VOID_LABEL	
+ActivityOptionEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+C
+
+A  B  C  D  E  F  G  H  I  J  K  L  M  N  O  P  Q  R  S  T  U  V  W  X  Y  Z 
+
+Enum name	Code list(s) with this enum value	Used by
+CANCEL	
+ReturnReasonTypeEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+CANCELLED	
+TrackingStatusEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+CHARGE_BACK_OPENED	
+BuyerCloseReturnReasonEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+CHARGEBACK_DISPUTE_FILED	
+CloseReturnReasonEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+CHARGEBACK_OPEN	
+ActivityOptionEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+CLOSED	
+ReturnCountFilterEnum	/post-order/v2/return/search GET
+ReturnStateEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+ReturnStatusEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+CREATE	
+RequestTypeEnum	/post-order/v2/return POST
+
+CREATED	
+FileStatusEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+/post-order/v2/return/{returnId}/files GET
+TrackingStatusEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+CREDIT_CARD	
+FundingMethodTypeEnum	/post-order/v2/cancellation/{cancelId} GET
+/post-order/v2/casemanagement/{caseId} GET
+/post-order/v2/inquiry/{inquiryId} GET
+/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+CSR	
+UserPartyEnum	/post-order/v2/casemanagement/{caseId} GET
+/post-order/v2/inquiry/{inquiryId} GET
+D
+
+A  B  C  D  E  F  G  H  I  J  K  L  M  N  O  P  Q  R  S  T  U  V  W  X  Y  Z 
+
+Enum name	Code list(s) with this enum value	Used by
+DECLINE	
+DecisionEnum	/post-order/v2/return/{returnId}/decide POST
+
+DECLINE_PARTIAL_REFUND	
+DecisionEnum	/post-order/v2/return/{returnId}/decide POST
+
+DECLINE_REPLACEMENT_OFFER	
+DecisionEnum	/post-order/v2/return/{returnId}/decide POST
+
+DELETE_FILE	
+ActivityOptionEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+DELETED	
+FileStatusEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+/post-order/v2/return/{returnId}/files GET
+
+DELIVERED	
+TrackingStatusEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+DENIED	
+AppealGrantStatusEnum	/post-order/v2/casemanagement/{caseId} GET
+/post-order/v2/inquiry/{inquiryId} GET
+
+DIRECT_DEBIT	
+FundingMethodTypeEnum	/post-order/v2/cancellation/{cancelId} GET
+/post-order/v2/casemanagement/{caseId} GET
+/post-order/v2/inquiry/{inquiryId} GET
+/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+DISCOVER	
+FundingMethodBrandEnum	/post-order/v2/cancellation/{cancelId} GET
+/post-order/v2/casemanagement/{caseId} GET
+/post-order/v2/inquiry/{inquiryId} GET
+/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+DOMESTIC_SHIPPING	
+RefundFeeTypeEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+E
+
+A  B  C  D  E  F  G  H  I  J  K  L  M  N  O  P  Q  R  S  T  U  V  W  X  Y  Z 
+
+Enum name	Code list(s) with this enum value	Used by
+EBAY	
+ReturnUserRoleEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+/post-order/v2/return/{returnId}/files GET
+
+EBAY_AT	
+MarketplaceIdEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+EBAY_AU	
+MarketplaceIdEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+EBAY_BE	
+MarketplaceIdEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+EBAY_CA	
+MarketplaceIdEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+EBAY_CH	
+MarketplaceIdEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+EBAY_CN	
+MarketplaceIdEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+EBAY_CZ	
+MarketplaceIdEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+EBAY_DE	
+MarketplaceIdEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+EBAY_DK	
+MarketplaceIdEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+EBAY_ES	
+MarketplaceIdEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+EBAY_FI	
+MarketplaceIdEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+EBAY_FR	
+MarketplaceIdEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+EBAY_GB	
+MarketplaceIdEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+EBAY_GR	
+MarketplaceIdEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+EBAY_HALF_US	
+MarketplaceIdEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+EBAY_HK	
+MarketplaceIdEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+EBAY_HU	
+MarketplaceIdEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+EBAY_ID	
+MarketplaceIdEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+EBAY_IE	
+MarketplaceIdEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+EBAY_IL	
+MarketplaceIdEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+EBAY_IN	
+MarketplaceIdEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+EBAY_IT	
+MarketplaceIdEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+EBAY_JP	
+MarketplaceIdEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+EBAY_LABEL	
+LabelActionEnum	/post-order/v2/return/{returnId}/add_shipping_label POST
+
+EBAY_MOTORS_US	
+MarketplaceIdEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+EBAY_MY	
+MarketplaceIdEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+EBAY_NL	
+MarketplaceIdEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+EBAY_NO	
+MarketplaceIdEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+EBAY_NZ	
+MarketplaceIdEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+EBAY_PE	
+MarketplaceIdEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+EBAY_PH	
+MarketplaceIdEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+EBAY_PL	
+MarketplaceIdEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+EBAY_PLUS	
+ReturnCountFilterEnum	/post-order/v2/return/search GET
+
+EBAY_PR	
+MarketplaceIdEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+EBAY_PT	
+MarketplaceIdEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+EBAY_RU	
+MarketplaceIdEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+EBAY_RULE_AUTO_APPROVE	
+ActivityOptionEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+EBAY_SE	
+MarketplaceIdEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+EBAY_SG	
+MarketplaceIdEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+EBAY_TH	
+MarketplaceIdEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+EBAY_TW	
+MarketplaceIdEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+EBAY_US	
+MarketplaceIdEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+EBAY_VN	
+MarketplaceIdEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+EBAY_ZA	
+MarketplaceIdEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+ECHECK	
+RefundPaymentTypeEnum	/post-order/v2/inquiry/{inquiryId}/issue_refund POST
+
+EMAIL_SHIPPING_LABEL	
+ActivityOptionEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+ERROR	
+ErrorSeverity	/post-order/v2/cancellation POST
+
+ESCALATED	
+CloseReturnReasonEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+ReturnStatusEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+EXCHANGE	
+ReturnTypeEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+EXTERNAL_CLAIM_OPENED	
+ActivityOptionEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+F
+
+A  B  C  D  E  F  G  H  I  J  K  L  M  N  O  P  Q  R  S  T  U  V  W  X  Y  Z 
+
+Enum name	Code list(s) with this enum value	Used by
+FAILED	
+FundingStatusEnum	/post-order/v2/cancellation/{cancelId} GET
+/post-order/v2/casemanagement/{caseId} GET
+/post-order/v2/inquiry/{inquiryId} GET
+/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+Refund_MoneyMovementStatusEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+/post-order/v2/return/{returnId}/decide POST
+/post-order/v2/return/{returnId}/issue_refund POST
+RefundStatusEnum	/post-order/v2/inquiry/{inquiryId}/issue_refund POST
+RelistStatusEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+StatusType	/post-order/v2/return POST
+
+FULL	
+RefundType	/post-order/v2/casemanagement/{caseId} GET
+
+FULL_ORDER	
+PartialOrderTypeEnum	/post-order/v2/cancellation/search GET
+/post-order/v2/cancellation/{cancelId} GET
+
+FULL_REFUNDED	
+CloseReturnReasonEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+FULL_REFUNDED_BY_DISPOSITION_RULE	
+CloseReturnReasonEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+FUNDED	
+FundingStatusEnum	/post-order/v2/cancellation/{cancelId} GET
+/post-order/v2/casemanagement/{caseId} GET
+/post-order/v2/inquiry/{inquiryId} GET
+/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+G
+
+A  B  C  D  E  F  G  H  I  J  K  L  M  N  O  P  Q  R  S  T  U  V  W  X  Y  Z 
+
+Enum name	Code list(s) with this enum value	Used by
+GENERAL_TIME_OUT	
+ActivityOptionEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+GIF	
+FileFormatEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+/post-order/v2/return/{returnId}/files GET
+
+GRANTED	
+AppealGrantStatusEnum	/post-order/v2/casemanagement/{caseId} GET
+/post-order/v2/inquiry/{inquiryId} GET
+H
+
+A  B  C  D  E  F  G  H  I  J  K  L  M  N  O  P  Q  R  S  T  U  V  W  X  Y  Z 
+
+Enum name	Code list(s) with this enum value	Used by
+HOLD_CREATION_SUCCESS	
+ReturnHoldStatusEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+HOLD_RELEASE_FAILED	
+ReturnHoldStatusEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+HOLD_RELEASE_SUCCESS	
+ReturnHoldStatusEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+I
+
+A  B  C  D  E  F  G  H  I  J  K  L  M  N  O  P  Q  R  S  T  U  V  W  X  Y  Z 
+
+Enum name	Code list(s) with this enum value	Used by
+IMPORT_CHARGE	
+RefundFeeTypeEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+IN_TRANSIT	
+TrackingStatusEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+INELIGIBLE_TO_RELEASE_HOLD	
+ReturnHoldStatusEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+INITIAL	
+ReturnStateEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+INSTANT_REFUND	
+RefundPaymentTypeEnum	/post-order/v2/inquiry/{inquiryId}/issue_refund POST
+
+INSTORE	
+ReturnReasonTypeEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+INSURANCE	
+ReturnShippingCostType	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+INTERMEDIATED_REFUND	
+RefundPaymentTypeEnum	/post-order/v2/inquiry/{inquiryId}/issue_refund POST
+
+INTERNATIONAL_SHIPPING	
+RefundFeeTypeEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+ITEM_DELIVERED	
+ReturnCountFilterEnum	/post-order/v2/return/search GET
+ReturnStateEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+ReturnStatusEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+ITEM_IMPORT_TAX	
+RefundFeeTypeEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+ITEM_KEPT	
+ReturnStateEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+ITEM_NOT_RECEIVED	
+CaseTypeEnum	/post-order/v2/casemanagement/{caseId} GET
+
+ITEM_READY_TO_SHIP	
+ReturnStateEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+ITEM_REJECTED	
+CloseReturnReasonEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+ITEM_RELATED	
+FilePurposeEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+/post-order/v2/return/{returnId}/file/upload POST
+/post-order/v2/return/{returnId}/files GET
+
+ITEM_SELECTION	
+EligibilityCheckTypeEnum	/post-order/v2/return POST
+
+ITEM_SHIPPED	
+ReturnCountFilterEnum	/post-order/v2/return/search GET
+ReturnStateEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+ReturnStatusEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+ITEM_TAX	
+RefundFeeTypeEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+ITEM_TOO_LARGE	
+NoSellerUploadLabelReasonEnum	/post-order/v2/return/{returnId}/add_shipping_label POST
+J
+
+A  B  C  D  E  F  G  H  I  J  K  L  M  N  O  P  Q  R  S  T  U  V  W  X  Y  Z 
+
+Enum name	Code list(s) with this enum value	Used by
+JPEG	
+FileFormatEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+/post-order/v2/return/{returnId}/files GET
+
+JPG	
+FileFormatEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+/post-order/v2/return/{returnId}/files GET
+K
+
+A  B  C  D  E  F  G  H  I  J  K  L  M  N  O  P  Q  R  S  T  U  V  W  X  Y  Z 
+
+Enum name	Code list(s) with this enum value	Used by
+L
+
+A  B  C  D  E  F  G  H  I  J  K  L  M  N  O  P  Q  R  S  T  U  V  W  X  Y  Z 
+
+Enum name	Code list(s) with this enum value	Used by
+LABEL_COST	
+ReturnShippingCostType	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+LABEL_RELATED	
+FilePurposeEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+/post-order/v2/return/{returnId}/file/upload POST
+/post-order/v2/return/{returnId}/files GET
+
+LESS_THAN_A_FULL_REFUND_ISSUED	
+ReturnStateEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+ReturnStatusEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+LVT_IMMEDIATE_REFUND	
+CloseReturnReasonEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+M
+
+A  B  C  D  E  F  G  H  I  J  K  L  M  N  O  P  Q  R  S  T  U  V  W  X  Y  Z 
+
+Enum name	Code list(s) with this enum value	Used by
+MARK_AS_PAID	
+PaymentStatusEnum	/post-order/v2/cancellation/search GET
+/post-order/v2/cancellation/{cancelId} GET
+
+MARK_AS_SENT	
+LabelActionEnum	/post-order/v2/return/{returnId}/add_shipping_label POST
+
+MARK_PARTIAL_REFUND_RECEIVED	
+CloseReturnReasonEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+MARK_REFUND_RECEIVED	
+CloseReturnReasonEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+MARK_REFUND_RECEIVED_TIMEOUT	
+CloseReturnReasonEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+MASTERCARD	
+FundingMethodBrandEnum	/post-order/v2/cancellation/{cancelId} GET
+/post-order/v2/casemanagement/{caseId} GET
+/post-order/v2/inquiry/{inquiryId} GET
+/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+MONEY_BACK	
+ReturnTypeEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+N
+
+A  B  C  D  E  F  G  H  I  J  K  L  M  N  O  P  Q  R  S  T  U  V  W  X  Y  Z 
+
+Enum name	Code list(s) with this enum value	Used by
+NO_LABEL	
+LabelActionEnum	/post-order/v2/return/{returnId}/add_shipping_label POST
+
+NOT_PAID	
+PaymentStatusEnum	/post-order/v2/cancellation/search GET
+/post-order/v2/cancellation/{cancelId} GET
+
+NOTIFIED_DELIVERED	
+ActivityOptionEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+NOTIFIED_SHIPPED	
+ActivityOptionEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+NOTIFY_REPLACEMENT_DELIVERED	
+ActivityOptionEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+NOTIFY_REPLACEMENT_SHIPPED	
+ActivityOptionEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+NOTIFY_UPDATE_REFUND_STATUS	
+ActivityOptionEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+O
+
+A  B  C  D  E  F  G  H  I  J  K  L  M  N  O  P  Q  R  S  T  U  V  W  X  Y  Z 
+
+Enum name	Code list(s) with this enum value	Used by
+OFFER_PARTIAL_REFUND	
+DecisionEnum	/post-order/v2/return/{returnId}/decide POST
+
+OFFER_REPLACEMENT	
+DecisionEnum	/post-order/v2/return/{returnId}/decide POST
+
+OFFER_RETURN	
+DecisionEnum	/post-order/v2/return/{returnId}/decide POST
+
+OFFER_RETURN_WITHOUT_LABEL	
+DecisionEnum	/post-order/v2/return/{returnId}/decide POST
+
+ONLINE_PAID	
+PaymentStatusEnum	/post-order/v2/cancellation/search GET
+/post-order/v2/cancellation/{cancelId} GET
+
+ORDER_ADJUSTMENT	
+RefundFeeTypeEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+ORIGINAL_SHIPPING	
+RefundFeeTypeEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+OTHER	
+ActivityOptionEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+AppealGrantStatusEnum	/post-order/v2/casemanagement/{caseId} GET
+/post-order/v2/inquiry/{inquiryId} GET
+BuyerCloseReturnReasonEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+CloseReturnReasonEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+NoSellerUploadLabelReasonEnum	/post-order/v2/return/{returnId}/add_shipping_label POST
+RefundFeeTypeEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+RefundPaymentTypeEnum	/post-order/v2/inquiry/{inquiryId}/issue_refund POST
+RefundStatusEnum	/post-order/v2/inquiry/{inquiryId}/issue_refund POST
+RefundType	/post-order/v2/casemanagement/{caseId} GET
+ReturnHoldStatusEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+ReturnRefundInitiatorEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+ReturnShippingCostType	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+ReturnUserRoleEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+/post-order/v2/return/{returnId}/files GET
+P
+
+A  B  C  D  E  F  G  H  I  J  K  L  M  N  O  P  Q  R  S  T  U  V  W  X  Y  Z 
+
+Enum name	Code list(s) with this enum value	Used by
+PARTIAL	
+RefundType	/post-order/v2/casemanagement/{caseId} GET
+
+PARTIAL_ORDER	
+PartialOrderTypeEnum	/post-order/v2/cancellation/search GET
+/post-order/v2/cancellation/{cancelId} GET
+
+PARTIAL_REFUND_AS_PAYOUT_INITIATED	
+ReturnStateEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+PARTIAL_REFUND_DECLINED	
+ReturnStateEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+ReturnStatusEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+PARTIAL_REFUND_FAILED	
+ReturnStateEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+ReturnStatusEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+PARTIAL_REFUND_INITIATED	
+ReturnStateEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+ReturnStatusEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+PARTIAL_REFUND_NON_PAYPAL_INITIATED	
+ReturnStateEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+PARTIAL_REFUND_REQUESTED	
+ReturnStateEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+ReturnStatusEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+PARTIAL_REFUNDED	
+ReturnStateEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+PARTIALLY_REFUNDED	
+CloseReturnReasonEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+PAY_UPON_INVOICE	
+FundingMethodTypeEnum	/post-order/v2/cancellation/{cancelId} GET
+/post-order/v2/casemanagement/{caseId} GET
+/post-order/v2/inquiry/{inquiryId} GET
+/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+PAYOUT	
+RefundPaymentTypeEnum	/post-order/v2/inquiry/{inquiryId}/issue_refund POST
+
+PAYOUT_INITIATED	
+ReturnStateEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+PAYPAL	
+PaymentProviderEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+PAYPAL_PAID	
+PaymentStatusEnum	/post-order/v2/cancellation/search GET
+/post-order/v2/cancellation/{cancelId} GET
+
+PAYPAL_REFUND	
+MoneyMovementTypeEnum	/post-order/v2/cancellation/{cancelId} GET
+
+PENDING	
+Refund_MoneyMovementStatusEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+/post-order/v2/return/{returnId}/decide POST
+/post-order/v2/return/{returnId}/issue_refund POST
+RefundStatusEnum	/post-order/v2/inquiry/{inquiryId}/issue_refund POST
+
+PNG	
+FileFormatEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+/post-order/v2/return/{returnId}/files GET
+
+PRE_TRANSACTION	
+EligibilityCheckTypeEnum	/post-order/v2/return POST
+
+PROVIDE_RMA	
+DecisionEnum	/post-order/v2/return/{returnId}/decide POST
+
+PUBLISHED	
+FileStatusEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+/post-order/v2/return/{returnId}/files GET
+
+PURCHASE_LABEL	
+LabelActionEnum	/post-order/v2/return/{returnId}/add_shipping_label POST
+
+PURCHASE_PRICE	
+RefundFeeTypeEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+Q
+
+A  B  C  D  E  F  G  H  I  J  K  L  M  N  O  P  Q  R  S  T  U  V  W  X  Y  Z 
+
+Enum name	Code list(s) with this enum value	Used by
+R
+
+A  B  C  D  E  F  G  H  I  J  K  L  M  N  O  P  Q  R  S  T  U  V  W  X  Y  Z 
+
+Enum name	Code list(s) with this enum value	Used by
+READY_FOR_SHIPPING	
+ReturnStatusEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+RECOUP_FROM_SELLER	
+MoneyMovementTypeEnum	/post-order/v2/cancellation/{cancelId} GET
+
+REFUND_AS_PAYOUT_INITIATED	
+ReturnStateEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+REFUND_FAILED	
+ReturnStateEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+REFUND_FROM_PAYPAL	
+RefundFeeTypeEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+REFUND_INITIATED	
+ReturnStateEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+REFUND_RELATED	
+FilePurposeEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+/post-order/v2/return/{returnId}/file/upload POST
+/post-order/v2/return/{returnId}/files GET
+
+REFUND_SENT_PENDING_CONFIRMATION	
+ReturnStateEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+REFUND_TIMEOUT	
+CloseReturnReasonEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+ReturnStateEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+REIMBURSE	
+NoSellerUploadLabelReasonEnum	/post-order/v2/return/{returnId}/add_shipping_label POST
+
+RELIST_ELIGIBLE	
+RelistStatusEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+REMINDER_BUYER_TO_RESPOND_RE_OFFER	
+ActivityOptionEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+REMINDER_BUYER_TO_SHIP	
+ActivityOptionEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+REMINDER_FOR_REFUND	
+ActivityOptionEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+REMINDER_FOR_REFUND_NO_SHIPPING	
+ActivityOptionEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+REMINDER_FOR_RMA	
+ActivityOptionEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+REMINDER_FOR_SHIPPING	
+ActivityOptionEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+REMINDER_SELLER_TO_RESPOND	
+ActivityOptionEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+REMINDER_SELLER_TO_SHIP	
+ActivityOptionEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+REMORSE	
+ReturnReasonTypeEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+REPLACED	
+CloseReturnReasonEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+ReturnStateEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+ReturnStatusEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+REPLACEMENT	
+ReturnTypeEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+REPLACEMENT_CLOSED	
+ReturnStateEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+ReturnStatusEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+REPLACEMENT_CREATION	
+EligibilityCheckTypeEnum	/post-order/v2/return POST
+
+REPLACEMENT_DELIVERED	
+ReturnStateEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+ReturnStatusEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+REPLACEMENT_ITEM_SELECTION	
+EligibilityCheckTypeEnum	/post-order/v2/return POST
+
+REPLACEMENT_LABEL_PENDING	
+ReturnStateEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+REPLACEMENT_LABEL_PENDING_TIMEOUT	
+ReturnStateEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+REPLACEMENT_LABEL_REQUESTED	
+ReturnStateEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+ReturnStatusEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+REPLACEMENT_LABEL_REQUESTED_TIMEOUT	
+ReturnStateEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+REPLACEMENT_OFFER_PENDING	
+ReturnStateEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+REPLACEMENT_PAYOUT_RECOUP	
+CloseReturnReasonEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+REPLACEMENT_REQUEST_TIMEOUT	
+ReturnStateEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+REPLACEMENT_REQUESTED	
+ReturnStateEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+ReturnStatusEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+REPLACEMENT_RMA_PENDING	
+ReturnStateEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+REPLACEMENT_SHIPPED	
+ReturnStateEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+ReturnStatusEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+REPLACEMENT_STARTED	
+ReturnStateEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+ReturnStatusEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+REPLACEMENT_WAITING_FOR_RMA	
+ReturnStatusEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+REQUEST	
+ErrorCategory	/post-order/v2/cancellation POST
+RequestTypeEnum	/post-order/v2/return POST
+
+REQUEST_DECLINED	
+CloseReturnReasonEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+REQUEST_TIMEOUT	
+CloseReturnReasonEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+REQUESTED	
+Refund_MoneyMovementStatusEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+/post-order/v2/return/{returnId}/decide POST
+/post-order/v2/return/{returnId}/issue_refund POST
+
+RETURN	
+CaseTypeEnum	/post-order/v2/casemanagement/{caseId} GET
+
+RETURN_CREATION	
+EligibilityCheckTypeEnum	/post-order/v2/return POST
+
+RETURN_LABEL_PENDING	
+ReturnStateEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+RETURN_LABEL_PENDING_TIMEOUT	
+ReturnStateEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+RETURN_LABEL_REQUESTED	
+ReturnStateEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+ReturnStatusEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+RETURN_LABEL_REQUESTED_TIMEOUT	
+ReturnStateEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+RETURN_REASON_SELECTION	
+EligibilityCheckTypeEnum	/post-order/v2/return POST
+
+RETURN_REJECTED	
+CloseReturnReasonEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+ReturnStateEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+ReturnStatusEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+RETURN_REQUEST_TIMEOUT	
+ReturnStateEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+RETURN_REQUESTED	
+ReturnStateEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+ReturnStatusEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+RETURN_REQUESTED_TIMEOUT	
+ReturnStatusEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+RETURN_SHIPPING	
+RefundFeeTypeEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+RETURN_STARTED	
+ReturnCountFilterEnum	/post-order/v2/return/search GET
+
+RETURN_TO_INTL_LOCATION	
+NoSellerUploadLabelReasonEnum	/post-order/v2/return/{returnId}/add_shipping_label POST
+
+RETURN_TO_STORE	
+NoSellerUploadLabelReasonEnum	/post-order/v2/return/{returnId}/add_shipping_label POST
+
+RMA_PENDING	
+ReturnStateEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+S
+
+A  B  C  D  E  F  G  H  I  J  K  L  M  N  O  P  Q  R  S  T  U  V  W  X  Y  Z 
+
+Enum name	Code list(s) with this enum value	Used by
+SELF_MAIL	
+ShippingMethodEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+SELLER	
+PartyEnum	/post-order/v2/cancellation/search GET
+/post-order/v2/cancellation/{cancelId} GET
+ReturnUserRoleEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+/post-order/v2/return/{returnId}/files GET
+UserPartyEnum	/post-order/v2/casemanagement/{caseId} GET
+/post-order/v2/inquiry/{inquiryId} GET
+
+SELLER_ACTION_DUE	
+ReturnCountFilterEnum	/post-order/v2/return/search GET
+
+SELLER_ACTION_OVERDUE	
+ReturnCountFilterEnum	/post-order/v2/return/search GET
+
+SELLER_APPROVAL	
+StatusType	/post-order/v2/return POST
+
+SELLER_APPROVE_REQUEST	
+ActivityOptionEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+SELLER_DECLINE_REQUEST	
+ActivityOptionEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+SELLER_ESCALATE	
+ActivityOptionEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+SELLER_INITIATED	
+ReturnRefundInitiatorEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+SELLER_INVOICED	
+CloseReturnReasonEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+SELLER_ISSUE_REFUND	
+ActivityOptionEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+SELLER_ISSUE_STORE_CREDIT_REFUND	
+ActivityOptionEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+SELLER_MARK_AS_RECEIVED	
+ActivityOptionEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+SELLER_MARK_REFUND_SENT	
+ActivityOptionEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+SELLER_MARK_REPLACEMENT_SHIPPED	
+ActivityOptionEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+SELLER_NO_ACTION	
+ReturnCountFilterEnum	/post-order/v2/return/search GET
+
+SELLER_OFFER_PARTIAL_REFUND	
+ActivityOptionEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+SELLER_OFFER_REPLACEMENT	
+ActivityOptionEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+SELLER_OFFER_RETURNS	
+ActivityOptionEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+SELLER_PAYOUT_FAILED	
+CloseReturnReasonEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+SELLER_PRINT_SHIPPING_LABEL	
+ActivityOptionEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+SELLER_PROVIDE_LABEL	
+ActivityOptionEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+SELLER_PROVIDE_RMA	
+ActivityOptionEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+SELLER_PROVIDE_TRACKING_INFO	
+ActivityOptionEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+SELLER_RETRY_REFUND	
+ActivityOptionEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+SELLER_SEND_MESSAGE	
+ActivityOptionEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+SELLER_UPDATE_TRACKING	
+ActivityOptionEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+SELLER_VOID_LABEL	
+ActivityOptionEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+SELLER_VOLUNTARY_REFUND	
+MoneyMovementTypeEnum	/post-order/v2/cancellation/{cancelId} GET
+
+SHIPMENT_TIMEOUT	
+CloseReturnReasonEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+SHIPPING_IMPORT_TAX	
+RefundFeeTypeEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+SHIPPING_LABEL	
+ShippingMethodEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+SHIPPING_TAX	
+RefundFeeTypeEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+SIGNATURE_CONFIRMATION_COST	
+ReturnShippingCostType	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+SNAD	
+ReturnReasonTypeEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+STORE_CREDIT_REFUNDED	
+CloseReturnReasonEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+
+SUBMIT_FILE	
+ActivityOptionEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+SUCCESS	
+Refund_MoneyMovementStatusEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+/post-order/v2/return/{returnId}/decide POST
+/post-order/v2/return/{returnId}/issue_refund POST
+RefundStatusEnum	/post-order/v2/inquiry/{inquiryId}/issue_refund POST
+RelistStatusEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+StatusType	/post-order/v2/return POST
+
+SYSTEM	
+ErrorCategory	/post-order/v2/cancellation POST
+ReturnUserRoleEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+/post-order/v2/return/{returnId}/files GET
+UserPartyEnum	/post-order/v2/casemanagement/{caseId} GET
+/post-order/v2/inquiry/{inquiryId} GET
+
+SYSTEM_BUYER_PARTIAL_REFUND_AS_PAYOUT	
+ActivityOptionEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+SYSTEM_BUYER_REFUND_AS_PAYOUT	
+ActivityOptionEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+SYSTEM_CLOSE_RETURN	
+ActivityOptionEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+SYSTEM_CREATE_RETURN	
+ActivityOptionEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+SYSTEM_IMMEDIATE_REFUND	
+ActivityOptionEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+SYSTEM_INITIATED_REFUND	
+ActivityOptionEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+SYSTEM_SELLER_CHARGE	
+ActivityOptionEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+T
+
+A  B  C  D  E  F  G  H  I  J  K  L  M  N  O  P  Q  R  S  T  U  V  W  X  Y  Z 
+
+Enum name	Code list(s) with this enum value	Used by
+TIME_OUT_AFTER_DECLINE	
+ActivityOptionEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+TIME_OUT_AFTER_REFUNDED	
+ActivityOptionEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+TIME_OUT_AFTER_REFUNDED_AS_PAYOUT	
+ActivityOptionEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+TIME_OUT_AFTER_REPLACED	
+ActivityOptionEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+TIME_OUT_FOR_AUTHENTICATION	
+ActivityOptionEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+TIME_OUT_FOR_AUTHORIZE	
+ActivityOptionEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+TIME_OUT_FOR_AUTO_REFUND	
+ActivityOptionEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+TIME_OUT_FOR_BUYER_RECOUP	
+ActivityOptionEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+TIME_OUT_FOR_DELIVERY	
+ActivityOptionEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+TIME_OUT_FOR_ESCALATION	
+ActivityOptionEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+TIME_OUT_FOR_ESCALATION_AFTER_SMIR	
+ActivityOptionEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+TIME_OUT_FOR_ITEM_REPLACED	
+ActivityOptionEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+TIME_OUT_FOR_MARK_REFUND_RECEIVED	
+ActivityOptionEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+TIME_OUT_FOR_MARK_REFUND_SENT	
+ActivityOptionEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+TIME_OUT_FOR_MASS_PAYOUT	
+ActivityOptionEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+TIME_OUT_FOR_PAYOUT	
+ActivityOptionEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+TIME_OUT_FOR_PROVIDE_LABEL	
+ActivityOptionEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+TIME_OUT_FOR_REFUND	
+ActivityOptionEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+TIME_OUT_FOR_REPLACEMENT_DELIVERED_ITEM_NOT_RETURNED	
+ActivityOptionEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+TIME_OUT_FOR_REPLACEMENT_SHIPPED	
+ActivityOptionEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+TIME_OUT_FOR_RETURN_SHIPPING	
+ActivityOptionEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+TIME_OUT_FOR_RMA	
+ActivityOptionEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+TIME_OUT_FOR_SELLER_INVOICE	
+ActivityOptionEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+TIME_OUT_FOR_SELLER_PAYOUT	
+ActivityOptionEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+TIME_OUT_FOR_SHIPMENT_TRACKING	
+ActivityOptionEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+TIME_OUT_FOR_SHIPPING	
+ActivityOptionEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+TIME_OUT_FOR_SHIPPING_SYSTEM_CLOSE	
+ActivityOptionEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+U
+
+A  B  C  D  E  F  G  H  I  J  K  L  M  N  O  P  Q  R  S  T  U  V  W  X  Y  Z 
+
+Enum name	Code list(s) with this enum value	Used by
+UNKNOWN	
+BuyerCloseReturnReasonEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+DecisionEnum	/post-order/v2/return/{returnId}/decide POST
+FileFormatEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+/post-order/v2/return/{returnId}/files GET
+FilePurposeEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+/post-order/v2/return/{returnId}/file/upload POST
+/post-order/v2/return/{returnId}/files GET
+FileStatusEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+/post-order/v2/return/{returnId}/files GET
+LabelActionEnum	/post-order/v2/return/{returnId}/add_shipping_label POST
+MoneyMovementTypeEnum	/post-order/v2/cancellation/{cancelId} GET
+PartialOrderTypeEnum	/post-order/v2/cancellation/search GET
+/post-order/v2/cancellation/{cancelId} GET
+PartyEnum	/post-order/v2/cancellation/search GET
+/post-order/v2/cancellation/{cancelId} GET
+PaymentProviderEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+PaymentStatusEnum	/post-order/v2/cancellation/search GET
+/post-order/v2/cancellation/{cancelId} GET
+Refund_MoneyMovementStatusEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+/post-order/v2/return/{returnId}/decide POST
+/post-order/v2/return/{returnId}/issue_refund POST
+RequestTypeEnum	/post-order/v2/return POST
+ReturnCountFilterEnum	/post-order/v2/return/search GET
+ReturnReasonTypeEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+ReturnStateEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+ReturnStatusEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+ReturnTypeEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+RlspTypeEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+ShippingMethodEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+StatusType	/post-order/v2/return POST
+TrackingStatusEnum	/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+UserPartyEnum	/post-order/v2/casemanagement/{caseId} GET
+/post-order/v2/inquiry/{inquiryId} GET
+
+UNPAID_TRANSACTION	
+EligibilityCheckTypeEnum	/post-order/v2/return POST
+
+UPLOAD_LABEL	
+LabelActionEnum	/post-order/v2/return/{returnId}/add_shipping_label POST
+V
+
+A  B  C  D  E  F  G  H  I  J  K  L  M  N  O  P  Q  R  S  T  U  V  W  X  Y  Z 
+
+Enum name	Code list(s) with this enum value	Used by
+VISA	
+FundingMethodBrandEnum	/post-order/v2/cancellation/{cancelId} GET
+/post-order/v2/casemanagement/{caseId} GET
+/post-order/v2/inquiry/{inquiryId} GET
+/post-order/v2/return POST
+/post-order/v2/return/{returnId} GET
+W
+
+A  B  C  D  E  F  G  H  I  J  K  L  M  N  O  P  Q  R  S  T  U  V  W  X  Y  Z 
+
+Enum name	Code list(s) with this enum value	Used by
+WAITING_FOR_RETURN_LABEL	
+ReturnStatusEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+WAITING_FOR_RMA	
+ReturnStatusEnum	/post-order/v2/return POST
+/post-order/v2/return/search GET
+/post-order/v2/return/{returnId} GET
+
+WARNING	
+ErrorSeverity	/post-order/v2/cancellation POST
+StatusType	/post-order/v2/return POST
+
+WORK_WITH_BUYER	
+NoSellerUploadLabelReasonEnum	/post-order/v2/return/{returnId}/add_shipping_label POST
+X
+
+A  B  C  D  E  F  G  H  I  J  K  L  M  N  O  P  Q  R  S  T  U  V  W  X  Y  Z 
+
+Enum name	Code list(s) with this enum value	Used by
+Y
+
+A  B  C  D  E  F  G  H  I  J  K  L  M  N  O  P  Q  R  S  T  U  V  W  X  Y  Z 
+
+Enum name	Code list(s) with this enum value	Used by
+Z
+
+A  B  C  D  E  F  G  H  I  J  K  L  M  N  O  P  Q  R  S  T  U  V  W  X  Y  Z 
+
+Enum name	Code list(s) with this enum value	Used by
+
+FAQs Developer Community Forum Developer Technical Support APIs API License Agreement
+
+Copyright 1999-2026 eBay Inc. All rights reserved. User agreement, Privacy policy, Cookies.

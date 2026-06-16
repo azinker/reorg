@@ -67,6 +67,7 @@ import {
   Settings as SettingsIcon,
   Trash2,
   X,
+  PackageOpen,
 } from "lucide-react";
 import type { HelpdeskFolderKey } from "@/hooks/use-helpdesk";
 import { Avatar, type AvatarUser } from "@/components/ui/avatar";
@@ -507,6 +508,15 @@ export function FolderSidebar({
           ))}
         </ul>
 
+        {/* Section C2: Return Cases — separate route (eBay Post-Order returns).
+         * Admin-only in v1. Links out of the inbox state machine to its own
+         * page; the badge shows open returns needing a seller action. */}
+        {isAdmin ? (
+          <ul className="mt-2 space-y-0.5">
+            <ReturnCasesNavItem />
+          </ul>
+        ) : null}
+
         {/* Section D: Tags drawer — system / state machine folders */}
         <div className="mt-2">
           <SectionDisclosure
@@ -596,6 +606,53 @@ export function FolderSidebar({
         </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * "Return Cases" sidebar link. Fetches its own needs-attention badge count on
+ * mount (one tiny read) so we don't have to thread a new prop through the whole
+ * use-helpdesk hook. The returns pages are a separate route, so this is a
+ * <Link> rather than a folder-state selection.
+ */
+function ReturnCasesNavItem() {
+  const [count, setCount] = useState<number | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/helpdesk/returns?status=needs_attention&pageSize=1", {
+      cache: "no-store",
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((json) => {
+        if (cancelled || !json?.data) return;
+        const n = json.data.needsAttention;
+        if (typeof n === "number") setCount(n);
+      })
+      .catch(() => {
+        /* badge is best-effort */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  return (
+    <li className="group/folder relative">
+      <Link
+        href="/help-desk/returns"
+        title="eBay return requests (TPP + TT). Review, approve, refund, and track returns with full safety gating."
+        className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm font-medium text-foreground transition-colors hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/30 cursor-pointer"
+      >
+        <PackageOpen className="h-3.5 w-3.5 shrink-0 text-orange-500" />
+        <span className="flex-1 truncate">Return Cases</span>
+        {count && count > 0 ? (
+          <span className="rounded-full bg-orange-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-orange-600 dark:text-orange-300">
+            {count}
+          </span>
+        ) : null}
+      </Link>
+    </li>
   );
 }
 

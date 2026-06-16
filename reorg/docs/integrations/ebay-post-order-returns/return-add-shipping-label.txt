@@ -1,0 +1,242 @@
+URL: https://developer.ebay.com/Devzone/post-order/post-order_v2_return-returnId_add_shipping_label__post.html
+STATUS: 200
+TITLE: Add Shipping Label Info - eBay Post-Order API Reference
+
+eBay Post-Order APIVersion 2.9.0
+Join
+Develop
+Grow
+Updates
+Support
+User Guide Making a Call API Reference Release Notes
+ 
+Add Shipping Label Info
+POST /post-order/v2/return/{returnId}/add_shipping_label
+
+The primary function of this seller-facing method is to create a return shipping label for the buyer. However, this method can also be used on behalf of the seller to provide more information to the buyer about the shipping label. For example, the seller may want to use this method to inform the buyer that an eBay or seller-provided shipping label is already available for use.
+
+The seller may need to first call POST /post-order/v2/return/{returnId}/initiate_shipping_label method before using this method.
+
+
+This method is not supported in the Sandbox environment.
+Input Output Samples Change History
+Input
+
+See also Samples.
+
+Resource URI (production)
+POST https://api.ebay.com/post-order/v2/return/{returnId}/add_shipping_label
+URI parameters
+Parameter	Type	Required?	Meaning
+returnId	string	Required	The unique eBay-assigned ID of the return request. The returnId value is required as part of the call URI to identify the return request for which a return shipping label is being created.
+
+
+
+HTTP request headers
+
+All requests made to eBay REST operations require you to provide the authorization HTTP header for authentication.
+See HTTP request headers for details.
+
+
+
+
+Authorization
+
+This call uses standard authorization tokens. See Making a Call for details.
+
+Payload model
+
+The following lists all fields that could be included in the request.
+
+{ /* ProvideLabelRequest */
+"carrierEnum": string,
+"carrierName": string,
+"comments":
+    { /* Text */
+    "content": string,
+    "language": string,
+    "translatedFromContent": string,
+    "translatedFromLanguage": string
+    },
+"fileId": string,
+"forwardShippingLabelProvided": boolean,
+"labelAction": string,
+"labelSentDate":
+    { /* DateTime */
+    "formattedValue": string,
+    "value": datetime
+    },
+"noLabelReason": string,
+"returnLabelCost":
+    { /* Amount */
+    "convertedFromCurrency": string,
+    "convertedFromValue": number,
+    "currency": string,
+    "exchangeRate": string,
+    "value": number
+    },
+"trackingNumber": string
+}
+
+Request field descriptions
+
+
+
+Input Container/Field	Type	Occurrence	Meaning
+carrierEnum	string	Conditional	One of the values defined in the ShippingCarrierEnum type definition must be used in this field to indicate the shipping carrier that will be used to ship the return item. This field is conditionally required if the POST /post-order/v2/return/{returnId}/add_shipping_label method is being used to initiate an eBay shipping label. Otherwise, the carrierName field can be used to indicate which shipping carrier will be used.
+
+Note that the ShippingCarrierEnum type defines enumeration values for some popular shipping carriers for the US, UK, Germany, Canada, and Australia, but it is not a complete global list.
+
+Applicable values: See ShippingCarrierEnum
+carrierName	string	Conditional	This field is used to show the name of the shipping carrier.
+comments	Text	Optional	This container can be used to include any applicable comments about the shipping label.
+comments.content	string	Conditional	This field displays the actual textual content in the language specified in the language field. This field is always used for containers using the Text type.
+comments.language	string	Conditional	This two-letter code indicates the language used to display the content in the content field. The language will default to the language used on the eBay site if a specific language is not specified through the Accept-Language HTTP header. This field is always used for containers using the Text type.
+
+The full list of language enumeration values are defined in the LanguageEnum type definition.
+
+Applicable values: See LanguageEnum
+comments.translatedFromContent	string	Conditional	If language translation/localization is required, this field displays the actual textual content in the language specified in the translatedFromLanguage field. If language translation was not required, this field is not applicable.
+comments
+  .translatedFromLanguage	string	Conditional	If language translation/localization is required, this two-letter code indicates the language used to display the content in the translatedFromContent field. If language translation was not required, this field is not applicable.
+
+The full list of language enumeration values are defined in the LanguageEnum type definition.
+
+Applicable values: See LanguageEnum
+fileId	string	Conditional	The unique ID of a file attached to the return request. This field may be used if the seller has associated a shipping label related file to the return request.
+forwardShippingLabelProvided	boolean	Optional	This field should be provided and set to true if the seller has already provided the buyer with a return shipping label. This field is generally provided if the labelAction value is set to MARK_AS_SENT.
+labelAction	string	Required	This required field indicates what action is being taken with the POST /post-order/v2/return/{returnId}/add_shipping_label request. Based on what value is supplied here, the noLabelReason, forwardShippingLabelProvided, and labelId fields may become conditionally required.
+
+Applicable values are from LabelActionEnum:See labelAction.
+labelSentDate	DateTime	Conditional	The timestamp in this container indicates when the shipping label was sent to the buyer or seller.
+labelSentDate.formattedValue	string	Optional	Reserved for future use.
+labelSentDate.value	datetime	Conditional	This timestamp indicates the date and time when an action or event occurred.
+
+The timestamp is formatted as an ISO 8601 string, which is based on the 24-hour Coordinated Universal Time (UTC) clock.
+
+Format: [YYYY]-[MM]-[DD]T[hh]:[mm]:[ss].[sss]Z
+Example: 2022-03-20T00:00:00.000Z
+noLabelReason	string	Conditional	This field is conditionally required if the labelAction value is set to NO_LABEL. If no shipping label is being provided, the seller must state the reason why through this field. The supported value for this field can be found in the NoSellerUploadLabelReasonEnum type definition.
+
+Applicable values are from NoSellerUploadLabelReasonEnum:See noLabelReason.
+returnLabelCost	Amount	Optional	This container shows the cost of the return shipping label.
+returnLabelCost
+  .convertedFromCurrency	string	Optional	The three-letter ISO 4217 code representing the currency of the amount in the convertedFromValue field. This value is the pre-conversion currency.
+
+If no conversion occurs, this should not be populated.
+
+The list of three-digit currency codes that may be returned in this field are defined in the CurrencyCodeEnum type definition.
+
+Applicable values: See CurrencyCodeEnum
+returnLabelCost
+  .convertedFromValue	number	Optional	The monetary amount before any conversion is performed, in the currency specified by the convertedFromCurrency field. This value is the pre-conversion amount. The value field contains the converted amount of this value, in the currency specified by the currency field.
+
+If no conversion occurs, this should not be populated.
+returnLabelCost.currency	string	Optional	A three-letter ISO 4217 code that indicates the currency of the amount in the value field. This field is always returned with any container using Amount type.
+
+The list of three-digit currency codes that may be returned in this field are defined in the CurrencyCodeEnum type definition.
+
+Applicable values: See CurrencyCodeEnum
+returnLabelCost.exchangeRate	string	Optional	This field shows the exchange rate used to convert the amount in the convertedFromValue field to amount in the value field. This field is only returned when eBay does a currency version.
+returnLabelCost.value	number	Optional	The monetary amount, in the currency specified by the currency field. This field is always returned with any container using Amount type.
+trackingNumber	string	Conditional	The tracking number on the shipping label. If providing the tracking number, the shipping carrier must also be provided through the carrierEnum field.
+
+
+Input Output Samples Change History
+Output
+
+See also Samples.
+
+Payload model
+
+Note: For information about the error fields and how to work with them, see Error Handling.
+
+The following lists all fields that could be included in the response.
+
+Supported response formats: application/json, application/xml
+
+For more information:
+- See ProvideLabelResponse for a description of the response structure
+- See the following table for descriptions of each of the data elements returned
+- See the Samples for an example of the response format
+
+{ /* ProvideLabelResponse */
+"labelData": string,
+"labelId": string,
+"labelURL": string,
+"trackingNumber": string
+}
+
+Response field descriptions
+
+
+
+Output Container/Field	Type	Occurrence	Meaning
+labelData	string	Always	This field contains the text of the shipping label. This field is returned if the shipping label was successfully created.
+labelId	string	Always	The unique eBay-assigned ID of the shipping label. This field is returned if the shipping label was successfully created.
+labelURL	string	Always	This value is the URL of the page where the shipping label can be downloaded and printed. This field is returned if the shipping label was successfully created.
+trackingNumber	string	Always	The tracking number on the shipping label that will be used for tracking the shipment. This field is returned if the shipping label was successfully created.
+null
+
+
+
+
+
+Input Output Samples Change History
+Samples
+
+New to making API calls? Please see Making a Call.
+
+Note: Some item IDs, user IDs, or other data in these samples might no longer be active on eBay. If necessary, you can substitute current eBay data in your requests.
+
+Sample: Create a Shipping Label
+
+This call creates a return shipping label for the buyer to use.
+
+Description
+
+This call creates a return shipping label for the buyer to use. The shipping carrier, tracking number, and value are provided.
+
+Input
+
+The returnId parameter is required in the URI path to identify the return for which a return shipping label will be created. In the request payload, you must include the labelId value, which is the unique identifier of the return shipping label, and the value, which indicates the action being performed with this call. In this particular call sample, the seller is uploading a return shipping label, so the value provided in this field is . The carrierEnum and trackingNumber values should also be provided.
+
+URL format. See also the non-wrapped version of this URL.
+
+POST https://api.sandbox.ebay.com/post-order/v2/return/5********9/add_shipping_label
+{ 
+  "carrierEnum": "USPS",
+  "comments":
+  { 
+    "content": "The shipping label you can use has been added to your return request.",
+  },
+  "labelId": "8******1",
+  "trackingNumber": "9********************9",
+  "labelAction": "UPLOAD_LABEL"
+}
+
+Output
+
+The output fields are all returned with valid values, which confirms that the return shipping label was successfully sent to the buyer.
+
+JSON format.
+{ 
+  "labelData": "B** B****, 2******************e, ********, CA 9***5, United States",
+  "labelId": "8******1",
+  "labelURL": "https://return.ebay.com/ws/eBayISAPI.dll?ResolveReturn&eventName=returnLabel&returnId=5********8",
+  "trackingNumber": "9********************9"
+}
+
+
+
+
+
+
+
+Input Output Samples Change History
+Change History
+Change Date	Description
+
+FAQs Developer Community Forum Developer Technical Support APIs API License Agreement
+
+Copyright 1999-2026 eBay Inc. All rights reserved. User agreement, Privacy policy, Cookies.

@@ -1,0 +1,198 @@
+URL: https://developer.ebay.com/Devzone/post-order/post-order_v2_return-returnId_tracking__get.html
+STATUS: 200
+
+eBay Post-Order APIVersion 2.9.0
+Join
+Develop
+Grow
+Updates
+Support
+User Guide Making a Call API Reference Release Notes
+ 
+Get Shipment Tracking Info
+GET /post-order/v2/return/{returnId}/tracking
+
+This method can be used to retrieve all shipment tracking activity on a specific return request. The information returned includes the date, location, and scan type for each time the shipping package was scanned.
+
+
+This method is not supported in the Sandbox environment.
+Input Output Samples Change History
+Input
+
+See also Samples.
+
+Resource URI (production)
+GET https://api.ebay.com/post-order/v2/return/{returnId}/tracking?
+  carrier_used=string&
+  tracking_number=string
+
+URI parameters
+Parameter	Type	Required?	Meaning
+carrier_used	string	Required	The shipping carrier used to to ship the package is passed in through this query parameter.
+returnId	string	Required	The unique eBay-assigned ID of the return request. The returnId value is required as part of the call URI to identify the return request for which shipment tracking activity is being retrieved.
+tracking_number	string	Required	The tracking number of the package is passed in through this query parameter.
+
+
+
+HTTP request headers
+
+All requests made to eBay REST operations require you to provide the authorization HTTP header for authentication.
+See HTTP request headers for details.
+
+
+
+
+Authorization
+
+This call uses standard authorization tokens. See Making a Call for details.
+
+Payload model
+
+This call has no request payload.
+
+
+
+Input Output Samples Change History
+Output
+
+See also Samples.
+
+Payload model
+
+Note: For information about the error fields and how to work with them, see Error Handling.
+
+The following lists all fields that could be included in the response.
+
+Supported response formats: application/json, application/xml
+
+For more information:
+- See GetTrackingHistoryResponse for a description of the response structure
+- See the following table for descriptions of each of the data elements returned
+- See the Samples for an example of the response format
+
+{ /* GetTrackingHistoryResponse */
+"carrierUsed": string,
+"scanHistory": [
+    { /* ScanDetailType */
+    "eventCity": string,
+    "eventCode": string,
+    "eventDesc": string,
+    "eventPostalCode": string,
+    "eventStateOrProvince": string,
+    "eventStatus": string,
+    "eventTime":
+        { /* DateTime */
+        "formattedValue": string,
+        "value": datetime
+        }
+    }
+    /* More ScanDetailType nodes here */
+  ],
+"trackingNumber": string,
+"trackingStatus": string
+}
+
+Response field descriptions
+
+
+
+Output Container/Field	Type	Occurrence	Meaning
+carrierUsed	string	Conditionally	This string value indicates the shipping carrier used to ship the item.
+scanHistory	array of ScanDetailType	Conditionally	This container holds an array of one or more shipment events/scans that have occurred with the item being returned, and each node provides details on each time a shipment is scanned by the shipping carrier.
+scanHistory.eventCity	string	Conditionally	This string value is the city in which the shipment event occurred. This field is always returned with the scanHistory container.
+scanHistory.eventCode	string	Conditionally	This enumeration value represents the shipment event that occurred. This field is returned if available.
+scanHistory.eventDesc	string	Conditionally	This field contains the description of the shipment event that occurred. This field is returned if available.
+scanHistory.eventPostalCode	string	Conditionally	This string value is the postal code for the scan location. This field is always returned with the scanHistory container.
+scanHistory
+  .eventStateOrProvince	string	Conditionally	This string value is the state or province in which the shipment event occurred. This field is always returned with the scanHistory container.
+scanHistory.eventStatus	string	Conditionally	This field contains shows the latest delivery status of the shipment based on the event (scan) that just occurred. This field is always returned with the scanHistory container.
+scanHistory.eventTime	DateTime	Conditionally	The timestamp in this container indicates the date and time when the shipment event occurred. This field is always returned with the scanHistory container.
+scanHistory.eventTime
+  .formattedValue	string	Conditionally	Reserved for future use.
+scanHistory.eventTime.value	datetime	Conditionally	This timestamp indicates the date and time when an action or event occurred.
+
+The timestamp is formatted as an ISO 8601 string, which is based on the 24-hour Coordinated Universal Time (UTC) clock.
+
+Format: [YYYY]-[MM]-[DD]T[hh]:[mm]:[ss].[sss]Z
+Example: 2022-03-20T00:00:00.000Z
+trackingNumber	string	Conditionally	This value is the tracking number for the shipment. Shipment tracking is mandatory except in countries where shipment tracking is not available, so this number should generally always be returned.
+trackingStatus	string	Conditionally	This string value indicates the delivery status of the shipment, such as in-transit or delivered. This field will be returned unless it is not known.
+null
+
+
+
+
+
+Input Output Samples Change History
+Samples
+
+New to making API calls? Please see Making a Call.
+
+Note: Some item IDs, user IDs, or other data in these samples might no longer be active on eBay. If necessary, you can substitute current eBay data in your requests.
+
+Sample: Basic Call
+
+Retrieve shipment tracking activity for a return.
+
+Description
+
+This call is used to retrieve shipment tracking activity for an item that is being returned.
+
+Input
+
+The seller passes in the return request ID as a path parameter in the URI. Shipment tracking activity will be returned for the return item that is associated with this return request ID.
+
+URL format. See also the non-wrapped version of this URL.
+
+GET https://api.ebay.com/post-order/v2/return/5********2/tracking
+
+
+Output
+
+The shipping carrier and the shipment tracking number is returned at the top of the response. The current status of shipment is DELIVERED, as shown by the trackingStatus field. Details on the two shipment scan activities are shown under the scanHistory container.
+
+JSON format.
+{ 
+"carrierUsed": "USPS",
+"trackingNumber": "0**************3",
+"trackingStatus": DELIVERED
+"scanHistory": [
+    { 
+    "eventStatus": DELIVERED,
+    "eventDesc": "Delivered",
+    "eventTime":
+		   { 
+			 "value": "2015-04-11T12:46:00.000-07:00"
+       },
+    "eventCity": "SACRAMENTO",
+    "eventStateOrProvince": CA,
+    "eventPostalCode": 9***4,
+    "eventCode": "UNKNOWN",
+    },
+    { 
+		"eventStatus": IN_TRANSIT,
+		"eventDesc": "Arrival at Pickup point",
+		"eventTime":
+			 { 
+			 "value": "2015-04-10T11:47:00.000-07:00"
+			 },
+		"eventCity": "SACRAMENTO",
+		"eventStateOrProvince": CA,
+		"eventPostalCode": 9***4,
+		"eventCode": "UNKNOWN",
+    }
+  ],
+}
+
+
+
+
+
+
+Input Output Samples Change History
+Change History
+Change Date	Description
+
+FAQs Developer Community Forum Developer Technical Support APIs API License Agreement
+
+Copyright 1999-2026 eBay Inc. All rights reserved. User agreement, Privacy policy, Cookies.

@@ -211,14 +211,14 @@ enum HelpdeskTicketKind {
 /// override via the per-ticket header bar; manual overrides win and are not
 /// reverted by subsequent syncs.
 enum HelpdeskTicketType {
-  QUERY                 // generic buyer message — the default
-  PRE_SALES             // pre-purchase question
-  RETURN_REQUEST        // buyer initiated an eBay return
-  ITEM_NOT_RECEIVED     // INR claim
-  NEGATIVE_FEEDBACK     // buyer left negative feedback or threatened to
-  REFUND                // refund request
-  SHIPPING_QUERY        // tracking / delivery / customs questions
-  CANCELLATION          // buyer wants to cancel (active cancellation request)
+  QUERY // generic buyer message — the default
+  PRE_SALES // pre-purchase question
+  RETURN_REQUEST // buyer initiated an eBay return
+  ITEM_NOT_RECEIVED // INR claim
+  NEGATIVE_FEEDBACK // buyer left negative feedback or threatened to
+  REFUND // refund request
+  SHIPPING_QUERY // tracking / delivery / customs questions
+  CANCELLATION // buyer wants to cancel (active cancellation request)
   /// Inbound notification sent by eBay itself (not a buyer). Examples:
   /// "Return approved", "Item delivered", "Buyer shipped item",
   /// "Your case is on hold", "We sent your payout", etc. These are routed
@@ -284,7 +284,7 @@ model User {
   /// (Dashboard, Users-as-self, Settings). Otherwise the listed page keys are
   /// granted in addition to the always-allowed set. Admin role overrides this.
   /// Page keys are defined in src/lib/nav-pages.ts.
-  pagePermissions Json?
+  pagePermissions    Json?
   /// Per-user catalog restrictions. NULL = normal editable catalog access.
   /// Object shape is normalized in src/lib/catalog-permissions.ts.
   catalogPermissions Json?
@@ -296,7 +296,7 @@ model User {
   /// in the buyer's court but ticket stays open for follow-up. The
   /// dropdown still lets the agent override per-message; this is just the
   /// default the dropdown is initialised to. NULL = use the global default.
-  helpdeskDefaultSendStatus String? @db.VarChar(16)
+  helpdeskDefaultSendStatus   String? @db.VarChar(16)
   /// Allows the Help Desk right rail to add order rows to Label Formatter and
   /// deduct order SKUs from SkuVault. Adam is also allowed by email as a
   /// built-in admin fallback.
@@ -318,26 +318,26 @@ model User {
   updatedAutoResponders AutoResponder[]        @relation("AutoResponderUpdater")
   autoResponderVersions AutoResponderVersion[] @relation("AutoResponderVersionCreator")
 
-  helpdeskPrimaryAssignments HelpdeskTicket[]       @relation("HelpdeskPrimaryAssignee")
-  helpdeskResolvedTickets    HelpdeskTicket[]       @relation("HelpdeskResolvedBy")
-  helpdeskSnoozedTickets     HelpdeskTicket[]       @relation("HelpdeskSnoozedBy")
-  helpdeskAgentFolders       HelpdeskAgentFolder[]  @relation("HelpdeskAgentFolderCreator")
-  helpdeskMessages           HelpdeskMessage[]      @relation("HelpdeskMessageAuthor")
-  helpdeskNotes              HelpdeskNote[]         @relation("HelpdeskNoteAuthor")
-  helpdeskCreatedTags        HelpdeskTag[]          @relation("HelpdeskTagCreator")
-  helpdeskAddedTags          HelpdeskTicketTag[]    @relation("HelpdeskTagAdder")
-  helpdeskAssignments        HelpdeskAssignment[]   @relation("HelpdeskAssignmentUser")
-  helpdeskOwnedTemplates     HelpdeskTemplate[]     @relation("HelpdeskTemplateOwner")
-  helpdeskCreatedTemplates   HelpdeskTemplate[]     @relation("HelpdeskTemplateCreator")
-  helpdeskUpdatedTemplates   HelpdeskTemplate[]     @relation("HelpdeskTemplateUpdater")
-  helpdeskDrafts             HelpdeskDraft[]        @relation("HelpdeskDraftAuthor")
-  helpdeskOutboundJobs       HelpdeskOutboundJob[]  @relation("HelpdeskOutboundAuthor")
-  helpdeskNotifications      HelpdeskNotification[] @relation("HelpdeskNotificationRecipient")
-  helpdeskCreatedFilters     HelpdeskFilter[]       @relation("HelpdeskFilterCreator")
-  helpdeskColumnPrefs        HelpdeskColumnPref[]   @relation("HelpdeskColumnPrefUser")
-  helpdeskPresence           HelpdeskPresence[]     @relation("HelpdeskPresenceUser")
+  helpdeskPrimaryAssignments  HelpdeskTicket[]            @relation("HelpdeskPrimaryAssignee")
+  helpdeskResolvedTickets     HelpdeskTicket[]            @relation("HelpdeskResolvedBy")
+  helpdeskSnoozedTickets      HelpdeskTicket[]            @relation("HelpdeskSnoozedBy")
+  helpdeskAgentFolders        HelpdeskAgentFolder[]       @relation("HelpdeskAgentFolderCreator")
+  helpdeskMessages            HelpdeskMessage[]           @relation("HelpdeskMessageAuthor")
+  helpdeskNotes               HelpdeskNote[]              @relation("HelpdeskNoteAuthor")
+  helpdeskCreatedTags         HelpdeskTag[]               @relation("HelpdeskTagCreator")
+  helpdeskAddedTags           HelpdeskTicketTag[]         @relation("HelpdeskTagAdder")
+  helpdeskAssignments         HelpdeskAssignment[]        @relation("HelpdeskAssignmentUser")
+  helpdeskOwnedTemplates      HelpdeskTemplate[]          @relation("HelpdeskTemplateOwner")
+  helpdeskCreatedTemplates    HelpdeskTemplate[]          @relation("HelpdeskTemplateCreator")
+  helpdeskUpdatedTemplates    HelpdeskTemplate[]          @relation("HelpdeskTemplateUpdater")
+  helpdeskDrafts              HelpdeskDraft[]             @relation("HelpdeskDraftAuthor")
+  helpdeskOutboundJobs        HelpdeskOutboundJob[]       @relation("HelpdeskOutboundAuthor")
+  helpdeskNotifications       HelpdeskNotification[]      @relation("HelpdeskNotificationRecipient")
+  helpdeskCreatedFilters      HelpdeskFilter[]            @relation("HelpdeskFilterCreator")
+  helpdeskColumnPrefs         HelpdeskColumnPref[]        @relation("HelpdeskColumnPrefUser")
+  helpdeskPresence            HelpdeskPresence[]          @relation("HelpdeskPresenceUser")
   labelFormatterExportBatches LabelFormatterExportBatch[] @relation("LabelFormatterExportBatchCreator")
-  labelFormatterWorkingRows   LabelFormatterWorkingRow[]   @relation("LabelFormatterWorkingRowOwner")
+  labelFormatterWorkingRows   LabelFormatterWorkingRow[]  @relation("LabelFormatterWorkingRowOwner")
 
   @@map("users")
 }
@@ -1244,6 +1244,8 @@ model HelpdeskTicket {
   additionalAssignees HelpdeskAssignment[]
   presence            HelpdeskPresence[]     @relation("HelpdeskTicketPresence")
   returnLabels        HelpdeskReturnLabel[]
+  agentFolderId       String?
+  agentFolder         HelpdeskAgentFolder?   @relation(fields: [agentFolderId], references: [id], onDelete: SetNull)
 
   @@unique([integrationId, threadKey])
   @@index([status, lastBuyerMessageAt])
@@ -1254,9 +1256,6 @@ model HelpdeskTicket {
   @@index([snoozedUntil])
   @@index([kind, status])
   @@index([isArchived, status])
-  agentFolderId      String?
-  agentFolder        HelpdeskAgentFolder? @relation(fields: [agentFolderId], references: [id], onDelete: SetNull)
-
   @@index([isFavorite])
   @@index([type])
   @@index([systemMessageType])
@@ -1266,12 +1265,12 @@ model HelpdeskTicket {
 }
 
 model HelpdeskAgentFolder {
-  id        String   @id @default(cuid())
-  name      String
-  color     String   @default("violet")
+  id          String   @id @default(cuid())
+  name        String
+  color       String   @default("violet")
   createdById String
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
   createdBy User             @relation("HelpdeskAgentFolderCreator", fields: [createdById], references: [id], onDelete: Cascade)
   tickets   HelpdeskTicket[]
@@ -1595,7 +1594,7 @@ enum HelpdeskCaseKind {
 /// in the timeline pill so the agent can click through to manage the case
 /// directly on eBay.
 model HelpdeskCase {
-  id              String              @id @default(cuid())
+  id              String             @id @default(cuid())
   integrationId   String
   /// Foreign-key to the matching HelpdeskTicket when we can resolve one by
   /// order number + buyer. Nullable so cases without a known ticket still
@@ -1604,18 +1603,18 @@ model HelpdeskCase {
   /// eBay's case identifier — guaranteed unique within the integration.
   externalId      String
   kind            HelpdeskCaseKind
-  status          HelpdeskCaseStatus  @default(OPEN)
+  status          HelpdeskCaseStatus @default(OPEN)
   ebayOrderNumber String?
   buyerUserId     String?
   /// Buyer-facing reason text shown on eBay (e.g. "Item not as described").
-  reason          String?             @db.Text
+  reason          String?            @db.Text
   /// URL the agent can click to open the case directly on eBay.
   manageUrl       String?
   openedAt        DateTime
   closedAt        DateTime?
-  rawData         Json                @default("{}")
-  createdAt       DateTime            @default(now())
-  updatedAt       DateTime            @updatedAt
+  rawData         Json               @default("{}")
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
 
   @@unique([integrationId, externalId])
   @@index([ticketId, openedAt])
@@ -1636,7 +1635,7 @@ enum HelpdeskFeedbackKind {
 /// the ticket type is still QUERY) flips ticket type to NEGATIVE_FEEDBACK so
 /// the inbox column makes the situation obvious.
 model HelpdeskFeedback {
-  id              String                @id @default(cuid())
+  id              String               @id @default(cuid())
   integrationId   String
   ticketId        String?
   /// eBay's FeedbackID — unique within the integration. We dedupe on this.
@@ -1645,18 +1644,18 @@ model HelpdeskFeedback {
   /// 1..5 star rating when eBay supplies one; null otherwise.
   starRating      Int?
   /// Public comment the buyer left.
-  comment         String?               @db.Text
+  comment         String?              @db.Text
   /// When provided, the agent's public reply to the feedback.
-  sellerResponse  String?               @db.Text
+  sellerResponse  String?              @db.Text
   ebayOrderNumber String?
   ebayItemId      String?
   buyerUserId     String?
   /// URL of the feedback page on eBay (deep-link).
   manageUrl       String?
   leftAt          DateTime
-  rawData         Json                  @default("{}")
-  createdAt       DateTime              @default(now())
-  updatedAt       DateTime              @updatedAt
+  rawData         Json                 @default("{}")
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
 
   @@unique([integrationId, externalId])
   @@index([ticketId, leftAt])
@@ -1733,12 +1732,12 @@ model HelpdeskCancellation {
 ///     "assignToUserId": "..."            // optional
 ///   }
 model HelpdeskFilter {
-  id          String   @id @default(cuid())
+  id          String    @id @default(cuid())
   name        String
   description String?
-  enabled     Boolean  @default(true)
-  isSystem    Boolean  @default(false)
-  sortOrder   Int      @default(0)
+  enabled     Boolean   @default(true)
+  isSystem    Boolean   @default(false)
+  sortOrder   Int       @default(0)
   conditions  Json
   action      Json
   lastRunAt   DateTime?
@@ -1752,4 +1751,225 @@ model HelpdeskFilter {
 
   @@index([enabled, sortOrder])
   @@map("helpdesk_filters")
+}
+
+// ─── Help Desk eBay Return Cases ─────────────────────────────────────────────
+//
+// Dedicated models for the eBay Return Cases feature (/help-desk/returns).
+// These are intentionally SEPARATE from HelpdeskCase (the lightweight timeline
+// mirror) and from message tickets — a return is a first-class operational
+// object with its own lifecycle, files, tracking, and gated live actions.
+//
+// Source: eBay Post-Order Return API v2 (Search Returns / Get Return /
+// Get Tracking / Get Files). Sync is PULL-ONLY — nothing in these tables ever
+// triggers a write to eBay. Live seller actions are recorded as
+// HelpdeskReturnActionAttempt rows and always pass the returns safety gate
+// (admin + global lock + integration lock + returns live-write toggle + env +
+// re-fetch + availability + preview + confirmation + audit). No delete paths.
+
+enum HelpdeskReturnActionStatus {
+  PREVIEWED
+  COMMITTED
+  FAILED
+  BLOCKED
+}
+
+/// One eBay return request. Keyed by (integrationId, returnId). Stores both the
+/// normalized list fields (for fast list/badge queries without parsing JSON)
+/// and the full raw eBay payloads (summary from search, detail from get) for
+/// traceability and the Admin debug panel.
+model HelpdeskReturnCase {
+  id              String   @id @default(cuid())
+  integrationId   String
+  /// Denormalized store platform (TPP_EBAY / TT_EBAY) so list filtering and
+  /// store badges never need an Integration join.
+  platform        Platform
+  /// eBay return identifier (e.g. "5...."). Unique within the integration.
+  returnId        String
+  /// eBay order id this return is attached to (legacy "26-xxxxx-xxxxx" style).
+  ebayOrderNumber String?
+  /// Line-item identifiers from creationInfo.item.
+  ebayItemId      String?
+  transactionId   String?
+  returnQuantity  Int?
+  /// Item presentation (hydrated from order context / detail when available).
+  itemTitle       String?  @db.Text
+  imageUrl        String?
+  sku             String?
+
+  buyerUserId  String?
+  sellerUserId String?
+
+  /// Raw eBay ReturnStateEnum (e.g. RETURN_REQUESTED, ITEM_SHIPPED,
+  /// ITEM_DELIVERED, CLOSED) and the human-ish status string. We keep them raw
+  /// and compute the UI bucket in a pure helper so mapping changes don't need a
+  /// migration.
+  returnState     String?
+  returnStatus    String?
+  currentType     String?
+  /// True when eBay currently has an action due from the seller — drives the
+  /// "needs attention" badge count. Recomputed on every sync.
+  sellerActionDue Boolean @default(false)
+  escalated       Boolean @default(false)
+  caseId          String?
+
+  reason        String? @db.Text
+  reasonType    String?
+  /// Buyer's free-text comment at return creation, when present.
+  buyerComments String? @db.Text
+
+  /// Refund amounts. "estimated" until eBay issues the refund, then "actual".
+  sellerRefundValue    Float?
+  sellerRefundCurrency String? @db.VarChar(8)
+  buyerRefundValue     Float?
+  buyerRefundCurrency  String? @db.VarChar(8)
+  refundIsActual       Boolean @default(false)
+
+  /// Deadlines from eBay.
+  sellerResponseDueAt DateTime?
+  buyerResponseDueAt  DateTime?
+  timeoutDate         DateTime?
+
+  openedAt DateTime
+  closedAt DateTime?
+
+  /// Best-effort link to the matching conversation ticket (by order number +
+  /// buyer). Nullable; never auto-creates a ticket.
+  ticketId String?
+
+  /// Snapshotted available options (AvailableOptionType[].actionType). These
+  /// are advisory only — the safety gate ALWAYS re-validates against a fresh
+  /// Get Return before any live write.
+  sellerAvailableOptions Json @default("[]")
+  buyerAvailableOptions  Json @default("[]")
+
+  /// Full raw eBay payloads. rawSummary from search; rawDetail from get (null
+  /// until a detail fetch happens). Exposed only in the Admin debug panel.
+  rawSummary      Json      @default("{}")
+  rawDetail       Json?
+  detailFetchedAt DateTime?
+  lastSyncedAt    DateTime  @default(now())
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  files          HelpdeskReturnFile[]
+  trackingEvents HelpdeskReturnTrackingEvent[]
+  actionAttempts HelpdeskReturnActionAttempt[]
+
+  @@unique([integrationId, returnId])
+  @@index([platform, openedAt])
+  @@index([returnState])
+  @@index([sellerActionDue])
+  @@index([ebayOrderNumber])
+  @@index([buyerUserId])
+  @@index([ticketId])
+  @@index([openedAt])
+  @@map("helpdesk_return_cases")
+}
+
+/// A file attached to a return (buyer photo, uploaded return label, etc.).
+/// Either mirrored from eBay (Get Files) or created by an agent upload that we
+/// then pushed to eBay via file/upload. Append-only.
+model HelpdeskReturnFile {
+  id               String   @id @default(cuid())
+  returnCaseId     String
+  /// eBay fileId once known (from file/upload response or Get Files).
+  ebayFileId       String?
+  fileName         String?
+  /// FilePurposeEnum: ITEM_RELATED | LABEL_RELATED | REFUND_RELATED | UNKNOWN.
+  filePurpose      String?
+  contentType      String?
+  sizeBytes        Int?
+  /// Where the file is viewable, when eBay returns a URL.
+  url              String?  @db.Text
+  /// "EBAY" (synced) or "UPLOAD" (agent-provided then pushed).
+  source           String   @default("EBAY")
+  uploadedByUserId String?
+  rawData          Json     @default("{}")
+  createdAt        DateTime @default(now())
+
+  returnCase HelpdeskReturnCase @relation(fields: [returnCaseId], references: [id], onDelete: Cascade)
+
+  @@index([returnCaseId, createdAt])
+  @@index([ebayFileId])
+  @@map("helpdesk_return_files")
+}
+
+/// A single return-shipment tracking scan event (from Get Tracking). Deduped
+/// on a stable fingerprint so repeated syncs don't duplicate scans.
+model HelpdeskReturnTrackingEvent {
+  id             String    @id @default(cuid())
+  returnCaseId   String
+  carrier        String?
+  trackingNumber String?
+  eventDate      DateTime?
+  status         String?
+  location       String?
+  description    String?   @db.Text
+  /// Stable hash of (eventDate|status|location|description) to dedupe scans.
+  fingerprint    String
+  rawData        Json      @default("{}")
+  createdAt      DateTime  @default(now())
+
+  returnCase HelpdeskReturnCase @relation(fields: [returnCaseId], references: [id], onDelete: Cascade)
+
+  @@unique([returnCaseId, fingerprint])
+  @@index([returnCaseId, eventDate])
+  @@map("helpdesk_return_tracking_events")
+}
+
+/// Records every live-write attempt against a return — previewed, committed,
+/// failed, or blocked. The idempotencyKey ties a preview to its single commit
+/// so a double-click/retry can't fire two live eBay writes. Append-only; this
+/// is the audit spine for return actions (in addition to AuditLog rows).
+model HelpdeskReturnActionAttempt {
+  id              String                     @id @default(cuid())
+  returnCaseId    String
+  integrationId   String
+  userId          String?
+  /// Our internal action key: APPROVE_RETURN, OFFER_PARTIAL_REFUND,
+  /// UPLOAD_LABEL, CONFIRM_LABEL_SENT, MARK_AS_RECEIVED, ISSUE_REFUND.
+  actionType      String
+  status          HelpdeskReturnActionStatus @default(PREVIEWED)
+  /// Server-generated token returned by preview; commit must echo it back so
+  /// the committed payload matches exactly what was previewed.
+  idempotencyKey  String
+  /// Normalized human summary shown on the preview/confirmation screen.
+  previewSummary  Json                       @default("{}")
+  /// Exact eBay request body that will be / was sent (secrets never included).
+  requestPayload  Json                       @default("{}")
+  /// eBay response body (normalized) for committed/failed attempts.
+  responsePayload Json?
+  /// eBay request id (X-EBAY-C-REQUEST-ID style) when returned.
+  ebayRequestId   String?
+  /// When BLOCKED, the safety reason. When FAILED, the error message.
+  blockReason     String?                    @db.Text
+  errorMessage    String?                    @db.Text
+  createdAt       DateTime                   @default(now())
+  committedAt     DateTime?
+
+  returnCase HelpdeskReturnCase @relation(fields: [returnCaseId], references: [id], onDelete: Cascade)
+
+  @@unique([idempotencyKey])
+  @@index([returnCaseId, createdAt])
+  @@index([integrationId, createdAt])
+  @@index([actionType, status])
+  @@map("helpdesk_return_action_attempts")
+}
+
+/// Pull-only sync watermark for the returns feature, kept separate from
+/// HelpdeskSyncCheckpoint so the returns sync cadence is independent.
+model HelpdeskReturnSyncCheckpoint {
+  id             String    @id @default(cuid())
+  integrationId  String
+  lastWatermark  DateTime?
+  lastFullSyncAt DateTime?
+  backfillDone   Boolean   @default(false)
+  metadata       Json      @default("{}")
+  updatedAt      DateTime  @updatedAt
+  createdAt      DateTime  @default(now())
+
+  @@unique([integrationId])
+  @@map("helpdesk_return_sync_checkpoints")
 }

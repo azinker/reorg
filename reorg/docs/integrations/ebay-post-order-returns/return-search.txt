@@ -1,0 +1,1000 @@
+URL: https://developer.ebay.com/Devzone/post-order/post-order_v2_return_search__get.html
+STATUS: 200
+TITLE: Search Returns - eBay Post-Order API Reference
+
+eBay Post-Order APIVersion 2.9.0
+Join
+Develop
+Grow
+Updates
+Support
+User Guide Making a Call API Reference Release Notes
+ 
+Search Returns
+GET /post-order/v2/return/search
+
+Use this method to retrieve the details on one or more return requests, or a summary of return requests per user. This method supports several filters, supplied as query parameters, that allow you to restrict results by date, return status, return type, or by listing. If you use more than one filter type in the request, Boolean AND logic is applied to the results set. Boolean OR logic is used for conditions within a filter.
+
+
+This method is not supported in the Sandbox environment.
+Input Output Samples Change History
+Input
+
+See also Samples.
+
+Resource URI (production)
+GET https://api.ebay.com/post-order/v2/return/search?
+  creation_date_range_from=string&
+  creation_date_range_to=string&
+  item_id=string&
+  limit=integer&
+  offset=integer&
+  order_id=string&
+  return_id=string&
+  return_state=ReturnCountFilterEnum&
+  role=UserRoleFilterEnum&
+  sort=ReturnSortField&
+  states=ReturnStateEnum&
+  transaction_id=string
+
+URI parameters
+Parameter	Type	Required?	Meaning
+creation_date_range_from	string	Optional	Specify the creation_date_range_from and creation_date_range_to query parameters if you want to retrieve return requests that were created during a specific period of time.
+
+Specify the starting date for your date range using the creation_date_range_from parameter. The date specified must be older than the creation_date_range_to timestamp and it cannot be set to more than 18 months in the past. If you specify a creation_date_range_from value, but do not specify a creation_date_range_to value, the method returns all return requests created at or after the specified timestamp and goes forward for the following 90 days. Use an ISO-8601 date format to specify the timestamp. For example: 2021-05-15T03:52:39.000Z.
+creation_date_range_to	string	Optional	Specify the creation_date_range_from and creation_date_range_to query parameters if you want to retrieve return requests that were created during a specific period of time.
+
+Specify the ending date for your date range using the creation_date_range_to parameter. The date specified must be more recent than the creation_date_range_from. If you specify a creation_date_range_to value, but do not specify a creation_date_range_from, the method returns all return requests created at or before the specified timestamp, goes backwards for the preceding 90 days. Use an ISO-8601 date format to specify the timestamp. For example: 2021-07-15T03:52:39.000Z.
+item_id	string	---	The unique eBay-assigned ID of a listing. If this parameter is used, eBay will search for any return requests filed against this listing.
+
+This parameter is conditionally required if the transaction_id query parameter is used, as both Item ID and Transaction ID values are needed to identify a line item.
+limit	integer	Optional	This parameter specifies the maximum number of return requests to display per page of data. If this query parameter is not used, its value defaults to 25 (return requests per page).
+
+Min value: 1
+Max value: 200
+Default value: 25
+offset	integer	Optional	This parameter specifies the number of entries to skip in the result set before returning the first item in the paginated response. A 0-based index is used, so page '1' of results is returned if 0 is set in this field or if this query parameter is omitted. Specify a positive value equal to or lower than the number of pages available (which you determine by examining the results in the paginationOutput container of your initial call).
+
+Combine offset with the limit query parameter to control how many and which items are returned in the response.
+
+Min value: 0
+Default value: 0
+order_id	string	Optional	The unique ID of an order. An order_id value is provided as a query parameter if the user wants to see if a return request was filed against one or more order line items in the order specified in this field.
+
+
+Note: The order ID value changes as an order goes from the unpaid to the paid state.
+
+return_id	string	Optional	The unigue identifier of a specific return request. If this query parameter is used, any other query parameters that are included are ignored since the request will only return this specific return request (if it is found).
+return_state	string	Optional	This query parameter is used if the user wants to search for return requests in a specific return state classification, such as all open requests, or return requests where the seller's response is currently due. One of the enumeration values defined in the ReturnCountFilterEnum type definition must be used in this query parameter.
+
+Applicable values are from ReturnCountFilterEnum.
+role	string	Optional	Use this query parameter to get return actions that were initiated by either the buyer or the seller. The supported values are BUYER and SELLER, and both value are case-sensitive (e.g. all CAPS are required).
+
+Applicable values are from UserRoleFilterEnum.
+sort	string	Optional	This query parameter allows a user to sort cancellation requests in the response by ACTUAL_AMOUNT, BUYER_LOGIN_NAME, ESTIMATED_AMOUNT, FILING_DATE, REASON, REFUND_DUE_DATE, RETURN_ID, or STATUS in ascending or descending order. One of these enumeration values must be used as the sort value, and will be preceding by either a + (plus sign) to sort in ascending order, or a - (minus sign) to sort in descending order.
+
+So, to sort in ascending order according to the actual refund amount, the following syntax would be used: sort=+ACTUAL_AMOUNT. To sort in descending order according to return creation date, sort=-FILING_DATE would be used.
+
+Applicable values are from ReturnSortField.
+states	string	Optional	This query parameter is used if the user wants to search for return requests in a specific state in the return process. One of the enumeration values defined in the ReturnStateEnum type definition must be used in this query parameter.
+
+Applicable values are from ReturnStateEnum.
+transaction_id	string	Optional	The unique eBay-assigned ID of the line item purchase. If this parameter is used, the item_id query parameter must also be used, as both Item ID and Transaction ID values are needed to identify a line item. If you use transaction_id without also supplying an item_id value, this parameter is ignored.
+
+
+
+HTTP request headers
+
+All requests made to eBay REST operations require you to provide the authorization HTTP header for authentication.
+See HTTP request headers for details.
+
+
+
+
+Authorization
+
+This call uses standard authorization tokens. See Making a Call for details.
+
+Payload model
+
+This call has no request payload.
+
+
+
+Input Output Samples Change History
+Output
+
+See also Samples.
+
+Payload model
+
+Note: For information about the error fields and how to work with them, see Error Handling.
+
+The following lists all fields that could be included in the response.
+
+Supported response formats: application/json, application/xml
+
+For more information:
+- See GetSummaryResponse for a description of the response structure
+- See the following table for descriptions of each of the data elements returned
+- See the Samples for an example of the response format
+
+{ /* GetSummaryResponse */
+"countSummary": [
+    { /* CountSummaryType */
+    "count": integer,
+    "type": string
+    }
+    /* More CountSummaryType nodes here */
+  ],
+"members": [
+    { /* ReturnSummaryType */
+    "buyerAvailableOptions": [
+        { /* AvailableOptionType */
+        "actionType": string,
+        "actionURL": string
+        }
+        /* More AvailableOptionType nodes here */
+      ],
+    "buyerLoginName": string,
+    "buyerResponseDue":
+        { /* ReturnResponseDueType */
+        "activityDue": string,
+        "respondByDate":
+            { /* DateTime */
+            "formattedValue": string,
+            "value": datetime
+            }
+        },
+    "buyerTotalRefund":
+        { /* TotalRefundAmountType */
+        "actualRefundAmount":
+            { /* Amount */
+            "convertedFromCurrency": string,
+            "convertedFromValue": number,
+            "currency": string,
+            "exchangeRate": string,
+            "value": number
+            },
+        "estimatedRefundAmount":
+            { /* Amount */
+            "convertedFromCurrency": string,
+            "convertedFromValue": number,
+            "currency": string,
+            "exchangeRate": string,
+            "value": number
+            }
+        },
+    "creationInfo":
+        { /* ReturnCreationInfoType */
+        "comments":
+            { /* Text */
+            "content": string,
+            "language": string,
+            "translatedFromContent": string,
+            "translatedFromLanguage": string
+            },
+        "creationDate":
+            { /* DateTime */
+            "formattedValue": string,
+            "value": datetime
+            },
+        "item":
+            { /* ReturnItemType */
+            "itemId": string,
+            "returnQuantity": integer,
+            "transactionId": string
+            },
+        "reason": string,
+        "reasonType": string,
+        "type": string
+        },
+    "currentType": string,
+    "escalationInfo":
+        { /* EscalationInfoType */
+        "buyerEscalationEligibilityInfo":
+            { /* EscalationEligibilityInfo */
+            "eligible": boolean,
+            "endTime":
+                { /* DateTime */
+                "formattedValue": string,
+                "value": datetime
+                },
+            "startTime":
+                { /* DateTime */
+                "formattedValue": string,
+                "value": datetime
+                }
+            },
+        "caseId": string,
+        "sellerEscalationEligibilityInfo":
+            { /* EscalationEligibilityInfo */
+            "eligible": boolean,
+            "endTime":
+                { /* DateTime */
+                "formattedValue": string,
+                "value": datetime
+                },
+            "startTime":
+                { /* DateTime */
+                "formattedValue": string,
+                "value": datetime
+                }
+            }
+        },
+    "orderId": string,
+    "returnId": string,
+    "returnPolicy":
+        { /* ReturnPolicyType */
+        "rmaRequired": boolean
+        },
+    "sellerAvailableOptions": [
+        { /* AvailableOptionType */
+        "actionType": string,
+        "actionURL": string
+        }
+        /* More AvailableOptionType nodes here */
+      ],
+    "sellerLoginName": string,
+    "sellerResponseDue":
+        { /* ReturnResponseDueType */
+        "activityDue": string,
+        "respondByDate":
+            { /* DateTime */
+            "formattedValue": string,
+            "value": datetime
+            }
+        },
+    "sellerTotalRefund":
+        { /* TotalRefundAmountType */
+        "actualRefundAmount":
+            { /* Amount */
+            "convertedFromCurrency": string,
+            "convertedFromValue": number,
+            "currency": string,
+            "exchangeRate": string,
+            "value": number
+            },
+        "estimatedRefundAmount":
+            { /* Amount */
+            "convertedFromCurrency": string,
+            "convertedFromValue": number,
+            "currency": string,
+            "exchangeRate": string,
+            "value": number
+            }
+        },
+    "state": string,
+    "status": string,
+    "timeoutDate":
+        { /* DateTime */
+        "formattedValue": string,
+        "value": datetime
+        }
+    }
+    /* More ReturnSummaryType nodes here */
+  ],
+"paginationOutput":
+    { /* PaginationOutput */
+    "limit": integer,
+    "offset": integer,
+    "totalEntries": integer,
+    "totalPages": integer
+    },
+"total": integer
+}
+
+Response field descriptions
+
+
+
+Output Container/Field	Type	Occurrence	Meaning
+countSummary	array of CountSummaryType	Always	This array holds a count of return requests in different states. A separate count and type pair is returned for each return request state, such as ALL_OPEN, RETURN_STARTED, or ITEM_DELIVERED. The return request states that are returned depend on the use of the return_state query parameter in the request. If this query parameter is omitted in the request, the count for every return request state is returned. However, if this query parameter is used, only the count for the specified return request state will be returned.
+countSummary.count	integer	Always	This integer value indicates how many return requests in the return state indicated by the corresponding type value were returned in the results.
+countSummary.type	string	Always	This enumeration value indicates the return request status that is being counted through the corresponding count field. Return request states include ALL_OPEN, CLOSED, ITEM_SHIPPED, or ITEM_DELIVERED. For a complete list of values and their descriptions, see the ReturnCountFilterEnum type definition.
+
+Applicable values are from ReturnCountFilterEnum:See type.
+Code so that your app gracefully handles any future changes to this list.
+members	array of ReturnSummaryType	Always	This array provides information on one or more return requests that match the filter criteria in the request.
+
+This array is returned as empty if no return requests match the filter criteria in the request.
+members.buyerAvailableOptions	array of AvailableOptionType	Conditionally	This array consists one or more options that are available to the buyer to move the return request to the next stage. If the return request is currently waiting for a response from the seller, this array may not appear at all.
+members.buyerAvailableOptions
+  .actionType	string	Always	This enumeration value informs the buyer or seller what the next action is to move the return request to the next stage. Note that most values in the ActivityOptionEnum type are either specific to the buyer or the seller, but not to both.
+
+Applicable values are from ActivityOptionEnum:See actionType.
+Code so that your app gracefully handles any future changes to this list.
+members.buyerAvailableOptions
+  .actionURL	string	Conditionally	This field contains the URL to an eBay page where the buyer or seller can take their next action (specified in the actionType field) in a return request. This field will only be returned if there is an eBay page associated with the next action.
+members.buyerLoginName	string	Conditionally	This string value is the eBay user name of the buyer.
+
+
+Note: Effective September 26, 2025, select developers will no longer receive username data for U.S. users through this field. Instead, an immutable user ID will be returned in its place. For more information, please refer to Data Handling Compliance.
+
+members.buyerResponseDue	ReturnResponseDueType	Conditionally	This container indicates the next action the buyer is responsible for, and the 'due date' for this action. This container might not be returned if there is currently no action due from the buyer.
+members.buyerResponseDue
+  .activityDue	string	Conditionally	This enumeration value informs the buyer or seller what the next action is to move the return request to the next stage.
+
+Applicable values are from ActivityOptionEnum:See activityDue.
+Code so that your app gracefully handles any future changes to this list.
+members.buyerResponseDue
+  .respondByDate	DateTime	Conditionally	The timestamp in this container indicates the deadline for when a buyer or seller must perform the next action (indicated in activityDue field) on the return request. This field will only be returned if there is a deadline associated with the next action.
+members.buyerResponseDue
+  .respondByDate.formattedValue	string	Conditionally	Reserved for future use.
+members.buyerResponseDue
+  .respondByDate.value	datetime	Conditionally	This timestamp indicates the date and time when an action or event occurred.
+
+The timestamp is formatted as an ISO 8601 string, which is based on the 24-hour Coordinated Universal Time (UTC) clock.
+
+Format: [YYYY]-[MM]-[DD]T[hh]:[mm]:[ss].[sss]Z
+Example: 2022-03-20T00:00:00.000Z
+members.buyerTotalRefund	TotalRefundAmountType	Conditionally	This container returns the total refund amount for the buyer. This container will either show the estimated amount due if the buyer refund has yet to be issued, or will show the actual amount paid if buyer refund has been issued.
+
+In some cases, the buyerTotalRefund differs from the sellerTotalRefund because the buyer may receive refunds from eBay instead of from the seller.
+members.buyerTotalRefund
+  .actualRefundAmount	Amount	Conditionally	This container shows the actual refund amount paid to the buyer. Is is only returned after a refund has been issued to the buyer.
+members.buyerTotalRefund
+  .actualRefundAmount
+  .convertedFromCurrency	string	Conditionally	The three-letter ISO 4217 code representing the currency of the amount in the convertedFromValue field. This value is the pre-conversion currency.
+
+If no conversion occurs, this should not be populated.
+
+The list of three-digit currency codes that may be returned in this field are defined in the CurrencyCodeEnum type definition.
+
+Applicable values: See CurrencyCodeEnum
+members.buyerTotalRefund
+  .actualRefundAmount
+  .convertedFromValue	number	Conditionally	The monetary amount before any conversion is performed, in the currency specified by the convertedFromCurrency field. This value is the pre-conversion amount. The value field contains the converted amount of this value, in the currency specified by the currency field.
+
+If no conversion occurs, this should not be populated.
+members.buyerTotalRefund
+  .actualRefundAmount.currency	string	Conditionally	A three-letter ISO 4217 code that indicates the currency of the amount in the value field. This field is always returned with any container using Amount type.
+
+The list of three-digit currency codes that may be returned in this field are defined in the CurrencyCodeEnum type definition.
+
+Applicable values: See CurrencyCodeEnum
+members.buyerTotalRefund
+  .actualRefundAmount
+  .exchangeRate	string	Conditionally	This field shows the exchange rate used to convert the amount in the convertedFromValue field to amount in the value field. This field is only returned when eBay does a currency version.
+members.buyerTotalRefund
+  .actualRefundAmount.value	number	Conditionally	The monetary amount, in the currency specified by the currency field. This field is always returned with any container using Amount type.
+members.buyerTotalRefund
+  .estimatedRefundAmount	Amount	Always	This container shows the estimated refund amount expected to be paid to the buyer.
+members.buyerTotalRefund
+  .estimatedRefundAmount
+  .convertedFromCurrency	string	Conditionally	The three-letter ISO 4217 code representing the currency of the amount in the convertedFromValue field. This value is the pre-conversion currency.
+
+If no conversion occurs, this should not be populated.
+
+The list of three-digit currency codes that may be returned in this field are defined in the CurrencyCodeEnum type definition.
+
+Applicable values: See CurrencyCodeEnum
+members.buyerTotalRefund
+  .estimatedRefundAmount
+  .convertedFromValue	number	Conditionally	The monetary amount before any conversion is performed, in the currency specified by the convertedFromCurrency field. This value is the pre-conversion amount. The value field contains the converted amount of this value, in the currency specified by the currency field.
+
+If no conversion occurs, this should not be populated.
+members.buyerTotalRefund
+  .estimatedRefundAmount
+  .currency	string	Conditionally	A three-letter ISO 4217 code that indicates the currency of the amount in the value field. This field is always returned with any container using Amount type.
+
+The list of three-digit currency codes that may be returned in this field are defined in the CurrencyCodeEnum type definition.
+
+Applicable values: See CurrencyCodeEnum
+members.buyerTotalRefund
+  .estimatedRefundAmount
+  .exchangeRate	string	Conditionally	This field shows the exchange rate used to convert the amount in the convertedFromValue field to amount in the value field. This field is only returned when eBay does a currency version.
+members.buyerTotalRefund
+  .estimatedRefundAmount.value	number	Conditionally	The monetary amount, in the currency specified by the currency field. This field is always returned with any container using Amount type.
+members.creationInfo	ReturnCreationInfoType	Always	This container provides details about the buyer's return request, including the order line item (and quantity) that is being returned and the reason for the return.
+members.creationInfo.comments	Text	Conditionally	If provided by the buyer at return creation time, this container provides more information to the seller about why a return is being requested. This container is only returned if the buyer made a comment at the time of creating the return request or draft.
+members.creationInfo.comments
+  .content	string	Conditionally	This field displays the actual textual content in the language specified in the language field. This field is always used for containers using the Text type.
+members.creationInfo.comments
+  .language	string	Conditionally	This two-letter code indicates the language used to display the content in the content field. The language will default to the language used on the eBay site if a specific language is not specified through the Accept-Language HTTP header. This field is always used for containers using the Text type.
+
+The full list of language enumeration values are defined in the LanguageEnum type definition.
+
+Applicable values: See LanguageEnum
+members.creationInfo.comments
+  .translatedFromContent	string	Conditionally	If language translation/localization is required, this field displays the actual textual content in the language specified in the translatedFromLanguage field. If language translation was not required, this field is not applicable.
+members.creationInfo.comments
+  .translatedFromLanguage	string	Conditionally	If language translation/localization is required, this two-letter code indicates the language used to display the content in the translatedFromContent field. If language translation was not required, this field is not applicable.
+
+The full list of language enumeration values are defined in the LanguageEnum type definition.
+
+Applicable values: See LanguageEnum
+members.creationInfo
+  .creationDate	DateTime	Always	The timestamp in this container indicates the date/time when the return request was created.
+members.creationInfo
+  .creationDate.formattedValue	string	Conditionally	Reserved for future use.
+members.creationInfo
+  .creationDate.value	datetime	Conditionally	This timestamp indicates the date and time when an action or event occurred.
+
+The timestamp is formatted as an ISO 8601 string, which is based on the 24-hour Coordinated Universal Time (UTC) clock.
+
+Format: [YYYY]-[MM]-[DD]T[hh]:[mm]:[ss].[sss]Z
+Example: 2022-03-20T00:00:00.000Z
+members.creationInfo.item	ReturnItemType	Always	This container provides information on the return item, including listing ID, listing title, order line item ID, and the quantity of the line item that is being returned.
+members.creationInfo.item
+  .itemId	string	Always	The unique identifier for the eBay listing where the item was purchased. This field is used in conjunction with the transactionId field to identify a line item within an order.
+members.creationInfo.item
+  .returnQuantity	integer	Always	This integer value indicates the quantity of the line item being returned. This number is generally 1, unless the buyer bought multiple quantity of the item in a multiple-quantity, fixed-price listing.
+members.creationInfo.item
+  .transactionId	string	Always	The unique identifier for the purchase of the item. This value is created right when the buyer is committed to buying the item, whether that buyer uses a 'Buy it Now' capability, is the winning bidder of an auction, or the buyer's Best Offer is accepted by the seller. This field is used in conjunction with the itemId field to identify a line item within an order.
+members.creationInfo.reason	string	Always	This enumerated value indicates the buyer's reason for creating a return request or draft.
+
+The supported enumeration values representing valid return reasons are defined in the ReturnReasonEnum type definition.
+
+Applicable values: See ReturnReasonEnum
+members.creationInfo
+  .reasonType	string	Conditionally	This value indicates the broad reason why the buyer is opening the return request, such as SNAD or REMORSE.
+
+Applicable values are from ReturnReasonTypeEnum:
+
+
+CANCEL
+This enumeration value is returned if a cancellation request was made by the buyer after the item was already shipped by the seller.
+INSTORE
+This enumeration value is returned if the return item was part of an In-Store Pickup or a Click and Collect order, and the buyer is returning the item to a local brick-and-mortar store.
+REMORSE
+This enumeration value is returned if the buyer is returning the item for a buyer's remorse reason, which means that there is nothing actually wrong with the item.
+SNAD
+This enumeration value is returned if the buyer found the item to be Significantly Not As Described, so the buyer wants to return the item.
+UNKNOWN
+This enumeration value is returned if the return reason category is not known.
+
+Code so that your app gracefully handles any future changes to this list.
+members.creationInfo.type	string	Always	This enumerated value indicates the buyer's desired outcome.
+
+Note: Currently, the only supported value is MONEY_BACK.
+
+
+
+Applicable values are from ReturnTypeEnum:
+
+
+EXCHANGE
+
+Note: This value is deprecated.
+
+MONEY_BACK
+This enumeration value indicates that the buyer is seeking a full refund after returning the item.
+REPLACEMENT
+This enumeration value indicates that the buyer is seeking a replacement item after returning the item.
+
+Note: This value is not currently supported.
+
+UNKNOWN
+
+Note: This value is deprecated.
+
+
+Code so that your app gracefully handles any future changes to this list.
+members.currentType	string	Conditionally	This enumerated value indicates the buyer's desired outcome.
+
+Note: Currently, the only supported value is MONEY_BACK.
+
+
+
+Applicable values are from ReturnTypeEnum:
+
+
+EXCHANGE
+
+Note: This value is deprecated.
+
+MONEY_BACK
+This enumeration value indicates that the buyer is seeking a full refund after returning the item.
+REPLACEMENT
+This enumeration value indicates that the buyer is seeking a replacement item after returning the item.
+
+Note: This value is not currently supported.
+
+UNKNOWN
+
+Note: This value is deprecated.
+
+
+Code so that your app gracefully handles any future changes to this list.
+members.escalationInfo	EscalationInfoType	Conditionally	This container provides information on whether or not the buyer or seller is eligible to escalate a return request to a case, and if a return request was escalated, a caseId can be found in this container.
+members.escalationInfo
+  .buyerEscalationEligibilityInfo	EscalationEligibilityInfo	Always	This container indicates if the buyer is eligible to escalate the return request into a return case. If the buyer is eligible to escalate the return request into a return case, the time window during which this buyer must perform this action is returned under this container.
+members.escalationInfo
+  .buyerEscalationEligibilityInfo
+  .eligible	boolean	Always	This boolean value indicates whether or not the buyer or seller is eligible to escalate the return request to a case. If the value is true, the time window in which the buyer or seller can escalate the case is found in the startTime and endTime containers.
+members.escalationInfo
+  .buyerEscalationEligibilityInfo
+  .endTime	DateTime	Conditionally	The timestamp in this container provides the deadline in which the buyer or seller may escalate the return request to a case. As soon as this time expires, the buyer or seller may no longer escalate the return request to a case. This field will not be returned if the value of the eligible field is false.
+members.escalationInfo
+  .buyerEscalationEligibilityInfo
+  .endTime.formattedValue	string	Conditionally	Reserved for future use.
+members.escalationInfo
+  .buyerEscalationEligibilityInfo
+  .endTime.value	datetime	Conditionally	This timestamp indicates the date and time when an action or event occurred.
+
+The timestamp is formatted as an ISO 8601 string, which is based on the 24-hour Coordinated Universal Time (UTC) clock.
+
+Format: [YYYY]-[MM]-[DD]T[hh]:[mm]:[ss].[sss]Z
+Example: 2022-03-20T00:00:00.000Z
+members.escalationInfo
+  .buyerEscalationEligibilityInfo
+  .startTime	DateTime	Conditionally	The timestamp in this container provides the earliest date in which the buyer or seller may escalate the return request to a case. As soon as this time arrives, up until the time shown in the end field, the buyer or seller is eligible to escalate the return request to a case. This field will not be returned if the value of the eligible field is false.
+members.escalationInfo
+  .buyerEscalationEligibilityInfo
+  .startTime.formattedValue	string	Conditionally	Reserved for future use.
+members.escalationInfo
+  .buyerEscalationEligibilityInfo
+  .startTime.value	datetime	Conditionally	This timestamp indicates the date and time when an action or event occurred.
+
+The timestamp is formatted as an ISO 8601 string, which is based on the 24-hour Coordinated Universal Time (UTC) clock.
+
+Format: [YYYY]-[MM]-[DD]T[hh]:[mm]:[ss].[sss]Z
+Example: 2022-03-20T00:00:00.000Z
+members.escalationInfo.caseId	string	Conditionally	The unique eBay-assigned ID of an eBay case. This field will only be returned if the return request was successfully escalated to a return case.
+members.escalationInfo
+  .sellerEscalationEligibilityInfo	EscalationEligibilityInfo	Always	This container indicates if the seller is eligible to escalate the return request into a return case. If the seller is eligible to escalate the return request into a return case, the time window during which this seller must perform this action is returned under this container.
+members.escalationInfo
+  .sellerEscalationEligibilityInfo
+  .eligible	boolean	Always	This boolean value indicates whether or not the buyer or seller is eligible to escalate the return request to a case. If the value is true, the time window in which the buyer or seller can escalate the case is found in the startTime and endTime containers.
+members.escalationInfo
+  .sellerEscalationEligibilityInfo
+  .endTime	DateTime	Conditionally	The timestamp in this container provides the deadline in which the buyer or seller may escalate the return request to a case. As soon as this time expires, the buyer or seller may no longer escalate the return request to a case. This field will not be returned if the value of the eligible field is false.
+members.escalationInfo
+  .sellerEscalationEligibilityInfo
+  .endTime.formattedValue	string	Conditionally	Reserved for future use.
+members.escalationInfo
+  .sellerEscalationEligibilityInfo
+  .endTime.value	datetime	Conditionally	This timestamp indicates the date and time when an action or event occurred.
+
+The timestamp is formatted as an ISO 8601 string, which is based on the 24-hour Coordinated Universal Time (UTC) clock.
+
+Format: [YYYY]-[MM]-[DD]T[hh]:[mm]:[ss].[sss]Z
+Example: 2022-03-20T00:00:00.000Z
+members.escalationInfo
+  .sellerEscalationEligibilityInfo
+  .startTime	DateTime	Conditionally	The timestamp in this container provides the earliest date in which the buyer or seller may escalate the return request to a case. As soon as this time arrives, up until the time shown in the end field, the buyer or seller is eligible to escalate the return request to a case. This field will not be returned if the value of the eligible field is false.
+members.escalationInfo
+  .sellerEscalationEligibilityInfo
+  .startTime.formattedValue	string	Conditionally	Reserved for future use.
+members.escalationInfo
+  .sellerEscalationEligibilityInfo
+  .startTime.value	datetime	Conditionally	This timestamp indicates the date and time when an action or event occurred.
+
+The timestamp is formatted as an ISO 8601 string, which is based on the 24-hour Coordinated Universal Time (UTC) clock.
+
+Format: [YYYY]-[MM]-[DD]T[hh]:[mm]:[ss].[sss]Z
+Example: 2022-03-20T00:00:00.000Z
+members.orderId	string	Conditionally	The unique eBay-assigned ID of the order being returned.
+members.returnId	string	Conditionally	The unique eBay-assigned ID of the return request.
+members.returnPolicy	ReturnPolicyType	Conditionally	This container indicates whether or not the seller is required to provide an RMA (return merchandise authorization) number to the buyer. The seller can use the POST /post-order/v2/return/{returnId}/decide method to provide the buyer with the RMA number.
+members.returnPolicy
+  .rmaRequired	boolean	Conditionally	This boolean field is returned as true if the seller is expected to provide a return merchandise authorization (RMA) number to the buyer before the buyer return ships the order line item. The seller can use the POST /post-order/v2/return/{returnId}/decide method to provide the buyer with the RMA number for the item.
+members.sellerAvailableOptions	array of AvailableOptionType	Conditionally	This array consists one or more options that are available to the seller to move the return request to the next stage. If the return request is currently waiting for a response from the buyer, this array may not appear at all.
+members.sellerAvailableOptions
+  .actionType	string	Always	This enumeration value informs the buyer or seller what the next action is to move the return request to the next stage. Note that most values in the ActivityOptionEnum type are either specific to the buyer or the seller, but not to both.
+
+Applicable values are from ActivityOptionEnum:See actionType.
+Code so that your app gracefully handles any future changes to this list.
+members.sellerAvailableOptions
+  .actionURL	string	Conditionally	This field contains the URL to an eBay page where the buyer or seller can take their next action (specified in the actionType field) in a return request. This field will only be returned if there is an eBay page associated with the next action.
+members.sellerLoginName	string	Conditionally	This string value is the eBay user name of the seller.
+
+
+Note: Effective September 26, 2025, select developers will no longer receive username data for U.S. users through this field. Instead, an immutable user ID will be returned in its place. For more information, please refer to Data Handling Compliance.
+
+members.sellerResponseDue	ReturnResponseDueType	Conditionally	This container indicates the next action the seller is responsible for, and the 'due date' for this action. This container might not be returned if there is currently no action due from the seller.
+members.sellerResponseDue
+  .activityDue	string	Conditionally	This enumeration value informs the buyer or seller what the next action is to move the return request to the next stage.
+
+Applicable values are from ActivityOptionEnum:See activityDue.
+Code so that your app gracefully handles any future changes to this list.
+members.sellerResponseDue
+  .respondByDate	DateTime	Conditionally	The timestamp in this container indicates the deadline for when a buyer or seller must perform the next action (indicated in activityDue field) on the return request. This field will only be returned if there is a deadline associated with the next action.
+members.sellerResponseDue
+  .respondByDate.formattedValue	string	Conditionally	Reserved for future use.
+members.sellerResponseDue
+  .respondByDate.value	datetime	Conditionally	This timestamp indicates the date and time when an action or event occurred.
+
+The timestamp is formatted as an ISO 8601 string, which is based on the 24-hour Coordinated Universal Time (UTC) clock.
+
+Format: [YYYY]-[MM]-[DD]T[hh]:[mm]:[ss].[sss]Z
+Example: 2022-03-20T00:00:00.000Z
+members.sellerTotalRefund	TotalRefundAmountType	Conditionally	This container returns the total buyer refund amount due from the seller. This container will either show the estimated amount due if the buyer refund has yet to be issued, or will show the actual amount paid if buyer refund has been issued.
+
+In some cases, the buyerTotalRefund differs from the sellerTotalRefund because the buyer may receive refunds from eBay instead of from the seller.
+members.sellerTotalRefund
+  .actualRefundAmount	Amount	Conditionally	This container shows the actual refund amount paid to the buyer. Is is only returned after a refund has been issued to the buyer.
+members.sellerTotalRefund
+  .actualRefundAmount
+  .convertedFromCurrency	string	Conditionally	The three-letter ISO 4217 code representing the currency of the amount in the convertedFromValue field. This value is the pre-conversion currency.
+
+If no conversion occurs, this should not be populated.
+
+The list of three-digit currency codes that may be returned in this field are defined in the CurrencyCodeEnum type definition.
+
+Applicable values: See CurrencyCodeEnum
+members.sellerTotalRefund
+  .actualRefundAmount
+  .convertedFromValue	number	Conditionally	The monetary amount before any conversion is performed, in the currency specified by the convertedFromCurrency field. This value is the pre-conversion amount. The value field contains the converted amount of this value, in the currency specified by the currency field.
+
+If no conversion occurs, this should not be populated.
+members.sellerTotalRefund
+  .actualRefundAmount.currency	string	Conditionally	A three-letter ISO 4217 code that indicates the currency of the amount in the value field. This field is always returned with any container using Amount type.
+
+The list of three-digit currency codes that may be returned in this field are defined in the CurrencyCodeEnum type definition.
+
+Applicable values: See CurrencyCodeEnum
+members.sellerTotalRefund
+  .actualRefundAmount
+  .exchangeRate	string	Conditionally	This field shows the exchange rate used to convert the amount in the convertedFromValue field to amount in the value field. This field is only returned when eBay does a currency version.
+members.sellerTotalRefund
+  .actualRefundAmount.value	number	Conditionally	The monetary amount, in the currency specified by the currency field. This field is always returned with any container using Amount type.
+members.sellerTotalRefund
+  .estimatedRefundAmount	Amount	Always	This container shows the estimated refund amount expected to be paid to the buyer.
+members.sellerTotalRefund
+  .estimatedRefundAmount
+  .convertedFromCurrency	string	Conditionally	The three-letter ISO 4217 code representing the currency of the amount in the convertedFromValue field. This value is the pre-conversion currency.
+
+If no conversion occurs, this should not be populated.
+
+The list of three-digit currency codes that may be returned in this field are defined in the CurrencyCodeEnum type definition.
+
+Applicable values: See CurrencyCodeEnum
+members.sellerTotalRefund
+  .estimatedRefundAmount
+  .convertedFromValue	number	Conditionally	The monetary amount before any conversion is performed, in the currency specified by the convertedFromCurrency field. This value is the pre-conversion amount. The value field contains the converted amount of this value, in the currency specified by the currency field.
+
+If no conversion occurs, this should not be populated.
+members.sellerTotalRefund
+  .estimatedRefundAmount
+  .currency	string	Conditionally	A three-letter ISO 4217 code that indicates the currency of the amount in the value field. This field is always returned with any container using Amount type.
+
+The list of three-digit currency codes that may be returned in this field are defined in the CurrencyCodeEnum type definition.
+
+Applicable values: See CurrencyCodeEnum
+members.sellerTotalRefund
+  .estimatedRefundAmount
+  .exchangeRate	string	Conditionally	This field shows the exchange rate used to convert the amount in the convertedFromValue field to amount in the value field. This field is only returned when eBay does a currency version.
+members.sellerTotalRefund
+  .estimatedRefundAmount.value	number	Conditionally	The monetary amount, in the currency specified by the currency field. This field is always returned with any container using Amount type.
+members.state	string	Conditionally	This enumeration value indicates the current state of the return request.
+
+Applicable values are from ReturnStateEnum:See state.
+Code so that your app gracefully handles any future changes to this list.
+members.status	string	Conditionally	This enumeration value indicates the current status of the return request.
+
+Applicable values are from ReturnStatusEnum:See status.
+Code so that your app gracefully handles any future changes to this list.
+members.timeoutDate	DateTime	Conditionally	The timestamp in this container indicates the date and time when eBay may administratively close the return request is either a buyer's or seller's response is nor made by this deadline.
+members.timeoutDate
+  .formattedValue	string	Conditionally	Reserved for future use.
+members.timeoutDate.value	datetime	Conditionally	This timestamp indicates the date and time when an action or event occurred.
+
+The timestamp is formatted as an ISO 8601 string, which is based on the 24-hour Coordinated Universal Time (UTC) clock.
+
+Format: [YYYY]-[MM]-[DD]T[hh]:[mm]:[ss].[sss]Z
+Example: 2022-03-20T00:00:00.000Z
+paginationOutput	PaginationOutput	Always	This container consists of metadata related to the current page of results. It shows the total number of return requests that match the filter criteria, the total number of return requests to show per page of results, and the total number of pages in the results set.
+paginationOutput.limit	integer	Always	The maximum number of entries to return per request. This value is set through the limit query parameter in the request (or the default value is used if this query parameter is omitted).
+
+The value of the totalEntries field divided by the value of this field determines the value of the totalPages field.
+paginationOutput.offset	integer	Always	The offset value indicates the number of entries to skip in the results set before returning the first entry in the paginated response. The offset query parameter is paired with the limit query parameter to control the number of entries returned in the response, and which entries appear on that page of data. For example, if you supply an offset of 0 and a limit of 10, the first page of the response contains the first 10 entries from the results set. If the offset was set to 10 and the limit was set to 20, the first page of the results set would contain entries 11-30.
+
+The offset value defaults to 0 if the offset query parameter is omitted from the request.
+paginationOutput.totalEntries	integer	Always	The total number of entries that match the current input criteria of the request. This value divided by the value of the limit field determines the value of the totalPages field.
+paginationOutput.totalPages	integer	Always	The total number of pages of entries that match the current input criteria of the request.
+
+This value is determined by dividing the value of the totalEntries field by the value of the limit field. If totalPages is more than 1, subsequent calls must be used to view subsequent pages in the results set.
+total	integer	Conditionally	This field is not currently used. The total number of return requests and the number of return requests on the current page are shown in the paginationOutput container.
+null
+
+
+
+
+
+Input Output Samples Change History
+Samples
+
+New to making API calls? Please see Making a Call.
+
+Note: Some item IDs, user IDs, or other data in these samples might no longer be active on eBay. If necessary, you can substitute current eBay data in your requests.
+
+Sample: Basic Call
+
+Search for returns
+
+Description
+
+This call allows for a search of return requests. Query parameters allow for flexibility in the search. For this particular call sample, a seller is looking for all return requests that have just been initiated by their order partners (buyers).
+
+Input
+
+The seller is looking for all return requests that have just been initiated, so the seller includes the return_state query parameter and sets its value to RETURN_STARTED.
+
+URL format. See also the non-wrapped version of this URL.
+
+GET https://api.ebay.com/post-order/v2/return/search?
+   return_state=RETURN_STARTED
+
+Output
+
+Based on the response, there are currently three return requests that have just been initiated by buyers. The countSummary container captures this fact. Detailed information on the three return requests can be found under the returns container. Each return request is identifier by its returnId value. For two of the return requests, the buyers are asking for their money back, as indicated in the currentType fields. The last return request in the response shows that the buyer noted the received item as being defective (see the creationInfo.reason field) and that buyer wants a replacement item, as indicated by the corresponding currentType field.
+
+For all three of these return requests, the seller's next response will be to either accept or deny the return request, or send the buyer a message. These available options are captured in the sellerAvailableOptions container.
+
+JSON format.
+{ /* GetSummaryResponse */
+"countSummary": [
+    { 
+    "count": 3,
+    "type": RETURN_STARTED
+    }
+  ],
+"members": [
+    { 
+    "returnId": "5********2",
+    "currentType": MONEY_BACK,
+    "state": RETURN_REQUESTED,
+    "status": RETURN_REQUESTED,
+    "creationInfo":
+		{ 
+		"creationDate":
+				{ 
+				"value": "2015-08-05T20:18:17.000Z"
+				},
+		"item":
+				{ 
+				"itemId": "1**********6",
+				"transactionId": "8********9",
+				"returnQuantity": 1,
+				},
+		"reason": ARRIVED_DAMAGED,
+		"type": MONEY_BACK
+        },
+    "buyerLoginName": "b*******1",
+    "sellerLoginName": "s********4",
+    "buyerTotalRefund":
+        { 
+        "estimatedRefundAmount":
+            { 
+            "value": 27.5
+            "currency": USD,
+            }
+        },
+    "escalationInfo":
+        { 
+        "buyerEscalationEligibilityInfo":
+            { 
+            "eligible": true,
+            "startTime":
+				{ 
+				"value": "2015-08-05T20:18:17.000Z"
+                }
+            "endTime":
+                { 
+                "value": "2015-08-19T20:18:17.000Z"
+                }
+            },
+        "sellerEscalationEligibilityInfo":
+            { 
+           	"eligible": true,
+				 "startTime":
+						{ 
+						"value": "2015-08-05T20:18:17.000Z"
+						 }
+				 "endTime":
+						 { 
+						 "value": "2015-08-19T20:18:17.000Z"
+                }
+            }
+        },
+    "sellerAvailableOptions": [
+        { 
+        "actionType": SELLER_APPROVE_REQUEST
+        },
+        { 
+			"actionType": SELLER_DECLINE_REQUEST
+        },
+        { 
+			"actionType": SELLER_SEND_MESSAGE
+        }
+      ],
+    "sellerResponseDue":
+        { 
+        "activityDue": SELLER_APPROVE_REQUEST,
+        "respondByDate":
+            { 
+            "value": "2015-08-09T20:18:17.000Z"
+            }
+        },
+    "sellerTotalRefund":
+        { 
+			"estimatedRefundAmount":
+				{ 
+				"value": 27.5
+				"currency": USD,
+				}
+        },
+    },
+    { 
+		"returnId": "5********8",
+		"currentType": MONEY_BACK,
+		"state": RETURN_REQUESTED,
+		"status": RETURN_REQUESTED,
+		"creationInfo":
+			{ 
+			"creationDate":
+					{ 
+					"value": "2015-08-06T20:20:17.000Z"
+					},
+			"item":
+					{ 
+					"itemId": "1**********2",
+					"transactionId": "8********4",
+					"returnQuantity": 1,
+					},
+			"reason": NO_LONGER_NEED_ITEM,
+			"type": MONEY_BACK
+			},
+		"buyerLoginName": "b*******4",
+		"sellerLoginName": "s********4",
+		"buyerTotalRefund":
+			{ 
+			"estimatedRefundAmount":
+					{ 
+					"value": 34.75
+					"currency": USD,
+					}
+			},
+		"escalationInfo":
+			{ 
+			"buyerEscalationEligibilityInfo":
+				{ 
+				"eligible": true,
+				"startTime":
+					{ 
+					"value": "2015-08-06T20:20:17.000Z"
+					}
+				"endTime":
+					{ 
+					"value": "2015-08-20T20:20:17.000Z"
+					}
+				},
+			"sellerEscalationEligibilityInfo":
+				{ 
+				"eligible": true,
+					 "startTime":
+						{ 
+						"value": "2015-08-06T20:20:17.000Z"
+						}
+					"endTime":
+						{ 
+						"value": "2015-08-20T20:20:17.000Z"
+						}
+					},
+				}
+			},
+		"sellerAvailableOptions": [
+				{ 
+				"actionType": SELLER_APPROVE_REQUEST
+				},
+				{ 
+				"actionType": SELLER_DECLINE_REQUEST
+				},
+				{ 
+				"actionType": SELLER_SEND_MESSAGE
+				}
+			],
+		"sellerResponseDue":
+				{ 
+				"activityDue": SELLER_APPROVE_REQUEST,
+				"respondByDate":
+					{ 
+					"value": "2015-08-10T20:18:17.000Z"
+					}
+				},
+		"sellerTotalRefund":
+			{ 
+			"estimatedRefundAmount":
+				{ 
+				"value": 34.75
+				"currency": USD,
+				}
+			},
+		},
+		{ 
+		"returnId": "5********5",
+		"currentType": REPLACEMENT,
+		"state": REPLACEMENT_REQUESTED,
+		"status": REPLACEMENT_REQUESTED,
+		"creationInfo":
+			{ 
+			"creationDate":
+				{ 
+				"value": "2015-08-08T09:42:37.000Z"
+				},
+			"item":
+				{ 
+				"itemId": "1**********5",
+				"transactionId": "8********9",
+				"returnQuantity": 1,
+				},
+			"reason": DEFECTIVE_ITEM,
+			"type": REPLACEMENT
+			},
+		"buyerLoginName": "b********8",
+		"sellerLoginName": "s********4",
+		"escalationInfo":
+			{ 
+			"buyerEscalationEligibilityInfo":
+				{ 
+				"eligible": true,
+				"startTime":
+					{ 
+					"value": "2015-08-08T09:42:37.000Z"
+					}
+				"endTime":
+					{ 
+					"value": "2015-08-22T09:42:37.000Z"
+					}
+				},
+			"sellerEscalationEligibilityInfo":
+					{ 
+					"eligible": true,
+					"startTime":
+						{ 
+						"value": "2015-08-08T09:42:37.000Z"
+						}
+					"endTime":
+						{ 
+						"value": "2015-08-22T09:42:37.000Z"
+						}
+					},
+				}
+			},
+		"sellerAvailableOptions": [
+				{ 
+				"actionType": SELLER_APPROVE_REQUEST
+				},
+				{ 
+				"actionType": SELLER_DECLINE_REQUEST
+				},
+				{ 
+				"actionType": SELLER_SEND_MESSAGE
+				}
+			],
+		"sellerResponseDue":
+			{ 
+			"activityDue": SELLER_APPROVE_REQUEST,
+			"respondByDate":
+					{ 
+					"value": "2015-08-12T09:42:37.000Z"
+					}
+			},
+		}
+  ],
+"paginationOutput":
+    { 
+    "limit": 100,
+    "offset": 1,
+    "totalEntries": 3,
+    "totalPages": 1
+    }
+}
+
+
+
+
+
+
+Input Output Samples Change History
+Change History
+Change Date	Description
+1.0
+2015-06-30	
+Call (added): New call.
+
+FAQs Developer Community Forum Developer Technical Support APIs API License Agreement
+
+Copyright 1999-2026 eBay Inc. All rights reserved. User agreement, Privacy policy, Cookies.

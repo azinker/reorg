@@ -1,0 +1,153 @@
+/**
+ * Shared presentational helpers for the Return Cases UI (list + detail).
+ * Pure, no data fetching — keeps the two client components consistent.
+ */
+import { Store } from "lucide-react";
+
+export type ReturnLifecycle =
+  | "requested"
+  | "in_transit"
+  | "delivered"
+  | "refund_pending"
+  | "closed";
+
+export const STORE_LABEL: Record<string, string> = {
+  TPP_EBAY: "TPP",
+  TT_EBAY: "TT",
+};
+
+export const STORE_FULL: Record<string, string> = {
+  TPP_EBAY: "The Perfect Part (eBay)",
+  TT_EBAY: "Telitetech (eBay)",
+};
+
+/** Small colored store badge. TPP = brand blue, TT = violet. */
+export function StoreBadge({ platform }: { platform: string }) {
+  const tpp = platform === "TPP_EBAY";
+  return (
+    <span
+      title={STORE_FULL[platform] ?? platform}
+      className={
+        "inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-semibold " +
+        (tpp
+          ? "bg-sky-500/15 text-sky-700 dark:text-sky-300"
+          : "bg-violet-500/15 text-violet-700 dark:text-violet-300")
+      }
+    >
+      <Store className="h-2.5 w-2.5" />
+      {STORE_LABEL[platform] ?? platform}
+    </span>
+  );
+}
+
+const LIFECYCLE_META: Record<
+  ReturnLifecycle,
+  { label: string; cls: string }
+> = {
+  requested: {
+    label: "Requested",
+    cls: "bg-amber-500/15 text-amber-700 dark:text-amber-300",
+  },
+  in_transit: {
+    label: "In transit",
+    cls: "bg-sky-500/15 text-sky-700 dark:text-sky-300",
+  },
+  delivered: {
+    label: "Delivered",
+    cls: "bg-indigo-500/15 text-indigo-700 dark:text-indigo-300",
+  },
+  refund_pending: {
+    label: "Refund pending",
+    cls: "bg-orange-500/15 text-orange-700 dark:text-orange-300",
+  },
+  closed: {
+    label: "Closed",
+    cls: "bg-zinc-500/15 text-zinc-600 dark:text-zinc-400",
+  },
+};
+
+export function LifecycleBadge({
+  lifecycle,
+  rawLabel,
+}: {
+  lifecycle: ReturnLifecycle;
+  rawLabel?: string | null;
+}) {
+  const meta = LIFECYCLE_META[lifecycle] ?? LIFECYCLE_META.requested;
+  return (
+    <span
+      title={rawLabel ?? meta.label}
+      className={
+        "inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium " +
+        meta.cls
+      }
+    >
+      {meta.label}
+    </span>
+  );
+}
+
+/** Format an ISO date as "Jun 16, 2026". */
+export function fmtDate(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
+/** Format an ISO datetime as "Jun 16, 2026, 5:19 PM". */
+export function fmtDateTime(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+/** Relative "x ago" string for freshness indicators. */
+export function fmtAgo(iso: string | null | undefined): string {
+  if (!iso) return "never";
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return "never";
+  const sec = Math.max(0, Math.floor((Date.now() - then) / 1000));
+  if (sec < 60) return "just now";
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min}m ago`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr}h ago`;
+  const day = Math.floor(hr / 24);
+  return `${day}d ago`;
+}
+
+export function fmtMoney(
+  value: number | null | undefined,
+  currency: string | null | undefined,
+): string {
+  if (value == null) return "—";
+  try {
+    return new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency: currency ?? "USD",
+    }).format(value);
+  } catch {
+    return `${currency ?? "$"}${value.toFixed(2)}`;
+  }
+}
+
+/** Human label for a return reason, shortened where eBay uses long enums. */
+export function humanizeReason(reason: string | null | undefined): string {
+  if (!reason) return "—";
+  return reason
+    .replace(/_/g, " ")
+    .toLowerCase()
+    .replace(/^\w/, (c) => c.toUpperCase());
+}

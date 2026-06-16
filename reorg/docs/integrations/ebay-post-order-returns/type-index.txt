@@ -1,0 +1,74 @@
+URL: https://developer.ebay.com/Devzone/post-order/typeindex.html
+STATUS: 200
+TITLE: eBay Developers Program
+
+Skip to main content
+Developers Program
+Join
+Develop
+Grow
+Updates
+Support
+
+Important Update: eBay's API integrations will be modified to address data handling requirements for select developers. Usernames will be replaced with immutable user IDs, and financial data will be protected for certain users. Learn more here.
+Action Required: From early May, API users must include standardized condition details when creating or updating listings in certain coins category. Update your integration to stay compliant. Learn more here.
+Size Standardization Update: Apparel & Footwear listings with non-standard, missing, or incomplete size information may be blocked or hidden starting July 2026. Normalization begins in June. Learn more here.
+Action Required: A new Right of Withdrawal (ROW) return reason will be added to the getReturnDetails API for eligible EU returns. Update your integration so it can safely handle new/unknown return reason enum values without errors. Learn more here.
+
+eBay Developers Program
+
+Building blocks for buying and selling on eBay from anywhere online
+
+Join
+
+Not a member? It's free to join the eBay Developers Program!
+
+Learn more
+Register now
+Develop
+
+eBay API tools and support - designed by developer, for developers.
+
+Learn more
+Grow
+
+Ready to grow? Put your application in the spotlight.
+
+Learn more
+Updates
+
+Keep up-to-date with our latest API enhancements.
+
+eBay Developers Program Q1 2026 Newsletter
+
+Program news, API updates, and deprecations for the first quarter of 2026.
+
+Learn more
+Explore the Inventory Mapping API
+
+The Inventory Mapping API helps you turn your existing product data into high-quality listings with AI-powered recommendations.
+
+Learn more
+A New Era of Partnership
+
+Accelerate your growth using eBay’s Developer Loyalty Program with upgraded concierge service, expanded benefits, and clearer guidelines.
+
+Learn more
+eBay Developer Awards
+
+Check out award-winning developers and apps.
+
+Learn more
+Events
+
+Plan for upcoming conferences and webinars, or see what you missed at past events.
+
+Learn more
+
+Learn more
+
+Learn more
+
+FAQsDeveloper Community ForumDeveloper Technical SupportAPIsAPI License Agreement
+
+Copyright 1999—2026 eBay Inc. All rights reserved. User agreement, Privacy policy, Cookies.

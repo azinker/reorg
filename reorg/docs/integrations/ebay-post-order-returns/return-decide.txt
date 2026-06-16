@@ -1,0 +1,231 @@
+URL: https://developer.ebay.com/Devzone/post-order/post-order_v2_return-returnId_decide__post.html
+STATUS: 200
+TITLE: Process Return Request - eBay Post-Order API Reference
+
+eBay Post-Order APIVersion 2.9.0
+Join
+Develop
+Grow
+Updates
+Support
+User Guide Making a Call API Reference Release Notes
+ 
+Process Return Request
+POST /post-order/v2/return/{returnId}/decide
+
+This method can be used on behalf of a seller or buyer to perform an action against a return request.
+Important! Due to EU & UK Payments regulatory requirements, an additional security verification via Digital Signatures is required for certain API calls that are made on behalf of EU/UK sellers, including this method. Please refer to Digital Signatures for APIs to learn more on the impacted APIs and the process to create signature to be included in the HTTP payload.
+Some of the actions that sellers can initiate with this method including approving or declining the return request, offering a partial refund solution to the buyer, or providing a Return Merchandise Authorization (RMA) number to the buyer.
+
+Buyers can use this method to accept or decline a partial refund offer.
+
+This method is not supported in the Sandbox environment.
+Input Output Samples Change History
+Input
+
+See also Samples.
+
+Resource URI (production)
+POST https://api.ebay.com/post-order/v2/return/{returnId}/decide
+URI parameters
+Parameter	Type	Required?	Meaning
+returnId	string	Required	The unique eBay-assigned ID of the return. The returnId value is required as part of the call URI to identify the return request for which an action is being performed against.
+
+
+
+HTTP request headers
+
+All requests made to eBay REST operations require you to provide the authorization HTTP header for authentication.
+See HTTP request headers for details.
+
+
+
+
+Authorization
+
+This call uses standard authorization tokens. See Making a Call for details.
+
+Payload model
+
+The following lists all fields that could be included in the request.
+
+{ /* DecideReturnRequest */
+"comments":
+    { /* Text */
+    "content": string,
+    "language": string,
+    "translatedFromContent": string,
+    "translatedFromLanguage": string
+    },
+"decision": string,
+"keepOriginalItem": boolean,
+"partialRefundAmount":
+    { /* Amount */
+    "convertedFromCurrency": string,
+    "convertedFromValue": number,
+    "currency": string,
+    "exchangeRate": string,
+    "value": number
+    },
+"RMANumber": string,
+"rMAProvided": boolean
+}
+
+Request field descriptions
+
+
+
+Input Container/Field	Type	Occurrence	Meaning
+comments	Text	Optional	This container is used by the seller or buyer to provide more information about the action that is being performed with the decide method.
+comments.content	string	Conditional	This field displays the actual textual content in the language specified in the language field. This field is always used for containers using the Text type.
+comments.language	string	Conditional	This two-letter code indicates the language used to display the content in the content field. The language will default to the language used on the eBay site if a specific language is not specified through the Accept-Language HTTP header. This field is always used for containers using the Text type.
+
+The full list of language enumeration values are defined in the LanguageEnum type definition.
+
+Applicable values: See LanguageEnum
+comments.translatedFromContent	string	Conditional	If language translation/localization is required, this field displays the actual textual content in the language specified in the translatedFromLanguage field. If language translation was not required, this field is not applicable.
+comments
+  .translatedFromLanguage	string	Conditional	If language translation/localization is required, this two-letter code indicates the language used to display the content in the translatedFromContent field. If language translation was not required, this field is not applicable.
+
+The full list of language enumeration values are defined in the LanguageEnum type definition.
+
+Applicable values: See LanguageEnum
+decision	string	Required	This field must be included in each request, and the value that is supplied here will depend on whether the seller or the buyer is using this method, and it will also depend on the current state of the return request. The POST /post-order/v2/return/{returnId}/decide request will fail unless an appropriate value is specified in this field.
+
+Sellers can use this method to approve or decline a return request, offer a partial refund to the buyer, or provide a Return Merchandise Authorization (RMA) number to the buyer.
+
+Buyers can use this method to accept or decline a partial refund offer.
+
+Applicable values are from DecisionEnum:See decision.
+keepOriginalItem	boolean	Optional	The seller can include this field and set it to true if they are OK with the buyer keeping the original item they received, and not requiring them to return the item. A seller may choose to do this in the case of a SNAD item or if the buyer is claiming that the item arrived damaged or was missing parts.
+
+Default: false
+partialRefundAmount	Amount	Conditional	This container is conditionally required if the seller is using the decide method to offer a partial refund amount to the buyer in order to settle the return request. This amount is the amount the seller is willing to offer the buyer as a partial refund. This field has no relevance if anything other than OFFER_PARTIAL_REFUND is passed in the decision field.
+partialRefundAmount
+  .convertedFromCurrency	string	Optional	The three-letter ISO 4217 code representing the currency of the amount in the convertedFromValue field. This value is the pre-conversion currency.
+
+If no conversion occurs, this should not be populated.
+
+The list of three-digit currency codes that may be returned in this field are defined in the CurrencyCodeEnum type definition.
+
+Applicable values: See CurrencyCodeEnum
+partialRefundAmount
+  .convertedFromValue	number	Optional	The monetary amount before any conversion is performed, in the currency specified by the convertedFromCurrency field. This value is the pre-conversion amount. The value field contains the converted amount of this value, in the currency specified by the currency field.
+
+If no conversion occurs, this should not be populated.
+partialRefundAmount.currency	string	Optional	A three-letter ISO 4217 code that indicates the currency of the amount in the value field. This field is always returned with any container using Amount type.
+
+The list of three-digit currency codes that may be returned in this field are defined in the CurrencyCodeEnum type definition.
+
+Applicable values: See CurrencyCodeEnum
+partialRefundAmount
+  .exchangeRate	string	Optional	This field shows the exchange rate used to convert the amount in the convertedFromValue field to amount in the value field. This field is only returned when eBay does a currency version.
+partialRefundAmount.value	number	Optional	The monetary amount, in the currency specified by the currency field. This field is always returned with any container using Amount type.
+RMANumber	string	Conditional	This field is conditionally required if the seller is using the POST /post-order/v2/return/{returnId}/decide method to provide a return merchandise authorization (RMA) to the buyer. The RMA value cannot be validated by eBay, so the seller should pay close attention to ensure that the RMA is accurate. If an RMA is provided in this field, the decision value should be PROVIDE_RMA.
+rMAProvided	boolean	Optional	If set to true, it indicates that the seller provided an RMA number to the buyer for processing of the return.
+
+Default: false
+
+
+Input Output Samples Change History
+Output
+
+See also Samples.
+
+Payload model
+
+Note: For information about the error fields and how to work with them, see Error Handling.
+
+The following lists all fields that could be included in the response.
+
+Supported response formats: application/json, application/xml
+
+For more information:
+- See DecideReturnResponse for a description of the response structure
+- See the following table for descriptions of each of the data elements returned
+- See the Samples for an example of the response format
+
+{ /* DecideReturnResponse */
+"refundStatus": string
+}
+
+Response field descriptions
+
+
+
+Output Container/Field	Type	Occurrence	Meaning
+refundStatus	string	Conditionally	This field is only returned in the response if a refund has been requested or initiated. The value in this field indicates the status of any refund action initiated through the POST /post-order/v2/return/{returnId}/decide request.
+
+Applicable values are from Refund_MoneyMovementStatusEnum:
+
+
+FAILED
+This enumeration value indicates that the buyer refund transaction failed.
+PENDING
+This enumeration value indicates that the buyer refund is in the pending state.
+REQUESTED
+This enumeration value indicates that a refund has been requested by the buyer.
+SUCCESS
+This enumeration value indicates that the buyer refund was successful.
+UNKNOWN
+This enumeration value indicates that the result of the buyer refund transaction is unknown.
+
+Code so that your app gracefully handles any future changes to this list.
+null
+
+
+
+
+
+Input Output Samples Change History
+Samples
+
+New to making API calls? Please see Making a Call.
+
+Note: Some item IDs, user IDs, or other data in these samples might no longer be active on eBay. If necessary, you can substitute current eBay data in your requests.
+
+Sample: Seller approves return.
+
+The seller approves a return request generated by the buyer.
+
+Description
+
+The seller must approve all buyer-initiated return requests before they are allowed.
+
+Input
+
+Seller passes in the returnId as a path parameter in the URI of the call. In the request payload, the seller passes in APPROVE in the decision field, and also includes a comment.
+
+URL format. See also the non-wrapped version of this URL.
+
+POST https://api.ebay.com/post-order/v2/return/5********9/decide
+
+{
+  "decision": "APPROVE",
+  "comments": 
+  { 
+    "content": "I approve your return request. Please ship the you want to return."
+  }
+}
+
+
+Output
+
+A successful call returns an HTTP status code of 200.
+
+
+JSON format.
+
+
+
+
+
+
+
+Input Output Samples Change History
+Change History
+Change Date	Description
+
+FAQs Developer Community Forum Developer Technical Support APIs API License Agreement
+
+Copyright 1999-2026 eBay Inc. All rights reserved. User agreement, Privacy policy, Cookies.

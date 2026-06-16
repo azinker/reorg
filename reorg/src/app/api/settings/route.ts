@@ -8,6 +8,9 @@ const ADMIN_SETTING_KEYS = new Set([
   "global_write_lock",
   "live_push_enabled",
   "helpdesk_safe_mode",
+  // eBay Returns live-write master toggle. Absent/false = LOCKED (no live
+  // return writes). Admin-only to view and change.
+  "returns_live_writes",
 ]);
 const ADMIN_APP_SETTING_FIELDS = [
   "globalWriteLock",

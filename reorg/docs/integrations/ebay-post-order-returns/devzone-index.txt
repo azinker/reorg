@@ -1,0 +1,95 @@
+URL: https://developer.ebay.com/devzone/post-order/index.html
+STATUS: 200
+TITLE: Index - eBay Post-Order API Reference
+
+eBay Post-Order APIVersion 2.9.0
+Join
+Develop
+Grow
+Updates
+Support
+User Guide Making a Call API Reference Release Notes
+ 
+Call Index
+Field Index
+Enumeration Index
+Type Index
+Errors by Number
+Error Response
+Call Index
+
+This API Reference describes the elements and attributes for each call in the Post-Order API.
+
+For details on the Post-Order API call flows, please see the Features Guide section Resolving Order Issues.
+
+Call	Summary	Samples
+CANCELLATION
+ 	Approve Cancellation
+POST /post-order/v2/cancellation/{cancelId}/approve	Seller approves a cancellation request	view
+ 	Check Cancellation Eligibility
+POST /post-order/v2/cancellation/check_eligibility	Verify if an order is eligible to be cancelled	view
+ 	Create Cancellation Request
+POST /post-order/v2/cancellation	Request or perform an order cancellation	view
+ 	Get Cancellation
+GET /post-order/v2/cancellation/{cancelId}	Retrieve the details of an order cancellation request	view
+ 	Reject Cancellation
+POST /post-order/v2/cancellation/{cancelId}/reject	Seller rejects a cancellation request	view
+ 	Search Cancellations
+GET /post-order/v2/cancellation/search	Search for cancellations	view
+CASE MANAGEMENT
+ 	Appeal Case Decision
+POST /post-order/v2/casemanagement/{caseId}/appeal	Buyer or seller appeals a case decision	view
+ 	Get Case
+GET /post-order/v2/casemanagement/{caseId}	Retrieve the details related to a specific case	view
+ 	Search Cases
+GET /post-order/v2/casemanagement/search	This method is used to search for cases using multiple filter types.	view
+INQUIRY
+ 	Escalate Inquiry
+POST /post-order/v2/inquiry/{inquiryId}/escalate	Escalate an inquiry to an INR case	view
+ 	Get Inquiry
+GET /post-order/v2/inquiry/{inquiryId}	
+
+Retrieve the history and details related to a specific inquiry
+
+	view
+ 	Issue Inquiry Refund
+POST /post-order/v2/inquiry/{inquiryId}/issue_refund	Issue a refund for a line item that is part of an INR inquiry	view
+ 	Provide Inquiry Shipment Info
+POST /post-order/v2/inquiry/{inquiryId}/provide_shipment_info	Provide shipment information for an inquiry	view
+ 	Search Inquiries
+GET /post-order/v2/inquiry/search	This method is used to search for inquiries using multiple filter types	view
+ 	Send Inquiry Message
+POST /post-order/v2/inquiry/{inquiryId}/send_message	Contact the buyer or seller about an inquiry	view
+RETURN
+ 	Add Shipping Label Info
+POST /post-order/v2/return/{returnId}/add_shipping_label	Create or update a return shipping label provided by the seller	view
+ 	Create Return Request
+POST /post-order/v2/return	Request a return for an item	view
+ 	Escalate Return
+POST /post-order/v2/return/{returnId}/escalate	Escalate a return request into a case	view
+ 	Get Return
+GET /post-order/v2/return/{returnId}	Retrieve the details of a specific return request	view
+ 	Get Return Files
+GET /post-order/v2/return/{returnId}/files	Retrieve the files associated with a return request	view
+ 	Get Return Preferences
+GET /post-order/v2/return/preference	Retrieve seller's return preferences	view
+ 	Get Shipment Tracking Info
+GET /post-order/v2/return/{returnId}/tracking	Retrieve shipment tracking activity for a return item	view
+ 	Issue Return Refund
+POST /post-order/v2/return/{returnId}/issue_refund	Issue a refund for a returned item	view
+ 	Mark Return Received
+POST /post-order/v2/return/{returnId}/mark_as_received	Mark a return item as received	view
+ 	Process Return Request
+POST /post-order/v2/return/{returnId}/decide	Seller or buyer perform an action against a return request	view
+ 	Search Returns
+GET /post-order/v2/return/search	Search for return requests based on filter criteria	view
+ 	Send Return Message
+POST /post-order/v2/return/{returnId}/send_message	Send a message to order partner regarding a return request	view
+ 	Set Return Preferences
+POST /post-order/v2/return/preference	Set seller's return preferences	view
+ 	Upload Return File
+POST /post-order/v2/return/{returnId}/file/upload	Upload the files relating to a return request	view
+
+FAQs Developer Community Forum Developer Technical Support APIs API License Agreement
+
+Copyright 1999-2026 eBay Inc. All rights reserved. User agreement, Privacy policy, Cookies.
