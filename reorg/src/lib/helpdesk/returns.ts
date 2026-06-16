@@ -67,6 +67,47 @@ export interface EbayReturnSummary {
   buyerTotalRefund?: EbayTotalRefund;
   timeoutDate?: EbayDateTime;
   closedDate?: EbayDateTime;
+  /**
+   * Present only on the Get Return *detail* payload (ReturnDetailType). The
+   * search summary does NOT include item title/image — those live here. The
+   * detail also carries closeInfo.returnCloseDate, which we map to closedDate.
+   */
+  itemDetail?: {
+    itemId?: string;
+    itemTitle?: string;
+    itemPicUrl?: string;
+    sku?: string;
+    returnQuantity?: number;
+    transactionId?: string;
+  };
+  closeInfo?: { returnCloseDate?: EbayDateTime };
+  /** Get Return wraps everything under `detail`. {@link normalizeReturnSummary} unwraps it. */
+  detail?: EbayReturnSummary;
+}
+
+/** Item title/image/sku, only available from the Get Return *detail* payload. */
+export interface ItemPresentation {
+  itemTitle: string | null;
+  imageUrl: string | null;
+  sku: string | null;
+}
+
+/**
+ * Pull the listing title / primary image / sku out of an eBay return payload.
+ * Handles both the `{ detail: { itemDetail } }` wrapper from Get Return and an
+ * already-unwrapped detail object. Search summaries return all-null.
+ */
+export function extractItemPresentation(
+  raw: EbayReturnSummary | null | undefined,
+): ItemPresentation {
+  const node = raw?.detail ?? raw ?? {};
+  const item = node.itemDetail;
+  const pic = item?.itemPicUrl ? String(item.itemPicUrl).trim() : "";
+  return {
+    itemTitle: item?.itemTitle ? String(item.itemTitle) : null,
+    imageUrl: pic ? pic : null,
+    sku: item?.sku ? String(item.sku) : null,
+  };
 }
 
 // ─── UI status buckets ───────────────────────────────────────────────────────
@@ -494,6 +535,9 @@ export interface NormalizedReturnFields {
   ebayItemId: string | null;
   transactionId: string | null;
   returnQuantity: number | null;
+  itemTitle: string | null;
+  imageUrl: string | null;
+  sku: string | null;
   buyerUserId: string | null;
   sellerUserId: string | null;
   returnState: string | null;
@@ -531,7 +575,10 @@ function toIntOrNull(n: number | undefined): number | null {
 export function normalizeReturnSummary(
   raw: EbayReturnSummary | null | undefined,
 ): NormalizedReturnFields {
-  const r = raw ?? {};
+  // Get Return wraps the whole return under `detail`; Search Returns returns the
+  // fields at the top level. Unwrap so a detail refresh reads real values
+  // instead of finding everything undefined and keeping stale data.
+  const r = raw?.detail ?? raw ?? {};
   const sellerOptions = Array.isArray(r.sellerAvailableOptions) ? r.sellerAvailableOptions : [];
   const buyerOptions = Array.isArray(r.buyerAvailableOptions) ? r.buyerAvailableOptions : [];
   const sellerResponseDueAt = parseEbayDate(r.sellerResponseDue?.respondByDate);
@@ -539,14 +586,27 @@ export function normalizeReturnSummary(
   const buyerRefund = normalizeTotalRefund(r.buyerTotalRefund);
   const state = r.state ? String(r.state) : null;
 
+  const item = r.creationInfo?.item;
+  const itemDetail = r.itemDetail;
+  const presentation = extractItemPresentation(r);
+
   return {
     returnId: r.returnId ? String(r.returnId) : null,
     ebayOrderNumber: r.orderId ? String(r.orderId) : null,
-    ebayItemId: r.creationInfo?.item?.itemId ? String(r.creationInfo.item.itemId) : null,
-    transactionId: r.creationInfo?.item?.transactionId
-      ? String(r.creationInfo.item.transactionId)
-      : null,
-    returnQuantity: toIntOrNull(r.creationInfo?.item?.returnQuantity),
+    ebayItemId: item?.itemId
+      ? String(item.itemId)
+      : itemDetail?.itemId
+        ? String(itemDetail.itemId)
+        : null,
+    transactionId: item?.transactionId
+      ? String(item.transactionId)
+      : itemDetail?.transactionId
+        ? String(itemDetail.transactionId)
+        : null,
+    returnQuantity: toIntOrNull(item?.returnQuantity ?? itemDetail?.returnQuantity),
+    itemTitle: presentation.itemTitle,
+    imageUrl: presentation.imageUrl,
+    sku: presentation.sku,
     buyerUserId: r.buyerLoginName ? String(r.buyerLoginName) : null,
     sellerUserId: r.sellerLoginName ? String(r.sellerLoginName) : null,
     returnState: state,
@@ -573,7 +633,7 @@ export function normalizeReturnSummary(
     buyerResponseDueAt: parseEbayDate(r.buyerResponseDue?.respondByDate),
     timeoutDate: parseEbayDate(r.timeoutDate),
     openedAt: parseEbayDate(r.creationInfo?.creationDate),
-    closedAt: parseEbayDate(r.closedDate),
+    closedAt: parseEbayDate(r.closedDate) ?? parseEbayDate(r.closeInfo?.returnCloseDate),
     sellerAvailableOptions: sellerOptions,
     buyerAvailableOptions: buyerOptions,
   };

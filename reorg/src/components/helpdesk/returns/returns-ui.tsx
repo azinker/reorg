@@ -87,6 +87,45 @@ export function LifecycleBadge({
   );
 }
 
+/** Title-case a raw eBay ReturnStateEnum, e.g. RETURN_APPROVED → "Return Approved". */
+export function humanizeState(state: string | null | undefined): string {
+  if (!state) return "Unknown";
+  return state
+    .trim()
+    .toLowerCase()
+    .split("_")
+    .map((w) => (w ? w[0].toUpperCase() + w.slice(1) : w))
+    .join(" ");
+}
+
+/**
+ * Status pill that shows the *actual* eBay state (e.g. "Return Approved",
+ * "Item Shipped") colored by its coarse lifecycle. More accurate than the
+ * coarse lifecycle label alone — an approved return awaiting the buyer reads
+ * "Return Approved" instead of the misleading "Requested".
+ */
+export function StatusBadge({
+  lifecycle,
+  state,
+}: {
+  lifecycle: ReturnLifecycle;
+  state?: string | null;
+}) {
+  const meta = LIFECYCLE_META[lifecycle] ?? LIFECYCLE_META.requested;
+  const label = state ? humanizeState(state) : meta.label;
+  return (
+    <span
+      title={label}
+      className={
+        "inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium " +
+        meta.cls
+      }
+    >
+      {label}
+    </span>
+  );
+}
+
 /** Format an ISO date as "Jun 16, 2026". */
 export function fmtDate(iso: string | null | undefined): string {
   if (!iso) return "—";

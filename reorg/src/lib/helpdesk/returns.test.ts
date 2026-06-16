@@ -14,6 +14,7 @@ import {
   isSupportedCarrier,
   humanizeReturnState,
   normalizeReturnSummary,
+  extractItemPresentation,
   type EbayAvailableOption,
 } from "@/lib/helpdesk/returns";
 
@@ -273,6 +274,55 @@ test("normalizeReturnSummary maps a typical eBay return summary", () => {
   assert.ok(out.openedAt instanceof Date);
   assert.ok(out.sellerResponseDueAt instanceof Date);
   assert.equal(out.closedAt, null);
+});
+
+test("extractItemPresentation: pulls title/image/sku from a Get Return detail", () => {
+  const detailBody = {
+    detail: {
+      returnId: "5322177775",
+      itemDetail: {
+        itemId: "111222333",
+        itemTitle: "OEM Brake Caliper Bracket Front Left",
+        itemPicUrl: "https://i.ebayimg.com/images/g/abc/s-l500.jpg",
+        sku: "BRK-001",
+      },
+    },
+  };
+  const p = extractItemPresentation(detailBody);
+  assert.equal(p.itemTitle, "OEM Brake Caliper Bracket Front Left");
+  assert.equal(p.imageUrl, "https://i.ebayimg.com/images/g/abc/s-l500.jpg");
+  assert.equal(p.sku, "BRK-001");
+});
+
+test("extractItemPresentation: search summaries (no itemDetail) return all-null", () => {
+  const p = extractItemPresentation({ returnId: "5", creationInfo: { item: { itemId: "9" } } });
+  assert.equal(p.itemTitle, null);
+  assert.equal(p.imageUrl, null);
+  assert.equal(p.sku, null);
+});
+
+test("normalizeReturnSummary unwraps the Get Return detail wrapper", () => {
+  const fields = normalizeReturnSummary({
+    detail: {
+      returnId: "5322177775",
+      orderId: "26-99999-11111",
+      state: "RETURN_APPROVED",
+      itemDetail: {
+        itemId: "111222333",
+        itemTitle: "OEM Brake Caliper Bracket",
+        itemPicUrl: "https://i.ebayimg.com/images/g/abc/s-l500.jpg",
+        transactionId: "tx-1",
+        returnQuantity: 2,
+      },
+    },
+  });
+  assert.equal(fields.returnId, "5322177775");
+  assert.equal(fields.returnState, "RETURN_APPROVED");
+  assert.equal(fields.ebayItemId, "111222333");
+  assert.equal(fields.transactionId, "tx-1");
+  assert.equal(fields.returnQuantity, 2);
+  assert.equal(fields.itemTitle, "OEM Brake Caliper Bracket");
+  assert.equal(fields.imageUrl, "https://i.ebayimg.com/images/g/abc/s-l500.jpg");
 });
 
 test("normalizeReturnSummary is defensive against an empty payload", () => {

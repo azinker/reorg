@@ -18,9 +18,13 @@
 import { db } from "@/lib/db";
 import { Platform, Prisma, type Integration } from "@prisma/client";
 import { buildEbayConfig } from "@/lib/services/helpdesk-ebay";
-import { searchReturns } from "@/lib/services/helpdesk-ebay-returns-client";
+import {
+  searchReturns,
+  getReturnDetail,
+} from "@/lib/services/helpdesk-ebay-returns-client";
 import {
   normalizeReturnSummary,
+  extractItemPresentation,
   type EbayReturnSummary,
 } from "@/lib/helpdesk/returns";
 
@@ -30,8 +34,10 @@ const INITIAL_LOOKBACK_DAYS = Number.parseInt(
   process.env.HELPDESK_RETURNS_BACKFILL_DAYS ?? process.env.HELPDESK_BACKFILL_DAYS ?? "90",
   10,
 );
-const MAX_PAGES_PER_TICK = 6;
-const PAGE_SIZE = 50;
+const MAX_PAGES_PER_TICK = 10;
+const PAGE_SIZE = 100;
+/** How many returns missing a title/image we enrich (via Get Return) per tick. */
+const ENRICH_BUDGET_PER_TICK = 30;
 
 export interface ReturnsSyncSummary {
   integrationId: string;
@@ -77,9 +83,13 @@ async function syncReturnsForIntegration(
     create: { integrationId: integration.id },
     update: {},
   });
-  const fromDate =
-    checkpoint.lastWatermark ??
-    new Date(Date.now() - INITIAL_LOOKBACK_DAYS * 86_400_000);
+  // Always scan a rolling lookback window rather than walking forward from a
+  // watermark. eBay returns are low-volume, so re-scanning the last N days
+  // every tick is cheap and guarantees two things the forward-watermark
+  // approach silently broke: (1) a return that's still open is never dropped,
+  // and (2) state changes on already-synced returns (approved → shipped →
+  // refunded) get refreshed in the list, not just on the detail page.
+  const fromDate = new Date(Date.now() - INITIAL_LOOKBACK_DAYS * 86_400_000);
 
   let upserted = 0;
   let offset = 0;
@@ -88,6 +98,7 @@ async function syncReturnsForIntegration(
       integrationId: integration.id,
       config,
       fromDate,
+      toDate: new Date(),
       offset,
       limit: PAGE_SIZE,
     });
@@ -170,11 +181,82 @@ async function syncReturnsForIntegration(
     offset += PAGE_SIZE;
   }
 
+  // Search summaries don't carry the listing title/image — only Get Return
+  // does. Hydrate rows that are still missing a title, prefering our local
+  // catalog (no API call) and falling back to a budgeted Get Return.
+  await enrichMissingItemDetails(integration, config);
+
   await db.helpdeskReturnSyncCheckpoint.update({
     where: { id: checkpoint.id },
     data: { lastWatermark: new Date(), lastFullSyncAt: new Date(), backfillDone: true },
   });
   return upserted;
+}
+
+/**
+ * Fill in itemTitle/imageUrl/sku for returns that don't have them yet. The eBay
+ * Search Returns response omits item presentation, so we hydrate from (1) our
+ * MarketplaceListing catalog by eBay item id when present (free), then (2) a
+ * bounded number of Get Return detail calls. Title never changes once set, so
+ * this runs only against rows where itemTitle is still null and is capped per
+ * tick to keep the sync well under the serverless time budget.
+ */
+async function enrichMissingItemDetails(
+  integration: Integration,
+  config: Awaited<ReturnType<typeof buildEbayConfig>>,
+): Promise<void> {
+  const missing = await db.helpdeskReturnCase.findMany({
+    where: { integrationId: integration.id, itemTitle: null },
+    orderBy: { openedAt: "desc" },
+    take: ENRICH_BUDGET_PER_TICK,
+    select: { id: true, returnId: true, ebayItemId: true },
+  });
+  if (missing.length === 0) return;
+
+  for (const row of missing) {
+    let itemTitle: string | null = null;
+    let imageUrl: string | null = null;
+    let sku: string | null = null;
+
+    // (1) Local catalog lookup — free, no eBay call.
+    if (row.ebayItemId) {
+      const listing = await db.marketplaceListing.findFirst({
+        where: { integrationId: integration.id, platformItemId: row.ebayItemId },
+        select: { title: true, imageUrl: true, sku: true },
+      });
+      if (listing?.title) {
+        itemTitle = listing.title;
+        imageUrl = listing.imageUrl ?? null;
+        sku = listing.sku ?? null;
+      }
+    }
+
+    // (2) Fall back to Get Return detail (authoritative title + pic url).
+    if (!itemTitle) {
+      const detail = await getReturnDetail({
+        integrationId: integration.id,
+        config,
+        returnId: row.returnId,
+      });
+      if (detail.ok && detail.body) {
+        const p = extractItemPresentation(detail.body as EbayReturnSummary);
+        itemTitle = p.itemTitle;
+        imageUrl = imageUrl ?? p.imageUrl;
+        sku = sku ?? p.sku;
+      }
+    }
+
+    if (itemTitle || imageUrl || sku) {
+      await db.helpdeskReturnCase.update({
+        where: { id: row.id },
+        data: {
+          ...(itemTitle ? { itemTitle } : {}),
+          ...(imageUrl ? { imageUrl } : {}),
+          ...(sku ? { sku } : {}),
+        },
+      });
+    }
+  }
 }
 
 /**

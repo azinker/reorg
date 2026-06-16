@@ -28,7 +28,7 @@ import {
 } from "lucide-react";
 import {
   StoreBadge,
-  LifecycleBadge,
+  StatusBadge,
   fmtDate,
   fmtAgo,
   fmtMoney,
@@ -84,6 +84,17 @@ const SORT_OPTIONS = [
   { key: "deadline_asc", label: "Respond-by deadline" },
 ];
 
+// eBay-style relative date ranges. Value = lookback days ("" = all). The sync
+// mirrors ~90 days, so "Last 90 days" is effectively "everything we hold".
+const DATE_RANGE_OPTIONS = [
+  { key: "1", label: "Last 24 hours" },
+  { key: "7", label: "Last 7 days" },
+  { key: "30", label: "Last 30 days" },
+  { key: "60", label: "Last 60 days" },
+  { key: "90", label: "Last 90 days" },
+  { key: "", label: "All time" },
+];
+
 export default function ReturnsListClient() {
   const [forbidden, setForbidden] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -95,8 +106,7 @@ export default function ReturnsListClient() {
   const [search, setSearch] = useState("");
   const [searchInput, setSearchInput] = useState("");
   const [sort, setSort] = useState("opened_desc");
-  const [from, setFrom] = useState("");
-  const [to, setTo] = useState("");
+  const [dateRange, setDateRange] = useState("90");
   const [page, setPage] = useState(1);
 
   const [syncing, setSyncing] = useState(false);
@@ -116,8 +126,12 @@ export default function ReturnsListClient() {
       if (status) qs.set("status", status);
       if (search) qs.set("q", search);
       if (sort) qs.set("sort", sort);
-      if (from) qs.set("from", from);
-      if (to) qs.set("to", to);
+      if (dateRange) {
+        const fromIso = new Date(
+          Date.now() - Number(dateRange) * 86_400_000,
+        ).toISOString();
+        qs.set("from", fromIso);
+      }
       qs.set("page", String(page));
       qs.set("pageSize", "50");
       const res = await fetch(`/api/helpdesk/returns?${qs.toString()}`, {
@@ -135,7 +149,7 @@ export default function ReturnsListClient() {
     } finally {
       setLoading(false);
     }
-  }, [store, status, search, sort, from, to, page]);
+  }, [store, status, search, sort, dateRange, page]);
 
   useEffect(() => {
     void load();
@@ -367,27 +381,21 @@ export default function ReturnsListClient() {
             ))}
           </select>
         </Field>
-        <Field label="From">
-          <input
-            type="date"
-            value={from}
+        <Field label="Date range">
+          <select
+            value={dateRange}
             onChange={(e) => {
               setPage(1);
-              setFrom(e.target.value);
+              setDateRange(e.target.value);
             }}
-            className="h-9 rounded-md border border-hairline bg-surface px-2 text-sm text-foreground"
-          />
-        </Field>
-        <Field label="To">
-          <input
-            type="date"
-            value={to}
-            onChange={(e) => {
-              setPage(1);
-              setTo(e.target.value);
-            }}
-            className="h-9 rounded-md border border-hairline bg-surface px-2 text-sm text-foreground"
-          />
+            className="h-9 rounded-md border border-hairline bg-surface px-2 text-sm text-foreground cursor-pointer"
+          >
+            {DATE_RANGE_OPTIONS.map((d) => (
+              <option key={d.key} value={d.key}>
+                {d.label}
+              </option>
+            ))}
+          </select>
         </Field>
         <Field label="Sort">
           <select
@@ -440,7 +448,7 @@ export default function ReturnsListClient() {
           <span>Item</span>
           <span className="w-44">Status</span>
           <span className="w-28 text-right">Refund</span>
-          <span className="w-32">Buyer</span>
+          <span className="w-52">Buyer</span>
         </div>
 
         {loading ? (
@@ -506,10 +514,7 @@ export default function ReturnsListClient() {
 
                   {/* Status cell */}
                   <div className="w-44">
-                    <LifecycleBadge
-                      lifecycle={r.lifecycle}
-                      rawLabel={r.returnState}
-                    />
+                    <StatusBadge lifecycle={r.lifecycle} state={r.returnState} />
                     {r.sellerResponseDueAt && !r.isClosed ? (
                       <p className="mt-1 text-[11px] text-muted-foreground">
                         Respond by {fmtDate(r.sellerResponseDueAt)}
@@ -532,8 +537,11 @@ export default function ReturnsListClient() {
                   </div>
 
                   {/* Buyer cell */}
-                  <div className="flex w-32 items-center justify-between gap-1">
-                    <span className="truncate text-xs text-muted-foreground">
+                  <div className="flex w-52 items-center justify-between gap-2">
+                    <span
+                      title={r.buyerUserId ?? undefined}
+                      className="min-w-0 break-words text-xs text-muted-foreground"
+                    >
                       {r.buyerUserId ?? "—"}
                     </span>
                     <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground/50" />

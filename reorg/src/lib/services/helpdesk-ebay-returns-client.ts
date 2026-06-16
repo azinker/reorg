@@ -240,8 +240,14 @@ export async function searchReturns(args: SearchReturnsArgs): Promise<SearchRetu
     method: "GET",
     path: "/post-order/v2/return/search",
     query: {
-      item_creation_date_range_from: args.fromDate.toISOString(),
-      item_creation_date_range_to: (args.toDate ?? new Date()).toISOString(),
+      // NOTE: the documented filter is `creation_date_range_from/to` (return
+      // creation date). The older `item_creation_date_range_*` names are NOT
+      // recognized by eBay and were silently ignored, which dropped returns
+      // from the sync. Sort newest-first so the first pages always carry the
+      // most recent (and most likely actionable) returns.
+      creation_date_range_from: args.fromDate.toISOString(),
+      creation_date_range_to: (args.toDate ?? new Date()).toISOString(),
+      sort: "-FILING_DATE",
       limit: String(limit),
       offset: String(args.offset ?? 0),
     },
