@@ -1,0 +1,159 @@
+{
+  "generatedAt": "2026-05-16T03:38:33.840Z",
+  "sourcePath": "reports/counterfeit-failed-send-retry-list.txt",
+  "dryRun": false,
+  "totalRowsEbayIds": 13,
+  "sentOrResolvedOk": 0,
+  "notOk": 13,
+  "skippedExcluded": 0,
+  "notFoundOrderIds": [],
+  "sendFailedOrderIds": [
+    "06-14634-97564",
+    "13-14624-78466",
+    "25-14603-42957",
+    "16-14617-85953",
+    "05-14635-45804",
+    "20-14610-59513",
+    "23-14609-32856",
+    "25-14605-79188",
+    "14-14616-38133",
+    "27-14596-43065",
+    "15-14614-53733",
+    "17-14612-61257",
+    "11-14621-09145"
+  ],
+  "sendFailedDetail": {
+    "06-14634-97564": "Fail to add member message. (2 strategies tried)",
+    "13-14624-78466": "Fail to add member message. (2 strategies tried)",
+    "25-14603-42957": "Fail to add member message. (2 strategies tried)",
+    "16-14617-85953": "Fail to add member message. (2 strategies tried)",
+    "05-14635-45804": "Fail to add member message. (2 strategies tried)",
+    "20-14610-59513": "Fail to add member message. (2 strategies tried)",
+    "23-14609-32856": "Fail to add member message. (2 strategies tried)",
+    "25-14605-79188": "Fail to add member message. (2 strategies tried)",
+    "14-14616-38133": "Fail to add member message. (2 strategies tried)",
+    "27-14596-43065": "Fail to add member message. (2 strategies tried)",
+    "15-14614-53733": "Fail to add member message. (2 strategies tried)",
+    "17-14612-61257": "Fail to add member message. (2 strategies tried)",
+    "11-14621-09145": "Fail to add member message. (2 strategies tried)"
+  },
+  "results": [
+    {
+      "orderId": "06-14634-97564",
+      "ok": false,
+      "store": "TPP_EBAY",
+      "buyerUserId": "furonus",
+      "itemId": "202799490610",
+      "reason": "SEND_FAILED",
+      "error": "Fail to add member message. (2 strategies tried)"
+    },
+    {
+      "orderId": "13-14624-78466",
+      "ok": false,
+      "store": "TT_EBAY",
+      "buyerUserId": "mem69673",
+      "itemId": "326259488711",
+      "reason": "SEND_FAILED",
+      "error": "Fail to add member message. (2 strategies tried)"
+    },
+    {
+      "orderId": "25-14603-42957",
+      "ok": false,
+      "store": "TPP_EBAY",
+      "buyerUserId": "kitchen12340",
+      "itemId": "204074118977",
+      "reason": "SEND_FAILED",
+      "error": "Fail to add member message. (2 strategies tried)"
+    },
+    {
+      "orderId": "16-14617-85953",
+      "ok": false,
+      "store": "TPP_EBAY",
+      "buyerUserId": "kitchen12340",
+      "itemId": "204885826651",
+      "reason": "SEND_FAILED",
+      "error": "Fail to add member message. (2 strategies tried)"
+    },
+    {
+      "orderId": "05-14635-45804",
+      "ok": false,
+      "store": "TPP_EBAY",
+      "buyerUserId": "kitchen12340",
+      "itemId": "193084690485",
+      "reason": "SEND_FAILED",
+      "error": "Fail to add member message. (2 strategies tried)"
+    },
+    {
+      "orderId": "20-14610-59513",
+      "ok": false,
+      "store": "TPP_EBAY",
+      "buyerUserId": "sap1278",
+      "itemId": "203186817191",
+      "reason": "SEND_FAILED",
+      "error": "Fail to add member message. (2 strategies tried)"
+    },
+    {
+      "orderId": "23-14609-32856",
+      "ok": false,
+      "store": "TPP_EBAY",
+      "buyerUserId": "willsmit.nyqzjo",
+      "itemId": "204232108516",
+      "reason": "SEND_FAILED",
+      "error": "Fail to add member message. (2 strategies tried)"
+    },
+    {
+      "orderId": "25-14605-79188",
+      "ok": false,
+      "store": "TPP_EBAY",
+      "buyerUserId": "carlnsherry",
+      "itemId": "204459828750",
+      "reason": "SEND_FAILED",
+      "error": "Fail to add member message. (2 strategies tried)"
+    },
+    {
+      "orderId": "14-14616-38133",
+      "ok": false,
+      "store": "TPP_EBAY",
+      "buyerUserId": "kitchen12340",
+      "itemId": "195579463878",
+      "reason": "SEND_FAILED",
+      "error": "Fail to add member message. (2 strategies tried)"
+    },
+    {
+      "orderId": "27-14596-43065",
+      "ok": false,
+      "store": "TPP_EBAY",
+      "buyerUserId": "kitchen12340",
+      "itemId": "195579463878",
+      "reason": "SEND_FAILED",
+      "error": "Fail to add member message. (2 strategies tried)"
+    },
+    {
+      "orderId": "15-14614-53733",
+      "ok": false,
+      "store": "TPP_EBAY",
+      "buyerUserId": "kitchen12340",
+      "itemId": "204885826651",
+      "reason": "SEND_FAILED",
+      "error": "Fail to add member message. (2 strategies tried)"
+    },
+    {
+      "orderId": "17-14612-61257",
+      "ok": false,
+      "store": "TPP_EBAY",
+      "buyerUserId": "hchoi1123",
+      "itemId": "204573001933",
+      "reason": "SEND_FAILED",
+      "error": "Fail to add member message. (2 strategies tried)"
+    },
+    {
+      "orderId": "11-14621-09145",
+      "ok": false,
+      "store": "TPP_EBAY",
+      "buyerUserId": "kitchen12340",
+      "itemId": "206080898718",
+      "reason": "SEND_FAILED",
+      "error": "Fail to add member message. (2 strategies tried)"
+    }
+  ]
+}

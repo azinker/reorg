@@ -81,8 +81,10 @@ export interface EbayReturnSummary {
     transactionId?: string;
   };
   closeInfo?: { returnCloseDate?: EbayDateTime };
-  /** Get Return wraps everything under `detail`. {@link normalizeReturnSummary} unwraps it. */
+  /** Get Return wraps everything under `detail` (FULL). {@link normalizeReturnSummary} unwraps it. */
   detail?: EbayReturnSummary;
+  /** Get Return with fieldgroups=SUMMARY wraps the return under `summary`. */
+  summary?: EbayReturnSummary;
 }
 
 /** Item title/image/sku, only available from the Get Return *detail* payload. */
@@ -575,10 +577,13 @@ function toIntOrNull(n: number | undefined): number | null {
 export function normalizeReturnSummary(
   raw: EbayReturnSummary | null | undefined,
 ): NormalizedReturnFields {
-  // Get Return wraps the whole return under `detail`; Search Returns returns the
-  // fields at the top level. Unwrap so a detail refresh reads real values
-  // instead of finding everything undefined and keeping stale data.
-  const r = raw?.detail ?? raw ?? {};
+  // Get Return wraps the return under either `summary` (fieldgroups=SUMMARY —
+  // the ONLY place sellerAvailableOptions / state / response-due live) or
+  // `detail` (fieldgroups=FULL). Search Returns returns the fields at the top
+  // level. Prefer summary, then detail, then the flat search payload so a
+  // detail refresh reads real values instead of wiping the seller's options.
+  const root = (raw ?? {}) as EbayReturnSummary;
+  const r = root.summary ?? root.detail ?? root;
   const sellerOptions = Array.isArray(r.sellerAvailableOptions) ? r.sellerAvailableOptions : [];
   const buyerOptions = Array.isArray(r.buyerAvailableOptions) ? r.buyerAvailableOptions : [];
   const sellerResponseDueAt = parseEbayDate(r.sellerResponseDue?.respondByDate);
@@ -587,8 +592,8 @@ export function normalizeReturnSummary(
   const state = r.state ? String(r.state) : null;
 
   const item = r.creationInfo?.item;
-  const itemDetail = r.itemDetail;
-  const presentation = extractItemPresentation(r);
+  const itemDetail = r.itemDetail ?? root.detail?.itemDetail;
+  const presentation = extractItemPresentation(root);
 
   return {
     returnId: r.returnId ? String(r.returnId) : null,
@@ -633,7 +638,10 @@ export function normalizeReturnSummary(
     buyerResponseDueAt: parseEbayDate(r.buyerResponseDue?.respondByDate),
     timeoutDate: parseEbayDate(r.timeoutDate),
     openedAt: parseEbayDate(r.creationInfo?.creationDate),
-    closedAt: parseEbayDate(r.closedDate) ?? parseEbayDate(r.closeInfo?.returnCloseDate),
+    closedAt:
+      parseEbayDate(r.closedDate) ??
+      parseEbayDate(r.closeInfo?.returnCloseDate) ??
+      parseEbayDate(root.detail?.closeInfo?.returnCloseDate),
     sellerAvailableOptions: sellerOptions,
     buyerAvailableOptions: buyerOptions,
   };

@@ -3,12 +3,22 @@ import { db } from "@/lib/db";
 import { fetchEbayTppFullItemDirect } from "@/lib/services/ebay-tpp-sync";
 import { fetchMarketplaceSales } from "@/lib/inventory-forecast/marketplace-sales";
 
-const DEFAULT_VIDEO_ENDPOINT = "/v1/image2video/dop";
-const DEFAULT_VIDEO_MODEL = "dop-turbo";
-const DEFAULT_VIDEO_DURATION_SECONDS = 12;
+const LEGACY_DOP_ENDPOINT = "/v1/image2video/dop";
+const LEGACY_DOP_MODEL = "dop-turbo";
+const DEFAULT_VIDEO_ENDPOINT = "/higgsfield-ai/dop/standard";
+const DEFAULT_VIDEO_MODEL = "Hyper Motion";
+const DEFAULT_VIDEO_DURATION_SECONDS = 15;
+const MAX_HIGGSFIELD_PROMPT_LENGTH = 2200;
 const VIDEO_ASPECT_RATIO = "16:9";
 const VIDEO_RESOLUTION = "1080p";
 const VIDEO_SIZE = "1920x1080";
+const HIGGSFIELD_CREDITS_PER_USD = 16;
+const DOP_CREDITS_PER_5_SECONDS = {
+  lite: 2,
+  turbo: 6.5,
+  standard: 9,
+  preview: 9,
+} as const;
 const LEGACY_UNAVAILABLE_VIDEO_MODELS = new Set([
   "bytedance/seedance/v1/pro/image-to-video",
 ]);
@@ -71,6 +81,9 @@ export type VideoListingBrief = {
     size: typeof VIDEO_SIZE;
     aspectRatio: typeof VIDEO_ASPECT_RATIO;
     durationSeconds: number;
+    estimatedCredits: number | null;
+    estimatedUsd: number | null;
+    creditEstimateNote: string;
     formatGuidance: string;
   };
 };
@@ -134,6 +147,12 @@ type HiggsfieldQueuedResponse = {
   video?: { url?: string };
   images?: Array<{ url?: string }>;
   url?: string;
+};
+
+type HiggsfieldCreditEstimate = {
+  credits: number | null;
+  usd: number | null;
+  note: string;
 };
 
 function daysForWindow(window: VideoWindow) {
@@ -265,7 +284,7 @@ function getHiggsfieldAuthHeader() {
 
 function getVideoModelId() {
   const configured = process.env.HIGGSFIELD_VIDEO_MODEL?.trim();
-  if (!configured || LEGACY_UNAVAILABLE_VIDEO_MODELS.has(configured)) return DEFAULT_VIDEO_MODEL;
+  if (!configured || LEGACY_UNAVAILABLE_VIDEO_MODELS.has(configured)) return LEGACY_DOP_MODEL;
   return configured;
 }
 
@@ -278,6 +297,62 @@ function getHiggsfieldVideoEndpoint() {
 function buildHiggsfieldUrl(endpoint: string) {
   const baseUrl = (process.env.HIGGSFIELD_BASE_URL || "https://platform.higgsfield.ai").replace(/\/+$/, "");
   return `${baseUrl}${endpoint.startsWith("/") ? endpoint : `/${endpoint}`}`;
+}
+
+function isLegacyDopEndpoint(endpoint: string) {
+  return endpoint.replace(/\/+$/, "") === LEGACY_DOP_ENDPOINT;
+}
+
+function isCurrentDopEndpoint(endpoint: string) {
+  return endpoint.replace(/\/+$/, "").startsWith("/higgsfield-ai/dop/");
+}
+
+function getDisplayModelId(endpoint = getHiggsfieldVideoEndpoint()) {
+  if (isLegacyDopEndpoint(endpoint)) return getVideoModelId();
+  if (isCurrentDopEndpoint(endpoint)) return DEFAULT_VIDEO_MODEL;
+  return getVideoModelId();
+}
+
+function getHiggsfieldDuration(endpoint: string, requestedDuration: number | undefined) {
+  return Math.min(20, Math.max(15, requestedDuration ?? DEFAULT_VIDEO_DURATION_SECONDS));
+}
+
+function inferDopPricingTier(endpoint: string) {
+  const normalized = endpoint.toLowerCase();
+  if (normalized.includes("/lite")) return "lite";
+  if (normalized.includes("/turbo")) return "turbo";
+  if (normalized.includes("/preview")) return "preview";
+  if (normalized.includes("/standard")) return "standard";
+  if (isLegacyDopEndpoint(endpoint)) return "turbo";
+  return null;
+}
+
+function roundCredits(value: number) {
+  return Math.round(value * 10) / 10;
+}
+
+function estimateHiggsfieldCredits(endpoint: string, duration: number): HiggsfieldCreditEstimate {
+  const tier = inferDopPricingTier(endpoint);
+  if (!tier) {
+    return {
+      credits: null,
+      usd: null,
+      note: "Credit estimate unavailable for this Higgsfield model.",
+    };
+  }
+
+  const credits = roundCredits((DOP_CREDITS_PER_5_SECONDS[tier] * duration) / 5);
+  return {
+    credits,
+    usd: Math.round((credits / HIGGSFIELD_CREDITS_PER_USD) * 100) / 100,
+    note: `Estimated from Higgsfield Cloud/API DoP ${tier} pricing at ${DOP_CREDITS_PER_5_SECONDS[tier]} credits per 5 seconds. This uses Cloud API credits, not the higgsfield.ai subscription credits. Higgsfield does not expose API-key balance in the public API docs.`,
+  };
+}
+
+function formatCreditEstimate(estimate: HiggsfieldCreditEstimate) {
+  if (estimate.credits == null) return "an unknown number of credits";
+  const usd = estimate.usd == null ? "" : `, about $${estimate.usd.toFixed(2)}`;
+  return `${estimate.credits.toLocaleString()} credits${usd}`;
 }
 
 function getAuthMode(): HiggsfieldConnectionStatus["authMode"] {
@@ -311,96 +386,85 @@ function formatPhotoUrlsForPrompt(imageUrls: string[]) {
     .join("\n");
 }
 
+function cleanPromoFact(value: string) {
+  return value
+    .replace(/^\s*[-*]+\s*/, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function promoFactsFromDescription(description: string | null) {
+  if (!description) return [];
+  const rejected = /shipping|money back|guarantee|contact us|refund|replacement|ships|same day|business day|risk free|purchase/i;
+  return description
+    .split(/\r?\n/)
+    .map(cleanPromoFact)
+    .filter((line) => line.length >= 24 && line.length <= 180)
+    .filter((line) => !rejected.test(line))
+    .filter((line, index, all) => all.indexOf(line) === index)
+    .slice(0, 6);
+}
+
+function productTypeFromTitle(title: string) {
+  const lower = title.toLowerCase();
+  if (lower.includes("cd") && lower.includes("dvd") && lower.includes("drive")) return "external CD/DVD drive";
+  if (lower.includes("laser")) return "laser pointer";
+  if (lower.includes("antenna")) return "digital antenna";
+  if (lower.includes("sd card") || lower.includes("memory card")) return "memory card";
+  if (lower.includes("washer")) return "portable washer";
+  return "product";
+}
+
 function buildVideoPrompt(brief: Omit<VideoListingBrief, "prompt" | "negativePrompt" | "generationSettings">) {
   const specifics = brief.itemSpecifics;
+  const productType = productTypeFromTitle(brief.title);
   const brand = getSpecificValue(specifics, ["Brand", "Manufacturer"]);
-  const mpn = getSpecificValue(specifics, ["Manufacturer Part Number", "MPN", "Part Number"]);
-  const description = truncate(brief.descriptionText, 12000);
+  const color = getSpecificValue(specifics, ["Color"]);
+  const material = getSpecificValue(specifics, ["Material"]);
+  const promoFacts = [
+    brand ? `Brand/manufacturer: ${brand}` : null,
+    color ? `Color: ${color}` : null,
+    material ? `Material: ${material}` : null,
+    ...promoFactsFromDescription(brief.descriptionText),
+  ].filter(Boolean).slice(0, 7);
 
   return [
-    "Create a premium, clear, engaging 15-second product video advertisement for an eBay video campaign.",
+    "Create a 15-second Hyper Motion promotional product video.",
     "",
-    "VIDEO SETTINGS:",
+    "FORMAT:",
     `- Format: ${VIDEO_ASPECT_RATIO} horizontal widescreen`,
     `- Resolution: ${VIDEO_SIZE}, ${VIDEO_RESOLUTION.toUpperCase()} Full HD`,
     "- Duration: exactly 15 seconds",
-    "- Audio: no voiceover, no spoken script, no music requirement; the ad must work perfectly on muted autoplay",
-    "- Style: polished Amazon/eBay-style e-commerce product ad",
-    "- Mood: trustworthy, useful, practical, buyer-friendly, product-focused",
-    "- Visual quality: crisp studio lighting, sharp product detail, smooth cinematic motion, realistic product rendering",
-    "- Camera: smooth dolly shots, macro close-ups, soft parallax, controlled product rotation, no shaky movement",
-    "- Background: clean white/light gray studio or tidy workbench environment; subtle color accents are okay only if they do not distract from the item",
-    "- Product accuracy: keep the product exactly aligned with the provided listing photos and facts. Preserve color, materials, shape, connectors, ports, prongs, labels, included parts, and visible identifiers.",
+    "- Audio: no voiceover and no spoken script; must work perfectly muted",
     "",
-    "IMPORTANT CREATIVE INSTRUCTION:",
-    "Read the full eBay listing data below before deciding the scenes and on-screen callouts. Use only facts that appear in the title, item specifics, listing photos, or full listing description. Make the video promotional and fun, but do not invent features, compatibility, guarantees, discounts, shipping claims, ratings, review counts, scarcity, or performance claims.",
+    "HYPER MOTION STYLE:",
+    "- Pure CGI product commercial with the product as the hero",
+    "- Dynamic camera moves, premium lighting, clean reflections, physics-driven VFX, and fast ad-editing energy",
+    "- No people, no hands, no UGC, no real-life testimonial footage, no unboxing host",
+    "- Make it feel like a premium tech/product launch spot, not a literal eBay listing recap",
     "",
-    "PRODUCT DATA FROM EBAY LISTING:",
-    `- Title: ${brief.title}`,
-    `- SKU: ${brief.sku}`,
-    `- eBay item ID: ${brief.platformItemId}`,
-    brief.listingUrl ? `- eBay listing URL: ${brief.listingUrl}` : null,
+    "PRODUCT TO PROMOTE:",
+    `- Product: ${brief.title}`,
+    `- Product type: ${productType}`,
     brief.condition ? `- Condition: ${brief.condition}` : null,
-    brief.category ? `- Category: ${brief.category}` : null,
-    brand ? `- Brand/manufacturer from listing: ${brand}` : null,
-    mpn ? `- Part number / MPN from listing: ${mpn}` : null,
-    brief.upc ? `- UPC: ${brief.upc}` : null,
-    brief.weight ? `- Stored item weight: ${brief.weight}` : null,
-    brief.inventory != null ? `- Current stored inventory: ${brief.inventory}` : null,
+    promoFacts.length > 0 ? "- Useful product facts:" : null,
+    ...promoFacts.map((fact) => `  - ${fact}`),
     "",
-    "ITEM SPECIFICS RETURNED BY EBAY:",
-    formatSpecificsForPrompt(specifics),
+    "VISUAL RULES:",
+    "- Use the listing product photo as the visual reference for shape, color, ports, labels, included parts, and proportions",
+    "- Show only the product and abstract/premium product-ad environments",
+    "- Do not invent brand marks, compatibility, certifications, discounts, reviews, shipping promises, warranties, or performance claims",
+    "- Keep text overlays short, clean, and promotional; avoid tiny technical copy",
     "",
-    "LISTING PHOTO REFERENCES:",
-    "Use the provided image-to-video source image as the primary visual reference. If the generation tool can use multiple references, use these listing photo URLs as additional references:",
-    formatPhotoUrlsForPrompt(brief.imageUrls),
+    "15-SECOND SHOT PLAN:",
+    `0:00-0:03 - Hyper Motion hero reveal of the ${productType}: product emerges from sleek light streaks or a clean CGI surface, centered and instantly readable.`,
+    "0:03-0:06 - Dynamic orbit and macro close-ups that emphasize the most recognizable physical details from the photo.",
+    "0:06-0:10 - Fast, polished product-ad motion: floating parts, light trails, subtle particles, and smooth transitions that make the item feel premium.",
+    "0:10-0:13 - Practical value moment: visualize what the product does using abstract CGI icons or simple environment cues, without showing people.",
+    "0:13-0:15 - Final beauty pack shot with the product fully visible and one clean CTA-style text phrase.",
     "",
-    "FULL EBAY LISTING DESCRIPTION:",
-    description ?? "No full listing description was returned by eBay for this item. Build the ad only from title, photos, category, condition, and item specifics.",
-    "",
-    "SCENE-BY-SCENE TIMELINE:",
-    "0:00-0:02 - Hero reveal: open with the real product centered on a clean tabletop. Use a smooth push-in or slide-in. Show the whole item clearly so the shopper instantly understands what is being sold.",
-    "On-screen text: choose a short hook based on the listing, such as the product type, replacement purpose, compatibility need, or problem it solves. Keep it 3-6 words.",
-    "",
-    "0:02-0:04 - Product identity: cut to a clean close-up of the most recognizable part of the item. Show shape, finish, connectors, ports, included cable, buttons, labels, or other visible identifiers from the photos.",
-    "On-screen text: the exact product type from the listing title, shortened for readability.",
-    "",
-    "0:04-0:07 - Compatibility / use case: show the product in a realistic, marketplace-safe context that matches the listing description. If the listing names compatible models, display only those names. If compatibility is uncertain, use a generic use-case shot without model claims.",
-    "On-screen text: one concise compatibility or use-case callout from the listing facts.",
-    "",
-    "0:07-0:10 - Feature close-ups: show 2-3 quick macro moments based on the listing description and item specifics. Examples: connector detail, cable length, foldaway prongs, included parts, material, color, size, control buttons, mounting points, or other physical details. Only include details that are visible or stated.",
-    "On-screen text: short feature phrases, maximum 3-5 words each.",
-    "",
-    "0:10-0:12 - Buyer confidence: make the item feel easy to understand and easy to choose. Use clean animated callouts or simple icons tied to real listing facts such as condition, included quantity, compatibility warning, or package contents. Do not show fake badges.",
-    "On-screen text: one useful fact from the description, not a hype claim.",
-    "",
-    "0:12-0:14 - Final beauty shot: return to the product arranged neatly and fully visible. Use subtle reflection, clean lighting, and a stable composition suitable for eBay/Amazon sponsored product video.",
-    "On-screen text: a concise purchase-oriented line based on the product, for example 'Ready to replace' or 'Get back to use' only if it fits the listing.",
-    "",
-    "0:14-0:15 - End card: keep the product visible with a clean final CTA. No price, no star ratings, no review counts.",
-    "On-screen text: 'Available from The Perfect Part' plus one short listing-accurate phrase.",
-    "",
-    "TEXT OVERLAY STYLE:",
-    "- Use clean bold sans-serif typography",
-    "- Use dark charcoal text on light backgrounds or white text on dark product close-ups",
-    "- Keep text large, readable, and inside the safe center area of the 16:9 frame",
-    "- Use no more than one main text phrase per scene",
-    "- Do not overcrowd the frame or cover important product details",
-    "",
-    "VISUAL DETAILS TO EMPHASIZE:",
-    "- The exact product shown in the listing photos",
-    "- The strongest buyer-relevant facts from the listing description",
-    "- Any compatibility, package contents, dimensions, color, material, quantity, condition, or warning that is explicitly stated",
-    "- Clean product readability for shoppers scrolling with sound off",
-    "",
-    "MARKETPLACE COMPLIANCE:",
-    "- Do not show official marketplace logos, OEM logos, or brand logos unless they visibly exist on the actual product photo",
-    "- Do not imply the product is official/OEM unless the listing explicitly says so",
-    "- Do not show prices, coupons, discounts, shipping speed, delivery promises, returns promises, reviews, ratings, or sold-count badges",
-    "- Do not create before/after claims, safety claims, performance claims, warranty claims, or technical certifications unless explicitly present in the listing description",
-    "",
-    "FINAL STYLE:",
-    "A polished eBay/Amazon sponsored-product style advertisement with clean studio product shots, smooth motion, clear muted-autoplay text, accurate product details, and a trustworthy value-focused tone.",
+    "FINAL FEEL:",
+    "A scroll-stopping Hyper Motion product ad: premium, energetic, product-only, CGI-driven, accurate to the listing photos, and clearly promotional.",
   ].filter(Boolean).join("\n");
 }
 
@@ -408,13 +472,66 @@ function buildNegativePrompt() {
   return [
     "No fake logos, no invented brand marks, no wrong part numbers, no distorted connectors, no extra ports, no impossible fitment claims.",
     "No price tags, coupons, star ratings, review claims, shipping promises, warranty claims, or before/after claims.",
-    "No cluttered text, no unreadable tiny captions, no heavy motion blur, no warped product geometry, no people holding the item unless the product remains accurate.",
+    "No people, no hands, no UGC, no testimonial footage, no cluttered text, no unreadable tiny captions, no heavy motion blur, no warped product geometry.",
   ].join(" ");
+}
+
+function buildHiggsfieldGenerationPrompt(brief: VideoListingBrief) {
+  return brief.prompt.length <= MAX_HIGGSFIELD_PROMPT_LENGTH
+    ? brief.prompt
+    : `${brief.prompt.slice(0, MAX_HIGGSFIELD_PROMPT_LENGTH - 1).trimEnd()}.`;
+}
+
+function buildHiggsfieldRequestBody(args: {
+  endpoint: string;
+  brief: VideoListingBrief;
+  duration: number;
+  modelId: string;
+}) {
+  const prompt = buildHiggsfieldGenerationPrompt(args.brief);
+  if (isLegacyDopEndpoint(args.endpoint)) {
+    return {
+      model: args.modelId,
+      prompt,
+      input_images: [
+        {
+          type: "image_url",
+          image_url: args.brief.imageUrls[0],
+        },
+      ],
+      duration: args.duration,
+      enhance_prompt: true,
+      check_nsfw: true,
+    };
+  }
+
+  if (isCurrentDopEndpoint(args.endpoint)) {
+    return {
+      image_url: args.brief.imageUrls[0],
+      prompt,
+      duration: args.duration,
+    };
+  }
+
+  return {
+    image_url: args.brief.imageUrls[0],
+    prompt,
+    duration: args.duration,
+  };
 }
 
 function normalizeHiggsfieldError(body: unknown, fallback: string) {
   const record = asRecord(body);
-  return firstString([record?.error, record?.message, record?.detail]) ?? fallback;
+  const direct = firstString([record?.error, record?.message, record?.detail]);
+  if (direct) return direct;
+  if (record?.detail || record?.errors) {
+    try {
+      return `Higgsfield validation failed: ${JSON.stringify(record.detail ?? record.errors)}`;
+    } catch {
+      return "Higgsfield validation failed.";
+    }
+  }
+  return fallback;
 }
 
 export function getHiggsfieldConnectionStatus(): HiggsfieldConnectionStatus {
@@ -422,7 +539,7 @@ export function getHiggsfieldConnectionStatus(): HiggsfieldConnectionStatus {
   return {
     configured: authMode !== "missing",
     authMode,
-    modelId: getVideoModelId(),
+    modelId: getDisplayModelId(),
     quality: VIDEO_RESOLUTION,
     size: VIDEO_SIZE,
     aspectRatio: VIDEO_ASPECT_RATIO,
@@ -769,19 +886,25 @@ function buildVideoListingBriefFromListing(
     itemSpecifics: specifics,
   };
   const negativePrompt = buildNegativePrompt();
+  const endpoint = getHiggsfieldVideoEndpoint();
+  const duration = getHiggsfieldDuration(endpoint, DEFAULT_VIDEO_DURATION_SECONDS);
+  const creditEstimate = estimateHiggsfieldCredits(endpoint, duration);
 
   return {
     ...briefBase,
     prompt: buildVideoPrompt(briefBase),
     negativePrompt,
     generationSettings: {
-      modelId: getVideoModelId(),
+      modelId: getDisplayModelId(),
       quality: VIDEO_RESOLUTION,
       size: VIDEO_SIZE,
       aspectRatio: VIDEO_ASPECT_RATIO,
-      durationSeconds: DEFAULT_VIDEO_DURATION_SECONDS,
+      durationSeconds: duration,
+      estimatedCredits: creditEstimate.credits,
+      estimatedUsd: creditEstimate.usd,
+      creditEstimateNote: creditEstimate.note,
       formatGuidance:
-        "Amazon Sponsored Brands video accepts 16:9 square-pixel video at 1920x1080; 6-45 seconds allowed, 20 seconds or less recommended.",
+        "Hyper Motion product ads are generated as 15-second, product-only CGI promotional videos from the selected listing photo.",
     },
   };
 }
@@ -802,9 +925,10 @@ export async function submitHiggsfieldVideoGeneration(args: {
     throw new Error("This listing has no product photo available for image-to-video generation.");
   }
 
-  const duration = Math.min(20, Math.max(6, args.durationSeconds ?? DEFAULT_VIDEO_DURATION_SECONDS));
-  const modelId = getVideoModelId();
   const endpoint = getHiggsfieldVideoEndpoint();
+  const duration = getHiggsfieldDuration(endpoint, args.durationSeconds);
+  const modelId = getDisplayModelId(endpoint);
+  const requestBody = buildHiggsfieldRequestBody({ endpoint, brief, duration, modelId });
   const response = await fetch(buildHiggsfieldUrl(endpoint), {
     method: "POST",
     headers: {
@@ -812,28 +936,19 @@ export async function submitHiggsfieldVideoGeneration(args: {
       "Content-Type": "application/json",
       Accept: "application/json",
     },
-    body: JSON.stringify({
-      model: modelId,
-      prompt: brief.prompt,
-      input_images: [
-        {
-          type: "image_url",
-          image_url: brief.imageUrls[0],
-        },
-      ],
-      image_url: brief.imageUrls[0],
-      negative_prompt: brief.negativePrompt,
-      duration,
-      aspect_ratio: VIDEO_ASPECT_RATIO,
-      resolution: VIDEO_RESOLUTION,
-      enhance_prompt: true,
-      check_nsfw: true,
-    }),
+    body: JSON.stringify(requestBody),
   });
 
   const json = (await response.json().catch(() => null)) as HiggsfieldQueuedResponse | null;
   if (!response.ok) {
-    throw new Error(normalizeHiggsfieldError(json, `Higgsfield request failed with status ${response.status}.`));
+    const message = normalizeHiggsfieldError(json, `Higgsfield request failed with status ${response.status}.`);
+    if (/not_enough_credits/i.test(message)) {
+      const estimate = estimateHiggsfieldCredits(endpoint, duration);
+      throw new Error(
+        `Higgsfield says not_enough_credits. This ${duration}s ${modelId} request is estimated at ${formatCreditEstimate(estimate)} and uses Higgsfield Cloud/API credits, not higgsfield.ai subscription credits. Add credits in Higgsfield Cloud, then retry.`,
+      );
+    }
+    throw new Error(message);
   }
 
   await db.auditLog.create({

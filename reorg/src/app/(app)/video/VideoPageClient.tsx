@@ -78,6 +78,9 @@ type VideoListingBrief = {
     size: "1920x1080";
     aspectRatio: "16:9";
     durationSeconds: number;
+    estimatedCredits: number | null;
+    estimatedUsd: number | null;
+    creditEstimateNote: string;
     formatGuidance: string;
   };
 };
@@ -118,6 +121,11 @@ function formatCurrency(value: number | null | undefined) {
     currency: "USD",
     maximumFractionDigits: 0,
   }).format(value);
+}
+
+function formatCredits(value: number | null | undefined) {
+  if (value == null || !Number.isFinite(value)) return "Unavailable";
+  return `${value.toLocaleString()} credits`;
 }
 
 function formatDateTime(value: string | null | undefined) {
@@ -666,6 +674,34 @@ export function VideoPageClient() {
                   <SettingPill label="Quality" value={brief.generationSettings.quality} />
                   <SettingPill label="Size" value={brief.generationSettings.size} />
                   <SettingPill label="Length" value={`${brief.generationSettings.durationSeconds}s`} />
+                </div>
+
+                <div className="rounded-lg border border-amber-500/25 bg-amber-500/10 p-3">
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                    <div>
+                      <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-amber-100">
+                        Cloud API Credit Preview
+                      </p>
+                      <p className="mt-1 text-sm text-foreground">
+                        {formatCredits(brief.generationSettings.estimatedCredits)}
+                        {brief.generationSettings.estimatedUsd == null
+                          ? ""
+                          : `, about $${brief.generationSettings.estimatedUsd.toFixed(2)}`}
+                      </p>
+                    </div>
+                    <a
+                      href="https://cloud.higgsfield.ai"
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex cursor-pointer items-center gap-2 rounded-md border border-amber-500/25 bg-background px-3 py-2 text-xs text-amber-100 hover:bg-muted/50"
+                    >
+                      <ExternalLink className="h-3.5 w-3.5" />
+                      API Balance
+                    </a>
+                  </div>
+                  <p className="mt-2 text-xs leading-5 text-amber-100/75">
+                    {brief.generationSettings.creditEstimateNote}
+                  </p>
                 </div>
 
                 <div className="flex flex-wrap gap-2">

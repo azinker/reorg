@@ -1,0 +1,973 @@
+{
+  "generatedAt": "2026-06-04T04:03:07.003Z",
+  "filePath": "C:\\Users\\thepe\\OneDrive - theperfectpart.net\\Desktop\\DTS LB BATCHES\\UPDATE_EBAY_ORDERS.xlsx",
+  "dryRun": true,
+  "marketplaceWritesPerformed": 0,
+  "inputRows": 37,
+  "readyCount": 37,
+  "blockedCount": 0,
+  "plan": [
+    {
+      "sourceRow": 1,
+      "orderId": "03-14678-97575",
+      "trackingNumber": "9302084612906938605522",
+      "status": "ready",
+      "store": "TT_EBAY",
+      "apiOrderId": "03-14678-97575",
+      "existingTracking": [
+        {
+          "number": "9434630109355130957485",
+          "carrier": "USPS",
+          "shippedTime": null
+        }
+      ],
+      "trackingPayload": [
+        {
+          "carrier": "USPS",
+          "trackingNumber": "9434630109355130957485"
+        },
+        {
+          "carrier": "USPS",
+          "trackingNumber": "9302084612906938605522"
+        }
+      ],
+      "blockers": []
+    },
+    {
+      "sourceRow": 2,
+      "orderId": "22-14665-26592",
+      "trackingNumber": "9302086077336249242166",
+      "status": "ready",
+      "store": "TT_EBAY",
+      "apiOrderId": "22-14665-26592",
+      "existingTracking": [
+        {
+          "number": "9405550105794021264463",
+          "carrier": "USPS",
+          "shippedTime": null
+        }
+      ],
+      "trackingPayload": [
+        {
+          "carrier": "USPS",
+          "trackingNumber": "9405550105794021264463"
+        },
+        {
+          "carrier": "USPS",
+          "trackingNumber": "9302086077336249242166"
+        }
+      ],
+      "blockers": []
+    },
+    {
+      "sourceRow": 3,
+      "orderId": "21-14642-56201",
+      "trackingNumber": "9302086638133483196188",
+      "status": "ready",
+      "store": "TT_EBAY",
+      "apiOrderId": "21-14642-56201",
+      "existingTracking": [
+        {
+          "number": "9200190267338812307157",
+          "carrier": "USPS",
+          "shippedTime": null
+        }
+      ],
+      "trackingPayload": [
+        {
+          "carrier": "USPS",
+          "trackingNumber": "9200190267338812307157"
+        },
+        {
+          "carrier": "USPS",
+          "trackingNumber": "9302086638133483196188"
+        }
+      ],
+      "blockers": []
+    },
+    {
+      "sourceRow": 4,
+      "orderId": "04-14666-88444",
+      "trackingNumber": "9302086358570387928007",
+      "status": "ready",
+      "store": "TT_EBAY",
+      "apiOrderId": "04-14666-88444",
+      "existingTracking": [
+        {
+          "number": "9434630109355130523505",
+          "carrier": "USPS",
+          "shippedTime": null
+        }
+      ],
+      "trackingPayload": [
+        {
+          "carrier": "USPS",
+          "trackingNumber": "9434630109355130523505"
+        },
+        {
+          "carrier": "USPS",
+          "trackingNumber": "9302086358570387928007"
+        }
+      ],
+      "blockers": []
+    },
+    {
+      "sourceRow": 5,
+      "orderId": "09-14654-52912",
+      "trackingNumber": "9302083460749041908126",
+      "status": "ready",
+      "store": "TT_EBAY",
+      "apiOrderId": "09-14654-52912",
+      "existingTracking": [
+        {
+          "number": "9434630109355129177764",
+          "carrier": "USPS",
+          "shippedTime": null
+        }
+      ],
+      "trackingPayload": [
+        {
+          "carrier": "USPS",
+          "trackingNumber": "9434630109355129177764"
+        },
+        {
+          "carrier": "USPS",
+          "trackingNumber": "9302083460749041908126"
+        }
+      ],
+      "blockers": []
+    },
+    {
+      "sourceRow": 6,
+      "orderId": "27-14665-41274",
+      "trackingNumber": "9302088181309988900365",
+      "status": "ready",
+      "store": "TT_EBAY",
+      "apiOrderId": "27-14665-41274",
+      "existingTracking": [
+        {
+          "number": "9405550105797023524917",
+          "carrier": "USPS",
+          "shippedTime": null
+        }
+      ],
+      "trackingPayload": [
+        {
+          "carrier": "USPS",
+          "trackingNumber": "9405550105797023524917"
+        },
+        {
+          "carrier": "USPS",
+          "trackingNumber": "9302088181309988900365"
+        }
+      ],
+      "blockers": []
+    },
+    {
+      "sourceRow": 7,
+      "orderId": "19-14664-86255",
+      "trackingNumber": "9302083238171308574929",
+      "status": "ready",
+      "store": "TT_EBAY",
+      "apiOrderId": "19-14664-86255",
+      "existingTracking": [
+        {
+          "number": "9434630109355132762223",
+          "carrier": "USPS",
+          "shippedTime": null
+        }
+      ],
+      "trackingPayload": [
+        {
+          "carrier": "USPS",
+          "trackingNumber": "9434630109355132762223"
+        },
+        {
+          "carrier": "USPS",
+          "trackingNumber": "9302083238171308574929"
+        }
+      ],
+      "blockers": []
+    },
+    {
+      "sourceRow": 8,
+      "orderId": "12-14660-19841",
+      "trackingNumber": "9302081927187585783872",
+      "status": "ready",
+      "store": "TT_EBAY",
+      "apiOrderId": "12-14660-19841",
+      "existingTracking": [
+        {
+          "number": "9434636208423291632908",
+          "carrier": "USPS",
+          "shippedTime": null
+        }
+      ],
+      "trackingPayload": [
+        {
+          "carrier": "USPS",
+          "trackingNumber": "9434636208423291632908"
+        },
+        {
+          "carrier": "USPS",
+          "trackingNumber": "9302081927187585783872"
+        }
+      ],
+      "blockers": []
+    },
+    {
+      "sourceRow": 9,
+      "orderId": "18-14670-16539",
+      "trackingNumber": "9302083395261784621843",
+      "status": "ready",
+      "store": "TT_EBAY",
+      "apiOrderId": "18-14670-16539",
+      "existingTracking": [
+        {
+          "number": "9434650105797021478655",
+          "carrier": "USPS",
+          "shippedTime": null
+        }
+      ],
+      "trackingPayload": [
+        {
+          "carrier": "USPS",
+          "trackingNumber": "9434650105797021478655"
+        },
+        {
+          "carrier": "USPS",
+          "trackingNumber": "9302083395261784621843"
+        }
+      ],
+      "blockers": []
+    },
+    {
+      "sourceRow": 10,
+      "orderId": "13-14672-23277",
+      "trackingNumber": "9302087799617798950507",
+      "status": "ready",
+      "store": "TPP_EBAY",
+      "apiOrderId": "13-14672-23277",
+      "existingTracking": [
+        {
+          "number": "9405530109355296103093",
+          "carrier": "USPS",
+          "shippedTime": null
+        }
+      ],
+      "trackingPayload": [
+        {
+          "carrier": "USPS",
+          "trackingNumber": "9405530109355296103093"
+        },
+        {
+          "carrier": "USPS",
+          "trackingNumber": "9302087799617798950507"
+        }
+      ],
+      "blockers": []
+    },
+    {
+      "sourceRow": 11,
+      "orderId": "19-14657-78638",
+      "trackingNumber": "9302087720601683436368",
+      "status": "ready",
+      "store": "TPP_EBAY",
+      "apiOrderId": "19-14657-78638",
+      "existingTracking": [
+        {
+          "number": "9434630109355130857921",
+          "carrier": "USPS",
+          "shippedTime": null
+        }
+      ],
+      "trackingPayload": [
+        {
+          "carrier": "USPS",
+          "trackingNumber": "9434630109355130857921"
+        },
+        {
+          "carrier": "USPS",
+          "trackingNumber": "9302087720601683436368"
+        }
+      ],
+      "blockers": []
+    },
+    {
+      "sourceRow": 12,
+      "orderId": "27-14624-26120",
+      "trackingNumber": "9302082078180925907020",
+      "status": "ready",
+      "store": "TPP_EBAY",
+      "apiOrderId": "27-14624-26120",
+      "existingTracking": [
+        {
+          "number": "9434630109355129726894",
+          "carrier": "USPS",
+          "shippedTime": null
+        }
+      ],
+      "trackingPayload": [
+        {
+          "carrier": "USPS",
+          "trackingNumber": "9434630109355129726894"
+        },
+        {
+          "carrier": "USPS",
+          "trackingNumber": "9302082078180925907020"
+        }
+      ],
+      "blockers": []
+    },
+    {
+      "sourceRow": 13,
+      "orderId": "03-14684-03593",
+      "trackingNumber": "9302082459053373769414",
+      "status": "ready",
+      "store": "TPP_EBAY",
+      "apiOrderId": "03-14684-03593",
+      "existingTracking": [
+        {
+          "number": "9434630109355132160876",
+          "carrier": "USPS",
+          "shippedTime": null
+        }
+      ],
+      "trackingPayload": [
+        {
+          "carrier": "USPS",
+          "trackingNumber": "9434630109355132160876"
+        },
+        {
+          "carrier": "USPS",
+          "trackingNumber": "9302082459053373769414"
+        }
+      ],
+      "blockers": []
+    },
+    {
+      "sourceRow": 14,
+      "orderId": "10-14664-59470",
+      "trackingNumber": "9302088962630761765428",
+      "status": "ready",
+      "store": "TPP_EBAY",
+      "apiOrderId": "10-14664-59470",
+      "existingTracking": [
+        {
+          "number": "9434630109355130692621",
+          "carrier": "USPS",
+          "shippedTime": null
+        }
+      ],
+      "trackingPayload": [
+        {
+          "carrier": "USPS",
+          "trackingNumber": "9434630109355130692621"
+        },
+        {
+          "carrier": "USPS",
+          "trackingNumber": "9302088962630761765428"
+        }
+      ],
+      "blockers": []
+    },
+    {
+      "sourceRow": 15,
+      "orderId": "18-14661-04093",
+      "trackingNumber": "9302084719562430607628",
+      "status": "ready",
+      "store": "TPP_EBAY",
+      "apiOrderId": "18-14661-04093",
+      "existingTracking": [
+        {
+          "number": "9434630109355130823278",
+          "carrier": "USPS",
+          "shippedTime": null
+        }
+      ],
+      "trackingPayload": [
+        {
+          "carrier": "USPS",
+          "trackingNumber": "9434630109355130823278"
+        },
+        {
+          "carrier": "USPS",
+          "trackingNumber": "9302084719562430607628"
+        }
+      ],
+      "blockers": []
+    },
+    {
+      "sourceRow": 16,
+      "orderId": "13-14682-02744",
+      "trackingNumber": "9302086229813495912629",
+      "status": "ready",
+      "store": "TPP_EBAY",
+      "apiOrderId": "13-14682-02744",
+      "existingTracking": [
+        {
+          "number": "9400136208303475993279",
+          "carrier": "USPS",
+          "shippedTime": null
+        }
+      ],
+      "trackingPayload": [
+        {
+          "carrier": "USPS",
+          "trackingNumber": "9400136208303475993279"
+        },
+        {
+          "carrier": "USPS",
+          "trackingNumber": "9302086229813495912629"
+        }
+      ],
+      "blockers": []
+    },
+    {
+      "sourceRow": 17,
+      "orderId": "15-14596-72728",
+      "trackingNumber": "9302082465672636911073",
+      "status": "ready",
+      "store": "TPP_EBAY",
+      "apiOrderId": "15-14596-72728",
+      "existingTracking": [
+        {
+          "number": "9501993814438445032930",
+          "carrier": "USPS",
+          "shippedTime": null
+        }
+      ],
+      "trackingPayload": [
+        {
+          "carrier": "USPS",
+          "trackingNumber": "9501993814438445032930"
+        },
+        {
+          "carrier": "USPS",
+          "trackingNumber": "9302082465672636911073"
+        }
+      ],
+      "blockers": []
+    },
+    {
+      "sourceRow": 18,
+      "orderId": "11-14673-54646",
+      "trackingNumber": "9302082570514218939215",
+      "status": "ready",
+      "store": "TPP_EBAY",
+      "apiOrderId": "11-14673-54646",
+      "existingTracking": [
+        {
+          "number": "9434630109355131916535",
+          "carrier": "USPS",
+          "shippedTime": null
+        }
+      ],
+      "trackingPayload": [
+        {
+          "carrier": "USPS",
+          "trackingNumber": "9434630109355131916535"
+        },
+        {
+          "carrier": "USPS",
+          "trackingNumber": "9302082570514218939215"
+        }
+      ],
+      "blockers": []
+    },
+    {
+      "sourceRow": 19,
+      "orderId": "07-14682-63292",
+      "trackingNumber": "9302085641366950970227",
+      "status": "ready",
+      "store": "TPP_EBAY",
+      "apiOrderId": "07-14682-63292",
+      "existingTracking": [
+        {
+          "number": "9405530109355296099747",
+          "carrier": "USPS",
+          "shippedTime": null
+        }
+      ],
+      "trackingPayload": [
+        {
+          "carrier": "USPS",
+          "trackingNumber": "9405530109355296099747"
+        },
+        {
+          "carrier": "USPS",
+          "trackingNumber": "9302085641366950970227"
+        }
+      ],
+      "blockers": []
+    },
+    {
+      "sourceRow": 20,
+      "orderId": "24-14680-69367",
+      "trackingNumber": "9302088387363976308252",
+      "status": "ready",
+      "store": "TPP_EBAY",
+      "apiOrderId": "24-14680-69367",
+      "existingTracking": [
+        {
+          "number": "9405550105797024380161",
+          "carrier": "USPS",
+          "shippedTime": null
+        }
+      ],
+      "trackingPayload": [
+        {
+          "carrier": "USPS",
+          "trackingNumber": "9405550105797024380161"
+        },
+        {
+          "carrier": "USPS",
+          "trackingNumber": "9302088387363976308252"
+        }
+      ],
+      "blockers": []
+    },
+    {
+      "sourceRow": 21,
+      "orderId": "15-14669-27314",
+      "trackingNumber": "9302081214629670702106",
+      "status": "ready",
+      "store": "TPP_EBAY",
+      "apiOrderId": "15-14669-27314",
+      "existingTracking": [
+        {
+          "number": "9405530109355296111036",
+          "carrier": "USPS",
+          "shippedTime": null
+        }
+      ],
+      "trackingPayload": [
+        {
+          "carrier": "USPS",
+          "trackingNumber": "9405530109355296111036"
+        },
+        {
+          "carrier": "USPS",
+          "trackingNumber": "9302081214629670702106"
+        }
+      ],
+      "blockers": []
+    },
+    {
+      "sourceRow": 22,
+      "orderId": "12-14653-41676",
+      "trackingNumber": "9302084591148812216822",
+      "status": "ready",
+      "store": "TPP_EBAY",
+      "apiOrderId": "12-14653-41676",
+      "existingTracking": [
+        {
+          "number": "9405501699330028574554",
+          "carrier": "USPS",
+          "shippedTime": null
+        }
+      ],
+      "trackingPayload": [
+        {
+          "carrier": "USPS",
+          "trackingNumber": "9405501699330028574554"
+        },
+        {
+          "carrier": "USPS",
+          "trackingNumber": "9302084591148812216822"
+        }
+      ],
+      "blockers": []
+    },
+    {
+      "sourceRow": 23,
+      "orderId": "01-14671-06027",
+      "trackingNumber": "9302082198889961355217",
+      "status": "ready",
+      "store": "TPP_EBAY",
+      "apiOrderId": "01-14671-06027",
+      "existingTracking": [
+        {
+          "number": "9400136208303475566947",
+          "carrier": "USPS",
+          "shippedTime": null
+        }
+      ],
+      "trackingPayload": [
+        {
+          "carrier": "USPS",
+          "trackingNumber": "9400136208303475566947"
+        },
+        {
+          "carrier": "USPS",
+          "trackingNumber": "9302082198889961355217"
+        }
+      ],
+      "blockers": []
+    },
+    {
+      "sourceRow": 24,
+      "orderId": "04-14699-60622",
+      "trackingNumber": "9302088856227228451989",
+      "status": "ready",
+      "store": "TPP_EBAY",
+      "apiOrderId": "04-14699-60622",
+      "existingTracking": [
+        {
+          "number": "9434636208303405339285",
+          "carrier": "USPS",
+          "shippedTime": null
+        }
+      ],
+      "trackingPayload": [
+        {
+          "carrier": "USPS",
+          "trackingNumber": "9434636208303405339285"
+        },
+        {
+          "carrier": "USPS",
+          "trackingNumber": "9302088856227228451989"
+        }
+      ],
+      "blockers": []
+    },
+    {
+      "sourceRow": 25,
+      "orderId": "27-14660-85270",
+      "trackingNumber": "9302081486332896484514",
+      "status": "ready",
+      "store": "TPP_EBAY",
+      "apiOrderId": "27-14660-85270",
+      "existingTracking": [
+        {
+          "number": "9400150899561399099527",
+          "carrier": "USPS",
+          "shippedTime": null
+        }
+      ],
+      "trackingPayload": [
+        {
+          "carrier": "USPS",
+          "trackingNumber": "9400150899561399099527"
+        },
+        {
+          "carrier": "USPS",
+          "trackingNumber": "9302081486332896484514"
+        }
+      ],
+      "blockers": []
+    },
+    {
+      "sourceRow": 26,
+      "orderId": "15-14668-64038",
+      "trackingNumber": "9302085239275248166466",
+      "status": "ready",
+      "store": "TPP_EBAY",
+      "apiOrderId": "15-14668-64038",
+      "existingTracking": [
+        {
+          "number": "9400150206242030562315",
+          "carrier": "USPS",
+          "shippedTime": null
+        }
+      ],
+      "trackingPayload": [
+        {
+          "carrier": "USPS",
+          "trackingNumber": "9400150206242030562315"
+        },
+        {
+          "carrier": "USPS",
+          "trackingNumber": "9302085239275248166466"
+        }
+      ],
+      "blockers": []
+    },
+    {
+      "sourceRow": 27,
+      "orderId": "20-14647-17230",
+      "trackingNumber": "9302083214617109460844",
+      "status": "ready",
+      "store": "TPP_EBAY",
+      "apiOrderId": "20-14647-17230",
+      "existingTracking": [
+        {
+          "number": "9405550105794024428626",
+          "carrier": "USPS",
+          "shippedTime": null
+        }
+      ],
+      "trackingPayload": [
+        {
+          "carrier": "USPS",
+          "trackingNumber": "9405550105794024428626"
+        },
+        {
+          "carrier": "USPS",
+          "trackingNumber": "9302083214617109460844"
+        }
+      ],
+      "blockers": []
+    },
+    {
+      "sourceRow": 28,
+      "orderId": "26-14663-87413",
+      "trackingNumber": "9302082603490943795739",
+      "status": "ready",
+      "store": "TPP_EBAY",
+      "apiOrderId": "26-14663-87413",
+      "existingTracking": [
+        {
+          "number": "9334620845500002840564",
+          "carrier": "USPS",
+          "shippedTime": null
+        }
+      ],
+      "trackingPayload": [
+        {
+          "carrier": "USPS",
+          "trackingNumber": "9334620845500002840564"
+        },
+        {
+          "carrier": "USPS",
+          "trackingNumber": "9302082603490943795739"
+        }
+      ],
+      "blockers": []
+    },
+    {
+      "sourceRow": 29,
+      "orderId": "04-14695-65027",
+      "trackingNumber": "9302089396495812708256",
+      "status": "ready",
+      "store": "TPP_EBAY",
+      "apiOrderId": "04-14695-65027",
+      "existingTracking": [
+        {
+          "number": "9400150899561345763304",
+          "carrier": "USPS",
+          "shippedTime": null
+        }
+      ],
+      "trackingPayload": [
+        {
+          "carrier": "USPS",
+          "trackingNumber": "9400150899561345763304"
+        },
+        {
+          "carrier": "USPS",
+          "trackingNumber": "9302089396495812708256"
+        }
+      ],
+      "blockers": []
+    },
+    {
+      "sourceRow": 30,
+      "orderId": "22-14641-07428",
+      "trackingNumber": "9302089467184680920910",
+      "status": "ready",
+      "store": "TT_EBAY",
+      "apiOrderId": "22-14641-07428",
+      "existingTracking": [
+        {
+          "number": "9200190267338805999468",
+          "carrier": "USPS",
+          "shippedTime": null
+        }
+      ],
+      "trackingPayload": [
+        {
+          "carrier": "USPS",
+          "trackingNumber": "9200190267338805999468"
+        },
+        {
+          "carrier": "USPS",
+          "trackingNumber": "9302089467184680920910"
+        }
+      ],
+      "blockers": []
+    },
+    {
+      "sourceRow": 31,
+      "orderId": "06-14656-95871",
+      "trackingNumber": "9302088677771191802255",
+      "status": "ready",
+      "store": "TT_EBAY",
+      "apiOrderId": "06-14656-95871",
+      "existingTracking": [
+        {
+          "number": "9400130109355158251594",
+          "carrier": "USPS",
+          "shippedTime": null
+        }
+      ],
+      "trackingPayload": [
+        {
+          "carrier": "USPS",
+          "trackingNumber": "9400130109355158251594"
+        },
+        {
+          "carrier": "USPS",
+          "trackingNumber": "9302088677771191802255"
+        }
+      ],
+      "blockers": []
+    },
+    {
+      "sourceRow": 32,
+      "orderId": "05-14712-36187",
+      "trackingNumber": "9302083438947487187902",
+      "status": "ready",
+      "store": "TPP_EBAY",
+      "apiOrderId": "05-14712-36187",
+      "existingTracking": [
+        {
+          "number": "9334620845500001589587",
+          "carrier": "USPS",
+          "shippedTime": null
+        }
+      ],
+      "trackingPayload": [
+        {
+          "carrier": "USPS",
+          "trackingNumber": "9334620845500001589587"
+        },
+        {
+          "carrier": "USPS",
+          "trackingNumber": "9302083438947487187902"
+        }
+      ],
+      "blockers": []
+    },
+    {
+      "sourceRow": 33,
+      "orderId": "17-14682-96814",
+      "trackingNumber": "9302081019580721448978",
+      "status": "ready",
+      "store": "TPP_EBAY",
+      "apiOrderId": "17-14682-96814",
+      "existingTracking": [
+        {
+          "number": "9334620845500001551126",
+          "carrier": "USPS",
+          "shippedTime": null
+        }
+      ],
+      "trackingPayload": [
+        {
+          "carrier": "USPS",
+          "trackingNumber": "9334620845500001551126"
+        },
+        {
+          "carrier": "USPS",
+          "trackingNumber": "9302081019580721448978"
+        }
+      ],
+      "blockers": []
+    },
+    {
+      "sourceRow": 34,
+      "orderId": "12-14675-69077",
+      "trackingNumber": "9302085710162851064077",
+      "status": "ready",
+      "store": "TPP_EBAY",
+      "apiOrderId": "12-14675-69077",
+      "existingTracking": [
+        {
+          "number": "9434630109355132758301",
+          "carrier": "USPS",
+          "shippedTime": null
+        }
+      ],
+      "trackingPayload": [
+        {
+          "carrier": "USPS",
+          "trackingNumber": "9434630109355132758301"
+        },
+        {
+          "carrier": "USPS",
+          "trackingNumber": "9302085710162851064077"
+        }
+      ],
+      "blockers": []
+    },
+    {
+      "sourceRow": 35,
+      "orderId": "08-14682-91877",
+      "trackingNumber": "9302086175563047545392",
+      "status": "ready",
+      "store": "TPP_EBAY",
+      "apiOrderId": "08-14682-91877",
+      "existingTracking": [
+        {
+          "number": "9434630109355132757748",
+          "carrier": "USPS",
+          "shippedTime": null
+        }
+      ],
+      "trackingPayload": [
+        {
+          "carrier": "USPS",
+          "trackingNumber": "9434630109355132757748"
+        },
+        {
+          "carrier": "USPS",
+          "trackingNumber": "9302086175563047545392"
+        }
+      ],
+      "blockers": []
+    },
+    {
+      "sourceRow": 36,
+      "orderId": "04-14703-91662",
+      "trackingNumber": "9302087383925399136798",
+      "status": "ready",
+      "store": "TPP_EBAY",
+      "apiOrderId": "04-14703-91662",
+      "existingTracking": [
+        {
+          "number": "9334620845500001944157",
+          "carrier": "USPS",
+          "shippedTime": null
+        }
+      ],
+      "trackingPayload": [
+        {
+          "carrier": "USPS",
+          "trackingNumber": "9334620845500001944157"
+        },
+        {
+          "carrier": "USPS",
+          "trackingNumber": "9302087383925399136798"
+        }
+      ],
+      "blockers": []
+    },
+    {
+      "sourceRow": 37,
+      "orderId": "23-14662-05339",
+      "trackingNumber": "9302083874879095609782",
+      "status": "ready",
+      "store": "TPP_EBAY",
+      "apiOrderId": "23-14662-05339",
+      "existingTracking": [
+        {
+          "number": "9434630109355132756505",
+          "carrier": "USPS",
+          "shippedTime": null
+        }
+      ],
+      "trackingPayload": [
+        {
+          "carrier": "USPS",
+          "trackingNumber": "9434630109355132756505"
+        },
+        {
+          "carrier": "USPS",
+          "trackingNumber": "9302083874879095609782"
+        }
+      ],
+      "blockers": []
+    }
+  ]
+}

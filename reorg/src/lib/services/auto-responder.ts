@@ -2,10 +2,12 @@ import { db } from "@/lib/db";
 import { recordNetworkTransferSample } from "@/lib/services/network-transfer-samples";
 import {
   buildEbayConfig,
+  ebayOrderLineAttempts,
   fetchEbayOrderDetails,
   fetchRecentlyShippedOrders,
+  itemIdFromOutboundWinningStrategy,
   renderTemplate,
-  sendEbayMessage,
+  sendEbayBuyerMessageWithFallback,
   validateTemplates,
   type RenderContext,
   type EbayOrderDetails,
@@ -535,7 +537,7 @@ export async function processAutoResponderJobs(): Promise<{
     data: { status: "PROCESSING" },
   });
 
-  // ── Phase 1: Bulk enrichment (1 eBay API call per integration) ──
+  // ── Phase 1: Bulk enrichment — one Trading GetOrders per integration (line items included) ──
   const byIntegration = new Map<string, JobWithRelations[]>();
   for (const job of jobs) {
     const group = byIntegration.get(job.integrationId) ?? [];
@@ -545,19 +547,20 @@ export async function processAutoResponderJobs(): Promise<{
 
   const enrichmentMap = new Map<string, EbayOrderDetails>();
   for (const [integrationId, groupJobs] of byIntegration) {
-    const needsEnrichment = groupJobs.filter((j) => !j.ebayBuyerUserId || !j.ebayItemId);
-    if (needsEnrichment.length === 0) continue;
+    const uniqOrderNumbers = [...new Set(groupJobs.map((j) => j.orderNumber))];
     try {
       const config = buildEbayConfig(groupJobs[0].integration);
       const details = await fetchEbayOrderDetails(
         integrationId,
         config,
-        needsEnrichment.map((j) => j.orderNumber),
+        uniqOrderNumbers,
       );
       for (const [orderNum, det] of details) {
         enrichmentMap.set(orderNum, det);
       }
-      console.log(`[auto-responder] bulk-enriched ${details.size}/${needsEnrichment.length} orders for integration ${integrationId}`);
+      console.log(
+        `[auto-responder] bulk-enriched ${details.size}/${uniqOrderNumbers.length} orders for integration ${integrationId}`,
+      );
     } catch (err) {
       console.error(`[auto-responder] bulk enrichment failed for integration ${integrationId}:`, err);
     }
@@ -611,18 +614,16 @@ async function sendOneJob(
     let buyerName = job.buyerName;
     let itemTitle = job.itemTitle;
 
-    // Use pre-fetched enrichment data
-    if (!buyerUserId || !itemId) {
-      const cached = enrichmentMap.get(job.orderNumber);
-      if (cached) {
-        buyerUserId = buyerUserId || cached.buyerUserId;
-        itemId = itemId || cached.itemId;
-        buyerName = buyerName || cached.buyerName;
-        itemTitle = itemTitle || cached.itemTitle;
-      }
+    const ebayDetail = enrichmentMap.get(job.orderNumber);
+    // Merge enrichment from bulk GetOrders whenever present (fills lineItems for fallback sends).
+    if (ebayDetail) {
+      buyerUserId = buyerUserId || ebayDetail.buyerUserId;
+      itemId = itemId || ebayDetail.itemId;
+      buyerName = buyerName || ebayDetail.buyerName;
+      itemTitle = itemTitle || ebayDetail.itemTitle;
     }
 
-    // Fallback: individual fetch if bulk enrichment missed this order
+    // Fallback: individual fetch if enrichment missed this order
     if (!buyerUserId || !itemId) {
       const config = buildEbayConfig(job.integration);
       const details = await fetchEbayOrderDetails(job.integrationId, config, [job.orderNumber]);
@@ -632,6 +633,7 @@ async function sendOneJob(
         itemId = itemId || orderDetails.itemId;
         buyerName = buyerName || orderDetails.buyerName;
         itemTitle = itemTitle || orderDetails.itemTitle;
+        enrichmentMap.set(job.orderNumber, orderDetails);
       }
     }
 
@@ -654,14 +656,22 @@ async function sendOneJob(
     const renderedBody = renderTemplate(job.responderVersion.bodyTemplate, ctx);
 
     const config = buildEbayConfig(job.integration);
-    const sendResult = await sendEbayMessage(
+    const detailForAttempts = enrichmentMap.get(job.orderNumber) ?? {
+      itemId: itemId ?? "",
+      lineItems: undefined,
+    };
+    const lineAttempts = ebayOrderLineAttempts(job.ebayItemId, detailForAttempts);
+    const sendResult = await sendEbayBuyerMessageWithFallback(
       job.integrationId,
       config,
-      itemId,
       buyerUserId,
       renderedSubject,
       renderedBody,
+      lineAttempts,
     );
+
+    const sentItemId =
+      itemIdFromOutboundWinningStrategy(sendResult.winningStrategy) ?? (itemId as string);
 
     if (sendResult.success) {
       const sentAt = new Date();
@@ -679,7 +689,7 @@ async function sendOneJob(
             renderedSubject,
             renderedBody,
             status: "sent",
-            ebayItemId: itemId,
+            ebayItemId: sentItemId,
             ebayBuyerUserId: buyerUserId,
             queuedAt: job.createdAt,
             attemptedAt: sentAt,
@@ -709,7 +719,7 @@ async function sendOneJob(
           orderNumber: job.orderNumber,
           buyerUserId,
           buyerName,
-          itemId,
+          itemId: sentItemId,
           itemTitle,
           subject: renderedSubject,
           body: renderedBody,

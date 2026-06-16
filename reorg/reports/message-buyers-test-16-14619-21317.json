@@ -1,0 +1,30 @@
+{
+  "generatedAt": "2026-05-17T23:02:17.978Z",
+  "directory": "C:\\Users\\thepe\\OneDrive - theperfectpart.net\\Desktop\\DTS LB BATCHES\\Message Buyers",
+  "dryRun": false,
+  "subject": "Update regarding your shipment",
+  "workbooksProcessed": 4,
+  "uniqueEbayJobs": 1,
+  "sendSucceededOrResolved": 0,
+  "skippedExcluded": 0,
+  "notFoundOrderIds": [],
+  "sendFailedOrderIds": [
+    "16-14619-21317"
+  ],
+  "sendFailedDetail": {
+    "16-14619-21317": "Your application has exceeded usage limit on this call, please make call to GetAPIAccessRules to check your call usage. (2 strategies tried)"
+  },
+  "results": [
+    {
+      "orderId": "16-14619-21317",
+      "ok": false,
+      "store": "TPP_EBAY",
+      "buyerUserId": "lostmicz",
+      "itemId": "193084690485",
+      "reason": "SEND_FAILED",
+      "error": "Your application has exceeded usage limit on this call, please make call to GetAPIAccessRules to check your call usage. (2 strategies tried)",
+      "tracking": "9434630109355129846219",
+      "sourceFile": "TPP_MAY_12_1_with_tracking.xlsx"
+    }
+  ]
+}

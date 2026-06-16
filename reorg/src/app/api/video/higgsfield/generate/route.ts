@@ -8,7 +8,7 @@ export const dynamic = "force-dynamic";
 
 const bodySchema = z.object({
   marketplaceListingId: z.string().min(1),
-  durationSeconds: z.number().int().min(6).max(20).optional(),
+  durationSeconds: z.number().int().min(15).max(20).optional(),
 });
 
 export async function POST(request: Request) {

@@ -262,17 +262,29 @@ export async function searchReturns(args: SearchReturnsArgs): Promise<SearchRetu
   return { members, total, totalPages: Math.ceil(total / limit), result };
 }
 
-/** GET /post-order/v2/return/{returnId} — full return detail. Read-only. */
+/**
+ * GET /post-order/v2/return/{returnId} — single return. Read-only.
+ *
+ * `fieldgroups` controls which containers come back:
+ *   - FULL (default)  → the `detail` container only (item title/pic, refundInfo).
+ *   - SUMMARY         → the `summary` container only — this is the ONLY place
+ *                       sellerAvailableOptions / sellerResponseDue / state live.
+ * We default to SUMMARY for the action + availability path because the detail
+ * page and the pre-write safety gate need the seller's available options. The
+ * sync's title/image enrichment passes FULL to read itemDetail.
+ */
 export async function getReturnDetail(args: {
   integrationId: string;
   config: EbayConfig;
   returnId: string;
+  fieldgroups?: "FULL" | "SUMMARY";
 }): Promise<EbayReturnsCallResult> {
   return postOrderRequest({
     integrationId: args.integrationId,
     config: args.config,
     method: "GET",
     path: `/post-order/v2/return/${encodeURIComponent(args.returnId)}`,
+    query: { fieldgroups: args.fieldgroups ?? "SUMMARY" },
     callName: "return/get",
   });
 }

@@ -1,0 +1,876 @@
+{
+  "generatedAt": "2026-05-18T01:05:58.276Z",
+  "directory": "C:\\Users\\thepe\\OneDrive - theperfectpart.net\\Desktop\\DTS LB BATCHES\\Message Buyers",
+  "dryRun": false,
+  "amazonShippingMethod": "Other",
+  "replaceExistingTracking": true,
+  "workbooksProcessed": 4,
+  "uniqueJobs": 166,
+  "identifiedCount": 142,
+  "identifyFailures": [
+    {
+      "orderNumber": "4642564",
+      "trackingNumber": "9405501699330028562780",
+      "status": "not_found"
+    },
+    {
+      "orderNumber": "4642567",
+      "trackingNumber": "9405530109355292319832",
+      "status": "not_found"
+    },
+    {
+      "orderNumber": "4642578",
+      "trackingNumber": "9405501699330028557885",
+      "status": "not_found"
+    },
+    {
+      "orderNumber": "4642579",
+      "trackingNumber": "9405530109355292313830",
+      "status": "not_found"
+    },
+    {
+      "orderNumber": "4642584",
+      "trackingNumber": "9405501699330028561622",
+      "status": "not_found"
+    },
+    {
+      "orderNumber": "4642586",
+      "trackingNumber": "9405501699330028557724",
+      "status": "not_found"
+    },
+    {
+      "orderNumber": "4642589",
+      "trackingNumber": "9434630109355129957427",
+      "status": "not_found"
+    },
+    {
+      "orderNumber": "4642592",
+      "trackingNumber": "9434630109355129833714",
+      "status": "not_found"
+    },
+    {
+      "orderNumber": "4642593",
+      "trackingNumber": "9434630109355129833240",
+      "status": "not_found"
+    },
+    {
+      "orderNumber": "4642595",
+      "trackingNumber": "9405530109355292312475",
+      "status": "not_found"
+    },
+    {
+      "orderNumber": "4642596",
+      "trackingNumber": "9434630109355129809306",
+      "status": "not_found"
+    },
+    {
+      "orderNumber": "4642597",
+      "trackingNumber": "9434630109355129833394",
+      "status": "not_found"
+    },
+    {
+      "orderNumber": "4642598",
+      "trackingNumber": "9405530109355292311829",
+      "status": "not_found"
+    },
+    {
+      "orderNumber": "4642599",
+      "trackingNumber": "9434630109355129812146",
+      "status": "not_found"
+    },
+    {
+      "orderNumber": "4642600",
+      "trackingNumber": "9434630109355129811682",
+      "status": "not_found"
+    },
+    {
+      "orderNumber": "4642601",
+      "trackingNumber": "9434630109355129812061",
+      "status": "not_found"
+    },
+    {
+      "orderNumber": "4642602",
+      "trackingNumber": "9434630109355129833509",
+      "status": "not_found"
+    },
+    {
+      "orderNumber": "4642603",
+      "trackingNumber": "9434630109355129833486",
+      "status": "not_found"
+    },
+    {
+      "orderNumber": "4642604",
+      "trackingNumber": "9434630109355129824620",
+      "status": "not_found"
+    },
+    {
+      "orderNumber": "4642606",
+      "trackingNumber": "9434630109355129812467",
+      "status": "not_found"
+    },
+    {
+      "orderNumber": "4642608",
+      "trackingNumber": "9405530109355292311584",
+      "status": "not_found"
+    },
+    {
+      "orderNumber": "4642609",
+      "trackingNumber": "9434630109355129814829",
+      "status": "not_found"
+    },
+    {
+      "orderNumber": "4642610",
+      "trackingNumber": "9405530109355292311980",
+      "status": "not_found"
+    },
+    {
+      "orderNumber": "4642611",
+      "trackingNumber": "9405530109355292312949",
+      "status": "not_found"
+    }
+  ],
+  "pushSucceeded": [
+    {
+      "orderNumber": "111-0181910-5054652",
+      "trackingNumber": "9434630109355129109352",
+      "platform": "AMAZON"
+    },
+    {
+      "orderNumber": "111-5338630-8604249",
+      "trackingNumber": "9405530109355293575619",
+      "platform": "AMAZON"
+    },
+    {
+      "orderNumber": "111-6019634-0309059",
+      "trackingNumber": "9405530109355294242831",
+      "platform": "AMAZON"
+    },
+    {
+      "orderNumber": "111-6899918-8456211",
+      "trackingNumber": "9434630109355129984607",
+      "platform": "AMAZON"
+    },
+    {
+      "orderNumber": "111-7194062-5182648",
+      "trackingNumber": "9405530109355294201920",
+      "platform": "AMAZON"
+    },
+    {
+      "orderNumber": "111-7849456-8562625",
+      "trackingNumber": "9400136208303476877790",
+      "platform": "AMAZON"
+    },
+    {
+      "orderNumber": "111-8183383-0657013",
+      "trackingNumber": "9434630109355129107389",
+      "platform": "AMAZON"
+    },
+    {
+      "orderNumber": "111-9423338-0937808",
+      "trackingNumber": "9405501699330028876276",
+      "platform": "AMAZON"
+    },
+    {
+      "orderNumber": "112-1009403-4755465",
+      "trackingNumber": "9405530109355294242947",
+      "platform": "AMAZON"
+    },
+    {
+      "orderNumber": "112-3781058-9287400",
+      "trackingNumber": "9405530109355293544493",
+      "platform": "AMAZON"
+    },
+    {
+      "orderNumber": "112-3889530-5562610",
+      "trackingNumber": "9405530109355292311751",
+      "platform": "AMAZON"
+    },
+    {
+      "orderNumber": "112-4855429-1318629",
+      "trackingNumber": "9434636208303384569970",
+      "platform": "AMAZON"
+    },
+    {
+      "orderNumber": "112-5273995-4130647",
+      "trackingNumber": "9434630109355129798747",
+      "platform": "AMAZON"
+    },
+    {
+      "orderNumber": "112-7573706-8605009",
+      "trackingNumber": "9405501699330028876566",
+      "platform": "AMAZON"
+    },
+    {
+      "orderNumber": "112-7907788-9702668",
+      "trackingNumber": "9405530109355293547012",
+      "platform": "AMAZON"
+    },
+    {
+      "orderNumber": "112-8641775-5080243",
+      "trackingNumber": "9434630109355129995214",
+      "platform": "AMAZON"
+    },
+    {
+      "orderNumber": "113-0055260-8172235",
+      "trackingNumber": "9434630109355129834940",
+      "platform": "AMAZON"
+    },
+    {
+      "orderNumber": "113-0596067-8385036",
+      "trackingNumber": "9434630109355129833936",
+      "platform": "AMAZON"
+    },
+    {
+      "orderNumber": "113-0721862-2545846",
+      "trackingNumber": "9405530109355292317586",
+      "platform": "AMAZON"
+    },
+    {
+      "orderNumber": "113-2676200-8886623",
+      "trackingNumber": "9405530109355292311515",
+      "platform": "AMAZON"
+    },
+    {
+      "orderNumber": "113-3779048-2353006",
+      "trackingNumber": "9405501699330028564166",
+      "platform": "AMAZON"
+    },
+    {
+      "orderNumber": "113-3902231-2006630",
+      "trackingNumber": "9405530109355293567867",
+      "platform": "AMAZON"
+    },
+    {
+      "orderNumber": "113-4831950-9977819",
+      "trackingNumber": "9405530109355293515615",
+      "platform": "AMAZON"
+    },
+    {
+      "orderNumber": "113-5514219-5789843",
+      "trackingNumber": "9405530109355294195847",
+      "platform": "AMAZON"
+    },
+    {
+      "orderNumber": "113-5979531-9762662",
+      "trackingNumber": "9434636208303384572710",
+      "platform": "AMAZON"
+    },
+    {
+      "orderNumber": "113-7831356-2515407",
+      "trackingNumber": "9405530109355292309437",
+      "platform": "AMAZON"
+    },
+    {
+      "orderNumber": "113-9132717-0815412",
+      "trackingNumber": "9434630109355131495757",
+      "platform": "AMAZON"
+    },
+    {
+      "orderNumber": "113-9469222-2470616",
+      "trackingNumber": "9405530109355293551354",
+      "platform": "AMAZON"
+    },
+    {
+      "orderNumber": "114-0013301-9255421",
+      "trackingNumber": "9405501699330028873213",
+      "platform": "AMAZON"
+    },
+    {
+      "orderNumber": "114-0210078-2181844",
+      "trackingNumber": "9405530109355293558650",
+      "platform": "AMAZON"
+    },
+    {
+      "orderNumber": "114-1220647-4328250",
+      "trackingNumber": "9434630109355129995160",
+      "platform": "AMAZON"
+    },
+    {
+      "orderNumber": "114-3858121-8929866",
+      "trackingNumber": "9434636208303384591896",
+      "platform": "AMAZON"
+    },
+    {
+      "orderNumber": "114-4139066-3949843",
+      "trackingNumber": "9434636208303384595740",
+      "platform": "AMAZON"
+    },
+    {
+      "orderNumber": "114-5055632-4418606",
+      "trackingNumber": "9434630109355129829625",
+      "platform": "AMAZON"
+    },
+    {
+      "orderNumber": "114-7613604-4350602",
+      "trackingNumber": "9434630109355129995979",
+      "platform": "AMAZON"
+    },
+    {
+      "orderNumber": "114-8601179-8752237",
+      "trackingNumber": "9405530109355293567041",
+      "platform": "AMAZON"
+    },
+    {
+      "orderNumber": "114-9461029-2772222",
+      "trackingNumber": "9434630109355129955539",
+      "platform": "AMAZON"
+    },
+    {
+      "orderNumber": "114-9980751-4563449",
+      "trackingNumber": "9405530109355292322115",
+      "platform": "AMAZON"
+    },
+    {
+      "orderNumber": "30485",
+      "trackingNumber": "9405530109355292321910",
+      "platform": "SHOPIFY"
+    },
+    {
+      "orderNumber": "30506",
+      "trackingNumber": "9405530109355292315841",
+      "platform": "SHOPIFY"
+    },
+    {
+      "orderNumber": "30507",
+      "trackingNumber": "9405501699330028559513",
+      "platform": "SHOPIFY"
+    },
+    {
+      "orderNumber": "30510",
+      "trackingNumber": "9405501699330028563022",
+      "platform": "SHOPIFY"
+    },
+    {
+      "orderNumber": "30511",
+      "trackingNumber": "9405501699330028563015",
+      "platform": "SHOPIFY"
+    },
+    {
+      "orderNumber": "30512",
+      "trackingNumber": "9405501699330028563657",
+      "platform": "SHOPIFY"
+    },
+    {
+      "orderNumber": "30516",
+      "trackingNumber": "9405530109355292324034",
+      "platform": "SHOPIFY"
+    },
+    {
+      "orderNumber": "30520",
+      "trackingNumber": "9405530109355292313625",
+      "platform": "SHOPIFY"
+    },
+    {
+      "orderNumber": "30524",
+      "trackingNumber": "9405501699330028560397",
+      "platform": "SHOPIFY"
+    },
+    {
+      "orderNumber": "30531",
+      "trackingNumber": "9405530109355292308447",
+      "platform": "SHOPIFY"
+    },
+    {
+      "orderNumber": "30534",
+      "trackingNumber": "9434630109355129987288",
+      "platform": "SHOPIFY"
+    },
+    {
+      "orderNumber": "30537",
+      "trackingNumber": "9434630109355129983419",
+      "platform": "SHOPIFY"
+    },
+    {
+      "orderNumber": "30538",
+      "trackingNumber": "9405530109355292305743",
+      "platform": "SHOPIFY"
+    },
+    {
+      "orderNumber": "30540",
+      "trackingNumber": "9405530109355294332068",
+      "platform": "SHOPIFY"
+    },
+    {
+      "orderNumber": "30542",
+      "trackingNumber": "9434630109355129957830",
+      "platform": "SHOPIFY"
+    },
+    {
+      "orderNumber": "30543",
+      "trackingNumber": "9434630109355129955546",
+      "platform": "SHOPIFY"
+    },
+    {
+      "orderNumber": "30544",
+      "trackingNumber": "9400136208303476957362",
+      "platform": "SHOPIFY"
+    },
+    {
+      "orderNumber": "30550",
+      "trackingNumber": "9400136208303476955405",
+      "platform": "SHOPIFY"
+    },
+    {
+      "orderNumber": "30552",
+      "trackingNumber": "9434630109355129982511",
+      "platform": "SHOPIFY"
+    },
+    {
+      "orderNumber": "30553",
+      "trackingNumber": "9434630109355130013211",
+      "platform": "SHOPIFY"
+    },
+    {
+      "orderNumber": "30555",
+      "trackingNumber": "9434630109355129955423",
+      "platform": "SHOPIFY"
+    },
+    {
+      "orderNumber": "30556",
+      "trackingNumber": "9434630109355129999953",
+      "platform": "SHOPIFY"
+    },
+    {
+      "orderNumber": "30559",
+      "trackingNumber": "9434636208303385415337",
+      "platform": "SHOPIFY"
+    },
+    {
+      "orderNumber": "30560",
+      "trackingNumber": "9400136208303477024131",
+      "platform": "SHOPIFY"
+    },
+    {
+      "orderNumber": "30561",
+      "trackingNumber": "9434630109355129955874",
+      "platform": "SHOPIFY"
+    },
+    {
+      "orderNumber": "30564",
+      "trackingNumber": "9405530109355294332471",
+      "platform": "SHOPIFY"
+    },
+    {
+      "orderNumber": "30566",
+      "trackingNumber": "9405530109355292311645",
+      "platform": "SHOPIFY"
+    },
+    {
+      "orderNumber": "30567",
+      "trackingNumber": "9434630109355129833417",
+      "platform": "SHOPIFY"
+    },
+    {
+      "orderNumber": "30568",
+      "trackingNumber": "9405530109355292311638",
+      "platform": "SHOPIFY"
+    },
+    {
+      "orderNumber": "30570",
+      "trackingNumber": "9434630109355129823487",
+      "platform": "SHOPIFY"
+    },
+    {
+      "orderNumber": "30572",
+      "trackingNumber": "9434630109355129833219",
+      "platform": "SHOPIFY"
+    },
+    {
+      "orderNumber": "30573",
+      "trackingNumber": "9405530109355294217785",
+      "platform": "SHOPIFY"
+    },
+    {
+      "orderNumber": "30575",
+      "trackingNumber": "9405530109355292307006",
+      "platform": "SHOPIFY"
+    },
+    {
+      "orderNumber": "30579",
+      "trackingNumber": "9434630109355129824538",
+      "platform": "SHOPIFY"
+    },
+    {
+      "orderNumber": "30581",
+      "trackingNumber": "9434630109355129832984",
+      "platform": "SHOPIFY"
+    },
+    {
+      "orderNumber": "30582",
+      "trackingNumber": "9405530109355292311737",
+      "platform": "SHOPIFY"
+    },
+    {
+      "orderNumber": "30583",
+      "trackingNumber": "9434630109355129812504",
+      "platform": "SHOPIFY"
+    },
+    {
+      "orderNumber": "30584",
+      "trackingNumber": "9434630109355129108195",
+      "platform": "SHOPIFY"
+    },
+    {
+      "orderNumber": "30585",
+      "trackingNumber": "9405501699330028868103",
+      "platform": "SHOPIFY"
+    },
+    {
+      "orderNumber": "30586",
+      "trackingNumber": "9405530109355293512287",
+      "platform": "SHOPIFY"
+    },
+    {
+      "orderNumber": "30587",
+      "trackingNumber": "9405501699330028870458",
+      "platform": "SHOPIFY"
+    },
+    {
+      "orderNumber": "30588",
+      "trackingNumber": "9405530109355293523702",
+      "platform": "SHOPIFY"
+    },
+    {
+      "orderNumber": "30589",
+      "trackingNumber": "9434630109355131498826",
+      "platform": "SHOPIFY"
+    },
+    {
+      "orderNumber": "30590",
+      "trackingNumber": "9434630109355129103107",
+      "platform": "SHOPIFY"
+    },
+    {
+      "orderNumber": "30591",
+      "trackingNumber": "9434630109355129109109",
+      "platform": "SHOPIFY"
+    },
+    {
+      "orderNumber": "30592",
+      "trackingNumber": "9405530109355293525812",
+      "platform": "SHOPIFY"
+    },
+    {
+      "orderNumber": "30593",
+      "trackingNumber": "9405530109355293582938",
+      "platform": "SHOPIFY"
+    },
+    {
+      "orderNumber": "30595",
+      "trackingNumber": "9434630109355129104890",
+      "platform": "SHOPIFY"
+    },
+    {
+      "orderNumber": "30596",
+      "trackingNumber": "9405501699330028876504",
+      "platform": "SHOPIFY"
+    },
+    {
+      "orderNumber": "30597",
+      "trackingNumber": "9405501699330028873091",
+      "platform": "SHOPIFY"
+    },
+    {
+      "orderNumber": "30598",
+      "trackingNumber": "9405501699330028869810",
+      "platform": "SHOPIFY"
+    },
+    {
+      "orderNumber": "30599",
+      "trackingNumber": "9405501699330028876429",
+      "platform": "SHOPIFY"
+    },
+    {
+      "orderNumber": "30600",
+      "trackingNumber": "9405501699330028875835",
+      "platform": "SHOPIFY"
+    },
+    {
+      "orderNumber": "30605",
+      "trackingNumber": "9434630109355131499250",
+      "platform": "SHOPIFY"
+    },
+    {
+      "orderNumber": "30607",
+      "trackingNumber": "9405530109355293583621",
+      "platform": "SHOPIFY"
+    },
+    {
+      "orderNumber": "30610",
+      "trackingNumber": "9434630109355129112369",
+      "platform": "SHOPIFY"
+    },
+    {
+      "orderNumber": "30612",
+      "trackingNumber": "9434630109355129112840",
+      "platform": "SHOPIFY"
+    },
+    {
+      "orderNumber": "30614",
+      "trackingNumber": "9405501699330028876078",
+      "platform": "SHOPIFY"
+    },
+    {
+      "orderNumber": "30615",
+      "trackingNumber": "9405530109355293559015",
+      "platform": "SHOPIFY"
+    },
+    {
+      "orderNumber": "30616",
+      "trackingNumber": "9405530109355293559466",
+      "platform": "SHOPIFY"
+    },
+    {
+      "orderNumber": "30617",
+      "trackingNumber": "9434636208303384604350",
+      "platform": "SHOPIFY"
+    },
+    {
+      "orderNumber": "30618",
+      "trackingNumber": "9405530109355293559305",
+      "platform": "SHOPIFY"
+    },
+    {
+      "orderNumber": "30619",
+      "trackingNumber": "9405530109355293559428",
+      "platform": "SHOPIFY"
+    },
+    {
+      "orderNumber": "30620",
+      "trackingNumber": "9434636208303384604688",
+      "platform": "SHOPIFY"
+    },
+    {
+      "orderNumber": "30621",
+      "trackingNumber": "9405530109355293559350",
+      "platform": "SHOPIFY"
+    },
+    {
+      "orderNumber": "30622",
+      "trackingNumber": "9434636208303384604619",
+      "platform": "SHOPIFY"
+    },
+    {
+      "orderNumber": "30624",
+      "trackingNumber": "9434636208303384597928",
+      "platform": "SHOPIFY"
+    },
+    {
+      "orderNumber": "30625",
+      "trackingNumber": "9434636208303384588162",
+      "platform": "SHOPIFY"
+    },
+    {
+      "orderNumber": "30627",
+      "trackingNumber": "9434636208303384583334",
+      "platform": "SHOPIFY"
+    },
+    {
+      "orderNumber": "30628",
+      "trackingNumber": "9405530109355293562190",
+      "platform": "SHOPIFY"
+    },
+    {
+      "orderNumber": "30629",
+      "trackingNumber": "9405530109355293571246",
+      "platform": "SHOPIFY"
+    },
+    {
+      "orderNumber": "30631",
+      "trackingNumber": "9405530109355293574476",
+      "platform": "SHOPIFY"
+    },
+    {
+      "orderNumber": "30632",
+      "trackingNumber": "9434636208303384592947",
+      "platform": "SHOPIFY"
+    },
+    {
+      "orderNumber": "30633",
+      "trackingNumber": "9405530109355293561070",
+      "platform": "SHOPIFY"
+    }
+  ],
+  "pushFailures": [
+    {
+      "orderNumber": "111-0736346-3957046",
+      "trackingNumber": "9405530109355292311713",
+      "platform": "AMAZON",
+      "error": "Amazon confirmShipment failed (400): [InvalidInput] Tracking Info update not allowed. Cannot update trackingId or carrierInfo"
+    },
+    {
+      "orderNumber": "111-2027525-8041854",
+      "trackingNumber": "9405530109355292313380",
+      "platform": "AMAZON",
+      "error": "Amazon confirmShipment failed (400): [InvalidInput] Tracking Info update not allowed. Cannot update trackingId or carrierInfo"
+    },
+    {
+      "orderNumber": "111-2817590-3746605",
+      "trackingNumber": "9405501699330028559582",
+      "platform": "AMAZON",
+      "error": "Amazon confirmShipment failed (400): [InvalidInput] Tracking Info update not allowed. Cannot update trackingId or carrierInfo"
+    },
+    {
+      "orderNumber": "111-7458823-6209815",
+      "trackingNumber": "9434630109355129995450",
+      "platform": "AMAZON",
+      "error": "Amazon confirmShipment failed (400): [InvalidInput] Tracking Info update not allowed. Cannot update trackingId or carrierInfo"
+    },
+    {
+      "orderNumber": "111-8816698-4414633",
+      "trackingNumber": "9434636208303385346952",
+      "platform": "AMAZON",
+      "error": "Amazon confirmShipment failed (400): [InvalidInput] Tracking Info update not allowed. Cannot update trackingId or carrierInfo"
+    },
+    {
+      "orderNumber": "112-1802983-8504256",
+      "trackingNumber": "9400130109355157989177",
+      "platform": "AMAZON",
+      "error": "Amazon confirmShipment failed (400): [InvalidInput] Tracking Info update not allowed. Cannot update trackingId or carrierInfo"
+    },
+    {
+      "orderNumber": "112-2085646-8713866",
+      "trackingNumber": "9400130109355157991279",
+      "platform": "AMAZON",
+      "error": "Amazon confirmShipment failed (400): [InvalidInput] Tracking Info update not allowed. Cannot update trackingId or carrierInfo"
+    },
+    {
+      "orderNumber": "112-3215625-1817021",
+      "trackingNumber": "9400130109355157991286",
+      "platform": "AMAZON",
+      "error": "Amazon confirmShipment failed (400): [InvalidInput] Tracking Info update not allowed. Cannot update trackingId or carrierInfo"
+    },
+    {
+      "orderNumber": "112-4106769-0931439",
+      "trackingNumber": "9434630109355129957434",
+      "platform": "AMAZON",
+      "error": "Amazon confirmShipment failed (400): [InvalidInput] Tracking Info update not allowed. Cannot update trackingId or carrierInfo"
+    },
+    {
+      "orderNumber": "113-1783329-6479410",
+      "trackingNumber": "9400130109355157988491",
+      "platform": "AMAZON",
+      "error": "Amazon confirmShipment failed (400): [InvalidInput] Tracking Info update not allowed. Cannot update trackingId or carrierInfo"
+    },
+    {
+      "orderNumber": "113-3534701-6101024",
+      "trackingNumber": "9400130109355157989160",
+      "platform": "AMAZON",
+      "error": "Amazon confirmShipment failed (400): [InvalidInput] Tracking Info update not allowed. Cannot update trackingId or carrierInfo"
+    },
+    {
+      "orderNumber": "113-3733743-2443410",
+      "trackingNumber": "9434630109355129972666",
+      "platform": "AMAZON",
+      "error": "Amazon confirmShipment failed (400): [InvalidInput] Tracking Info update not allowed. Cannot update trackingId or carrierInfo"
+    },
+    {
+      "orderNumber": "113-3916037-9933022",
+      "trackingNumber": "9434636208303384573243",
+      "platform": "AMAZON",
+      "error": "Amazon confirmShipment failed (400): [InvalidInput] Tracking Info update not allowed. Cannot update trackingId or carrierInfo"
+    },
+    {
+      "orderNumber": "114-2154134-4839425",
+      "trackingNumber": "9400130109355157991385",
+      "platform": "AMAZON",
+      "error": "Amazon confirmShipment failed (400): [InvalidInput] Tracking Info update not allowed. Cannot update trackingId or carrierInfo"
+    },
+    {
+      "orderNumber": "114-8922973-3289828",
+      "trackingNumber": "9405530109355292320524",
+      "platform": "AMAZON",
+      "error": "Amazon confirmShipment failed (400): [InvalidInput] Tracking Info update not allowed. Cannot update trackingId or carrierInfo"
+    },
+    {
+      "orderNumber": "4642612",
+      "trackingNumber": "9405530109355292311669",
+      "platform": "BIGCOMMERCE",
+      "error": "BigCommerce shipment PUT failed (422): The existing 'shipping_provider' value and provided (optional) field 'tracking_carrier' must be same shipping carriers. Please refer docs"
+    },
+    {
+      "orderNumber": "4642614",
+      "trackingNumber": "9434630109355129113236",
+      "platform": "BIGCOMMERCE",
+      "error": "BigCommerce shipment PUT failed (422): The existing 'shipping_provider' value and provided (optional) field 'tracking_carrier' must be same shipping carriers. Please refer docs"
+    },
+    {
+      "orderNumber": "4642615",
+      "trackingNumber": "9405501699330028873916",
+      "platform": "BIGCOMMERCE",
+      "error": "BigCommerce shipment PUT failed (422): The existing 'shipping_provider' value and provided (optional) field 'tracking_carrier' must be same shipping carriers. Please refer docs"
+    },
+    {
+      "orderNumber": "4642616",
+      "trackingNumber": "9434630109355129114813",
+      "platform": "BIGCOMMERCE",
+      "error": "BigCommerce shipment PUT failed (422): The existing 'shipping_provider' value and provided (optional) field 'tracking_carrier' must be same shipping carriers. Please refer docs"
+    },
+    {
+      "orderNumber": "4642617",
+      "trackingNumber": "9434630109355129105910",
+      "platform": "BIGCOMMERCE",
+      "error": "BigCommerce shipment PUT failed (422): The existing 'shipping_provider' value and provided (optional) field 'tracking_carrier' must be same shipping carriers. Please refer docs"
+    },
+    {
+      "orderNumber": "4642618",
+      "trackingNumber": "9405501699330028875927",
+      "platform": "BIGCOMMERCE",
+      "error": "BigCommerce shipment PUT failed (422): The existing 'shipping_provider' value and provided (optional) field 'tracking_carrier' must be same shipping carriers. Please refer docs"
+    },
+    {
+      "orderNumber": "4642621",
+      "trackingNumber": "9405530109355293562510",
+      "platform": "BIGCOMMERCE",
+      "error": "BigCommerce shipment PUT failed (422): The existing 'shipping_provider' value and provided (optional) field 'tracking_carrier' must be same shipping carriers. Please refer docs"
+    },
+    {
+      "orderNumber": "4642622",
+      "trackingNumber": "9405530109355293536283",
+      "platform": "BIGCOMMERCE",
+      "error": "BigCommerce shipment PUT failed (422): The existing 'shipping_provider' value and provided (optional) field 'tracking_carrier' must be same shipping carriers. Please refer docs"
+    },
+    {
+      "orderNumber": "4642623",
+      "trackingNumber": "9405530109355293578504",
+      "platform": "BIGCOMMERCE",
+      "error": "BigCommerce shipment PUT failed (422): The existing 'shipping_provider' value and provided (optional) field 'tracking_carrier' must be same shipping carriers. Please refer docs"
+    },
+    {
+      "orderNumber": "4642624",
+      "trackingNumber": "9434636208303384580616",
+      "platform": "BIGCOMMERCE",
+      "error": "BigCommerce shipment PUT failed (422): The existing 'shipping_provider' value and provided (optional) field 'tracking_carrier' must be same shipping carriers. Please refer docs"
+    },
+    {
+      "orderNumber": "4642627",
+      "trackingNumber": "9400150899561346575975",
+      "platform": "BIGCOMMERCE",
+      "error": "BigCommerce shipment PUT failed (422): The existing 'shipping_provider' value and provided (optional) field 'tracking_carrier' must be same shipping carriers. Please refer docs"
+    },
+    {
+      "orderNumber": "4642628",
+      "trackingNumber": "9405530109355293559046",
+      "platform": "BIGCOMMERCE",
+      "error": "BigCommerce shipment PUT failed (422): The existing 'shipping_provider' value and provided (optional) field 'tracking_carrier' must be same shipping carriers. Please refer docs"
+    },
+    {
+      "orderNumber": "4642629",
+      "trackingNumber": "9405530109355293559343",
+      "platform": "BIGCOMMERCE",
+      "error": "BigCommerce shipment PUT failed (422): The existing 'shipping_provider' value and provided (optional) field 'tracking_carrier' must be same shipping carriers. Please refer docs"
+    },
+    {
+      "orderNumber": "4642632",
+      "trackingNumber": "9434636208303384579177",
+      "platform": "BIGCOMMERCE",
+      "error": "BigCommerce shipment PUT failed (422): The existing 'shipping_provider' value and provided (optional) field 'tracking_carrier' must be same shipping carriers. Please refer docs"
+    },
+    {
+      "orderNumber": "4642633",
+      "trackingNumber": "9434636208303384576299",
+      "platform": "BIGCOMMERCE",
+      "error": "BigCommerce shipment PUT failed (422): The existing 'shipping_provider' value and provided (optional) field 'tracking_carrier' must be same shipping carriers. Please refer docs"
+    }
+  ]
+}

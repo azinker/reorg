@@ -325,6 +325,29 @@ test("normalizeReturnSummary unwraps the Get Return detail wrapper", () => {
   assert.equal(fields.imageUrl, "https://i.ebayimg.com/images/g/abc/s-l500.jpg");
 });
 
+test("normalizeReturnSummary unwraps the Get Return SUMMARY wrapper with seller options", () => {
+  // fieldgroups=SUMMARY returns the return under `summary` — the only container
+  // that carries sellerAvailableOptions. The detail refresh must read these
+  // instead of wiping them.
+  const fields = normalizeReturnSummary({
+    summary: {
+      returnId: "5322195906",
+      orderId: "06-14766-18901",
+      state: "RETURN_REQUESTED",
+      sellerAvailableOptions: [
+        { actionType: "SELLER_PROVIDE_LABEL" },
+        { actionType: "CONFIRM_LABEL_SENT" },
+        { actionType: "SELLER_ISSUE_REFUND" },
+      ],
+      sellerResponseDue: { activityDue: "SELLER_PROVIDE_LABEL", respondByDate: { value: "2026-06-20T00:00:00.000Z" } },
+    },
+  });
+  assert.equal(fields.returnId, "5322195906");
+  assert.equal(fields.ebayOrderNumber, "06-14766-18901");
+  assert.equal(fields.sellerActionDue, true);
+  assert.equal(fields.sellerAvailableOptions.length, 3);
+});
+
 test("normalizeReturnSummary is defensive against an empty payload", () => {
   const out = normalizeReturnSummary({});
   assert.equal(out.returnId, null);

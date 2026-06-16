@@ -1,0 +1,48 @@
+{
+  "generatedAt": "2026-05-18T01:59:53.376Z",
+  "directory": "C:\\Users\\thepe\\OneDrive - theperfectpart.net\\Desktop\\DTS LB BATCHES\\Message Buyers",
+  "dryRun": false,
+  "amazonShippingMethod": "Other",
+  "replaceExistingTracking": true,
+  "workbooksProcessed": 4,
+  "uniqueJobs": 6,
+  "identifiedCount": 6,
+  "platformsFilter": [
+    "BIGCOMMERCE"
+  ],
+  "ordersSelectedForPush": 6,
+  "identifyFailures": [],
+  "pushSucceeded": [
+    {
+      "orderNumber": "4642604",
+      "trackingNumber": "9434630109355129824620",
+      "platform": "BIGCOMMERCE"
+    },
+    {
+      "orderNumber": "4642606",
+      "trackingNumber": "9434630109355129812467",
+      "platform": "BIGCOMMERCE"
+    },
+    {
+      "orderNumber": "4642608",
+      "trackingNumber": "9405530109355292311584",
+      "platform": "BIGCOMMERCE"
+    },
+    {
+      "orderNumber": "4642609",
+      "trackingNumber": "9434630109355129814829",
+      "platform": "BIGCOMMERCE"
+    },
+    {
+      "orderNumber": "4642610",
+      "trackingNumber": "9405530109355292311980",
+      "platform": "BIGCOMMERCE"
+    },
+    {
+      "orderNumber": "4642611",
+      "trackingNumber": "9405530109355292312949",
+      "platform": "BIGCOMMERCE"
+    }
+  ],
+  "pushFailures": []
+}

@@ -6,6 +6,17 @@ import { helpdeskFlagsSnapshotAsync } from "@/lib/helpdesk/flags";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+function newestIsoDate(values: Array<Date | string | null | undefined>): string | null {
+  let newest: Date | null = null;
+  for (const value of values) {
+    if (!value) continue;
+    const date = value instanceof Date ? value : new Date(value);
+    if (Number.isNaN(date.getTime())) continue;
+    if (!newest || date > newest) newest = date;
+  }
+  return newest?.toISOString() ?? null;
+}
+
 export async function GET(_request: NextRequest) {
   const session = await auth();
   if (!session?.user?.id) {
@@ -39,12 +50,23 @@ export async function GET(_request: NextRequest) {
     process.env.HELPDESK_BACKFILL_DAYS ?? "60",
     10,
   ) || 60;
+  const lastCheckpointActivityAt = newestIsoDate(
+    checkpoints.flatMap((c) => [c.updatedAt, c.lastFullSyncAt]),
+  );
+  const effectiveLastTickAt =
+    newestIsoDate([
+      (lastTickAt?.value as string | undefined) ?? null,
+      lastCheckpointActivityAt,
+    ]) ?? null;
 
   return NextResponse.json({
     data: {
       flags,
       backfillDays,
-      lastTickAt: (lastTickAt?.value as string | undefined) ?? null,
+      // The poll-status app_setting is useful for summaries, but a deploy or
+      // alternate worker can leave it stale while checkpoints continue moving.
+      // The header should reflect the newest confirmed Help Desk sync activity.
+      lastTickAt: effectiveLastTickAt,
       lastOutcome: (lastOutcome?.value as string | undefined) ?? null,
       lastSummary: lastSummary?.value ?? null,
       checkpoints: checkpoints.map((c) => ({

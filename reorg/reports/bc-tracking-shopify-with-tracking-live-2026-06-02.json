@@ -1,0 +1,498 @@
+{
+  "generatedAt": "2026-06-02T05:12:52.773Z",
+  "workbookPath": "C:\\Users\\thepe\\Downloads\\SHOPIFY_with_tracking.xlsx",
+  "mode": "LIVE_PUSH",
+  "spreadsheetCandidates": 38,
+  "bigCommerceIdentified": 38,
+  "selectedForPush": [
+    {
+      "sourceRow": 2,
+      "orderNumber": "4643101",
+      "trackingNumber": "9302084677678441315867",
+      "carrier": "USPS"
+    },
+    {
+      "sourceRow": 7,
+      "orderNumber": "4643125",
+      "trackingNumber": "9302086476410166350450",
+      "carrier": "USPS"
+    },
+    {
+      "sourceRow": 11,
+      "orderNumber": "4643088",
+      "trackingNumber": "9302082287700860515669",
+      "carrier": "USPS"
+    },
+    {
+      "sourceRow": 22,
+      "orderNumber": "4643099",
+      "trackingNumber": "9302083845200538825267",
+      "carrier": "USPS"
+    },
+    {
+      "sourceRow": 24,
+      "orderNumber": "4643105",
+      "trackingNumber": "9302086769147246779906",
+      "carrier": "USPS"
+    },
+    {
+      "sourceRow": 34,
+      "orderNumber": "4643109",
+      "trackingNumber": "9302087508277814533666",
+      "carrier": "USPS"
+    },
+    {
+      "sourceRow": 37,
+      "orderNumber": "4643094",
+      "trackingNumber": "9302087081166933138495",
+      "carrier": "USPS"
+    },
+    {
+      "sourceRow": 54,
+      "orderNumber": "4643110",
+      "trackingNumber": "9302083379405137718855",
+      "carrier": "USPS"
+    },
+    {
+      "sourceRow": 55,
+      "orderNumber": "4643106",
+      "trackingNumber": "9302082685434456224328",
+      "carrier": "USPS"
+    },
+    {
+      "sourceRow": 57,
+      "orderNumber": "4643115",
+      "trackingNumber": "9302082169524554480522",
+      "carrier": "USPS"
+    },
+    {
+      "sourceRow": 58,
+      "orderNumber": "4643102",
+      "trackingNumber": "9302085023855605626270",
+      "carrier": "USPS"
+    },
+    {
+      "sourceRow": 64,
+      "orderNumber": "4643114",
+      "trackingNumber": "9302089816615340714904",
+      "carrier": "USPS"
+    },
+    {
+      "sourceRow": 71,
+      "orderNumber": "4643124",
+      "trackingNumber": "9302084360632322461749",
+      "carrier": "USPS"
+    },
+    {
+      "sourceRow": 75,
+      "orderNumber": "4643096",
+      "trackingNumber": "9302086092375854576388",
+      "carrier": "USPS"
+    },
+    {
+      "sourceRow": 79,
+      "orderNumber": "4643120",
+      "trackingNumber": "9302085165528033315614",
+      "carrier": "USPS"
+    },
+    {
+      "sourceRow": 82,
+      "orderNumber": "4643093",
+      "trackingNumber": "9302089375317730873588",
+      "carrier": "USPS"
+    },
+    {
+      "sourceRow": 84,
+      "orderNumber": "4643117",
+      "trackingNumber": "9302087211895771700890",
+      "carrier": "USPS"
+    },
+    {
+      "sourceRow": 86,
+      "orderNumber": "4643121",
+      "trackingNumber": "9302081141698848878566",
+      "carrier": "USPS"
+    }
+  ],
+  "skipped": [
+    {
+      "orderNumber": "4643111",
+      "sourceRow": 4,
+      "reason": "not_awaiting_fulfillment",
+      "statusId": 2,
+      "status": "Shipped"
+    },
+    {
+      "orderNumber": "4643104",
+      "sourceRow": 5,
+      "reason": "not_awaiting_fulfillment",
+      "statusId": 2,
+      "status": "Shipped"
+    },
+    {
+      "orderNumber": "4643116",
+      "sourceRow": 8,
+      "reason": "not_awaiting_fulfillment",
+      "statusId": 2,
+      "status": "Shipped"
+    },
+    {
+      "orderNumber": "4643086",
+      "sourceRow": 9,
+      "reason": "not_awaiting_fulfillment",
+      "statusId": 2,
+      "status": "Shipped"
+    },
+    {
+      "orderNumber": "4643112",
+      "sourceRow": 10,
+      "reason": "not_awaiting_fulfillment",
+      "statusId": 2,
+      "status": "Shipped"
+    },
+    {
+      "orderNumber": "4643118",
+      "sourceRow": 13,
+      "reason": "not_awaiting_fulfillment",
+      "statusId": 2,
+      "status": "Shipped"
+    },
+    {
+      "orderNumber": "4643089",
+      "sourceRow": 15,
+      "reason": "not_awaiting_fulfillment",
+      "statusId": 2,
+      "status": "Shipped"
+    },
+    {
+      "orderNumber": "4643087",
+      "sourceRow": 16,
+      "reason": "not_awaiting_fulfillment",
+      "statusId": 2,
+      "status": "Shipped"
+    },
+    {
+      "orderNumber": "4643113",
+      "sourceRow": 17,
+      "reason": "not_awaiting_fulfillment",
+      "statusId": 2,
+      "status": "Shipped"
+    },
+    {
+      "orderNumber": "4643119",
+      "sourceRow": 18,
+      "reason": "not_awaiting_fulfillment",
+      "statusId": 2,
+      "status": "Shipped"
+    },
+    {
+      "orderNumber": "4643122",
+      "sourceRow": 19,
+      "reason": "not_awaiting_fulfillment",
+      "statusId": 2,
+      "status": "Shipped"
+    },
+    {
+      "orderNumber": "4643123",
+      "sourceRow": 21,
+      "reason": "not_awaiting_fulfillment",
+      "statusId": 2,
+      "status": "Shipped"
+    },
+    {
+      "orderNumber": "4643098",
+      "sourceRow": 23,
+      "reason": "not_awaiting_fulfillment",
+      "statusId": 2,
+      "status": "Shipped"
+    },
+    {
+      "orderNumber": "4643103",
+      "sourceRow": 35,
+      "reason": "not_awaiting_fulfillment",
+      "statusId": 2,
+      "status": "Shipped"
+    },
+    {
+      "orderNumber": "4643100",
+      "sourceRow": 36,
+      "reason": "not_awaiting_fulfillment",
+      "statusId": 2,
+      "status": "Shipped"
+    },
+    {
+      "orderNumber": "4643107",
+      "sourceRow": 38,
+      "reason": "not_awaiting_fulfillment",
+      "statusId": 2,
+      "status": "Shipped"
+    },
+    {
+      "orderNumber": "4643108",
+      "sourceRow": 45,
+      "reason": "not_awaiting_fulfillment",
+      "statusId": 2,
+      "status": "Shipped"
+    },
+    {
+      "orderNumber": "4643097",
+      "sourceRow": 56,
+      "reason": "not_awaiting_fulfillment",
+      "statusId": 2,
+      "status": "Shipped"
+    },
+    {
+      "orderNumber": "4643091",
+      "sourceRow": 70,
+      "reason": "not_awaiting_fulfillment",
+      "statusId": 2,
+      "status": "Shipped"
+    },
+    {
+      "orderNumber": "4643095",
+      "sourceRow": 74,
+      "reason": "not_awaiting_fulfillment",
+      "statusId": 2,
+      "status": "Shipped"
+    }
+  ],
+  "pushSucceeded": [
+    {
+      "orderNumber": "4643101",
+      "trackingNumber": "9302084677678441315867",
+      "carrier": "USPS"
+    },
+    {
+      "orderNumber": "4643125",
+      "trackingNumber": "9302086476410166350450",
+      "carrier": "USPS"
+    },
+    {
+      "orderNumber": "4643088",
+      "trackingNumber": "9302082287700860515669",
+      "carrier": "USPS"
+    },
+    {
+      "orderNumber": "4643099",
+      "trackingNumber": "9302083845200538825267",
+      "carrier": "USPS"
+    },
+    {
+      "orderNumber": "4643105",
+      "trackingNumber": "9302086769147246779906",
+      "carrier": "USPS"
+    },
+    {
+      "orderNumber": "4643109",
+      "trackingNumber": "9302087508277814533666",
+      "carrier": "USPS"
+    },
+    {
+      "orderNumber": "4643094",
+      "trackingNumber": "9302087081166933138495",
+      "carrier": "USPS"
+    },
+    {
+      "orderNumber": "4643110",
+      "trackingNumber": "9302083379405137718855",
+      "carrier": "USPS"
+    },
+    {
+      "orderNumber": "4643106",
+      "trackingNumber": "9302082685434456224328",
+      "carrier": "USPS"
+    },
+    {
+      "orderNumber": "4643115",
+      "trackingNumber": "9302082169524554480522",
+      "carrier": "USPS"
+    },
+    {
+      "orderNumber": "4643102",
+      "trackingNumber": "9302085023855605626270",
+      "carrier": "USPS"
+    },
+    {
+      "orderNumber": "4643114",
+      "trackingNumber": "9302089816615340714904",
+      "carrier": "USPS"
+    },
+    {
+      "orderNumber": "4643124",
+      "trackingNumber": "9302084360632322461749",
+      "carrier": "USPS"
+    },
+    {
+      "orderNumber": "4643096",
+      "trackingNumber": "9302086092375854576388",
+      "carrier": "USPS"
+    },
+    {
+      "orderNumber": "4643120",
+      "trackingNumber": "9302085165528033315614",
+      "carrier": "USPS"
+    },
+    {
+      "orderNumber": "4643093",
+      "trackingNumber": "9302089375317730873588",
+      "carrier": "USPS"
+    },
+    {
+      "orderNumber": "4643117",
+      "trackingNumber": "9302087211895771700890",
+      "carrier": "USPS"
+    },
+    {
+      "orderNumber": "4643121",
+      "trackingNumber": "9302081141698848878566",
+      "carrier": "USPS"
+    }
+  ],
+  "pushFailures": [],
+  "postVerify": [
+    {
+      "orderNumber": "4643101",
+      "expectedTracking": "9302084677678441315867",
+      "trackingNumbers": [
+        "9302084677678441315867"
+      ],
+      "verified": true
+    },
+    {
+      "orderNumber": "4643125",
+      "expectedTracking": "9302086476410166350450",
+      "trackingNumbers": [
+        "9302086476410166350450"
+      ],
+      "verified": true
+    },
+    {
+      "orderNumber": "4643088",
+      "expectedTracking": "9302082287700860515669",
+      "trackingNumbers": [
+        "9302082287700860515669"
+      ],
+      "verified": true
+    },
+    {
+      "orderNumber": "4643099",
+      "expectedTracking": "9302083845200538825267",
+      "trackingNumbers": [
+        "9302083845200538825267"
+      ],
+      "verified": true
+    },
+    {
+      "orderNumber": "4643105",
+      "expectedTracking": "9302086769147246779906",
+      "trackingNumbers": [
+        "9302086769147246779906"
+      ],
+      "verified": true
+    },
+    {
+      "orderNumber": "4643109",
+      "expectedTracking": "9302087508277814533666",
+      "trackingNumbers": [
+        "9302087508277814533666"
+      ],
+      "verified": true
+    },
+    {
+      "orderNumber": "4643094",
+      "expectedTracking": "9302087081166933138495",
+      "trackingNumbers": [
+        "9302087081166933138495"
+      ],
+      "verified": true
+    },
+    {
+      "orderNumber": "4643110",
+      "expectedTracking": "9302083379405137718855",
+      "trackingNumbers": [
+        "9302083379405137718855"
+      ],
+      "verified": true
+    },
+    {
+      "orderNumber": "4643106",
+      "expectedTracking": "9302082685434456224328",
+      "trackingNumbers": [
+        "9302082685434456224328"
+      ],
+      "verified": true
+    },
+    {
+      "orderNumber": "4643115",
+      "expectedTracking": "9302082169524554480522",
+      "trackingNumbers": [
+        "9302082169524554480522"
+      ],
+      "verified": true
+    },
+    {
+      "orderNumber": "4643102",
+      "expectedTracking": "9302085023855605626270",
+      "trackingNumbers": [
+        "9302085023855605626270"
+      ],
+      "verified": true
+    },
+    {
+      "orderNumber": "4643114",
+      "expectedTracking": "9302089816615340714904",
+      "trackingNumbers": [
+        "9302089816615340714904"
+      ],
+      "verified": true
+    },
+    {
+      "orderNumber": "4643124",
+      "expectedTracking": "9302084360632322461749",
+      "trackingNumbers": [
+        "9302084360632322461749"
+      ],
+      "verified": true
+    },
+    {
+      "orderNumber": "4643096",
+      "expectedTracking": "9302086092375854576388",
+      "trackingNumbers": [
+        "9302086092375854576388"
+      ],
+      "verified": true
+    },
+    {
+      "orderNumber": "4643120",
+      "expectedTracking": "9302085165528033315614",
+      "trackingNumbers": [
+        "9302085165528033315614"
+      ],
+      "verified": true
+    },
+    {
+      "orderNumber": "4643093",
+      "expectedTracking": "9302089375317730873588",
+      "trackingNumbers": [
+        "9302089375317730873588"
+      ],
+      "verified": true
+    },
+    {
+      "orderNumber": "4643117",
+      "expectedTracking": "9302087211895771700890",
+      "trackingNumbers": [
+        "9302087211895771700890"
+      ],
+      "verified": true
+    },
+    {
+      "orderNumber": "4643121",
+      "expectedTracking": "9302081141698848878566",
+      "trackingNumbers": [
+        "9302081141698848878566"
+      ],
+      "verified": true
+    }
+  ]
+}

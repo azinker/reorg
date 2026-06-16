@@ -1,0 +1,32 @@
+{
+  "generatedAt": "2026-05-17T23:20:12.607Z",
+  "directory": "C:\\Users\\thepe\\OneDrive - theperfectpart.net\\Desktop\\DTS LB BATCHES\\Message Buyers",
+  "dryRun": false,
+  "tradingOnlySend": false,
+  "getOrdersBatch": 75,
+  "commerceFirstDefault": true,
+  "subject": "Update regarding your shipment",
+  "workbooksProcessed": 4,
+  "uniqueEbayJobs": 1,
+  "sendSucceededOrResolved": 1,
+  "skippedExcluded": 0,
+  "notFoundOrderIds": [],
+  "sendFailedOrderIds": [],
+  "sendFailedDetail": {},
+  "commerceSendCount": 1,
+  "tradingSendCount": 0,
+  "results": [
+    {
+      "orderId": "27-14603-67924",
+      "ok": true,
+      "store": "TPP_EBAY",
+      "buyerUserId": "2015forbe",
+      "itemId": "195365581331",
+      "winningStrategy": "commerce-listing:195365581331",
+      "outboundChannel": "COMMERCE_MESSAGE",
+      "commerceMessageId": "6217227105019",
+      "tracking": "9434630109355131498888",
+      "sourceFile": "TPP_MAY_13_1_with_tracking.xlsx"
+    }
+  ]
+}

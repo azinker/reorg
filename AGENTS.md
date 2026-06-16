@@ -49,6 +49,35 @@ Write locks, dry-run mode, and per-store write enablement must be exposed in the
 
 ---
 
+## eBay Reship Shortcut
+
+When the user says **"eBay Reship"** and provides an `.xlsx` path, this means:
+
+- The workbook uses column A = eBay order number and column B = USPS tracking number.
+- Run the production dry-run first with the prod `little-fire` database guard:
+
+```powershell
+cd reorg
+npx tsx scripts/_batch-add-ebay-tracking-numbers.ts --file="<provided .xlsx path>" --report="reports\ebay-reship-add-trackings-dry-run-<date>.json"
+```
+
+- Report: input rows, ready count, blocked count, TPP/TT split, and the dry-run report path.
+- If blocked count is `0`, ask only for explicit confirmation: **"OKAY PROCEED"**.
+- Do **not** perform the live write until the user confirms. This satisfies the marketplace write confirmation rule.
+- After confirmation, run the live batch with the mutation flag scoped to that process only:
+
+```powershell
+cd reorg
+$env:ENABLE_LIVE_EBAY_ORDER_MUTATIONS = "true"
+npx tsx scripts/_batch-add-ebay-tracking-numbers.ts --file="<provided .xlsx path>" --send --confirmed-batch --report="reports\ebay-reship-add-trackings-dry-run-<date>-confirmed.json"
+```
+
+- The script will write the live report as `reports\ebay-reship-add-trackings-live-<date>-confirmed.json`.
+- Summarize attempted count, successful eBay writes, failures, TPP/TT split, verified/unverified counts, and report path.
+- `unverified` after the live run means eBay accepted `CompleteSale`, but `GetOrders` did not show the new tracking immediately.
+
+---
+
 ## Data Model Rules
 
 ### Row Identity

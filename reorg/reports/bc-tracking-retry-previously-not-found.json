@@ -1,0 +1,139 @@
+{
+  "generatedAt": "2026-05-18T01:57:38.084Z",
+  "directory": "C:\\Users\\thepe\\OneDrive - theperfectpart.net\\Desktop\\DTS LB BATCHES\\Message Buyers",
+  "dryRun": false,
+  "amazonShippingMethod": "Other",
+  "replaceExistingTracking": true,
+  "workbooksProcessed": 4,
+  "uniqueJobs": 24,
+  "identifiedCount": 18,
+  "platformsFilter": [
+    "BIGCOMMERCE"
+  ],
+  "ordersSelectedForPush": 18,
+  "identifyFailures": [
+    {
+      "orderNumber": "4642604",
+      "trackingNumber": "9434630109355129824620",
+      "status": "not_found"
+    },
+    {
+      "orderNumber": "4642606",
+      "trackingNumber": "9434630109355129812467",
+      "status": "not_found"
+    },
+    {
+      "orderNumber": "4642608",
+      "trackingNumber": "9405530109355292311584",
+      "status": "not_found"
+    },
+    {
+      "orderNumber": "4642609",
+      "trackingNumber": "9434630109355129814829",
+      "status": "not_found"
+    },
+    {
+      "orderNumber": "4642610",
+      "trackingNumber": "9405530109355292311980",
+      "status": "not_found"
+    },
+    {
+      "orderNumber": "4642611",
+      "trackingNumber": "9405530109355292312949",
+      "status": "not_found"
+    }
+  ],
+  "pushSucceeded": [
+    {
+      "orderNumber": "4642564",
+      "trackingNumber": "9405501699330028562780",
+      "platform": "BIGCOMMERCE"
+    },
+    {
+      "orderNumber": "4642567",
+      "trackingNumber": "9405530109355292319832",
+      "platform": "BIGCOMMERCE"
+    },
+    {
+      "orderNumber": "4642578",
+      "trackingNumber": "9405501699330028557885",
+      "platform": "BIGCOMMERCE"
+    },
+    {
+      "orderNumber": "4642579",
+      "trackingNumber": "9405530109355292313830",
+      "platform": "BIGCOMMERCE"
+    },
+    {
+      "orderNumber": "4642584",
+      "trackingNumber": "9405501699330028561622",
+      "platform": "BIGCOMMERCE"
+    },
+    {
+      "orderNumber": "4642586",
+      "trackingNumber": "9405501699330028557724",
+      "platform": "BIGCOMMERCE"
+    },
+    {
+      "orderNumber": "4642589",
+      "trackingNumber": "9434630109355129957427",
+      "platform": "BIGCOMMERCE"
+    },
+    {
+      "orderNumber": "4642592",
+      "trackingNumber": "9434630109355129833714",
+      "platform": "BIGCOMMERCE"
+    },
+    {
+      "orderNumber": "4642593",
+      "trackingNumber": "9434630109355129833240",
+      "platform": "BIGCOMMERCE"
+    },
+    {
+      "orderNumber": "4642595",
+      "trackingNumber": "9405530109355292312475",
+      "platform": "BIGCOMMERCE"
+    },
+    {
+      "orderNumber": "4642596",
+      "trackingNumber": "9434630109355129809306",
+      "platform": "BIGCOMMERCE"
+    },
+    {
+      "orderNumber": "4642597",
+      "trackingNumber": "9434630109355129833394",
+      "platform": "BIGCOMMERCE"
+    },
+    {
+      "orderNumber": "4642598",
+      "trackingNumber": "9405530109355292311829",
+      "platform": "BIGCOMMERCE"
+    },
+    {
+      "orderNumber": "4642599",
+      "trackingNumber": "9434630109355129812146",
+      "platform": "BIGCOMMERCE"
+    },
+    {
+      "orderNumber": "4642600",
+      "trackingNumber": "9434630109355129811682",
+      "platform": "BIGCOMMERCE"
+    },
+    {
+      "orderNumber": "4642601",
+      "trackingNumber": "9434630109355129812061",
+      "platform": "BIGCOMMERCE"
+    },
+    {
+      "orderNumber": "4642602",
+      "trackingNumber": "9434630109355129833509",
+      "platform": "BIGCOMMERCE"
+    },
+    {
+      "orderNumber": "4642603",
+      "trackingNumber": "9434630109355129833486",
+      "platform": "BIGCOMMERCE"
+    }
+  ],
+  "pushFailures": []
+}

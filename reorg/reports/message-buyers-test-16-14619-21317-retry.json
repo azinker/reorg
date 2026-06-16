@@ -1,0 +1,25 @@
+{
+  "generatedAt": "2026-05-17T23:04:04.078Z",
+  "directory": "C:\\Users\\thepe\\OneDrive - theperfectpart.net\\Desktop\\DTS LB BATCHES\\Message Buyers",
+  "dryRun": false,
+  "subject": "Update regarding your shipment",
+  "workbooksProcessed": 4,
+  "uniqueEbayJobs": 1,
+  "sendSucceededOrResolved": 1,
+  "skippedExcluded": 0,
+  "notFoundOrderIds": [],
+  "sendFailedOrderIds": [],
+  "sendFailedDetail": {},
+  "results": [
+    {
+      "orderId": "16-14619-21317",
+      "ok": true,
+      "store": "TPP_EBAY",
+      "buyerUserId": "lostmicz",
+      "itemId": "193084690485",
+      "winningStrategy": "CustomizedSubject:193084690485",
+      "tracking": "9434630109355129846219",
+      "sourceFile": "TPP_MAY_12_1_with_tracking.xlsx"
+    }
+  ]
+}

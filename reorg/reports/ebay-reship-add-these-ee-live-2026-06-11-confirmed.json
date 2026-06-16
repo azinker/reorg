@@ -1,0 +1,311 @@
+{
+  "generatedAt": "2026-06-11T01:59:07.318Z",
+  "filePath": "C:\\Users\\thepe\\OneDrive - theperfectpart.net\\Desktop\\DTS LB BATCHES\\ADD_THESE_EE.xlsx",
+  "dryRun": false,
+  "marketplaceWritesPerformed": 15,
+  "attemptedCount": 15,
+  "successCount": 15,
+  "failureCount": 0,
+  "results": [
+    {
+      "sourceRow": 1,
+      "orderId": "13-14667-97435",
+      "trackingNumber": "9302082861759870190201",
+      "store": "TPP_EBAY",
+      "success": true,
+      "marketplaceAck": "Success",
+      "marketplaceWarnings": [],
+      "verifiedTracking": [
+        {
+          "number": "9434636208303404568730",
+          "carrier": "USPS",
+          "shippedTime": null
+        },
+        {
+          "number": "9302082861759870190201",
+          "carrier": "USPS",
+          "shippedTime": null
+        }
+      ],
+      "verificationStatus": "verified"
+    },
+    {
+      "sourceRow": 2,
+      "orderId": "25-14678-17095",
+      "trackingNumber": "9302085859316252217466",
+      "store": "TT_EBAY",
+      "success": true,
+      "marketplaceAck": "Success",
+      "marketplaceWarnings": [],
+      "verifiedTracking": [
+        {
+          "number": "9302087888632095759632",
+          "carrier": "USPS",
+          "shippedTime": null
+        },
+        {
+          "number": "9302085859316252217466",
+          "carrier": "USPS",
+          "shippedTime": null
+        }
+      ],
+      "verificationStatus": "verified"
+    },
+    {
+      "sourceRow": 3,
+      "orderId": "04-14732-24534",
+      "trackingNumber": "9302088182625123318772",
+      "store": "TT_EBAY",
+      "success": true,
+      "marketplaceAck": "Success",
+      "marketplaceWarnings": [],
+      "verifiedTracking": [
+        {
+          "number": "9234690267338815506016",
+          "carrier": "USPS",
+          "shippedTime": null
+        }
+      ],
+      "verificationStatus": "unverified"
+    },
+    {
+      "sourceRow": 4,
+      "orderId": "06-14664-75016",
+      "trackingNumber": "9302084944842249784203",
+      "store": "TT_EBAY",
+      "success": true,
+      "marketplaceAck": "Success",
+      "marketplaceWarnings": [],
+      "verifiedTracking": [
+        {
+          "number": "9200190267338807127388",
+          "carrier": "USPS",
+          "shippedTime": null
+        },
+        {
+          "number": "9302084944842249784203",
+          "carrier": "USPS",
+          "shippedTime": null
+        }
+      ],
+      "verificationStatus": "verified"
+    },
+    {
+      "sourceRow": 5,
+      "orderId": "22-14673-77645",
+      "trackingNumber": "9302083559393929082496",
+      "store": "TT_EBAY",
+      "success": true,
+      "marketplaceAck": "Success",
+      "marketplaceWarnings": [],
+      "verifiedTracking": [
+        {
+          "number": "9334620845500001891413",
+          "carrier": "USPS",
+          "shippedTime": null
+        },
+        {
+          "number": "9302083559393929082496",
+          "carrier": "USPS",
+          "shippedTime": null
+        }
+      ],
+      "verificationStatus": "verified"
+    },
+    {
+      "sourceRow": 6,
+      "orderId": "08-14708-60210",
+      "trackingNumber": "9302084090488319818065",
+      "store": "TPP_EBAY",
+      "success": true,
+      "marketplaceAck": "Success",
+      "marketplaceWarnings": [],
+      "verifiedTracking": [
+        {
+          "number": "9334620845500002553792",
+          "carrier": "USPS",
+          "shippedTime": null
+        }
+      ],
+      "verificationStatus": "unverified"
+    },
+    {
+      "sourceRow": 7,
+      "orderId": "07-14720-97194",
+      "trackingNumber": "9302088402979173113445",
+      "store": "TPP_EBAY",
+      "success": true,
+      "marketplaceAck": "Success",
+      "marketplaceWarnings": [],
+      "verifiedTracking": [
+        {
+          "number": "9234690267338818303636",
+          "carrier": "USPS",
+          "shippedTime": null
+        }
+      ],
+      "verificationStatus": "unverified"
+    },
+    {
+      "sourceRow": 8,
+      "orderId": "06-14731-02739",
+      "trackingNumber": "9302089315624599605754",
+      "store": "TPP_EBAY",
+      "success": true,
+      "marketplaceAck": "Success",
+      "marketplaceWarnings": [],
+      "verifiedTracking": [
+        {
+          "number": "9234690267338818209419",
+          "carrier": "USPS",
+          "shippedTime": null
+        },
+        {
+          "number": "9302089315624599605754",
+          "carrier": "USPS",
+          "shippedTime": null
+        }
+      ],
+      "verificationStatus": "verified"
+    },
+    {
+      "sourceRow": 9,
+      "orderId": "06-14698-20224",
+      "trackingNumber": "9302082367284926220186",
+      "store": "TPP_EBAY",
+      "success": true,
+      "marketplaceAck": "Success",
+      "marketplaceWarnings": [],
+      "verifiedTracking": [
+        {
+          "number": "9334620845500001926535",
+          "carrier": "USPS",
+          "shippedTime": null
+        }
+      ],
+      "verificationStatus": "unverified"
+    },
+    {
+      "sourceRow": 10,
+      "orderId": "15-14715-65190",
+      "trackingNumber": "9302089363403123746500",
+      "store": "TPP_EBAY",
+      "success": true,
+      "marketplaceAck": "Success",
+      "marketplaceWarnings": [],
+      "verifiedTracking": [
+        {
+          "number": "9234690267338818210118",
+          "carrier": "USPS",
+          "shippedTime": null
+        }
+      ],
+      "verificationStatus": "unverified"
+    },
+    {
+      "sourceRow": 11,
+      "orderId": "14-14722-58881",
+      "trackingNumber": "9302087448082513708463",
+      "store": "TPP_EBAY",
+      "success": true,
+      "marketplaceAck": "Success",
+      "marketplaceWarnings": [],
+      "verifiedTracking": [
+        {
+          "number": "9400150105796074148520",
+          "carrier": "USPS",
+          "shippedTime": null
+        },
+        {
+          "number": "9302087448082513708463",
+          "carrier": "USPS",
+          "shippedTime": null
+        }
+      ],
+      "verificationStatus": "verified"
+    },
+    {
+      "sourceRow": 12,
+      "orderId": "25-14691-97804",
+      "trackingNumber": "9302086772405019419379",
+      "store": "TT_EBAY",
+      "success": true,
+      "marketplaceAck": "Success",
+      "marketplaceWarnings": [],
+      "verifiedTracking": [
+        {
+          "number": "9234690267338816885318",
+          "carrier": "USPS",
+          "shippedTime": null
+        }
+      ],
+      "verificationStatus": "unverified"
+    },
+    {
+      "sourceRow": 13,
+      "orderId": "03-14654-83205",
+      "trackingNumber": "9302084223983618566137",
+      "store": "TT_EBAY",
+      "success": true,
+      "marketplaceAck": "Success",
+      "marketplaceWarnings": [],
+      "verifiedTracking": [
+        {
+          "number": "9405501699330028528847",
+          "carrier": "USPS",
+          "shippedTime": null
+        },
+        {
+          "number": "9302084223983618566137",
+          "carrier": "USPS",
+          "shippedTime": null
+        }
+      ],
+      "verificationStatus": "verified"
+    },
+    {
+      "sourceRow": 14,
+      "orderId": "23-14689-94401",
+      "trackingNumber": "9302084941863941083282",
+      "store": "TT_EBAY",
+      "success": true,
+      "marketplaceAck": "Success",
+      "marketplaceWarnings": [],
+      "verifiedTracking": [
+        {
+          "number": "9334620845500002858118",
+          "carrier": "USPS",
+          "shippedTime": null
+        },
+        {
+          "number": "9302084941863941083282",
+          "carrier": "USPS",
+          "shippedTime": null
+        }
+      ],
+      "verificationStatus": "verified"
+    },
+    {
+      "sourceRow": 15,
+      "orderId": "14-14635-71712",
+      "trackingNumber": "9302085632262705152066",
+      "store": "TPP_EBAY",
+      "success": true,
+      "marketplaceAck": "Success",
+      "marketplaceWarnings": [],
+      "verifiedTracking": [
+        {
+          "number": "9434630109355131484928",
+          "carrier": "USPS",
+          "shippedTime": null
+        },
+        {
+          "number": "9302085632262705152066",
+          "carrier": "USPS",
+          "shippedTime": null
+        }
+      ],
+      "verificationStatus": "verified"
+    }
+  ]
+}

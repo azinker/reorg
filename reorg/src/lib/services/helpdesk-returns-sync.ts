@@ -237,6 +237,8 @@ async function enrichMissingItemDetails(
         integrationId: integration.id,
         config,
         returnId: row.returnId,
+        // itemDetail (title + pic) only ships in the FULL/`detail` container.
+        fieldgroups: "FULL",
       });
       if (detail.ok && detail.body) {
         const p = extractItemPresentation(detail.body as EbayReturnSummary);

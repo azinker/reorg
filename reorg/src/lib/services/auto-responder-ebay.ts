@@ -1,4 +1,6 @@
 ﻿import { db } from "@/lib/db";
+import type { EbayConfig as HelpdeskEbayConfig } from "@/lib/services/helpdesk-ebay";
+import { sendCommerceMessage } from "@/lib/services/helpdesk-commerce-message";
 import { recordNetworkTransferSample } from "@/lib/services/network-transfer-samples";
 import type { Platform } from "@prisma/client";
 
@@ -35,6 +37,25 @@ const TOKEN_REGEX = /\{[a-z_]+\}/g;
 
 export const EBAY_SUBJECT_MAX_LENGTH = 200;
 export const EBAY_BODY_MAX_LENGTH = 2000;
+
+/** Subject + body for Commerce Message REST (single plaintext field max 2000 chars). */
+function commerceBundledPlainText(subject: string, body: string): string {
+  const raw = `${subject.trim()}\n\n${body.trim()}`.trim();
+  if (raw.length <= EBAY_BODY_MAX_LENGTH) return raw;
+  return `${raw.slice(0, EBAY_BODY_MAX_LENGTH - 24).trimEnd()}\n\n(truncated for eBay)`;
+}
+
+/** Parses item id from `CustomizedSubject:123`, `General:123`, or `commerce-listing:123`. */
+export function itemIdFromOutboundWinningStrategy(strategy: string | undefined): string | undefined {
+  if (!strategy) return undefined;
+  if (strategy.startsWith("commerce-listing:")) {
+    const id = strategy.slice("commerce-listing:".length).trim();
+    return id || undefined;
+  }
+  const idx = strategy.indexOf(":");
+  if (idx <= 0) return undefined;
+  return strategy.slice(idx + 1).trim() || undefined;
+}
 
 // ΓöÇΓöÇΓöÇ Validation ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 
@@ -436,6 +457,37 @@ export interface EbayOrderDetails {
   itemTitle: string;
   shippedTime?: string;
   orderStatus?: string;
+  /** Distinct listing ItemIDs across line items — used for AddMemberMessageAAQToPartner retries. */
+  lineItems?: Array<{ itemId: string; itemTitle: string }>;
+}
+
+export type EbayAaqQuestionType = "CustomizedSubject" | "General";
+
+/** Prefer job/shipment item ID first (matches AR enqueue), then all order line items — deduped. */
+export function ebayOrderLineAttempts(
+  preferredItemId: string | undefined | null,
+  detail: Pick<EbayOrderDetails, "itemId" | "lineItems">,
+): Array<{ itemId: string }> {
+  const fromLines: Array<{ itemId: string }> =
+    detail.lineItems && detail.lineItems.length > 0
+      ? detail.lineItems.map((l) => ({ itemId: l.itemId }))
+      : detail.itemId
+        ? [{ itemId: detail.itemId }]
+        : [];
+  const seen = new Set<string>();
+  const out: Array<{ itemId: string }> = [];
+  const pref = preferredItemId?.trim();
+  if (pref && pref.length > 0) {
+    seen.add(pref);
+    out.push({ itemId: pref });
+  }
+  for (const row of fromLines) {
+    const id = row.itemId?.trim();
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    out.push({ itemId: id });
+  }
+  return out;
 }
 
 export async function fetchEbayOrderDetails(
@@ -494,13 +546,27 @@ ${idElements}
     const transactions = Array.isArray(rawTx) ? rawTx : rawTx ? [rawTx] : [];
     const firstTx = transactions[0] as Record<string, unknown> | undefined;
 
+    const lineItemSeen = new Set<string>();
+    const lineItems: Array<{ itemId: string; itemTitle: string }> = [];
+    for (const tx of transactions as Array<Record<string, unknown>>) {
+      const item = tx?.Item as Record<string, unknown> | undefined;
+      const itemIdLine = String(item?.ItemID ?? "").trim();
+      if (!itemIdLine || lineItemSeen.has(itemIdLine)) continue;
+      lineItemSeen.add(itemIdLine);
+      lineItems.push({
+        itemId: itemIdLine,
+        itemTitle: orderLineItemTitle(tx, item),
+      });
+    }
+
     const buyer = firstTx?.Buyer as Record<string, unknown> | undefined;
     const buyerName = String(buyer?.UserFirstName ?? "").trim() +
       (buyer?.UserLastName ? ` ${String(buyer.UserLastName).trim()}` : "");
 
     const item = firstTx?.Item as Record<string, unknown> | undefined;
-    const itemId = String(item?.ItemID ?? "").trim();
-    const itemTitle = firstTx ? orderLineItemTitle(firstTx, item) : String(item?.Title ?? "").trim();
+    const itemId = lineItems[0]?.itemId ?? String(item?.ItemID ?? "").trim();
+    const itemTitle = lineItems[0]?.itemTitle ??
+      (firstTx ? orderLineItemTitle(firstTx, item) : String(item?.Title ?? "").trim());
     const shippedTime = order.ShippedTime ? String(order.ShippedTime) : undefined;
     const orderStatus = order.OrderStatus ? String(order.OrderStatus) : undefined;
 
@@ -517,6 +583,7 @@ ${idElements}
         itemTitle,
         shippedTime,
         orderStatus,
+        lineItems: lineItems.length > 0 ? lineItems : undefined,
       });
     }
   }
@@ -1337,15 +1404,17 @@ export async function sendEbayMessage(
   recipientId: string,
   subject: string,
   messageBody: string,
+  options?: { questionType?: EbayAaqQuestionType },
 ): Promise<SendMessageResult> {
   const accessToken = await getEbayAccessToken(integrationId, config);
+  const questionType = options?.questionType ?? "CustomizedSubject";
   const body = `<?xml version="1.0" encoding="utf-8"?>
 <AddMemberMessageAAQToPartnerRequest xmlns="urn:ebay:apis:eBLBaseComponents">
   <ItemID>${escapeXml(itemId)}</ItemID>
   <MemberMessage>
     <Subject>${escapeXml(subject)}</Subject>
     <Body>${escapeXml(messageBody)}</Body>
-    <QuestionType>CustomizedSubject</QuestionType>
+    <QuestionType>${escapeXml(questionType)}</QuestionType>
     <RecipientID>${escapeXml(recipientId)}</RecipientID>
   </MemberMessage>
 </AddMemberMessageAAQToPartnerRequest>`;
@@ -1388,6 +1457,125 @@ export async function sendEbayMessage(
     .join("; ");
 
   return { success: false, error: errorMessages || `Ack: ${ack}` };
+}
+
+/**
+ * eBay Trading `AddMemberMessageAAQToPartner` can return a generic Failure for the
+ * first line item + CustomizedSubject even when General or another line item works.
+ */
+export async function sendEbayBuyerMessageWithFallback(
+  integrationId: string,
+  config: EbayConfig,
+  recipientId: string,
+  subject: string,
+  messageBody: string,
+  lineAttemptsOrdered: Array<{ itemId: string }>,
+): Promise<SendMessageResult & { attempted?: string[]; winningStrategy?: string }> {
+  const attempted: string[] = [];
+  const questionTypes: EbayAaqQuestionType[] = ["CustomizedSubject", "General"];
+  let lastErr = "No line items to message";
+
+  for (const qt of questionTypes) {
+    for (const line of lineAttemptsOrdered) {
+      const key = `${qt}:${line.itemId}`;
+      attempted.push(key);
+      const r = await sendEbayMessage(integrationId, config, line.itemId, recipientId, subject, messageBody, {
+        questionType: qt,
+      });
+      if (r.success) return { ...r, attempted, winningStrategy: key };
+      lastErr = r.error ?? lastErr;
+    }
+  }
+
+  return { success: false, error: lastErr, attempted };
+}
+
+/**
+ * High-volume outbound path: try Commerce Message REST `send_message` first (typically
+ * different quota buckets than Trading `AddMemberMessage*`), then fall back to Trading
+ * AAQ retries. Requires `commerce.message` OAuth scope; if Commerce is blocked, Trading
+ * may still succeed.
+ */
+export async function sendEbayBuyerMessageCommerceThenTradingFallback(
+  integrationId: string,
+  arConfig: EbayConfig,
+  recipientId: string,
+  subject: string,
+  messageBody: string,
+  lineAttemptsOrdered: Array<{ itemId: string }>,
+): Promise<
+  SendMessageResult & {
+    attempted?: string[];
+    winningStrategy?: string;
+    channel?: "COMMERCE_MESSAGE" | "TRADING_AAQ";
+    commerceMessageId?: string;
+  }
+> {
+  const helpdeskCfg = arConfig as unknown as HelpdeskEbayConfig;
+  const messageText = commerceBundledPlainText(subject, messageBody);
+  const attempted: string[] = [];
+
+  const seenListing = new Set<string>();
+  const commerceSteps: Array<{ referenceItemId?: string; strategyLabel: string }> = [];
+  for (const line of lineAttemptsOrdered) {
+    const id = line.itemId?.trim();
+    if (!id || seenListing.has(id)) continue;
+    seenListing.add(id);
+    commerceSteps.push({ referenceItemId: id, strategyLabel: `commerce-listing:${id}` });
+  }
+  commerceSteps.push({ strategyLabel: "commerce-open" });
+
+  let lastCmErr = "Commerce send not attempted";
+  for (const step of commerceSteps) {
+    attempted.push(step.strategyLabel);
+    const cm = await sendCommerceMessage(integrationId, helpdeskCfg, {
+      otherPartyUsername: recipientId,
+      messageText,
+      ...(step.referenceItemId ? { referenceItemId: step.referenceItemId } : {}),
+    });
+    if (cm.success) {
+      return {
+        success: true,
+        attempted,
+        winningStrategy: step.strategyLabel,
+        channel: "COMMERCE_MESSAGE",
+        commerceMessageId: cm.messageId,
+      };
+    }
+    lastCmErr = cm.error ?? `HTTP ${cm.status}`;
+    if (cm.needsReauth) {
+      lastCmErr = `${lastCmErr} (reauthorize for commerce.message scope)`;
+      break;
+    }
+  }
+
+  const trading = await sendEbayBuyerMessageWithFallback(
+    integrationId,
+    arConfig,
+    recipientId,
+    subject,
+    messageBody,
+    lineAttemptsOrdered,
+  );
+
+  const tradingAttempted = trading.attempted ?? [];
+  const fullAttempted = [...attempted, ...tradingAttempted];
+
+  if (trading.success) {
+    return {
+      success: true,
+      attempted: fullAttempted,
+      winningStrategy: trading.winningStrategy,
+      channel: "TRADING_AAQ",
+    };
+  }
+
+  const merged = [`Commerce: ${lastCmErr}`, trading.error ?? "Trading AAQ failed"].filter(Boolean).join(" | ");
+  return {
+    success: false,
+    error: merged,
+    attempted: fullAttempted,
+  };
 }
 
 // ΓöÇΓöÇΓöÇ Check integration health ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
