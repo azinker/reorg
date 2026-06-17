@@ -275,18 +275,24 @@ export type ReturnActionKey =
 const ACTION_OPTION_MAP: Record<ReturnActionKey, string[]> = {
   APPROVE_RETURN: ["SELLER_APPROVE_REQUEST"],
   OFFER_PARTIAL_REFUND: ["SELLER_OFFER_PARTIAL_REFUND"],
+  // eBay exposes a single SELLER_PROVIDE_LABEL option that fans out into the
+  // three label choices seen in Seller Hub (provide an eBay label / upload a
+  // label / confirm you sent one). All three map to that one option; the
+  // distinction is the labelAction we send to add_shipping_label.
+  PROVIDE_EBAY_LABEL: ["SELLER_PROVIDE_LABEL", "SELLER_PRINT_SHIPPING_LABEL"],
   UPLOAD_LABEL: ["SELLER_PROVIDE_LABEL"],
   CONFIRM_LABEL_SENT: ["SELLER_PROVIDE_LABEL", "SELLER_PROVIDE_TRACKING_INFO", "SELLER_UPDATE_TRACKING"],
-  PROVIDE_EBAY_LABEL: ["SELLER_PRINT_SHIPPING_LABEL"],
   MARK_AS_RECEIVED: ["SELLER_MARK_AS_RECEIVED"],
   ISSUE_REFUND: ["SELLER_ISSUE_REFUND"],
 };
 
 /**
- * Actions we deliberately DO NOT execute live even when eBay offers them,
- * because the write semantics are ambiguous/paid/irreversible and there is no
- * eBay sandbox to validate against. These render as visible-but-disabled with a
- * documented reason. (See the prompt's "block ambiguous writes" rule.)
+ * Actions we deliberately DO NOT execute as a live API write even when eBay
+ * offers them, because the write semantics are paid/irreversible and there is
+ * no eBay sandbox to validate against. PROVIDE_EBAY_LABEL purchases a paid eBay
+ * return label; rather than fire an ambiguous paid call we deep-link the user
+ * to eBay's label-purchase flow (handled in the UI). Keeping it here means the
+ * commit endpoint will also refuse it as defense-in-depth.
  */
 export const POLICY_BLOCKED_ACTIONS: ReturnActionKey[] = ["PROVIDE_EBAY_LABEL"];
 

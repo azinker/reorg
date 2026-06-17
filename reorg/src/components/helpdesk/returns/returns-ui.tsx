@@ -182,9 +182,41 @@ export function fmtMoney(
   }
 }
 
-/** Human label for a return reason, shortened where eBay uses long enums. */
+/**
+ * eBay's Post-Order API returns terse `ReturnReasonEnum` codes (e.g.
+ * `ORDERED_WRONG_ITEM`) that do NOT match the buyer-facing wording shown in
+ * Seller Hub. This maps the codes to eBay's current buyer-facing labels so the
+ * Help Desk reads exactly like eBay. Verified against the live Get Return
+ * payload: the API code `ORDERED_WRONG_ITEM` is presented to the buyer as
+ * "Just didn't like it". Unknown codes fall back to title-case.
+ */
+const RETURN_REASON_LABELS: Record<string, string> = {
+  ORDERED_WRONG_ITEM: "Just didn't like it",
+  JUST_DONT_WANT: "Just didn't like it",
+  NO_LONGER_NEED_ITEM: "No longer needed",
+  ORDERED_ACCIDENTALLY: "Ordered by mistake",
+  FOUND_BETTER_PRICE: "Found a better price",
+  NOT_AS_DESCRIBED: "Doesn't match description or photos",
+  WRONG_ITEM: "Wrong item sent",
+  WRONG_ITEM_RECEIVED: "Wrong item sent",
+  ARRIVED_DAMAGED: "Arrived damaged",
+  DEFECTIVE_ITEM: "Doesn't work or defective",
+  ITEM_DEFECTIVE: "Doesn't work or defective",
+  MISSING_PARTS: "Missing parts or pieces",
+  MISSING_PARTS_OR_PIECES: "Missing parts or pieces",
+  WRONG_SIZE: "Doesn't fit",
+  DOESNT_FIT: "Doesn't fit",
+  ITEM_NOT_RECEIVED: "Didn't arrive",
+  EXTRA_ITEM: "Extra item received",
+  AUTHENTICITY: "Not authentic",
+  COUNTERFEIT: "Not authentic",
+};
+
+/** Human label for a return reason, mapped to eBay's buyer-facing wording. */
 export function humanizeReason(reason: string | null | undefined): string {
   if (!reason) return "—";
+  const key = reason.trim().toUpperCase();
+  if (RETURN_REASON_LABELS[key]) return RETURN_REASON_LABELS[key];
   return reason
     .replace(/_/g, " ")
     .toLowerCase()

@@ -150,12 +150,27 @@ const CARRIERS = [
 ];
 
 // Actions the v1 write flow can actually execute (subset of ActionKey).
+// PROVIDE_EBAY_LABEL is intentionally NOT here — it purchases a paid eBay label
+// and is handled as a deep-link to eBay's own label-purchase flow instead.
 const EXECUTABLE: ActionKey[] = [
   "APPROVE_RETURN",
   "OFFER_PARTIAL_REFUND",
+  "UPLOAD_LABEL",
   "CONFIRM_LABEL_SENT",
   "MARK_AS_RECEIVED",
   "ISSUE_REFUND",
+];
+
+// Order the seller actions exactly like eBay's "Provide a return shipping
+// label" screen. ISSUE_REFUND is rendered separately as the green Send-refund
+// button under the Estimated refund card.
+const ACTION_DISPLAY_ORDER: ActionKey[] = [
+  "APPROVE_RETURN",
+  "OFFER_PARTIAL_REFUND",
+  "PROVIDE_EBAY_LABEL",
+  "UPLOAD_LABEL",
+  "CONFIRM_LABEL_SENT",
+  "MARK_AS_RECEIVED",
 ];
 
 const ACTION_META: Record<
@@ -174,17 +189,17 @@ const ACTION_META: Record<
   },
   UPLOAD_LABEL: {
     label: "Upload a label",
-    desc: "Uploading your own label is not supported in reorG v1.",
+    desc: "Upload a return label and tracking from your preferred carrier.",
     icon: Truck,
   },
   CONFIRM_LABEL_SENT: {
-    label: "Confirm label sent",
+    label: "Confirm you sent a label",
     desc: "Confirm you already provided a return label to the buyer.",
     icon: Truck,
   },
   PROVIDE_EBAY_LABEL: {
     label: "Provide an eBay label",
-    desc: "Buying an eBay-paid label is blocked by policy in reorG.",
+    desc: "Purchase an eBay return label based on eBay-negotiated rates (opens eBay).",
     icon: Truck,
   },
   MARK_AS_RECEIVED: {
@@ -193,11 +208,16 @@ const ACTION_META: Record<
     icon: PackageOpen,
   },
   ISSUE_REFUND: {
-    label: "Issue refund",
+    label: "Send refund",
     desc: "Refund the buyer (optionally with a deduction up to 50%).",
     icon: DollarSign,
   },
 };
+
+/** Deep link to the eBay return case (opens in a new tab). */
+function ebayReturnUrl(returnId: string): string {
+  return `https://www.ebay.com/rtn/Return/ReturnsDetail?returnId=${encodeURIComponent(returnId)}`;
+}
 
 export default function ReturnDetailClient({ returnId }: { returnId: string }) {
   const [forbidden, setForbidden] = useState(false);
@@ -322,8 +342,14 @@ export default function ReturnDetailClient({ returnId }: { returnId: string }) {
     return { enabled: true, reason: null };
   }
 
-  // Build the ordered list of seller actions eBay currently offers.
-  const offeredActions = detail.availability.filter((a) => a.availableOnEbay);
+  // Build the ordered list of seller actions eBay currently offers, in eBay's
+  // own order. ISSUE_REFUND is pulled out and rendered as the green Send-refund
+  // button under the Estimated refund card.
+  const offeredActions = ACTION_DISPLAY_ORDER.map((key) => availMap.get(key))
+    .filter((a): a is ActionAvailability => !!a && a.availableOnEbay);
+  const refundAvail = availMap.get("ISSUE_REFUND");
+  const refundState = actionState("ISSUE_REFUND");
+  const showRefundButton = !detail.isClosed && !!refundAvail?.availableOnEbay;
 
   return (
     <div className="mx-auto max-w-6xl px-6 py-6">
@@ -409,8 +435,39 @@ export default function ReturnDetailClient({ returnId }: { returnId: string }) {
               <div className="space-y-2">
                 {offeredActions.map((a) => {
                   const meta = ACTION_META[a.key];
-                  const st = actionState(a.key);
                   const Icon = meta.icon;
+
+                  // "Provide an eBay label" buys a paid eBay label through
+                  // eBay's own purchase flow — deep-link there instead of
+                  // firing an ambiguous paid API write.
+                  if (a.key === "PROVIDE_EBAY_LABEL") {
+                    return (
+                      <a
+                        key={a.key}
+                        href={ebayReturnUrl(detail.returnId)}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="flex w-full items-start gap-3 rounded-lg border border-brand/30 bg-brand/5 p-3 text-left transition-colors hover:bg-brand/10 cursor-pointer"
+                      >
+                        <Icon className="mt-0.5 h-4 w-4 shrink-0 text-brand" />
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-medium text-foreground">
+                              {meta.label}
+                            </span>
+                            <span className="inline-flex items-center gap-1 rounded bg-brand/15 px-1.5 py-0.5 text-[10px] font-semibold text-brand">
+                              <ExternalLink className="h-2.5 w-2.5" /> eBay
+                            </span>
+                          </div>
+                          <p className="mt-0.5 text-xs text-muted-foreground">
+                            {meta.desc}
+                          </p>
+                        </div>
+                      </a>
+                    );
+                  }
+
+                  const st = actionState(a.key);
                   return (
                     <button
                       key={a.key}
@@ -421,7 +478,7 @@ export default function ReturnDetailClient({ returnId }: { returnId: string }) {
                       className={
                         "flex w-full items-start gap-3 rounded-lg border p-3 text-left transition-colors " +
                         (st.enabled
-                          ? "border-hairline bg-surface hover:bg-surface-2 cursor-pointer"
+                          ? "border-brand/30 bg-brand/5 hover:bg-brand/10 cursor-pointer"
                           : "border-hairline/60 bg-surface/40 opacity-70 cursor-not-allowed")
                       }
                     >
@@ -470,7 +527,20 @@ export default function ReturnDetailClient({ returnId }: { returnId: string }) {
                 label="Escalated"
                 value={detail.escalated ? "Yes — eBay involved" : "No"}
               />
-              <Detail label="eBay case ID" value={detail.caseId ?? "—"} />
+              <Detail
+                label="eBay case"
+                value={
+                  <a
+                    href={ebayReturnUrl(detail.returnId)}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1 text-brand hover:underline"
+                  >
+                    {detail.caseId ?? detail.returnId}
+                    <ExternalLink className="h-3 w-3" />
+                  </a>
+                }
+              />
             </dl>
             {detail.buyerComments ? (
               <div className="mt-4 rounded-lg border border-hairline bg-surface p-3">
@@ -557,7 +627,36 @@ export default function ReturnDetailClient({ returnId }: { returnId: string }) {
                   )
                 }
               />
-              <RailRow label="Return ID" value={detail.returnId} />
+              <RailRow
+                label="Return ID"
+                value={
+                  <a
+                    href={ebayReturnUrl(detail.returnId)}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1 text-brand hover:underline"
+                  >
+                    {detail.returnId}
+                    <ExternalLink className="h-3 w-3" />
+                  </a>
+                }
+              />
+              {detail.caseId ? (
+                <RailRow
+                  label="eBay case ID"
+                  value={
+                    <a
+                      href={ebayReturnUrl(detail.returnId)}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-1 text-brand hover:underline"
+                    >
+                      {detail.caseId}
+                      <ExternalLink className="h-3 w-3" />
+                    </a>
+                  }
+                />
+              ) : null}
               <RailRow
                 label="Request amount"
                 value={fmtMoney(detail.sellerRefund.value, detail.sellerRefund.currency)}
@@ -581,10 +680,19 @@ export default function ReturnDetailClient({ returnId }: { returnId: string }) {
               ) : null}
             </dl>
 
+            <a
+              href={ebayReturnUrl(detail.returnId)}
+              target="_blank"
+              rel="noreferrer"
+              className="mt-4 inline-flex w-full items-center justify-center gap-1.5 rounded-md border border-brand/40 bg-brand/10 px-3 py-2 text-xs font-medium text-brand hover:bg-brand/20 cursor-pointer"
+            >
+              <ExternalLink className="h-3.5 w-3.5" /> View return on eBay
+            </a>
+
             {detail.ticketId ? (
               <Link
                 href={`/help-desk?ticket=${encodeURIComponent(detail.ticketId)}`}
-                className="mt-4 inline-flex w-full items-center justify-center gap-1.5 rounded-md border border-hairline bg-surface px-3 py-2 text-xs font-medium text-foreground hover:bg-surface-2 cursor-pointer"
+                className="mt-2 inline-flex w-full items-center justify-center gap-1.5 rounded-md border border-hairline bg-surface px-3 py-2 text-xs font-medium text-foreground hover:bg-surface-2 cursor-pointer"
               >
                 <MessageSquare className="h-3.5 w-3.5" /> View linked ticket
               </Link>
@@ -592,19 +700,47 @@ export default function ReturnDetailClient({ returnId }: { returnId: string }) {
           </div>
 
           {/* Refund summary card */}
-          {detail.sellerRefund.value != null ? (
+          {detail.sellerRefund.value != null || showRefundButton ? (
             <div className="rounded-xl border border-hairline bg-card p-4">
-              <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-                {detail.sellerRefund.isActual ? "Refunded" : "Estimated refund"}
-              </p>
-              <p className="mt-1 text-xl font-semibold text-foreground">
-                {fmtMoney(detail.sellerRefund.value, detail.sellerRefund.currency)}
-              </p>
-              <p className="mt-1 text-[11px] text-muted-foreground">
-                {detail.sellerRefund.isActual
-                  ? "Amount eBay reports as actually refunded."
-                  : "eBay estimate of the refund if this return completes."}
-              </p>
+              {detail.sellerRefund.value != null ? (
+                <>
+                  <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+                    {detail.sellerRefund.isActual ? "Refunded" : "Estimated refund"}
+                  </p>
+                  <p className="mt-1 text-2xl font-semibold text-foreground">
+                    {fmtMoney(detail.sellerRefund.value, detail.sellerRefund.currency)}
+                  </p>
+                  <p className="mt-1 text-[11px] text-muted-foreground">
+                    {detail.sellerRefund.isActual
+                      ? "Amount eBay reports as actually refunded."
+                      : "eBay estimate of the refund if this return completes."}
+                  </p>
+                </>
+              ) : null}
+
+              {showRefundButton ? (
+                <>
+                  <button
+                    type="button"
+                    disabled={!refundState.enabled}
+                    onClick={() => refundState.enabled && setActiveAction("ISSUE_REFUND")}
+                    title={refundState.reason ?? "Refund the buyer."}
+                    className={
+                      "mt-3 inline-flex w-full items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold transition-colors " +
+                      (refundState.enabled
+                        ? "bg-emerald-600 text-white hover:bg-emerald-700 cursor-pointer"
+                        : "bg-emerald-600/30 text-white/70 cursor-not-allowed")
+                    }
+                  >
+                    <DollarSign className="h-4 w-4" /> Send refund
+                  </button>
+                  {!refundState.enabled && refundState.reason ? (
+                    <p className="mt-1.5 text-center text-[11px] text-muted-foreground">
+                      {refundState.reason}
+                    </p>
+                  ) : null}
+                </>
+              ) : null}
             </div>
           ) : null}
         </aside>
@@ -896,7 +1032,7 @@ function ActionModal({
         body.amount = n;
         if (comments) body.comments = comments;
       }
-      if (action === "CONFIRM_LABEL_SENT") {
+      if (action === "CONFIRM_LABEL_SENT" || action === "UPLOAD_LABEL") {
         body.carrierEnum = carrier;
         if (!tracking.trim()) throw new Error("Enter the tracking number.");
         body.trackingNumber = tracking.trim();
@@ -1002,7 +1138,7 @@ function ActionModal({
                 </Labeled>
               ) : null}
 
-              {action === "CONFIRM_LABEL_SENT" ? (
+              {action === "CONFIRM_LABEL_SENT" || action === "UPLOAD_LABEL" ? (
                 <>
                   <Labeled label="Carrier">
                     <select
@@ -1074,7 +1210,9 @@ function ActionModal({
                 </>
               ) : null}
 
-              {action === "OFFER_PARTIAL_REFUND" || action === "CONFIRM_LABEL_SENT" ? (
+              {action === "OFFER_PARTIAL_REFUND" ||
+              action === "CONFIRM_LABEL_SENT" ||
+              action === "UPLOAD_LABEL" ? (
                 <Labeled label="Comments (optional)">
                   <textarea
                     value={comments}

@@ -28,6 +28,7 @@ import {
   issueRefund,
   markAsReceived,
   addForwardedShippingLabel,
+  uploadReturnShippingLabel,
   type EbayReturnsCallResult,
 } from "@/lib/services/helpdesk-ebay-returns-client";
 import {
@@ -492,6 +493,22 @@ export async function previewReturnAction(args: {
       requestPayload.trackingNumber = args.params.trackingNumber;
       break;
     }
+    case "UPLOAD_LABEL": {
+      if (!args.params.carrierEnum || !isSupportedCarrier(args.params.carrierEnum)) {
+        return { ok: false, error: "Choose a supported carrier." };
+      }
+      if (!args.params.trackingNumber || !args.params.trackingNumber.trim()) {
+        return { ok: false, error: "Enter the tracking number on your label." };
+      }
+      headline = "Upload your return shipping label";
+      lines.push(`Carrier: ${args.params.carrierEnum}`);
+      lines.push(`Tracking: ${args.params.trackingNumber.trim()}`);
+      lines.push("eBay shares this label + tracking with the buyer.");
+      requiresTypedConfirmation = true;
+      requestPayload.carrierEnum = args.params.carrierEnum;
+      requestPayload.trackingNumber = args.params.trackingNumber.trim();
+      break;
+    }
     case "OFFER_PARTIAL_REFUND": {
       const amount = args.params.amount ?? 0;
       const check = validateRefundAmount({ amount, maxAmount: maxRefundFor(caseRow) });
@@ -717,6 +734,16 @@ export async function commitReturnAction(args: {
           returnId: args.returnId,
           carrierEnum: payload.carrierEnum as string | undefined,
           trackingNumber: payload.trackingNumber as string | undefined,
+          comments,
+        });
+        break;
+      case "UPLOAD_LABEL":
+        result = await uploadReturnShippingLabel({
+          integrationId: integration.id,
+          config,
+          returnId: args.returnId,
+          carrierEnum: payload.carrierEnum as string,
+          trackingNumber: payload.trackingNumber as string,
           comments,
         });
         break;

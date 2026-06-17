@@ -15,6 +15,7 @@ const bodySchema = z.object({
   action: z.enum([
     "APPROVE_RETURN",
     "OFFER_PARTIAL_REFUND",
+    "UPLOAD_LABEL",
     "CONFIRM_LABEL_SENT",
     "MARK_AS_RECEIVED",
     "ISSUE_REFUND",

@@ -348,8 +348,8 @@ export default function ReturnsListClient() {
       </header>
 
       {/* Filter bar */}
-      <div className="mb-4 flex flex-wrap items-end gap-3 rounded-xl border border-hairline bg-card p-3">
-        <Field label="Status">
+      <div className="mb-4 flex flex-wrap items-end gap-3 rounded-xl border border-brand/20 bg-gradient-to-r from-brand/[0.06] to-transparent p-3">
+        <Field label="Status" tone="text-brand">
           <select
             value={status}
             onChange={(e) => {
@@ -365,7 +365,7 @@ export default function ReturnsListClient() {
             ))}
           </select>
         </Field>
-        <Field label="Store">
+        <Field label="Store" tone="text-violet-400">
           <select
             value={store}
             onChange={(e) => {
@@ -381,7 +381,7 @@ export default function ReturnsListClient() {
             ))}
           </select>
         </Field>
-        <Field label="Date range">
+        <Field label="Date range" tone="text-sky-400">
           <select
             value={dateRange}
             onChange={(e) => {
@@ -397,7 +397,7 @@ export default function ReturnsListClient() {
             ))}
           </select>
         </Field>
-        <Field label="Sort">
+        <Field label="Sort" tone="text-indigo-400">
           <select
             value={sort}
             onChange={(e) => setSort(e.target.value)}
@@ -413,8 +413,8 @@ export default function ReturnsListClient() {
       </div>
 
       {/* Search — own full-width row below the filters */}
-      <div className="mb-4 rounded-xl border border-hairline bg-card p-3">
-        <span className="mb-1 block text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+      <div className="mb-4 rounded-xl border border-brand/20 bg-gradient-to-r from-brand/[0.06] to-transparent p-3">
+        <span className="mb-1 block text-[10px] font-medium uppercase tracking-wider text-brand">
           Search (Return ID, order number, buyer, item title)
         </span>
         <div className="flex w-full">
@@ -444,7 +444,7 @@ export default function ReturnsListClient() {
 
       {/* Table */}
       <div className="overflow-hidden rounded-xl border border-hairline bg-card">
-        <div className="grid grid-cols-[1fr_auto_auto_auto] gap-4 border-b border-hairline bg-surface px-4 py-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+        <div className="grid grid-cols-[1fr_auto_auto_auto] gap-4 border-b border-brand/20 bg-brand/[0.06] px-4 py-2 text-[11px] font-semibold uppercase tracking-wider text-brand/80">
           <span>Item</span>
           <span className="w-44">Status</span>
           <span className="w-28 text-right">Refund</span>
@@ -596,13 +596,17 @@ export default function ReturnsListClient() {
 function Field({
   label,
   children,
+  tone = "text-muted-foreground",
 }: {
   label: string;
   children: React.ReactNode;
+  tone?: string;
 }) {
   return (
     <label className="flex flex-col gap-1">
-      <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+      <span
+        className={"text-[10px] font-medium uppercase tracking-wider " + tone}
+      >
         {label}
       </span>
       {children}
