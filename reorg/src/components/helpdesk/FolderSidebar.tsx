@@ -333,6 +333,8 @@ interface FolderSidebarProps {
   channelFilter: "TPP_EBAY" | "TT_EBAY" | "ALL";
   onChannelChange: (channel: "TPP_EBAY" | "TT_EBAY" | "ALL") => void;
   isAdmin?: boolean;
+  /** Whether to show the Return Cases section (help-desk-returns permission). */
+  canViewReturns?: boolean;
   agentFolders: AgentFolderData[];
   activeAgentFolderId: string | null;
   agents?: AssignedAgentFolderData[];
@@ -352,6 +354,7 @@ export function FolderSidebar({
   channelFilter,
   onChannelChange,
   isAdmin = false,
+  canViewReturns = false,
   agentFolders,
   activeAgentFolderId,
   agents = [],
@@ -552,10 +555,11 @@ export function FolderSidebar({
         </div>
 
         {/* Section F: Return Cases — its own section (eBay Post-Order returns).
-         * Admin-only in v1. Sits below Agent Folders behind a separator so it
-         * reads as a distinct area, separate from the inbox state machine. The
-         * badge shows open returns that need a seller action. */}
-        {isAdmin ? (
+         * Visible to admins and any user granted the "Return Cases"
+         * (help-desk-returns) permission. Sits below Agent Folders behind a
+         * separator so it reads as a distinct area, separate from the inbox
+         * state machine. The badge shows open returns that need a seller action. */}
+        {canViewReturns ? (
           <div className="mt-3 border-t border-hairline pt-3">
             <p className="px-2 pb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/70">
               Returns

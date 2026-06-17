@@ -41,3 +41,24 @@ export async function requirePageAccess(pageKey: PageKey): Promise<void> {
     redirect(`/dashboard?denied=${encodeURIComponent(pageKey)}`);
   }
 }
+
+/**
+ * Non-redirecting permission check for API route handlers. Returns whether the
+ * current actor (honoring impersonation) can access the given page key, plus a
+ * flag for whether anyone is even signed in (so callers can return 401 vs 403).
+ *
+ *     const { authenticated, allowed } = await checkPageAccess("help-desk-returns");
+ *     if (!authenticated) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+ *     if (!allowed) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+ */
+export async function checkPageAccess(
+  pageKey: PageKey,
+): Promise<{ authenticated: boolean; allowed: boolean }> {
+  const actor = await getActor();
+  if (!actor) return { authenticated: false, allowed: false };
+  const allowed = resolveAllowedPageKeys({
+    role: actor.role,
+    pagePermissions: actor.pagePermissions,
+  });
+  return { authenticated: true, allowed: allowed.has(pageKey) };
+}

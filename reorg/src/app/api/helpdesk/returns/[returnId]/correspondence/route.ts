@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { auth } from "@/lib/auth";
+import { checkPageAccess } from "@/lib/page-access";
 import { getReturnCorrespondence } from "@/lib/services/helpdesk-returns";
 
 export const runtime = "nodejs";
@@ -19,6 +20,9 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
   const session = await auth();
   if (!session?.user?.id) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  if (!(await checkPageAccess("help-desk-returns")).allowed) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
   const { returnId } = await params;

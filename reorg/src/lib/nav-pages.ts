@@ -37,6 +37,7 @@ export type PageKey =
   | "ship-orders"
   | "auto-responder"
   | "help-desk"
+  | "help-desk-returns"
   | "integrations"
   | "engine-room"
   | "public-network-transfer"
@@ -87,6 +88,14 @@ export interface NavPage {
     | "Settings";
   /** Hidden from non-admins regardless of pagePermissions. */
   adminOnly?: boolean;
+  /**
+   * Don't render this page as a top-level item in the main left sidebar.
+   * It still appears in the per-user permission editor and is enforced by
+   * `resolveAllowedPageKeys` — used for sub-features that live inside another
+   * page (e.g. Return Cases lives inside Help Desk) but need their own
+   * grantable permission.
+   */
+  hideFromSidebar?: boolean;
   /** Visible only to Adam's account. */
   adamOnly?: boolean;
   /** Always visible to every signed-in user. Cannot be revoked. */
@@ -119,6 +128,18 @@ export const NAV_PAGES: NavPage[] = [
     icon: "LifeBuoy",
     description:
       "Buyer-message inbox with tickets, threads, and reply composer.",
+  },
+  {
+    key: "help-desk-returns",
+    href: "/help-desk/returns",
+    label: "Return Cases",
+    icon: "PackageCheck",
+    // Lives inside Help Desk — not a top-level sidebar item. Surfaces only in
+    // the per-user permission editor and gates the Help Desk "Return Cases"
+    // section + the /help-desk/returns routes/APIs.
+    hideFromSidebar: true,
+    description:
+      "eBay Return Cases inside Help Desk — review, approve, refund, and track returns with full safety gating. Requires Help Desk access.",
   },
   {
     key: "manage-orders",

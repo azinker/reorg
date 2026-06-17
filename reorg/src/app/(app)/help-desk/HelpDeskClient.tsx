@@ -71,6 +71,7 @@ export default function HelpDeskClient() {
    *     they're operating in (especially under "Login as" impersonation).
    */
   const [isAdmin, setIsAdmin] = useState(false);
+  const [canViewReturns, setCanViewReturns] = useState(false);
   const [agent, setAgent] = useState<{
     id: string;
     name: string | null;
@@ -93,11 +94,16 @@ export default function HelpDeskClient() {
             handle?: string | null;
             avatarUrl?: string | null;
             role?: string;
+            allowedPageKeys?: string[];
             impersonation?: { realUserId: string } | null;
           };
         };
         if (cancelled) return;
         setIsAdmin(j.data?.role === "ADMIN");
+        setCanViewReturns(
+          j.data?.role === "ADMIN" ||
+            (j.data?.allowedPageKeys ?? []).includes("help-desk-returns"),
+        );
         if (j.data?.id) {
           setAgent({
             id: j.data.id,
@@ -605,6 +611,7 @@ export default function HelpDeskClient() {
           channelFilter={channelFilter}
           onChannelChange={setChannelFilter}
           isAdmin={isAdmin}
+          canViewReturns={canViewReturns}
           agentFolders={agentFolders}
           activeAgentFolderId={activeAgentFolderId}
           agents={agentRoster}

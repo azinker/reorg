@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { auth } from "@/lib/auth";
+import { checkPageAccess } from "@/lib/page-access";
 import { previewReturnAction } from "@/lib/services/helpdesk-returns";
 import type { ReturnActionKey } from "@/lib/helpdesk/returns";
 
@@ -47,7 +48,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
   if (!session?.user?.id) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
-  if (session.user.role !== "ADMIN") {
+  if (!(await checkPageAccess("help-desk-returns")).allowed) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 

@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { auth } from "@/lib/auth";
+import { checkPageAccess } from "@/lib/page-access";
 import {
   getReturnCaseDetail,
   refreshReturnDetail,
@@ -36,7 +37,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
   if (!session?.user?.id) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
-  if (session.user.role !== "ADMIN") {
+  if (!(await checkPageAccess("help-desk-returns")).allowed) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 

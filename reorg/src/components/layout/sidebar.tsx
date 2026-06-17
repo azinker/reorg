@@ -122,8 +122,9 @@ export function Sidebar({
       // Legacy fallback (no allowlist available) — preserves prior behavior.
       const pages = NAV_PAGES.filter(
         (item) =>
-          (item.key !== "public-network-transfer" && item.key !== "payouts") ||
-          userRole !== "OPERATOR",
+          !item.hideFromSidebar &&
+          ((item.key !== "public-network-transfer" && item.key !== "payouts") ||
+            userRole !== "OPERATOR"),
       );
       return pages.map((item) => ({ item, isLocked: false }));
     }
@@ -141,6 +142,7 @@ export function Sidebar({
     const isAdam = userEmail?.trim().toLowerCase() === "adam@theperfectpart.net";
     return NAV_PAGES.filter(
       (item) =>
+        !item.hideFromSidebar &&
         (userRole !== "OPERATOR" || !item.adminOnly) &&
         (!item.adamOnly || isAdam),
     ).map((item) => ({
