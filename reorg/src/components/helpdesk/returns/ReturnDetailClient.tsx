@@ -2116,11 +2116,10 @@ function ActionModal({
                         No deduction available
                       </p>
                       <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
-                        eBay doesn&apos;t allow a refund deduction on this return,
-                        so the buyer must be refunded in full. Deductions only
-                        apply to seller-paid &ldquo;free return&rdquo; cases for
-                        remorse reasons — not when the buyer paid return shipping
-                        or the item was not as described.
+                        This buyer paid for original shipping, so eBay requires a
+                        full refund — no deduction can be taken. Deductions (up to
+                        50% off the item price) are only available when the buyer
+                        received free shipping (seller free returns).
                       </p>
                     </div>
                   ) : (

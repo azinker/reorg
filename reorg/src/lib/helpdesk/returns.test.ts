@@ -95,7 +95,26 @@ const SNAD_REFUND_BODY = {
   },
 };
 
-test("parseEstimatedRefundLines: reads per-fee-type caps + editability", () => {
+// Free-shipping return (seller free returns): NO original shipping line.
+const FREE_SHIPPING_REFUND_BODY = {
+  detail: {
+    refundInfo: {
+      estimatedRefundDetail: {
+        itemizedRefundDetails: [
+          {
+            refundFeeType: "PURCHASE_PRICE",
+            estimatedAmount: { value: 21.89, currency: "USD" },
+            overwritableBySeller: false,
+            amountEditable: false,
+          },
+        ],
+      },
+    },
+  },
+};
+
+test("parseEstimatedRefundLines: buyer-paid shipping blocks deduction (non-editable)", () => {
+  // ORIGINAL_SHIPPING present → buyer paid shipping → no deduction allowed.
   const lines = parseEstimatedRefundLines(SNAD_REFUND_BODY);
   assert.deepEqual(lines, [
     { refundFeeType: "PURCHASE_PRICE", estimated: 12.85, editable: false },
@@ -103,6 +122,15 @@ test("parseEstimatedRefundLines: reads per-fee-type caps + editability", () => {
   ]);
   assert.deepEqual(parseEstimatedRefundLines(null), []);
   assert.deepEqual(parseEstimatedRefundLines({}), []);
+});
+
+test("parseEstimatedRefundLines: free shipping makes the item price deductible", () => {
+  // No ORIGINAL_SHIPPING line → free shipping → deduction allowed on item price,
+  // even though eBay reports amountEditable:false (which we ignore).
+  const lines = parseEstimatedRefundLines(FREE_SHIPPING_REFUND_BODY);
+  assert.deepEqual(lines, [
+    { refundFeeType: "PURCHASE_PRICE", estimated: 21.89, editable: true },
+  ]);
 });
 
 test("buildItemizedRefund: full refund itemizes PURCHASE_PRICE + ORIGINAL_SHIPPING", () => {
@@ -130,31 +158,16 @@ test("buildItemizedRefund: deduction on a non-editable (SNAD) return is rejected
   const lines = parseEstimatedRefundLines(SNAD_REFUND_BODY);
   const out = buildItemizedRefund(lines, 14.83); // $0.01 deduction
   assert.equal(out.ok, false);
-  if (!out.ok) assert.match(out.error, /doesn't allow a deduction/i);
+  if (!out.ok) assert.match(out.error, /full refund|paid for shipping/i);
 });
 
-test("buildItemizedRefund: deduction comes off the editable line first", () => {
-  const editableBody = {
-    detail: {
-      refundInfo: {
-        estimatedRefundDetail: {
-          itemizedRefundDetails: [
-            { refundFeeType: "PURCHASE_PRICE", estimatedAmount: { value: 20, currency: "USD" }, amountEditable: true },
-            { refundFeeType: "ORIGINAL_SHIPPING", estimatedAmount: { value: 5, currency: "USD" }, amountEditable: false },
-          ],
-        },
-      },
-    },
-  };
-  const lines = parseEstimatedRefundLines(editableBody);
-  const out = buildItemizedRefund(lines, 22); // $3 deduction off the $20 line
+test("buildItemizedRefund: deduction comes off the item price on free-shipping returns", () => {
+  const lines = parseEstimatedRefundLines(FREE_SHIPPING_REFUND_BODY); // $21.89, free shipping
+  const out = buildItemizedRefund(lines, 18.89); // $3 deduction off the item price
   assert.equal(out.ok, true);
   if (out.ok) {
-    assert.equal(out.total, 22);
-    assert.deepEqual(out.lines, [
-      { refundFeeType: "PURCHASE_PRICE", amount: 17 },
-      { refundFeeType: "ORIGINAL_SHIPPING", amount: 5 },
-    ]);
+    assert.equal(out.total, 18.89);
+    assert.deepEqual(out.lines, [{ refundFeeType: "PURCHASE_PRICE", amount: 18.89 }]);
   }
 });
 

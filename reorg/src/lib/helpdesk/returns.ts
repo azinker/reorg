@@ -412,7 +412,13 @@ export interface EstimatedRefundLine {
   refundFeeType: string;
   /** eBay's estimated (max) refundable amount for this fee type, in dollars. */
   estimated: number;
-  /** Whether eBay lets the seller reduce this line (deductions only here). */
+  /**
+   * Whether a deduction may be taken off this line. True only for the item
+   * price (PURCHASE_PRICE) when the buyer did NOT pay original shipping — i.e.
+   * seller free-shipping / free-return items, the only case eBay permits a
+   * deduction. Derived from the shipping line, not eBay's (unreliable)
+   * amountEditable flag.
+   */
   editable: boolean;
 }
 
@@ -468,18 +474,33 @@ export function parseEstimatedRefundLines(body: unknown): EstimatedRefundLine[] 
   const est = refundInfo?.estimatedRefundDetail as Record<string, unknown> | undefined;
   const raw = est?.itemizedRefundDetails;
   if (!Array.isArray(raw)) return [];
-  const lines: EstimatedRefundLine[] = [];
+
+  // First pass: collect the fee-type lines.
+  const parsed: { refundFeeType: string; estimated: number }[] = [];
   for (const item of raw) {
     if (!item || typeof item !== "object") continue;
     const r = item as Record<string, unknown>;
     const feeType = typeof r.refundFeeType === "string" ? r.refundFeeType : null;
     if (!feeType) continue;
     const amt = r.estimatedAmount as Record<string, unknown> | undefined;
-    const estimated = toNumber(amt?.value);
-    const editable = r.amountEditable === true || r.overwritableBySeller === true;
-    lines.push({ refundFeeType: feeType, estimated, editable });
+    parsed.push({ refundFeeType: feeType, estimated: toNumber(amt?.value) });
   }
-  return lines;
+
+  // Deductions (up to 50% off the item price) are only available when the buyer
+  // did NOT pay original shipping — i.e. seller free-shipping / free-return
+  // items. When the buyer paid shipping, eBay itemizes an ORIGINAL_SHIPPING line
+  // and requires a full refund (no deduction). eBay's own amountEditable /
+  // overwritableBySeller flags are unreliable here (always false), so we derive
+  // deductibility from the shipping line instead. The deductible line is the
+  // item price (PURCHASE_PRICE).
+  const buyerPaidShipping = parsed.some(
+    (l) => l.refundFeeType.trim().toUpperCase() === "ORIGINAL_SHIPPING" && l.estimated > 0,
+  );
+  return parsed.map((l) => ({
+    refundFeeType: l.refundFeeType,
+    estimated: l.estimated,
+    editable: l.refundFeeType.trim().toUpperCase() === "PURCHASE_PRICE" && !buyerPaidShipping,
+  }));
 }
 
 /**
@@ -520,7 +541,7 @@ export function buildItemizedRefund(
       return {
         ok: false,
         error:
-          "eBay doesn't allow a deduction on this return — the full amount must be refunded. Clear the deduction and try again.",
+          "This buyer paid for shipping, so eBay requires a full refund — no deduction is available. Clear the deduction and try again.",
       };
     }
     if (reductionCents > editableCapacity) {

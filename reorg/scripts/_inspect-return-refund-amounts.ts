@@ -8,7 +8,9 @@ import { db } from "@/lib/db";
 import { buildEbayConfig } from "@/lib/services/helpdesk-ebay";
 import { getReturnDetail } from "@/lib/services/helpdesk-ebay-returns-client";
 
-const RETURN_ID = process.argv[2] ?? "5320155729";
+// Accepts a returnId OR an eBay order number (NN-NNNNN-NNNNN).
+const ARG = process.argv[2] ?? "5320155729";
+const IS_ORDER = ARG.includes("-");
 
 function pick(obj: unknown, keys: string[]): Record<string, unknown> {
   const out: Record<string, unknown> = {};
@@ -26,13 +28,21 @@ async function main() {
   const host = url.match(/@([^/:]+)/)?.[1] ?? "<unknown>";
   console.log(`[inspect] connected to ${host}`);
 
-  const row = await db.helpdeskReturnCase.findFirst({ where: { returnId: RETURN_ID } });
+  const row = await db.helpdeskReturnCase.findFirst({
+    where: IS_ORDER ? { ebayOrderNumber: ARG } : { returnId: ARG },
+  });
   if (!row) {
-    console.error(`[inspect] no HelpdeskReturnCase for ${RETURN_ID}`);
+    console.error(`[inspect] no HelpdeskReturnCase for ${ARG}`);
     return;
   }
+  const RETURN_ID = row.returnId;
   console.log("\n=== PERSISTED REFUND FIELDS ===");
   console.log({
+    returnId: row.returnId,
+    ebayOrderNumber: row.ebayOrderNumber,
+    reason: row.reason,
+    reasonType: row.reasonType,
+    currentType: row.currentType,
     returnState: row.returnState,
     returnQuantity: row.returnQuantity,
     sellerRefundValue: row.sellerRefundValue,
