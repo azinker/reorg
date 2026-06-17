@@ -270,10 +270,15 @@ async function enrichMissingItemDetails(
   config: Awaited<ReturnType<typeof buildEbayConfig>>,
 ): Promise<void> {
   const missing = await db.helpdeskReturnCase.findMany({
-    // Rows still missing a title OR an image need hydration. Including
+    // Rows still missing a title, image, OR sku need hydration. Including
     // image-less rows lets us correct variation thumbnails once we learn the
-    // purchased variant's SKU (see SKU-match step below).
-    where: { integrationId: integration.id, OR: [{ itemTitle: null }, { imageUrl: null }] },
+    // purchased variant's SKU (see SKU-match step below); including sku-less
+    // rows lets us backfill the SKU from our catalog by item id even when the
+    // title/image already arrived from the search summary.
+    where: {
+      integrationId: integration.id,
+      OR: [{ itemTitle: null }, { imageUrl: null }, { sku: null }],
+    },
     orderBy: { openedAt: "desc" },
     take: ENRICH_BUDGET_PER_TICK,
     select: { id: true, returnId: true, ebayItemId: true, itemTitle: true, sku: true },

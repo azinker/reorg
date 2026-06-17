@@ -42,6 +42,7 @@ import {
   Download,
   MapPin,
   X,
+  PackagePlus,
 } from "lucide-react";
 import {
   StoreBadge,
@@ -192,6 +193,20 @@ const CARRIERS = [
   { value: "OTHER", label: "Other" },
 ];
 
+// eBay's exact deduction reasons on the "Provide a refund" screen.
+const DEDUCTION_REASONS = [
+  "Item was opened",
+  "Item was used",
+  "Item was damaged",
+  "Item was missing parts",
+];
+
+const MAX_DEDUCTION_PCT = 50;
+
+function round2(n: number): number {
+  return Math.round((n + Number.EPSILON) * 100) / 100;
+}
+
 // Actions the v1 write flow can actually execute (subset of ActionKey).
 // PROVIDE_EBAY_LABEL is now wired: it asks eBay to generate a prepaid return
 // label for the buyer (eBay charges the seller). It runs through the same
@@ -322,13 +337,13 @@ function BuyerPhotos({ files }: { files: ReturnFile[] }) {
         <p className="mb-1.5 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
           Buyer photos ({photos.length})
         </p>
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap gap-3">
           {photos.map((p) => (
             <button
               key={p.id}
               type="button"
               onClick={() => setActive(p.url)}
-              className="h-16 w-16 overflow-hidden rounded-md border border-hairline bg-surface transition-transform hover:scale-105 cursor-pointer"
+              className="h-32 w-32 overflow-hidden rounded-lg border border-hairline bg-surface transition-transform hover:scale-[1.03] hover:border-brand/50 cursor-pointer sm:h-36 sm:w-36"
               title="Click to expand"
             >
               {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -1515,17 +1530,35 @@ function ActionModal({
   const [labelFileName, setLabelFileName] = useState<string | null>(null);
   const [labelFileData, setLabelFileData] = useState<string | null>(null);
   const [fileBusy, setFileBusy] = useState(false);
-  const [deductionType, setDeductionType] = useState<"none" | "percent" | "amount">(
-    "none",
-  );
+  // ISSUE_REFUND (eBay "Provide a refund" parity): Amount/Percent toggle, live
+  // deduction calc, required reason checkboxes + comment.
+  const [refundMode, setRefundMode] = useState<"amount" | "percent">("amount");
   const [deductionValue, setDeductionValue] = useState("");
-  const [deductionReason, setDeductionReason] = useState("");
+  const [deductionReasons, setDeductionReasons] = useState<string[]>([]);
 
   const [preview, setPreview] = useState<PreviewSummary | null>(null);
   const [idemKey, setIdemKey] = useState<string | null>(null);
   const [typed, setTyped] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+
+  // Post-commit "Your refund is being processed" screen + SkuVault add-back result.
+  const [committed, setCommitted] = useState(false);
+  const [skuBusy, setSkuBusy] = useState(false);
+  const [skuMsg, setSkuMsg] = useState<{ ok: boolean; text: string } | null>(null);
+
+  // Live refund math for the ISSUE_REFUND screen.
+  const purchasePrice = detail.sellerRefund.value ?? 0;
+  const dedRaw = Number(deductionValue);
+  const dedNum = Number.isFinite(dedRaw) && dedRaw > 0 ? dedRaw : 0;
+  const deductionAmount = round2(
+    refundMode === "percent"
+      ? (purchasePrice * Math.min(dedNum, MAX_DEDUCTION_PCT)) / 100
+      : Math.min(dedNum, round2(purchasePrice * (MAX_DEDUCTION_PCT / 100))),
+  );
+  const totalRefund = round2(Math.max(purchasePrice - deductionAmount, 0));
+  const hasDeduction = deductionAmount > 0;
+  const refundReturnQty = detail.returnQuantity ?? 1;
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -1562,12 +1595,22 @@ function ActionModal({
       if (action === "DECLINE_RETURN" && comments) {
         body.comments = comments;
       }
-      if (action === "ISSUE_REFUND" && deductionType !== "none") {
-        const n = Number(deductionValue);
-        if (!Number.isFinite(n) || n < 0) throw new Error("Enter a valid deduction.");
-        body.deductionType = deductionType;
-        body.deductionValue = n;
-        if (deductionReason) body.deductionReason = deductionReason;
+      if (action === "ISSUE_REFUND") {
+        if (purchasePrice > 0) body.amount = round2(purchasePrice);
+        if (hasDeduction) {
+          if (deductionReasons.length === 0) {
+            throw new Error("Select at least one deduction reason.");
+          }
+          if (!comments.trim()) {
+            throw new Error("A deduction comment is required (Comments).");
+          }
+          body.deductionType = refundMode;
+          body.deductionValue = dedNum;
+          body.deductionReason = deductionReasons.join(", ");
+          body.deductionComment = comments.trim();
+        } else {
+          body.deductionType = "none";
+        }
       }
       const res = await fetch(
         `/api/helpdesk/returns/${encodeURIComponent(returnId)}/preview`,
@@ -1593,20 +1636,69 @@ function ActionModal({
     }
   }
 
-  async function runCommit() {
+  async function addBackToSkuvault() {
+    if (!detail.sku) {
+      setSkuMsg({ ok: false, text: "No SKU on this return — nothing was added to SkuVault." });
+      return;
+    }
+    setSkuBusy(true);
+    try {
+      const res = await fetch("/api/skuvault/adjust", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sku: detail.sku, quantity: refundReturnQty, action: "add" }),
+      });
+      const json = (await res.json().catch(() => null)) as {
+        data?: {
+          sku?: string;
+          quantityChanged?: number;
+          quantityOnHand?: number;
+          warehouse?: string | null;
+        };
+        error?: string;
+      } | null;
+      if (!res.ok) {
+        throw new Error(json?.error ?? `SkuVault update failed (${res.status})`);
+      }
+      const d = json?.data;
+      const qty = d?.quantityChanged ?? refundReturnQty;
+      const onHand = d?.quantityOnHand;
+      const wh = d?.warehouse ? ` (${d.warehouse})` : "";
+      setSkuMsg({
+        ok: true,
+        text: `Added ${qty} × ${d?.sku ?? detail.sku} back to SkuVault${
+          onHand != null ? ` — now ${onHand} on hand${wh}` : ""
+        }.`,
+      });
+    } catch (e) {
+      setSkuMsg({
+        ok: false,
+        text: e instanceof Error ? e.message : "SkuVault update failed.",
+      });
+    } finally {
+      setSkuBusy(false);
+    }
+  }
+
+  async function runCommit(opts?: { addToSkuvault?: boolean }) {
     if (!idemKey) return;
     setBusy(true);
     setErr(null);
     try {
+      // eBay's "Review and refund → Refund now" screen IS the explicit
+      // confirmation for ISSUE_REFUND, so we satisfy the server's typed gate
+      // automatically here; other irreversible actions still require typing.
+      const typedConfirmation = preview?.requiresTypedConfirmation
+        ? action === "ISSUE_REFUND"
+          ? "CONFIRM"
+          : typed
+        : undefined;
       const res = await fetch(
         `/api/helpdesk/returns/${encodeURIComponent(returnId)}/commit`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            idempotencyKey: idemKey,
-            typedConfirmation: preview?.requiresTypedConfirmation ? typed : undefined,
-          }),
+          body: JSON.stringify({ idempotencyKey: idemKey, typedConfirmation }),
         },
       );
       const json = (await res.json().catch(() => null)) as {
@@ -1615,6 +1707,16 @@ function ActionModal({
       } | null;
       if (!res.ok) {
         throw new Error(json?.error ?? `Commit failed (${res.status})`);
+      }
+
+      if (action === "ISSUE_REFUND") {
+        // Show "Your refund is being processed", optionally restock, then close.
+        setCommitted(true);
+        if (opts?.addToSkuvault) {
+          await addBackToSkuvault();
+        }
+        setTimeout(() => onCommitted(), opts?.addToSkuvault ? 2600 : 1800);
+        return;
       }
       onCommitted();
     } catch (e) {
@@ -1743,50 +1845,138 @@ function ActionModal({
               ) : null}
 
               {action === "ISSUE_REFUND" ? (
-                <>
-                  <Labeled label="Deduction">
-                    <select
-                      value={deductionType}
-                      onChange={(e) =>
-                        setDeductionType(
-                          e.target.value as "none" | "percent" | "amount",
-                        )
-                      }
-                      className="h-9 w-full rounded-md border border-hairline bg-surface px-2 text-sm text-foreground cursor-pointer"
-                    >
-                      <option value="none">No deduction (full refund)</option>
-                      <option value="percent">Percent (max 50%)</option>
-                      <option value="amount">Fixed amount</option>
-                    </select>
+                <div className="space-y-3">
+                  {/* Purchase price → deduction → total refund, like eBay's
+                      "Provide a refund" page. */}
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-muted-foreground">Purchase price</span>
+                    <span className="font-medium text-foreground">
+                      {fmtMoney(purchasePrice, currency)}
+                    </span>
+                  </div>
+
+                  <div className="rounded-lg border border-hairline bg-surface p-3">
+                    <div className="mb-2 flex items-center justify-between">
+                      <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                        Deduction
+                      </span>
+                      {hasDeduction ? (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setDeductionValue("");
+                            setDeductionReasons([]);
+                          }}
+                          className="text-xs text-brand hover:underline cursor-pointer"
+                        >
+                          Clear
+                        </button>
+                      ) : (
+                        <span className="text-sm font-medium text-foreground">
+                          −{fmtMoney(deductionAmount, currency)}
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="flex items-center gap-3">
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={deductionValue}
+                        onChange={(e) => setDeductionValue(e.target.value)}
+                        placeholder="0"
+                        className="h-9 w-24 rounded-md border border-hairline bg-card px-2 text-sm text-foreground"
+                      />
+                      <label className="inline-flex cursor-pointer items-center gap-1.5 text-sm text-foreground">
+                        <input
+                          type="radio"
+                          name="refundMode"
+                          checked={refundMode === "amount"}
+                          onChange={() => setRefundMode("amount")}
+                          className="cursor-pointer accent-brand"
+                        />
+                        Amount
+                      </label>
+                      <label className="inline-flex cursor-pointer items-center gap-1.5 text-sm text-foreground">
+                        <input
+                          type="radio"
+                          name="refundMode"
+                          checked={refundMode === "percent"}
+                          onChange={() => setRefundMode("percent")}
+                          className="cursor-pointer accent-brand"
+                        />
+                        Percent
+                      </label>
+                      {hasDeduction ? (
+                        <span className="ml-auto text-sm font-medium text-foreground">
+                          −{fmtMoney(deductionAmount, currency)}
+                        </span>
+                      ) : null}
+                    </div>
+                    <p className="mt-1.5 text-[11px] text-muted-foreground">
+                      Max deduction is {MAX_DEDUCTION_PCT}% of the purchase price.
+                    </p>
+
+                    {hasDeduction ? (
+                      <div className="mt-3 border-t border-hairline pt-3">
+                        <p className="mb-1.5 text-xs font-medium text-foreground">
+                          Deduction reason{" "}
+                          <span className="text-red-500">(Required)</span>
+                        </p>
+                        <div className="space-y-1.5">
+                          {DEDUCTION_REASONS.map((r) => (
+                            <label
+                              key={r}
+                              className="flex cursor-pointer items-center gap-2 text-sm text-foreground"
+                            >
+                              <input
+                                type="checkbox"
+                                checked={deductionReasons.includes(r)}
+                                onChange={(e) =>
+                                  setDeductionReasons((prev) =>
+                                    e.target.checked
+                                      ? [...prev, r]
+                                      : prev.filter((x) => x !== r),
+                                  )
+                                }
+                                className="cursor-pointer accent-brand"
+                              />
+                              {r}
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
+
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-muted-foreground">Original shipping</span>
+                    <span className="text-foreground">Free</span>
+                  </div>
+                  <div className="flex items-center justify-between border-t border-hairline pt-2 text-base">
+                    <span className="font-semibold text-foreground">Total refund</span>
+                    <span className="font-semibold text-foreground">
+                      {fmtMoney(totalRefund, currency)}
+                    </span>
+                  </div>
+
+                  <Labeled
+                    label={
+                      hasDeduction
+                        ? "Comments (required with deductions)"
+                        : "Comments (optional)"
+                    }
+                  >
+                    <textarea
+                      value={comments}
+                      onChange={(e) => setComments(e.target.value)}
+                      rows={2}
+                      placeholder="Give the buyer a little more info."
+                      className="w-full rounded-md border border-hairline bg-surface px-2 py-1.5 text-sm text-foreground"
+                    />
                   </Labeled>
-                  {deductionType !== "none" ? (
-                    <>
-                      <Labeled
-                        label={
-                          deductionType === "percent"
-                            ? "Deduction percent (0–50)"
-                            : `Deduction amount (${currency})`
-                        }
-                      >
-                        <input
-                          type="number"
-                          min="0"
-                          step="0.01"
-                          value={deductionValue}
-                          onChange={(e) => setDeductionValue(e.target.value)}
-                          className="h-9 w-full rounded-md border border-hairline bg-surface px-2 text-sm text-foreground"
-                        />
-                      </Labeled>
-                      <Labeled label="Deduction reason (optional)">
-                        <input
-                          value={deductionReason}
-                          onChange={(e) => setDeductionReason(e.target.value)}
-                          className="h-9 w-full rounded-md border border-hairline bg-surface px-2 text-sm text-foreground"
-                        />
-                      </Labeled>
-                    </>
-                  ) : null}
-                </>
+                </div>
               ) : null}
 
               {action === "OFFER_PARTIAL_REFUND" ||
@@ -1822,7 +2012,134 @@ function ActionModal({
                   className="inline-flex items-center gap-1.5 rounded-md bg-brand px-3 py-1.5 text-xs font-semibold text-white hover:bg-brand/90 disabled:opacity-50 cursor-pointer"
                 >
                   {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
-                  Preview
+                  {action === "ISSUE_REFUND" ? "Next" : "Preview"}
+                </button>
+              </div>
+            </>
+          ) : committed ? (
+            // eBay parity: "Your refund is being processed" → auto-closes.
+            <div className="space-y-3 py-2 text-center">
+              <CheckCircle2 className="mx-auto h-10 w-10 text-emerald-500" />
+              <p className="text-base font-semibold text-foreground">
+                Your refund is being processed
+              </p>
+              <p className="text-xs text-muted-foreground">
+                eBay will email the buyer once it&apos;s complete. This return
+                closes once the refund goes through.
+              </p>
+              <p className="text-sm font-semibold text-foreground">
+                Total refund: {fmtMoney(totalRefund, currency)}
+              </p>
+              {skuBusy ? (
+                <p className="inline-flex items-center justify-center gap-1.5 text-xs text-muted-foreground">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" /> Adding back to
+                  SkuVault…
+                </p>
+              ) : null}
+              {skuMsg ? (
+                <div
+                  className={`mx-auto max-w-sm rounded-lg border px-3 py-2 text-xs ${
+                    skuMsg.ok
+                      ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+                      : "border-red-500/30 bg-red-500/10 text-red-700 dark:text-red-300"
+                  }`}
+                >
+                  {skuMsg.text}
+                </div>
+              ) : null}
+            </div>
+          ) : action === "ISSUE_REFUND" ? (
+            // eBay "Review and refund" screen with dual Refund buttons.
+            <>
+              <p className="text-sm font-semibold text-foreground">
+                Review and refund
+              </p>
+              <p className="text-xs text-muted-foreground">
+                Review the details below and, if everything looks good, refund
+                the buyer now.
+              </p>
+
+              <div className="rounded-lg border border-hairline bg-surface p-3">
+                <div className="flex items-center justify-between text-base">
+                  <span className="font-semibold text-foreground">Total refund</span>
+                  <span className="font-semibold text-foreground">
+                    {fmtMoney(preview.finalRefundAmount ?? totalRefund, preview.currency ?? currency)}
+                  </span>
+                </div>
+                <div className="mt-2 space-y-1 border-t border-hairline pt-2 text-xs">
+                  <div className="flex items-center justify-between">
+                    <span className="text-muted-foreground">Purchase price</span>
+                    <span className="text-foreground">{fmtMoney(purchasePrice, currency)}</span>
+                  </div>
+                  {hasDeduction ? (
+                    <>
+                      <div className="flex items-center justify-between">
+                        <span className="text-muted-foreground">Deduction</span>
+                        <span className="text-foreground">−{fmtMoney(deductionAmount, currency)}</span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-muted-foreground">Reason</span>
+                        <span className="max-w-[60%] truncate text-right text-foreground">
+                          {deductionReasons.join(", ")}
+                        </span>
+                      </div>
+                    </>
+                  ) : null}
+                  <div className="flex items-center justify-between">
+                    <span className="text-muted-foreground">Original shipping</span>
+                    <span className="text-foreground">Free</span>
+                  </div>
+                </div>
+                <p className="mt-2 border-t border-hairline pt-2 text-[11px] text-muted-foreground">
+                  eBay credits your selling fees on this refund automatically.
+                  The exact amount deducted from your payout appears on eBay.
+                </p>
+              </div>
+
+              <div className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
+                <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                This sends a single live refund to eBay and cannot be undone.
+              </div>
+
+              {err ? (
+                <p className="text-xs text-red-600 dark:text-red-300">{err}</p>
+              ) : null}
+
+              <div className="space-y-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => runCommit()}
+                  disabled={busy}
+                  className="inline-flex w-full items-center justify-center gap-1.5 rounded-md bg-emerald-600 px-3 py-2.5 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-50 cursor-pointer"
+                >
+                  {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                  Refund now
+                </button>
+                <button
+                  type="button"
+                  onClick={() => runCommit({ addToSkuvault: true })}
+                  disabled={busy || !detail.sku}
+                  title={
+                    detail.sku
+                      ? `Refund and add ${refundReturnQty} × ${detail.sku} back to SkuVault`
+                      : "No SKU on this return — SkuVault add-back unavailable"
+                  }
+                  className="inline-flex w-full items-center justify-center gap-1.5 rounded-md bg-brand px-3 py-2.5 text-sm font-semibold text-white hover:bg-brand/90 disabled:opacity-50 cursor-pointer"
+                >
+                  {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <PackagePlus className="h-4 w-4" />}
+                  Refund + Add {refundReturnQty} back to SkuVault
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPreview(null);
+                    setIdemKey(null);
+                    setErr(null);
+                  }}
+                  disabled={busy}
+                  className="w-full rounded-md border border-hairline bg-surface px-3 py-2 text-xs text-foreground hover:bg-surface-2 disabled:opacity-50 cursor-pointer"
+                >
+                  Go back
                 </button>
               </div>
             </>
@@ -1881,7 +2198,7 @@ function ActionModal({
                 </button>
                 <button
                   type="button"
-                  onClick={runCommit}
+                  onClick={() => runCommit()}
                   disabled={busy || !canCommit}
                   className="inline-flex items-center gap-1.5 rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50 cursor-pointer"
                 >

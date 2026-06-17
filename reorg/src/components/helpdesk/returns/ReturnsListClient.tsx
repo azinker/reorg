@@ -105,19 +105,45 @@ const DATE_RANGE_OPTIONS = [
   { key: "", label: "All time" },
 ];
 
+const FILTERS_STORAGE_KEY = "reorg.returns.filters.v1";
+
+type PersistedFilters = {
+  store: string;
+  status: string;
+  search: string;
+  sort: string;
+  dateRange: string;
+  page: number;
+};
+
+function readPersistedFilters(): Partial<PersistedFilters> {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = window.sessionStorage.getItem(FILTERS_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as Partial<PersistedFilters>;
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
 export default function ReturnsListClient() {
   const [forbidden, setForbidden] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<ListResponse | null>(null);
 
-  const [store, setStore] = useState("");
-  const [status, setStatus] = useState("open_all");
-  const [search, setSearch] = useState("");
-  const [searchInput, setSearchInput] = useState("");
-  const [sort, setSort] = useState("opened_desc");
-  const [dateRange, setDateRange] = useState("90");
-  const [page, setPage] = useState(1);
+  // Lazy-init from sessionStorage so the chosen status/store/search/sort survives
+  // navigating into a return and back (Back to return cases).
+  const initialFilters = useRef<Partial<PersistedFilters>>(readPersistedFilters());
+  const [store, setStore] = useState(initialFilters.current.store ?? "");
+  const [status, setStatus] = useState(initialFilters.current.status ?? "open_all");
+  const [search, setSearch] = useState(initialFilters.current.search ?? "");
+  const [searchInput, setSearchInput] = useState(initialFilters.current.search ?? "");
+  const [sort, setSort] = useState(initialFilters.current.sort ?? "opened_desc");
+  const [dateRange, setDateRange] = useState(initialFilters.current.dateRange ?? "90");
+  const [page, setPage] = useState(initialFilters.current.page ?? 1);
 
   const [syncing, setSyncing] = useState(false);
   const [syncMsg, setSyncMsg] = useState<string | null>(null);
@@ -164,6 +190,18 @@ export default function ReturnsListClient() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  // Persist the active filters so they survive navigating into a return detail
+  // page and back.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const payload: PersistedFilters = { store, status, search, sort, dateRange, page };
+      window.sessionStorage.setItem(FILTERS_STORAGE_KEY, JSON.stringify(payload));
+    } catch {
+      /* sessionStorage unavailable — non-fatal */
+    }
+  }, [store, status, search, sort, dateRange, page]);
 
   // Keep a stable handle to the latest loader so the auto-sync interval can
   // refresh the list (with whatever filters are active) without re-subscribing

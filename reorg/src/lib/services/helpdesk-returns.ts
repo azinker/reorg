@@ -263,6 +263,21 @@ export async function refreshReturnDetail(returnId: string): Promise<{
   const fields = normalizeReturnSummary(raw);
   const shipTracking = extractReturnShipmentTracking(raw);
 
+  // SKU catalog fallback: eBay's return detail often omits the SKU even when it
+  // returns the item title. Resolve it from our cached MarketplaceListing by the
+  // eBay item id so the detail page always shows the real SKU when we have it.
+  let resolvedSku = fields.sku ?? existing.sku ?? null;
+  if (!resolvedSku) {
+    const itemId = fields.ebayItemId ?? existing.ebayItemId;
+    if (itemId) {
+      const listing = await db.marketplaceListing.findFirst({
+        where: { integrationId: integration.id, platformItemId: itemId },
+        select: { sku: true },
+      });
+      resolvedSku = listing?.sku ?? null;
+    }
+  }
+
   const updated = await db.helpdeskReturnCase.update({
     where: { id: existing.id },
     data: {
@@ -276,7 +291,7 @@ export async function refreshReturnDetail(returnId: string): Promise<{
       returnQuantity: fields.returnQuantity ?? existing.returnQuantity,
       itemTitle: fields.itemTitle ?? existing.itemTitle,
       imageUrl: fields.imageUrl ?? existing.imageUrl,
-      sku: fields.sku ?? existing.sku,
+      sku: resolvedSku,
       buyerUserId: fields.buyerUserId ?? existing.buyerUserId,
       sellerUserId: fields.sellerUserId ?? existing.sellerUserId,
       returnState: fields.returnState ?? existing.returnState,
@@ -1015,6 +1030,30 @@ export interface ReturnCorrespondence {
   ticketSearchHref: string | null;
 }
 
+const EBAY_SYSTEM_SENDER = /^ebay$/i;
+
+/**
+ * Returns true only for genuine buyer↔seller communication. Filters out eBay
+ * system notifications (return-request alerts, refund/feedback notices) — which
+ * arrive as inbound EBAY-source messages whose sender is literally "eBay" — and
+ * internal SYSTEM-source event rows. This mirrors how `ThreadView` distinguishes
+ * `isEbaySystem` notifications from real messages in the main Help Desk.
+ */
+function isBuyerSellerMessage(m: {
+  source: string;
+  fromName: string | null;
+  fromIdentifier: string | null;
+}): boolean {
+  if (m.source === "SYSTEM") return false;
+  if (
+    m.source === "EBAY" &&
+    (EBAY_SYSTEM_SENDER.test(m.fromName ?? "") || EBAY_SYSTEM_SENDER.test(m.fromIdentifier ?? ""))
+  ) {
+    return false;
+  }
+  return true;
+}
+
 /**
  * Gather the Help Desk message correspondence tied to a return's buyer so the
  * detail page can show it inline (read-only). Prefers the directly-linked
@@ -1065,6 +1104,7 @@ export async function getReturnCorrespondence(returnId: string): Promise<ReturnC
           direction: true,
           source: true,
           fromName: true,
+          fromIdentifier: true,
           bodyText: true,
           isHtml: true,
           sentAt: true,
@@ -1073,20 +1113,28 @@ export async function getReturnCorrespondence(returnId: string): Promise<ReturnC
     },
   });
 
-  const threads: CorrespondenceThread[] = tickets.map((t) => ({
-    ticketId: t.id,
-    subject: t.subject,
-    ebayOrderNumber: t.ebayOrderNumber,
-    messages: t.messages.map((m) => ({
-      id: m.id,
-      direction: m.direction,
-      source: m.source,
-      fromName: m.fromName,
-      bodyText: m.bodyText,
-      isHtml: m.isHtml,
-      sentAt: m.sentAt.toISOString(),
-    })),
-  }));
+  const threads: CorrespondenceThread[] = tickets
+    .map((t) => ({
+      ticketId: t.id,
+      subject: t.subject,
+      ebayOrderNumber: t.ebayOrderNumber,
+      // Only true buyer↔seller communication — drop eBay system notifications
+      // (return-request alerts, refund/feedback notices) and internal SYSTEM
+      // rows so this mirrors the human conversation, just like the Help Desk
+      // thread shows when you search the buyer/order directly.
+      messages: t.messages
+        .filter((m) => isBuyerSellerMessage(m))
+        .map((m) => ({
+          id: m.id,
+          direction: m.direction,
+          source: m.source,
+          fromName: m.fromName,
+          bodyText: m.bodyText,
+          isHtml: m.isHtml,
+          sentAt: m.sentAt.toISOString(),
+        })),
+    }))
+    .filter((t) => t.messages.length > 0);
 
   return { buyerUserId: caseRow.buyerUserId, threads, ticketSearchHref };
 }
