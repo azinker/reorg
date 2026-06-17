@@ -395,7 +395,7 @@ test("getReturnActionModel: RETURN_REQUESTED shows Accept / Decline / Offer refu
   assert.equal(ids.includes("track"), false);
 });
 
-test("getReturnActionModel: label stage shows Provide eBay label / Upload a label", () => {
+test("getReturnActionModel: label stage shows Provide eBay label / Upload a label / Confirm sent", () => {
   const groups = getReturnActionModel({
     state: "RETURN_LABEL_PENDING",
     sellerOptions: opts("SELLER_PROVIDE_LABEL", "SELLER_ISSUE_REFUND"),
@@ -404,7 +404,7 @@ test("getReturnActionModel: label stage shows Provide eBay label / Upload a labe
   assert.ok(label, "expected a label group");
   assert.deepEqual(
     label!.choices.map((c) => c.actionKey),
-    ["PROVIDE_EBAY_LABEL", "UPLOAD_LABEL"],
+    ["PROVIDE_EBAY_LABEL", "UPLOAD_LABEL", "CONFIRM_LABEL_SENT"],
   );
 });
 

@@ -4,7 +4,7 @@ import { Platform } from "@prisma/client";
 import { auth } from "@/lib/auth";
 import {
   listReturnCases,
-  countReturnsNeedingAttention,
+  getReturnsAttentionSummary,
 } from "@/lib/services/helpdesk-returns";
 import {
   RETURN_STATUS_FILTERS,
@@ -67,7 +67,7 @@ export async function GET(request: NextRequest) {
   const { store, status, q, from, to, sort, page, pageSize } = parsed.data;
 
   try {
-    const [list, needsAttention] = await Promise.all([
+    const [list, attention] = await Promise.all([
       listReturnCases({
         platform: store ? (store as Platform) : null,
         status: (status as ReturnStatusFilterKey | undefined) ?? null,
@@ -78,12 +78,13 @@ export async function GET(request: NextRequest) {
         page,
         pageSize,
       }),
-      countReturnsNeedingAttention(),
+      getReturnsAttentionSummary(),
     ]);
     return NextResponse.json({
       data: {
         ...list,
-        needsAttention,
+        needsAttention: attention.total,
+        needsAttentionByStore: attention.byPlatform,
         filters: RETURN_STATUS_FILTERS,
       },
     });

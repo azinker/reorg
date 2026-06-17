@@ -118,6 +118,7 @@ interface ReturnFile {
   contentType: string | null;
   submitter: string | null;
   url: string | null;
+  fullUrl: string | null;
   source: string | null;
   createdAt: string;
 }
@@ -342,7 +343,7 @@ function BuyerPhotos({ files }: { files: ReturnFile[] }) {
             <button
               key={p.id}
               type="button"
-              onClick={() => setActive(p.url)}
+              onClick={() => setActive(p.fullUrl ?? p.url)}
               className="h-32 w-32 overflow-hidden rounded-lg border border-hairline bg-surface transition-transform hover:scale-[1.03] hover:border-brand/50 cursor-pointer sm:h-36 sm:w-36"
               title="Click to expand"
             >
@@ -369,12 +370,107 @@ function BuyerPhotos({ files }: { files: ReturnFile[] }) {
           <img
             src={active}
             alt=""
-            className="max-h-[85vh] max-w-[90vw] rounded-lg object-contain"
+            className="h-auto max-h-[88vh] w-auto max-w-[92vw] rounded-lg bg-white object-contain shadow-2xl"
+            style={{ minHeight: "min(70vh, 700px)" }}
             onClick={(e) => e.stopPropagation()}
           />
         </div>
       ) : null}
     </>
+  );
+}
+
+/**
+ * eBay-parity "Provide a return shipping label" screen, shown after the seller
+ * clicks "Accept the return". Mirrors Seller Hub: three label options plus a
+ * "Send refund" escape hatch. Choosing any of these accepts the return and
+ * performs the action in one confirmed step (the server accepts first).
+ */
+function AcceptLabelPanel({
+  onChoose,
+  onBack,
+}: {
+  onChoose: (k: ActionKey) => void;
+  onBack: () => void;
+}) {
+  const options: {
+    key: ActionKey;
+    title: string;
+    desc: string;
+    Icon: typeof Truck;
+    destructive?: boolean;
+  }[] = [
+    {
+      key: "PROVIDE_EBAY_LABEL",
+      title: "Provide an eBay label",
+      desc: "Purchase an eBay return label based on shipping prices negotiated by eBay. eBay charges you, the seller, for the label.",
+      Icon: Truck,
+      destructive: true,
+    },
+    {
+      key: "UPLOAD_LABEL",
+      title: "Upload a label",
+      desc: "Upload a return label and tracking details from your preferred carrier.",
+      Icon: Upload,
+    },
+    {
+      key: "CONFIRM_LABEL_SENT",
+      title: "Confirm you sent a label",
+      desc: "Confirm you have already provided a return label to the buyer.",
+      Icon: CheckCircle2,
+    },
+  ];
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={onBack}
+        className="mb-2 inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground cursor-pointer"
+      >
+        <ArrowLeft className="h-3 w-3" /> Back
+      </button>
+      <p className="text-sm font-semibold text-foreground">
+        Provide a return shipping label
+      </p>
+      <p className="mt-0.5 text-xs text-muted-foreground">
+        Purchase a return label from your preferred carrier and then share it
+        with the buyer. If you prefer to close this return request instead and
+        let the buyer keep the item, you can send a refund.
+      </p>
+      <div className="mt-3 space-y-2">
+        {options.map((o) => (
+          <button
+            key={o.key}
+            type="button"
+            onClick={() => onChoose(o.key)}
+            className={
+              "flex w-full items-start gap-2.5 rounded-lg border p-3 text-left transition-colors " +
+              (o.destructive
+                ? "border-red-500/30 bg-red-500/5 hover:bg-red-500/10 cursor-pointer"
+                : "border-brand/30 bg-brand/5 hover:bg-brand/10 cursor-pointer")
+            }
+          >
+            <o.Icon
+              className={
+                "mt-0.5 h-4 w-4 shrink-0 " +
+                (o.destructive ? "text-red-600 dark:text-red-300" : "text-brand")
+              }
+            />
+            <div className="min-w-0 flex-1">
+              <span className="text-sm font-medium text-foreground">{o.title}</span>
+              <p className="mt-0.5 text-xs text-muted-foreground">{o.desc}</p>
+            </div>
+          </button>
+        ))}
+      </div>
+      <button
+        type="button"
+        onClick={() => onChoose("ISSUE_REFUND")}
+        className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-4 py-2.5 text-sm font-semibold text-emerald-700 hover:bg-emerald-500/20 dark:text-emerald-300 cursor-pointer"
+      >
+        <DollarSign className="h-4 w-4" /> Send refund instead
+      </button>
+    </div>
   );
 }
 
@@ -402,6 +498,8 @@ export default function ReturnDetailClient({ returnId }: { returnId: string }) {
   const [showCorrespondence, setShowCorrespondence] = useState(false);
   // Track-package popup state
   const [showTracking, setShowTracking] = useState(false);
+  // eBay "Accept the return" → "Provide a return shipping label" sub-flow.
+  const [acceptFlow, setAcceptFlow] = useState(false);
 
   const load = useCallback(
     async (refresh: boolean) => {
@@ -512,13 +610,17 @@ export default function ReturnDetailClient({ returnId }: { returnId: string }) {
   // The action area is driven entirely by the server's eBay-parity action model
   // (detail.actionModel) so the options shown match Seller Hub 1:1 for the
   // return's current lifecycle. We split out the "track" group (read-only Track
-  // Package) and keep a convenient green Send-refund shortcut under the refund
-  // card when a refund is offered.
+  // Package). The refund itself is always launched from the Action needed panel
+  // (eBay-parity flow) — the refund card on the right is informational only.
   const actionGroups = detail.actionModel.filter((g) => g.id !== "track");
   const trackGroup = detail.actionModel.find((g) => g.id === "track");
-  const refundState = actionState("ISSUE_REFUND");
-  const showRefundButton =
+  const acceptGroup = detail.actionModel.find((g) => g.id === "accept");
+  const refundAvailable =
     !detail.isClosed && !!availMap.get("ISSUE_REFUND")?.availableOnEbay;
+  // The accept sub-flow only makes sense while the return is still awaiting a
+  // seller verdict. Once accepted (or closed) the accept group disappears, so
+  // exit the flow automatically.
+  const inAcceptFlow = acceptFlow && !!acceptGroup;
 
   return (
     <div className="mx-auto max-w-6xl px-6 py-6">
@@ -604,6 +706,11 @@ export default function ReturnDetailClient({ returnId }: { returnId: string }) {
                 means the ball is in the buyer&apos;s court (e.g. awaiting the
                 buyer to ship). Refresh to re-check.
               </p>
+            ) : inAcceptFlow ? (
+              <AcceptLabelPanel
+                onChoose={(k) => setActiveAction(k)}
+                onBack={() => setAcceptFlow(false)}
+              />
             ) : (
               <div className="space-y-3">
                 {actionGroups.map((g) => (
@@ -629,7 +736,14 @@ export default function ReturnDetailClient({ returnId }: { returnId: string }) {
                             key={c.actionKey}
                             type="button"
                             disabled={!st.enabled}
-                            onClick={() => st.enabled && setActiveAction(c.actionKey)}
+                            onClick={() => {
+                              if (!st.enabled) return;
+                              // eBay parity: "Accept the return" navigates to the
+                              // "Provide a return shipping label" screen rather
+                              // than firing a standalone write.
+                              if (c.actionKey === "APPROVE_RETURN") setAcceptFlow(true);
+                              else setActiveAction(c.actionKey);
+                            }}
                             title={st.reason ?? c.description ?? c.label}
                             className={
                               "flex items-start gap-2.5 rounded-lg border p-3 text-left transition-colors " +
@@ -757,7 +871,7 @@ export default function ReturnDetailClient({ returnId }: { returnId: string }) {
 
           {/* Return tracking */}
           {detail.returnTracking.trackingNumber || detail.trackingEvents.length > 0 ? (
-            <ReturnTrackingBox detail={detail} onTrack={() => setShowTracking(true)} />
+            <ReturnTrackingBox detail={detail} />
           ) : null}
 
           {/* Timeline */}
@@ -950,47 +1064,35 @@ export default function ReturnDetailClient({ returnId }: { returnId: string }) {
             ) : null}
           </div>
 
-          {/* Refund summary card */}
-          {detail.sellerRefund.value != null || showRefundButton ? (
+          {/* Refund summary card — informational. The refund action lives in
+              the Action needed panel (eBay-parity flow), so no button here. */}
+          {detail.sellerRefund.value != null ? (
             <div className="rounded-xl border border-hairline bg-card p-4">
-              {detail.sellerRefund.value != null ? (
-                <>
-                  <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-                    {detail.sellerRefund.isActual ? "Refunded" : "Estimated refund"}
-                  </p>
-                  <p className="mt-1 text-2xl font-semibold text-foreground">
-                    {fmtMoney(detail.sellerRefund.value, detail.sellerRefund.currency)}
-                  </p>
-                  <p className="mt-1 text-[11px] text-muted-foreground">
-                    {detail.sellerRefund.isActual
-                      ? "Amount eBay reports as actually refunded."
-                      : "eBay estimate of the refund if this return completes."}
-                  </p>
-                </>
-              ) : null}
+              <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+                {detail.sellerRefund.isActual ? "Refunded" : "Estimated refund"}
+              </p>
+              <p className="mt-1 text-2xl font-semibold text-foreground">
+                {fmtMoney(detail.sellerRefund.value, detail.sellerRefund.currency)}
+              </p>
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                {detail.sellerRefund.isActual
+                  ? "Amount eBay reports as actually refunded."
+                  : "eBay estimate of the refund if this return completes."}
+              </p>
 
-              {showRefundButton ? (
-                <>
-                  <button
-                    type="button"
-                    disabled={!refundState.enabled}
-                    onClick={() => refundState.enabled && setActiveAction("ISSUE_REFUND")}
-                    title={refundState.reason ?? "Refund the buyer."}
-                    className={
-                      "mt-3 inline-flex w-full items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold transition-colors " +
-                      (refundState.enabled
-                        ? "bg-emerald-600 text-white hover:bg-emerald-700 cursor-pointer"
-                        : "bg-emerald-600/30 text-white/70 cursor-not-allowed")
-                    }
-                  >
-                    <DollarSign className="h-4 w-4" /> Send refund
-                  </button>
-                  {!refundState.enabled && refundState.reason ? (
-                    <p className="mt-1.5 text-center text-[11px] text-muted-foreground">
-                      {refundState.reason}
-                    </p>
-                  ) : null}
-                </>
+              {refundAvailable ? (
+                <p className="mt-3 flex items-start gap-1.5 rounded-lg border border-emerald-500/25 bg-emerald-500/5 px-2.5 py-2 text-[11px] leading-relaxed text-muted-foreground">
+                  <DollarSign className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-600 dark:text-emerald-400" />
+                  <span>
+                    To refund, use{" "}
+                    <span className="font-medium text-emerald-600 dark:text-emerald-400">
+                      Send a full refund
+                    </span>{" "}
+                    or{" "}
+                    <span className="font-medium text-foreground">Offer a partial refund</span>{" "}
+                    in the Action needed panel.
+                  </span>
+                </p>
               ) : null}
             </div>
           ) : null}
@@ -1030,6 +1132,7 @@ export default function ReturnDetailClient({ returnId }: { returnId: string }) {
           onClose={() => setActiveAction(null)}
           onCommitted={() => {
             setActiveAction(null);
+            setAcceptFlow(false);
             void load(true);
           }}
         />
@@ -1130,15 +1233,34 @@ function Timeline({ detail }: { detail: ReturnDetail }) {
     tone: "info",
   });
 
-  for (const t of detail.trackingEvents) {
+  // Return-case milestones derived from tracking — NOT the granular per-scan
+  // updates (those live in the Return Tracking frame). We surface only the
+  // "buyer shipped" and "delivered back" milestones here.
+  if (detail.trackingEvents.length > 0) {
+    const byDateAsc = [...detail.trackingEvents].sort((a, b) => {
+      const at = a.eventDate ? new Date(a.eventDate).getTime() : 0;
+      const bt = b.eventDate ? new Date(b.eventDate).getTime() : 0;
+      return at - bt;
+    });
+    const earliest = byDateAsc[0];
     items.push({
-      when: t.eventDate,
-      title: `Tracking: ${t.status ?? "update"}`,
-      sub: [t.carrier, t.trackingNumber, t.location, t.description]
+      when: earliest.eventDate,
+      title: "Buyer shipped the item back",
+      sub: [detail.returnTracking.carrier ?? "USPS", detail.returnTracking.trackingNumber]
         .filter(Boolean)
         .join(" · "),
-      tone: "neutral",
+      tone: "info",
     });
+    const deliveredEvent = [...byDateAsc]
+      .reverse()
+      .find((e) => /deliver/i.test(`${e.status ?? ""} ${e.description ?? ""}`));
+    if (deliveredEvent) {
+      items.push({
+        when: deliveredEvent.eventDate,
+        title: "Item delivered back to you",
+        tone: "good",
+      });
+    }
   }
 
   for (const a of detail.actionAttempts) {
@@ -1265,13 +1387,7 @@ function findLabelFile(files: ReturnFile[]): ReturnFile | null {
 
 // ── Return tracking box (under Return details) ────────────────────────────────
 
-function ReturnTrackingBox({
-  detail,
-  onTrack,
-}: {
-  detail: ReturnDetail;
-  onTrack: () => void;
-}) {
+function ReturnTrackingBox({ detail }: { detail: ReturnDetail }) {
   const tn = detail.returnTracking.trackingNumber;
   const carrier = detail.returnTracking.carrier ?? "USPS";
   const events = detail.trackingEvents;
@@ -1282,15 +1398,6 @@ function ReturnTrackingBox({
         <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
           Return tracking
         </h2>
-        {events.length > 0 ? (
-          <button
-            type="button"
-            onClick={onTrack}
-            className="inline-flex items-center gap-1.5 rounded-md border border-brand/40 bg-brand/10 px-2.5 py-1 text-xs font-medium text-brand hover:bg-brand/20 cursor-pointer"
-          >
-            <Truck className="h-3.5 w-3.5" /> Track package
-          </button>
-        ) : null}
       </div>
 
       {tn ? (

@@ -630,6 +630,12 @@ export function getReturnActionModel(args: {
           description: "Attach your own prepaid label (PDF or image) + tracking.",
           kind: "label_upload",
         },
+        {
+          actionKey: "CONFIRM_LABEL_SENT",
+          label: "Confirm you sent a label",
+          description: "Confirm you already provided a return label to the buyer.",
+          kind: "confirm",
+        },
       ],
     });
   }

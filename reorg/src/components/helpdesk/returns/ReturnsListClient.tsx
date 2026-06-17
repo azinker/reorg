@@ -25,6 +25,7 @@ import {
   ChevronRight,
   Lock,
   Unlock,
+  X,
 } from "lucide-react";
 import {
   StoreBadge,
@@ -79,6 +80,7 @@ interface ListResponse {
   page: number;
   pageSize: number;
   needsAttention: number;
+  needsAttentionByStore?: Record<string, number>;
   filters: StatusFilter[];
 }
 
@@ -87,6 +89,11 @@ const STORE_OPTIONS = [
   { key: "TPP_EBAY", label: "TPP eBay" },
   { key: "TT_EBAY", label: "TT eBay" },
 ];
+
+const STORE_LABELS: Record<string, string> = {
+  TPP_EBAY: "TPP eBay",
+  TT_EBAY: "TT eBay",
+};
 
 const SORT_OPTIONS = [
   { key: "opened_desc", label: "Date requested (newest)" },
@@ -297,6 +304,12 @@ export default function ReturnsListClient() {
     setSearch(searchInput.trim());
   }
 
+  function clearSearch() {
+    setSearchInput("");
+    setPage(1);
+    setSearch("");
+  }
+
   if (forbidden) {
     return (
       <div className="mx-auto max-w-2xl px-6 py-12">
@@ -359,9 +372,12 @@ export default function ReturnsListClient() {
               Return Cases
             </h1>
             {data && data.needsAttention > 0 ? (
-              <span className="inline-flex items-center gap-1 rounded-full bg-orange-500/15 px-2 py-0.5 text-xs font-semibold text-orange-600 dark:text-orange-300">
+              <span
+                className="inline-flex items-center gap-1 rounded-full bg-orange-500/15 px-2 py-0.5 text-xs font-semibold text-orange-600 dark:text-orange-300"
+                title="Open return cases where eBay is waiting on you — accept/decline a request, provide a label, or issue a refund."
+              >
                 <AlertTriangle className="h-3 w-3" />
-                {data.needsAttention} need attention
+                {data.needsAttention} awaiting your action
               </span>
             ) : null}
           </div>
@@ -370,6 +386,18 @@ export default function ReturnsListClient() {
             seller action runs through a preview + confirmation behind the
             returns write lock.
           </p>
+          {data && data.needsAttention > 0 && data.needsAttentionByStore ? (
+            <p className="mt-1.5 text-xs text-muted-foreground">
+              <span className="font-medium text-foreground">
+                {data.needsAttention} awaiting your action
+              </span>{" "}
+              = open cases needing a seller decision (accept/decline, provide a
+              label, or refund) —{" "}
+              {Object.entries(data.needsAttentionByStore)
+                .map(([k, v]) => `${STORE_LABELS[k] ?? k} ${v}`)
+                .join(" · ")}
+            </p>
+          ) : null}
         </div>
         {/* Live-write lock control */}
         <button
@@ -473,10 +501,22 @@ export default function ReturnsListClient() {
             onChange={(e) => setSearchInput(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === "Enter") applySearch();
+              if (e.key === "Escape" && searchInput) clearSearch();
             }}
             placeholder="Search returns…"
             className="h-9 w-full min-w-0 flex-1 border-0 bg-transparent px-3 text-sm text-foreground outline-none"
           />
+          {searchInput ? (
+            <button
+              type="button"
+              onClick={clearSearch}
+              aria-label="Clear search"
+              title="Clear search"
+              className="inline-flex h-9 shrink-0 items-center px-2 text-muted-foreground hover:text-foreground cursor-pointer"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          ) : null}
           <button
             type="button"
             onClick={applySearch}
@@ -490,6 +530,20 @@ export default function ReturnsListClient() {
 
       {syncMsg ? (
         <p className="mb-3 text-xs text-muted-foreground">{syncMsg}</p>
+      ) : null}
+
+      {/* Results summary — reflects the active status filter + page window. */}
+      {data && !loading && !error ? (
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-2 px-1 text-xs text-muted-foreground">
+          <span className="font-medium text-foreground">
+            {filters.find((f) => f.key === status)?.label ?? "All returns"}
+          </span>
+          <span>
+            {total === 0
+              ? "No results"
+              : `Results ${(page - 1) * pageSize + 1}–${Math.min(page * pageSize, total)} of ${total}`}
+          </span>
+        </div>
       ) : null}
 
       {/* Table */}

@@ -1898,7 +1898,10 @@ model HelpdeskReturnFile {
   contentType      String?
   sizeBytes        Int?
   /// Where the file is viewable, when eBay returns a URL (secureUrl).
+  /// For buyer photos this holds the small resized thumbnail (grid preview).
   url              String?  @db.Text
+  /// Full-resolution inline data URL for buyer photos (lightbox/expand view).
+  fullUrl          String?  @db.Text
   /// ReturnUserRoleEnum of who attached the file: BUYER | SELLER | EBAY |
   /// SYSTEM | OTHER. Used to surface buyer-uploaded photos in the comments UI.
   submitter        String?

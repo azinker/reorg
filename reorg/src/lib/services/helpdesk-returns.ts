@@ -44,6 +44,8 @@ import {
   parseAmount,
   isSupportedCarrier,
   extractReturnShipmentTracking,
+  extractActionTypes,
+  isActionExecutable,
   describeReturnStatus,
   type EbayReturnSummary,
   type EbayAvailableOption,
@@ -206,6 +208,29 @@ export async function countReturnsNeedingAttention(): Promise<number> {
   return db.helpdeskReturnCase.count({
     where: { platform: { in: EBAY_PLATFORMS }, sellerActionDue: true },
   });
+}
+
+/**
+ * Break out the "needs attention" total by store so the header can explain
+ * exactly what the number represents (open returns awaiting a seller action).
+ */
+export async function getReturnsAttentionSummary(): Promise<{
+  total: number;
+  byPlatform: Record<string, number>;
+}> {
+  const grouped = await db.helpdeskReturnCase.groupBy({
+    by: ["platform"],
+    where: { platform: { in: EBAY_PLATFORMS }, sellerActionDue: true },
+    _count: { _all: true },
+  });
+  const byPlatform: Record<string, number> = {};
+  let total = 0;
+  for (const g of grouped) {
+    const n = g._count._all;
+    byPlatform[g.platform] = n;
+    total += n;
+  }
+  return { total, byPlatform };
 }
 
 // ─── Detail + refresh ────────────────────────────────────────────────────────
@@ -457,9 +482,16 @@ async function syncReturnFiles(
     // (403) in the browser — that was the broken-thumbnail bug. Use the resized
     // thumbnail when available to keep the row small; fall back to the hosted
     // URL only when no base64 is provided.
+    // `url` = small thumbnail for the grid (resized when eBay provides it).
+    // `fullUrl` = full-resolution image for the expand/lightbox view. Both are
+    // inline base64 data URLs so they render WITHOUT a second authenticated
+    // fetch — eBay's secureUrl requires the seller token and 403s in <img>.
     let url: string | null = null;
-    const b64 = f.resizedFileData ?? f.fileData;
-    if (b64 && contentType) url = `data:${contentType};base64,${b64}`;
+    let fullUrl: string | null = null;
+    const thumbB64 = f.resizedFileData ?? f.fileData;
+    const fullB64 = f.fileData ?? f.resizedFileData;
+    if (thumbB64 && contentType) url = `data:${contentType};base64,${thumbB64}`;
+    if (fullB64 && contentType) fullUrl = `data:${contentType};base64,${fullB64}`;
     if (!url) url = f.secureUrl ?? f.url ?? null;
     const existing = await db.helpdeskReturnFile.findFirst({
       where: { returnCaseId, ebayFileId: f.fileId },
@@ -471,11 +503,19 @@ async function syncReturnFiles(
       const hasInlineNow = !!url && url.startsWith("data:");
       const existingIsRemote = !!existing.url && !existing.url.startsWith("data:");
       const needsUrl = (!existing.url && url) || (hasInlineNow && existingIsRemote);
-      if (needsUrl || (!existing.submitter && f.submitter) || (!existing.contentType && contentType)) {
+      const existingRow = existing as typeof existing & { fullUrl?: string | null };
+      const needsFullUrl = !!fullUrl && !existingRow.fullUrl;
+      if (
+        needsUrl ||
+        needsFullUrl ||
+        (!existing.submitter && f.submitter) ||
+        (!existing.contentType && contentType)
+      ) {
         await db.helpdeskReturnFile.update({
           where: { id: existing.id },
           data: {
             ...(needsUrl && url ? { url } : {}),
+            ...(needsFullUrl && fullUrl ? { fullUrl } : {}),
             ...(existing.submitter ? {} : f.submitter ? { submitter: f.submitter } : {}),
             ...(existing.contentType ? {} : contentType ? { contentType } : {}),
           },
@@ -492,6 +532,7 @@ async function syncReturnFiles(
         contentType,
         sizeBytes: typeof f.fileSize === "number" ? f.fileSize : null,
         url,
+        fullUrl,
         submitter: f.submitter ?? null,
         source: "EBAY",
         rawData: f as unknown as Prisma.InputJsonValue,
@@ -811,7 +852,83 @@ export async function commitReturnAction(args: {
   // STEP 1 — re-fetch the latest detail so availability is authoritative.
   const refresh = await refreshReturnDetail(args.returnId);
   const freshCase = refresh.caseRow ?? caseRow;
-  const freshOptions = (freshCase.sellerAvailableOptions ?? []) as unknown as EbayAvailableOption[];
+  let freshOptions = (freshCase.sellerAvailableOptions ?? []) as unknown as EbayAvailableOption[];
+
+  // STEP 1b — Accept-then-act parity. eBay Seller Hub treats "provide a label"
+  // (or "send a refund") on a STILL-REQUESTED return as accept + act in one
+  // flow: clicking "Accept the return" just navigates to the label screen, and
+  // submitting a label/refund is what actually resolves the request. We mirror
+  // that: if the buyer's request is still pending (SELLER_APPROVE_REQUEST) and
+  // the user chose a label/refund action that eBay hasn't surfaced yet, accept
+  // the return first (gated as APPROVE_RETURN), then re-fetch so the chosen
+  // option becomes available. The user already explicitly confirmed the
+  // label/refund action, which on eBay inherently accepts the return.
+  const ACCEPT_THEN_ACT: ReturnActionKey[] = [
+    "PROVIDE_EBAY_LABEL",
+    "UPLOAD_LABEL",
+    "CONFIRM_LABEL_SENT",
+    "ISSUE_REFUND",
+    "OFFER_PARTIAL_REFUND",
+  ];
+  const stillRequested = extractActionTypes(freshOptions).includes("SELLER_APPROVE_REQUEST");
+  if (stillRequested && ACCEPT_THEN_ACT.includes(action) && !isActionExecutable(action, freshOptions)) {
+    const acceptGate = await assertReturnWriteAllowed({
+      isAdmin: args.isAdmin,
+      platform: integration.platform,
+      action: "APPROVE_RETURN",
+      freshSellerOptions: freshOptions,
+    });
+    if (!acceptGate.allowed) {
+      await db.helpdeskReturnActionAttempt.update({
+        where: { id: attempt.id },
+        data: { status: HelpdeskReturnActionStatus.BLOCKED, blockReason: acceptGate.reason },
+      });
+      await writeAudit({
+        userId: args.userId,
+        action: "HELPDESK_RETURN_ACTION_BLOCKED",
+        returnCaseId: caseRow.id,
+        details: { action, step: "auto_accept", code: acceptGate.code, reason: acceptGate.reason, returnId: args.returnId },
+      });
+      return { ok: false, status: "BLOCKED", error: acceptGate.reason };
+    }
+    const acceptRes = await decideReturn({
+      integrationId: integration.id,
+      config,
+      returnId: args.returnId,
+      decision: "APPROVE",
+    });
+    if (!acceptRes.ok) {
+      await db.helpdeskReturnActionAttempt.update({
+        where: { id: attempt.id },
+        data: {
+          status: HelpdeskReturnActionStatus.FAILED,
+          errorMessage: acceptRes.errorMessage ?? "Failed to accept the return before providing the label.",
+        },
+      });
+      await writeAudit({
+        userId: args.userId,
+        action: "HELPDESK_RETURN_ACTION_FAILED",
+        returnCaseId: caseRow.id,
+        details: { action, step: "auto_accept", error: acceptRes.errorMessage, returnId: args.returnId },
+      });
+      return { ok: false, status: "FAILED", error: acceptRes.errorMessage ?? undefined };
+    }
+    await writeAudit({
+      userId: args.userId,
+      action: "HELPDESK_RETURN_AUTO_ACCEPTED",
+      returnCaseId: caseRow.id,
+      details: { action, returnId: args.returnId, ebayRequestId: acceptRes.requestId },
+    });
+    // Re-fetch so the label/refund option is now offered by eBay.
+    try {
+      const reRefresh = await refreshReturnDetail(args.returnId);
+      if (reRefresh.caseRow?.sellerAvailableOptions) {
+        freshOptions = reRefresh.caseRow.sellerAvailableOptions as unknown as EbayAvailableOption[];
+      }
+    } catch {
+      /* non-fatal — gate below will catch an unavailable option */
+    }
+  }
 
   // STEP 2 — safety gate.
   const gate = await assertReturnWriteAllowed({
@@ -1043,6 +1160,7 @@ function isBuyerSellerMessage(m: {
   source: string;
   fromName: string | null;
   fromIdentifier: string | null;
+  bodyText: string | null;
 }): boolean {
   if (m.source === "SYSTEM") return false;
   if (
@@ -1051,6 +1169,11 @@ function isBuyerSellerMessage(m: {
   ) {
     return false;
   }
+  // Digest-envelope stubs are storage placeholders, not real message content —
+  // their sub-messages are stored separately, so hide the empty stub.
+  const body = (m.bodyText ?? "").trim();
+  if (!body) return false;
+  if (/digest envelope.*stripped to save storage/i.test(body)) return false;
   return true;
 }
 

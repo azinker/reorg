@@ -136,6 +136,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         contentType: f.contentType,
         submitter: f.submitter,
         url: f.url,
+        fullUrl: f.fullUrl,
         source: f.source,
         createdAt: f.createdAt.toISOString(),
       })),
