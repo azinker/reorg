@@ -1837,6 +1837,15 @@ model HelpdeskReturnCase {
   buyerResponseDueAt  DateTime?
   timeoutDate         DateTime?
 
+  /// Buyer's return-shipment tracking (from Get Return detail's
+  /// returnShipmentInfo.shipmentTracking). Powers the "Return tracking" box +
+  /// the Track Package modal and the feed into the GET /return/{id}/tracking
+  /// scan-history call (carrierUsed + trackingNumber are required there).
+  returnTrackingNumber String?
+  returnCarrier        String?
+  returnCarrierUsed    String?
+  returnDeliveryStatus String?
+
   openedAt DateTime
   closedAt DateTime?
 

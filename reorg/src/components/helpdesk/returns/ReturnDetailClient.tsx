@@ -39,11 +39,12 @@ import {
   Copy,
   Check,
   Upload,
+  Download,
+  MapPin,
   X,
 } from "lucide-react";
 import {
   StoreBadge,
-  LifecycleBadge,
   fmtDate,
   fmtDateTime,
   fmtMoney,
@@ -55,6 +56,7 @@ import {
 
 type ActionKey =
   | "APPROVE_RETURN"
+  | "DECLINE_RETURN"
   | "OFFER_PARTIAL_REFUND"
   | "UPLOAD_LABEL"
   | "CONFIRM_LABEL_SENT"
@@ -66,6 +68,35 @@ interface ActionAvailability {
   key: ActionKey;
   availableOnEbay: boolean;
   policyBlocked: boolean;
+}
+
+interface ActionChoice {
+  actionKey: ActionKey;
+  label: string;
+  description?: string;
+  kind: "confirm" | "refund_full" | "refund_partial" | "label_upload" | "label_ebay";
+  destructive?: boolean;
+}
+
+interface ActionGroup {
+  id: string;
+  label: string;
+  description?: string;
+  kind: "action" | "track";
+  choices: ActionChoice[];
+}
+
+type StatusTone = "attention" | "progress" | "shipped" | "delivered" | "closed";
+interface StatusDescriptor {
+  label: string;
+  tone: StatusTone;
+}
+
+interface ReturnTrackingInfo {
+  trackingNumber: string | null;
+  carrier: string | null;
+  carrierUsed: string | null;
+  deliveryStatus: string | null;
 }
 
 interface TrackingEvent {
@@ -80,6 +111,7 @@ interface TrackingEvent {
 
 interface ReturnFile {
   id: string;
+  ebayFileId: string | null;
   fileName: string | null;
   filePurpose: string | null;
   contentType: string | null;
@@ -117,6 +149,8 @@ interface ReturnDetail {
   currentType: string | null;
   lifecycle: ReturnLifecycle;
   isClosed: boolean;
+  statusDescriptor: StatusDescriptor;
+  returnTracking: ReturnTrackingInfo;
   sellerActionDue: boolean;
   escalated: boolean;
   caseId: string | null;
@@ -133,6 +167,7 @@ interface ReturnDetail {
   detailFetchedAt: string | null;
   lastSyncedAt: string;
   availability: ActionAvailability[];
+  actionModel: ActionGroup[];
   returnsLiveWritesEnabled: boolean;
   trackingEvents: TrackingEvent[];
   files: ReturnFile[];
@@ -171,29 +206,22 @@ const EXECUTABLE: ActionKey[] = [
   "ISSUE_REFUND",
 ];
 
-// Order the seller actions exactly like eBay's "Provide a return shipping
-// label" screen. ISSUE_REFUND is rendered separately as the green Send-refund
-// button under the Estimated refund card.
-const ACTION_DISPLAY_ORDER: ActionKey[] = [
-  "APPROVE_RETURN",
-  "OFFER_PARTIAL_REFUND",
-  "PROVIDE_EBAY_LABEL",
-  "UPLOAD_LABEL",
-  "CONFIRM_LABEL_SENT",
-  "MARK_AS_RECEIVED",
-];
-
 const ACTION_META: Record<
   ActionKey,
   { label: string; desc: string; icon: typeof CheckCircle2 }
 > = {
   APPROVE_RETURN: {
-    label: "Approve return",
-    desc: "Notify the buyer the return is approved.",
+    label: "Accept the return",
+    desc: "Accept the return, then provide a label for the buyer.",
     icon: CheckCircle2,
   },
+  DECLINE_RETURN: {
+    label: "Decline the return",
+    desc: "Close this return request; the buyer keeps the item.",
+    icon: XCircle,
+  },
   OFFER_PARTIAL_REFUND: {
-    label: "Offer partial refund",
+    label: "Offer a partial refund",
     desc: "Offer the buyer a partial refund to keep the item.",
     icon: DollarSign,
   },
@@ -218,10 +246,18 @@ const ACTION_META: Record<
     icon: PackageOpen,
   },
   ISSUE_REFUND: {
-    label: "Send refund",
-    desc: "Refund the buyer (optionally with a deduction up to 50%).",
+    label: "Send a full refund",
+    desc: "Refund the buyer in full (optionally with a deduction up to 50%).",
     icon: DollarSign,
   },
+};
+
+const STATUS_TONE_CLASS: Record<StatusTone, string> = {
+  attention: "bg-amber-500/15 text-amber-600 dark:text-amber-300",
+  progress: "bg-sky-500/15 text-sky-600 dark:text-sky-300",
+  shipped: "bg-indigo-500/15 text-indigo-600 dark:text-indigo-300",
+  delivered: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-300",
+  closed: "bg-zinc-500/15 text-zinc-600 dark:text-zinc-400",
 };
 
 /** Deep link to the eBay return case (opens in a new tab). */
@@ -349,6 +385,8 @@ export default function ReturnDetailClient({ returnId }: { returnId: string }) {
   const [activeAction, setActiveAction] = useState<ActionKey | null>(null);
   // Message-correspondence popup state
   const [showCorrespondence, setShowCorrespondence] = useState(false);
+  // Track-package popup state
+  const [showTracking, setShowTracking] = useState(false);
 
   const load = useCallback(
     async (refresh: boolean) => {
@@ -456,14 +494,16 @@ export default function ReturnDetailClient({ returnId }: { returnId: string }) {
     return { enabled: true, reason: null };
   }
 
-  // Build the ordered list of seller actions eBay currently offers, in eBay's
-  // own order. ISSUE_REFUND is pulled out and rendered as the green Send-refund
-  // button under the Estimated refund card.
-  const offeredActions = ACTION_DISPLAY_ORDER.map((key) => availMap.get(key))
-    .filter((a): a is ActionAvailability => !!a && a.availableOnEbay);
-  const refundAvail = availMap.get("ISSUE_REFUND");
+  // The action area is driven entirely by the server's eBay-parity action model
+  // (detail.actionModel) so the options shown match Seller Hub 1:1 for the
+  // return's current lifecycle. We split out the "track" group (read-only Track
+  // Package) and keep a convenient green Send-refund shortcut under the refund
+  // card when a refund is offered.
+  const actionGroups = detail.actionModel.filter((g) => g.id !== "track");
+  const trackGroup = detail.actionModel.find((g) => g.id === "track");
   const refundState = actionState("ISSUE_REFUND");
-  const showRefundButton = !detail.isClosed && !!refundAvail?.availableOnEbay;
+  const showRefundButton =
+    !detail.isClosed && !!availMap.get("ISSUE_REFUND")?.availableOnEbay;
 
   return (
     <div className="mx-auto max-w-6xl px-6 py-6">
@@ -518,7 +558,7 @@ export default function ReturnDetailClient({ returnId }: { returnId: string }) {
         <div className="min-w-0 space-y-6">
           <ProgressLine lifecycle={detail.lifecycle} isClosed={detail.isClosed} />
 
-          {/* Action area */}
+          {/* Action area — driven by the server eBay-parity action model */}
           <section className="rounded-xl border border-hairline bg-card p-5">
             <div className="mb-3 flex items-center justify-between gap-2">
               <h2 className="text-base font-semibold text-foreground">
@@ -528,10 +568,14 @@ export default function ReturnDetailClient({ returnId }: { returnId: string }) {
                     ? "Action needed"
                     : "No action needed right now"}
               </h2>
-              <LifecycleBadge
-                lifecycle={detail.lifecycle}
-                rawLabel={detail.returnState}
-              />
+              <span
+                className={
+                  "inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold " +
+                  STATUS_TONE_CLASS[detail.statusDescriptor.tone]
+                }
+              >
+                {detail.statusDescriptor.label}
+              </span>
             </div>
 
             {detail.isClosed ? (
@@ -539,56 +583,90 @@ export default function ReturnDetailClient({ returnId }: { returnId: string }) {
                 No further seller actions are available. See the timeline below
                 for the full history.
               </p>
-            ) : offeredActions.length === 0 ? (
+            ) : actionGroups.length === 0 && !trackGroup ? (
               <p className="text-sm text-muted-foreground">
                 eBay is not offering any seller actions right now. This usually
                 means the ball is in the buyer&apos;s court (e.g. awaiting the
                 buyer to ship). Refresh to re-check.
               </p>
             ) : (
-              <div className="space-y-2">
-                {offeredActions.map((a) => {
-                  const meta = ACTION_META[a.key];
-                  const Icon = meta.icon;
-                  const st = actionState(a.key);
-                  return (
-                    <button
-                      key={a.key}
-                      type="button"
-                      disabled={!st.enabled}
-                      onClick={() => st.enabled && setActiveAction(a.key)}
-                      title={st.reason ?? meta.desc}
-                      className={
-                        "flex w-full items-start gap-3 rounded-lg border p-3 text-left transition-colors " +
-                        (st.enabled
-                          ? "border-brand/30 bg-brand/5 hover:bg-brand/10 cursor-pointer"
-                          : "border-hairline/60 bg-surface/40 opacity-70 cursor-not-allowed")
-                      }
-                    >
-                      <Icon
-                        className={
-                          "mt-0.5 h-4 w-4 shrink-0 " +
-                          (st.enabled ? "text-brand" : "text-muted-foreground")
-                        }
-                      />
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2">
-                          <span className="text-sm font-medium text-foreground">
-                            {meta.label}
-                          </span>
-                          {!st.enabled && a.policyBlocked ? (
-                            <span className="inline-flex items-center gap-1 rounded bg-zinc-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-zinc-600 dark:text-zinc-400">
-                              <Lock className="h-2.5 w-2.5" /> Blocked
-                            </span>
-                          ) : null}
-                        </div>
+              <div className="space-y-3">
+                {actionGroups.map((g) => (
+                  <div
+                    key={g.id}
+                    className="rounded-lg border border-hairline bg-surface/40 p-3"
+                  >
+                    <div className="mb-2">
+                      <p className="text-sm font-semibold text-foreground">{g.label}</p>
+                      {g.description ? (
                         <p className="mt-0.5 text-xs text-muted-foreground">
-                          {st.enabled ? meta.desc : st.reason}
+                          {g.description}
                         </p>
-                      </div>
-                    </button>
-                  );
-                })}
+                      ) : null}
+                    </div>
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      {g.choices.map((c) => {
+                        const meta = ACTION_META[c.actionKey];
+                        const Icon = meta?.icon ?? CheckCircle2;
+                        const st = actionState(c.actionKey);
+                        return (
+                          <button
+                            key={c.actionKey}
+                            type="button"
+                            disabled={!st.enabled}
+                            onClick={() => st.enabled && setActiveAction(c.actionKey)}
+                            title={st.reason ?? c.description ?? c.label}
+                            className={
+                              "flex items-start gap-2.5 rounded-lg border p-3 text-left transition-colors " +
+                              (!st.enabled
+                                ? "border-hairline/60 bg-surface/40 opacity-70 cursor-not-allowed"
+                                : c.destructive
+                                  ? "border-red-500/30 bg-red-500/5 hover:bg-red-500/10 cursor-pointer"
+                                  : "border-brand/30 bg-brand/5 hover:bg-brand/10 cursor-pointer")
+                            }
+                          >
+                            <Icon
+                              className={
+                                "mt-0.5 h-4 w-4 shrink-0 " +
+                                (!st.enabled
+                                  ? "text-muted-foreground"
+                                  : c.destructive
+                                    ? "text-red-600 dark:text-red-300"
+                                    : "text-brand")
+                              }
+                            />
+                            <div className="min-w-0 flex-1">
+                              <span className="text-sm font-medium text-foreground">
+                                {c.label}
+                              </span>
+                              <p className="mt-0.5 text-xs text-muted-foreground">
+                                {st.enabled ? c.description ?? meta?.desc : st.reason}
+                              </p>
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
+
+                {trackGroup ? (
+                  <button
+                    type="button"
+                    onClick={() => setShowTracking(true)}
+                    className="flex w-full items-center gap-2.5 rounded-lg border border-hairline bg-surface/40 p-3 text-left hover:bg-surface-2 cursor-pointer"
+                  >
+                    <Truck className="h-4 w-4 shrink-0 text-brand" />
+                    <div className="min-w-0 flex-1">
+                      <span className="text-sm font-medium text-foreground">
+                        Track package
+                      </span>
+                      <p className="mt-0.5 text-xs text-muted-foreground">
+                        See the buyer&apos;s return shipment tracking events.
+                      </p>
+                    </div>
+                  </button>
+                ) : null}
               </div>
             )}
           </section>
@@ -661,6 +739,11 @@ export default function ReturnDetailClient({ returnId }: { returnId: string }) {
               </div>
             ) : null}
           </section>
+
+          {/* Return tracking */}
+          {detail.returnTracking.trackingNumber || detail.trackingEvents.length > 0 ? (
+            <ReturnTrackingBox detail={detail} onTrack={() => setShowTracking(true)} />
+          ) : null}
 
           {/* Timeline */}
           <Timeline detail={detail} />
@@ -918,6 +1001,11 @@ export default function ReturnDetailClient({ returnId }: { returnId: string }) {
         />
       ) : null}
 
+      {/* Track-package popup */}
+      {showTracking ? (
+        <TrackingModal detail={detail} onClose={() => setShowTracking(false)} />
+      ) : null}
+
       {/* Action modal */}
       {activeAction ? (
         <ActionModal
@@ -1013,9 +1101,12 @@ function Timeline({ detail }: { detail: ReturnDetail }) {
     when: string | null;
     title: string;
     sub?: string | null;
+    extra?: React.ReactNode;
     tone: "neutral" | "good" | "bad" | "info";
   };
   const items: Item[] = [];
+
+  const labelFile = findLabelFile(detail.files);
 
   items.push({
     when: detail.openedAt,
@@ -1038,6 +1129,35 @@ function Timeline({ detail }: { detail: ReturnDetail }) {
   for (const a of detail.actionAttempts) {
     const good = a.status === "COMMITTED";
     const bad = a.status === "FAILED" || a.status === "BLOCKED";
+    // For a committed label upload/provide, surface the return tracking number
+    // and a link to re-download the uploaded label file.
+    const isLabel = a.actionType === "UPLOAD_LABEL" || a.actionType === "PROVIDE_EBAY_LABEL";
+    let extra: React.ReactNode = null;
+    if (good && isLabel) {
+      const tn = detail.returnTracking.trackingNumber;
+      extra = (
+        <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
+          {tn ? (
+            <span className="inline-flex items-center gap-1 text-[11px] text-foreground">
+              <Truck className="h-3 w-3 text-brand" />
+              {detail.returnTracking.carrier ?? "USPS"}:{" "}
+              <span className="font-medium">{tn}</span>
+            </span>
+          ) : null}
+          {labelFile?.url ? (
+            <a
+              href={labelFile.url}
+              target="_blank"
+              rel="noreferrer"
+              download={labelFile.fileName ?? undefined}
+              className="inline-flex items-center gap-1 text-[11px] font-medium text-brand hover:underline"
+            >
+              <Download className="h-3 w-3" /> Download label
+            </a>
+          ) : null}
+        </div>
+      );
+    }
     items.push({
       when: a.committedAt ?? a.createdAt,
       title: `${labelizeAction(a.actionType)} — ${a.status.toLowerCase()}`,
@@ -1045,6 +1165,7 @@ function Timeline({ detail }: { detail: ReturnDetail }) {
         a.errorMessage ??
         a.blockReason ??
         (a.ebayRequestId ? `eBay request ${a.ebayRequestId}` : null),
+      extra,
       tone: good ? "good" : bad ? "bad" : "neutral",
     });
   }
@@ -1096,6 +1217,7 @@ function Timeline({ detail }: { detail: ReturnDetail }) {
                 {it.sub ? (
                   <p className="text-xs text-muted-foreground">{it.sub}</p>
                 ) : null}
+                {it.extra}
                 <p className="text-[11px] text-muted-foreground/70">
                   {fmtDateTime(it.when)}
                 </p>
@@ -1113,6 +1235,188 @@ function labelizeAction(actionType: string): string {
     .replace(/_/g, " ")
     .toLowerCase()
     .replace(/^\w/, (c) => c.toUpperCase());
+}
+
+/** The seller-provided return label file (for re-download), if one exists. */
+function findLabelFile(files: ReturnFile[]): ReturnFile | null {
+  return (
+    files.find(
+      (f) =>
+        (f.filePurpose ?? "").toUpperCase().includes("LABEL") ||
+        f.source === "UPLOAD",
+    ) ?? null
+  );
+}
+
+// ── Return tracking box (under Return details) ────────────────────────────────
+
+function ReturnTrackingBox({
+  detail,
+  onTrack,
+}: {
+  detail: ReturnDetail;
+  onTrack: () => void;
+}) {
+  const tn = detail.returnTracking.trackingNumber;
+  const carrier = detail.returnTracking.carrier ?? "USPS";
+  const events = detail.trackingEvents;
+  const status = detail.returnTracking.deliveryStatus;
+  return (
+    <section className="rounded-xl border border-hairline bg-card p-5">
+      <div className="mb-3 flex items-center justify-between gap-2">
+        <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
+          Return tracking
+        </h2>
+        {events.length > 0 ? (
+          <button
+            type="button"
+            onClick={onTrack}
+            className="inline-flex items-center gap-1.5 rounded-md border border-brand/40 bg-brand/10 px-2.5 py-1 text-xs font-medium text-brand hover:bg-brand/20 cursor-pointer"
+          >
+            <Truck className="h-3.5 w-3.5" /> Track package
+          </button>
+        ) : null}
+      </div>
+
+      {tn ? (
+        <div className="flex flex-wrap items-center gap-2 text-sm">
+          <span className="text-muted-foreground">{carrier}:</span>
+          <span className="font-medium text-foreground">{tn}</span>
+          <CopyButton value={tn} label="tracking number" />
+          {status ? (
+            <span className="inline-flex items-center rounded-full bg-indigo-500/15 px-2 py-0.5 text-[11px] font-semibold text-indigo-600 dark:text-indigo-300">
+              {humanizeTrackingStatus(status)}
+            </span>
+          ) : null}
+        </div>
+      ) : (
+        <p className="text-sm text-muted-foreground">
+          No return tracking yet. It appears here once the buyer ships the item
+          back (or you upload a label with tracking).
+        </p>
+      )}
+
+      {events.length > 0 ? (
+        <ul className="mt-4 space-y-3">
+          {events.map((e) => (
+            <li key={e.id} className="flex gap-3">
+              <MapPin className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+              <div className="min-w-0">
+                <p className="text-sm text-foreground">
+                  {e.description ?? humanizeTrackingStatus(e.status) ?? "Update"}
+                </p>
+                {e.location ? (
+                  <p className="text-xs text-muted-foreground">{e.location}</p>
+                ) : null}
+                <p className="text-[11px] text-muted-foreground/70">
+                  {fmtDateTime(e.eventDate)}
+                </p>
+              </div>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </section>
+  );
+}
+
+function humanizeTrackingStatus(s: string | null): string {
+  if (!s) return "";
+  return s
+    .replace(/_/g, " ")
+    .toLowerCase()
+    .replace(/^\w/, (c) => c.toUpperCase());
+}
+
+// ── Track package modal (mirrors eBay's Track Package popup) ───────────────────
+
+function TrackingModal({
+  detail,
+  onClose,
+}: {
+  detail: ReturnDetail;
+  onClose: () => void;
+}) {
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") onClose();
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  const tn = detail.returnTracking.trackingNumber;
+  const carrier = detail.returnTracking.carrier ?? "USPS";
+  const events = detail.trackingEvents;
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+      onClick={onClose}
+    >
+      <div
+        className="flex max-h-[85vh] w-full max-w-md flex-col rounded-xl border border-hairline bg-card shadow-xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between border-b border-hairline px-5 py-3">
+          <h3 className="flex items-center gap-2 text-sm font-semibold text-foreground">
+            <Truck className="h-4 w-4 text-brand" /> Track package
+          </h3>
+          <button
+            type="button"
+            onClick={onClose}
+            className="text-muted-foreground hover:text-foreground cursor-pointer"
+            aria-label="Close"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+          {tn ? (
+            <div className="mb-3 flex flex-wrap items-center gap-2 text-sm">
+              <span className="text-muted-foreground">{carrier}:</span>
+              <span className="font-medium text-foreground">{tn}</span>
+              <CopyButton value={tn} label="tracking number" />
+            </div>
+          ) : null}
+          {events.length === 0 ? (
+            <p className="py-6 text-center text-sm text-muted-foreground">
+              No tracking events yet.
+            </p>
+          ) : (
+            <ul className="space-y-3">
+              {events.map((e, i) => (
+                <li key={e.id} className="flex gap-3">
+                  <div className="flex flex-col items-center">
+                    <span
+                      className={
+                        "mt-1 h-2.5 w-2.5 shrink-0 rounded-full " +
+                        (i === 0 ? "bg-brand" : "bg-muted-foreground/40")
+                      }
+                    />
+                    {i < events.length - 1 ? (
+                      <span className="mt-1 w-px flex-1 bg-hairline" />
+                    ) : null}
+                  </div>
+                  <div className="min-w-0 pb-1">
+                    <p className="text-sm text-foreground">
+                      {e.description ?? humanizeTrackingStatus(e.status) ?? "Update"}
+                    </p>
+                    {e.location ? (
+                      <p className="text-xs text-muted-foreground">{e.location}</p>
+                    ) : null}
+                    <p className="text-[11px] text-muted-foreground/70">
+                      {fmtDateTime(e.eventDate)}
+                    </p>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </div>
+    </div>
+  );
 }
 
 // ── Small presentational bits ────────────────────────────────────────────────
@@ -1250,6 +1554,9 @@ function ActionModal({
         }
         body.labelFileData = labelFileData;
         body.labelFileName = labelFileName;
+      }
+      if (action === "DECLINE_RETURN" && comments) {
+        body.comments = comments;
       }
       if (action === "ISSUE_REFUND" && deductionType !== "none") {
         const n = Number(deductionValue);
@@ -1480,7 +1787,8 @@ function ActionModal({
 
               {action === "OFFER_PARTIAL_REFUND" ||
               action === "CONFIRM_LABEL_SENT" ||
-              action === "UPLOAD_LABEL" ? (
+              action === "UPLOAD_LABEL" ||
+              action === "DECLINE_RETURN" ? (
                 <Labeled label="Comments (optional)">
                   <textarea
                     value={comments}

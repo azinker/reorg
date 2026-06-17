@@ -35,15 +35,25 @@ const INITIAL_LOOKBACK_DAYS = Number.parseInt(
   process.env.HELPDESK_RETURNS_BACKFILL_DAYS ?? process.env.HELPDESK_BACKFILL_DAYS ?? "90",
   10,
 );
-const MAX_PAGES_PER_TICK = 10;
-const PAGE_SIZE = 100;
+/** eBay caps return/search at 200 entries per page; use the max to minimize calls. */
+const PAGE_SIZE = 200;
+/** Open/shipped/delivered buckets are small — page them to completion. */
+const MAX_PAGES_PER_TICK = 20;
 /**
- * The CLOSED bucket can hold thousands of returns. We cap how deep we page it
- * each tick so the sync stays well under the serverless budget while still
- * surfacing a large, representative, newest-first slice. Open buckets are tiny
- * and page to completion.
+ * The CLOSED bucket can hold thousands of returns. We page it newest-first up
+ * to this depth (≈2000 entries) so the table shows a large, representative
+ * slice; the actual stop is governed by the shared time budget below so the
+ * cron never exceeds its serverless maxDuration. Open buckets are tiny and
+ * always page to completion.
  */
-const CLOSED_MAX_PAGES = 8;
+const CLOSED_MAX_PAGES = 12;
+/**
+ * Wall-clock budget for the whole multi-integration sync. Open/shipped/
+ * delivered always finish (they're small); CLOSED stops paging once we cross
+ * this so a slow eBay never trips Vercel's 120s maxDuration. CLOSED converges
+ * across ticks since it's idempotent on (integrationId, returnId).
+ */
+const SYNC_TIME_BUDGET_MS = 95_000;
 /** How many returns missing a title/image we enrich (via Get Return) per tick. */
 const ENRICH_BUDGET_PER_TICK = 30;
 
@@ -85,6 +95,7 @@ async function findTicketIdForReturn(args: {
 async function syncReturnsForIntegration(
   integration: Integration,
   config: Awaited<ReturnType<typeof buildEbayConfig>>,
+  deadline: number,
 ): Promise<number> {
   const checkpoint = await db.helpdeskReturnSyncCheckpoint.upsert({
     where: { integrationId: integration.id },
@@ -110,10 +121,15 @@ async function syncReturnsForIntegration(
   >();
 
   for (const bucket of RETURN_SYNC_BUCKETS) {
-    const maxPages = bucket === "CLOSED" ? CLOSED_MAX_PAGES : MAX_PAGES_PER_TICK;
+    const isClosed = bucket === "CLOSED";
+    const maxPages = isClosed ? CLOSED_MAX_PAGES : MAX_PAGES_PER_TICK;
     let offset = 0;
     for (let page = 0; page < maxPages; page++) {
-      const { members, totalPages, result } = await searchReturns({
+      // The CLOSED bucket is huge; yield once we cross the shared time budget so
+      // the cron never trips its serverless maxDuration. Small open/shipped/
+      // delivered buckets always run to completion regardless of the clock.
+      if (isClosed && page > 0 && Date.now() > deadline) break;
+      const { members, total, totalPages, result } = await searchReturns({
         integrationId: integration.id,
         config,
         fromDate,
@@ -140,18 +156,37 @@ async function syncReturnsForIntegration(
         }
       }
 
-      if (members.length < PAGE_SIZE || page + 1 >= totalPages) break;
+      // Stop when this page was the last one. Use the authoritative
+      // paginationOutput-derived total/totalPages (NOT the broken top-level
+      // `total`, which used to report the page size and capped us at one page).
+      const fetchedSoFar = offset + members.length;
+      if (members.length < PAGE_SIZE || page + 1 >= totalPages || fetchedSoFar >= total) break;
       offset += PAGE_SIZE;
     }
   }
 
+  // Pre-load existing rows' ticket linkage in ONE query so we only run the
+  // (expensive) per-return ticket lookup for rows that don't have a ticket yet.
+  // Without this the upsert loop ran up to 2 ticket queries × hundreds of rows
+  // every tick, which dominated the sync time budget.
+  const returnIds = Array.from(collected.keys());
+  const existingRows = await db.helpdeskReturnCase.findMany({
+    where: { integrationId: integration.id, returnId: { in: returnIds } },
+    select: { returnId: true, ticketId: true },
+  });
+  const existingTicketByReturnId = new Map(existingRows.map((r) => [r.returnId, r.ticketId]));
+
   let upserted = 0;
   for (const [returnId, { raw, fields, buckets }] of collected.entries()) {
-    const ticketId = await findTicketIdForReturn({
-      integrationId: integration.id,
-      ebayOrderNumber: fields.ebayOrderNumber,
-      buyerUserId: fields.buyerUserId,
-    });
+    // Only resolve ticket linkage when we don't already have one for this row.
+    let ticketId = existingTicketByReturnId.get(returnId) ?? null;
+    if (!ticketId) {
+      ticketId = await findTicketIdForReturn({
+        integrationId: integration.id,
+        ebayOrderNumber: fields.ebayOrderNumber,
+        buyerUserId: fields.buyerUserId,
+      });
+    }
 
     const commonData = {
       platform: integration.platform,
@@ -318,6 +353,7 @@ export async function runHelpdeskReturnsSync(): Promise<{
   summaries: ReturnsSyncSummary[];
 }> {
   const startedAt = Date.now();
+  const deadline = startedAt + SYNC_TIME_BUDGET_MS;
   const summaries: ReturnsSyncSummary[] = [];
 
   const integrations = await db.integration.findMany({
@@ -338,7 +374,7 @@ export async function runHelpdeskReturnsSync(): Promise<{
       continue;
     }
     try {
-      summary.upserted = await syncReturnsForIntegration(integration, config);
+      summary.upserted = await syncReturnsForIntegration(integration, config, deadline);
     } catch (err) {
       summary.errors.push(err instanceof Error ? err.message : String(err));
     }
@@ -373,7 +409,11 @@ export async function runHelpdeskReturnsSyncForIntegration(
     return summary;
   }
   try {
-    summary.upserted = await syncReturnsForIntegration(integration, config);
+    summary.upserted = await syncReturnsForIntegration(
+      integration,
+      config,
+      Date.now() + SYNC_TIME_BUDGET_MS,
+    );
   } catch (err) {
     summary.errors.push(err instanceof Error ? err.message : String(err));
   }

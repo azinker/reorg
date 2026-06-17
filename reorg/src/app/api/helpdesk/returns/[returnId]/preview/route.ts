@@ -14,6 +14,7 @@ interface RouteParams {
 const bodySchema = z.object({
   action: z.enum([
     "APPROVE_RETURN",
+    "DECLINE_RETURN",
     "OFFER_PARTIAL_REFUND",
     "UPLOAD_LABEL",
     "PROVIDE_EBAY_LABEL",

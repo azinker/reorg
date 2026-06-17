@@ -28,7 +28,6 @@ import {
 } from "lucide-react";
 import {
   StoreBadge,
-  StatusBadge,
   fmtDate,
   fmtAgo,
   fmtMoney,
@@ -36,6 +35,14 @@ import {
   reasonDefectAssociation,
   type ReturnLifecycle,
 } from "./returns-ui";
+
+const LIST_STATUS_TONE: Record<string, string> = {
+  attention: "bg-amber-500/15 text-amber-600 dark:text-amber-300",
+  progress: "bg-sky-500/15 text-sky-600 dark:text-sky-300",
+  shipped: "bg-indigo-500/15 text-indigo-600 dark:text-indigo-300",
+  delivered: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-300",
+  closed: "bg-zinc-500/15 text-zinc-600 dark:text-zinc-400",
+};
 
 interface ReturnRow {
   id: string;
@@ -48,6 +55,7 @@ interface ReturnRow {
   returnState: string | null;
   lifecycle: ReturnLifecycle;
   isClosed: boolean;
+  statusDescriptor: { label: string; tone: "attention" | "progress" | "shipped" | "delivered" | "closed" };
   sellerActionDue: boolean;
   reason: string | null;
   reasonType: string | null;
@@ -545,9 +553,16 @@ export default function ReturnsListClient() {
                     )}
                   </div>
 
-                  {/* Status cell */}
+                  {/* Status cell — clear, eBay-style label */}
                   <div className="w-44">
-                    <StatusBadge lifecycle={r.lifecycle} state={r.returnState} />
+                    <span
+                      className={
+                        "inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold " +
+                        LIST_STATUS_TONE[r.statusDescriptor.tone]
+                      }
+                    >
+                      {r.statusDescriptor.label}
+                    </span>
                     {r.sellerResponseDueAt && !r.isClosed ? (
                       <p className="mt-1 text-[11px] text-muted-foreground">
                         Respond by {fmtDate(r.sellerResponseDueAt)}

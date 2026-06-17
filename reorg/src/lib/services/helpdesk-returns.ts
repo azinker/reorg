@@ -43,10 +43,13 @@ import {
   validateRefundAmount,
   parseAmount,
   isSupportedCarrier,
+  extractReturnShipmentTracking,
+  describeReturnStatus,
   type EbayReturnSummary,
   type EbayAvailableOption,
   type ReturnActionKey,
   type ReturnStatusFilterKey,
+  type ReturnStatusDescriptor,
 } from "@/lib/helpdesk/returns";
 import { assertReturnWriteAllowed } from "@/lib/helpdesk/returns-safety";
 
@@ -77,6 +80,7 @@ export interface ReturnListItem {
   returnState: string | null;
   lifecycle: ReturnType<typeof getReturnLifecycle>;
   isClosed: boolean;
+  statusDescriptor: ReturnStatusDescriptor;
   sellerActionDue: boolean;
   reason: string | null;
   reasonType: string | null;
@@ -103,6 +107,11 @@ function toListItem(row: HelpdeskReturnCase): ReturnListItem {
     returnState: row.returnState,
     lifecycle: getReturnLifecycle(row.returnState),
     isClosed: isReturnClosed(row.returnState),
+    statusDescriptor: describeReturnStatus({
+      state: row.returnState,
+      status: row.returnStatus,
+      sellerActionDue: row.sellerActionDue,
+    }),
     sellerActionDue: row.sellerActionDue,
     reason: row.reason,
     reasonType: row.reasonType,
@@ -214,17 +223,6 @@ function fingerprintTrackingEvent(e: {
   return [e.eventDate ?? "", e.status ?? "", e.location ?? "", e.description ?? ""].join("|");
 }
 
-interface RawTrackingEvent {
-  eventDate?: { value?: string };
-  date?: { value?: string };
-  status?: string;
-  activity?: string;
-  location?: string;
-  city?: string;
-  description?: string;
-  eventDescription?: string;
-}
-
 /**
  * Re-fetch a single return's detail (+ tracking + files) directly from eBay and
  * persist it. This is the authoritative read used by the detail page and
@@ -258,10 +256,15 @@ export async function refreshReturnDetail(returnId: string): Promise<{
 
   const raw = detailResult.body as EbayReturnSummary;
   const fields = normalizeReturnSummary(raw);
+  const shipTracking = extractReturnShipmentTracking(raw);
 
   const updated = await db.helpdeskReturnCase.update({
     where: { id: existing.id },
     data: {
+      returnTrackingNumber: shipTracking.trackingNumber ?? existing.returnTrackingNumber,
+      returnCarrier: shipTracking.carrier ?? existing.returnCarrier,
+      returnCarrierUsed: shipTracking.carrierUsed ?? existing.returnCarrierUsed,
+      returnDeliveryStatus: shipTracking.deliveryStatus ?? existing.returnDeliveryStatus,
       ebayOrderNumber: fields.ebayOrderNumber ?? existing.ebayOrderNumber,
       ebayItemId: fields.ebayItemId ?? existing.ebayItemId,
       transactionId: fields.transactionId ?? existing.transactionId,
@@ -299,7 +302,12 @@ export async function refreshReturnDetail(returnId: string): Promise<{
 
   // Tracking + files are best-effort enrichment; never block the detail render.
   try {
-    await syncTrackingEvents(existing.id, integration.id, config, returnId);
+    if (shipTracking.carrierUsed && shipTracking.trackingNumber) {
+      await syncTrackingEvents(existing.id, integration.id, config, returnId, {
+        carrierUsed: shipTracking.carrierUsed,
+        trackingNumber: shipTracking.trackingNumber,
+      });
+    }
   } catch {
     /* non-fatal */
   }
@@ -312,36 +320,66 @@ export async function refreshReturnDetail(returnId: string): Promise<{
   return { caseRow: updated, detailResult, error: null };
 }
 
+/** A single ScanDetailType node from GET /return/{id}/tracking scanHistory. */
+interface RawScanDetail {
+  eventCity?: string;
+  eventCode?: string;
+  eventDesc?: string;
+  eventPostalCode?: string;
+  eventStateOrProvince?: string;
+  eventStatus?: string;
+  eventTime?: { value?: string; formattedValue?: string };
+}
+
 async function syncTrackingEvents(
   returnCaseId: string,
   integrationId: string,
   config: ReturnType<typeof buildEbayConfig>,
   returnId: string,
+  shipment: { carrierUsed: string; trackingNumber: string },
 ): Promise<void> {
-  const res = await getReturnTracking({ integrationId, config, returnId });
+  const res = await getReturnTracking({
+    integrationId,
+    config,
+    returnId,
+    carrierUsed: shipment.carrierUsed,
+    trackingNumber: shipment.trackingNumber,
+  });
   if (!res.ok || !res.body) return;
-  const body = res.body as { shipmentTrackingDetails?: unknown[]; trackingHistory?: unknown[] };
-  const rawEvents =
-    (body.trackingHistory as RawTrackingEvent[] | undefined) ??
-    ((body.shipmentTrackingDetails as { trackingHistory?: RawTrackingEvent[] }[] | undefined)?.[0]
-      ?.trackingHistory) ??
-    [];
-  for (const ev of rawEvents) {
-    const eventDate = ev.eventDate?.value ?? ev.date?.value ?? null;
-    const fingerprint = fingerprintTrackingEvent({
-      eventDate,
-      status: ev.status ?? ev.activity ?? null,
-      location: ev.location ?? ev.city ?? null,
-      description: ev.description ?? ev.eventDescription ?? null,
+  const body = res.body as {
+    carrierUsed?: string;
+    trackingNumber?: string;
+    trackingStatus?: string;
+    scanHistory?: RawScanDetail[];
+  };
+  const carrier = body.carrierUsed ?? shipment.carrierUsed;
+  const trackingNumber = body.trackingNumber ?? shipment.trackingNumber;
+  const scans = Array.isArray(body.scanHistory) ? body.scanHistory : [];
+
+  // Keep the case's headline delivery status fresh from the live scan feed.
+  if (body.trackingStatus) {
+    await db.helpdeskReturnCase.update({
+      where: { id: returnCaseId },
+      data: { returnDeliveryStatus: body.trackingStatus },
     });
+  }
+
+  for (const ev of scans) {
+    const eventDate = ev.eventTime?.value ?? null;
+    const location = [ev.eventCity, ev.eventStateOrProvince].filter(Boolean).join(", ") || null;
+    const status = ev.eventStatus ?? null;
+    const description = ev.eventDesc ?? null;
+    const fingerprint = fingerprintTrackingEvent({ eventDate, status, location, description });
     await db.helpdeskReturnTrackingEvent.upsert({
       where: { returnCaseId_fingerprint: { returnCaseId, fingerprint } },
       create: {
         returnCaseId,
+        carrier,
+        trackingNumber,
         eventDate: eventDate ? new Date(eventDate) : null,
-        status: ev.status ?? ev.activity ?? null,
-        location: ev.location ?? ev.city ?? null,
-        description: ev.description ?? ev.eventDescription ?? null,
+        status,
+        location,
+        description,
         fingerprint,
         rawData: ev as unknown as Prisma.InputJsonValue,
       },
@@ -393,26 +431,33 @@ async function syncReturnFiles(
   for (const f of body.files ?? []) {
     if (!f.fileId) continue;
     const contentType = f.contentType ?? fileFormatToMime(f.fileFormat ?? f.fileType) ?? null;
-    // Prefer eBay's hosted URL; otherwise build a data: URL from the base64 the
-    // Get Files response carries so buyer-uploaded photos render inline without
-    // needing a second authenticated fetch. Use the resized thumbnail when
-    // available to keep the row small.
-    let url: string | null = f.secureUrl ?? f.url ?? null;
-    if (!url) {
-      const b64 = f.resizedFileData ?? f.fileData;
-      if (b64 && contentType) url = `data:${contentType};base64,${b64}`;
-    }
+    // Prefer the inline base64 the Get Files response carries so buyer-uploaded
+    // photos render WITHOUT a second authenticated fetch. eBay's secureUrl
+    // requires the seller's auth token, so an <img src=secureUrl> renders broken
+    // (403) in the browser — that was the broken-thumbnail bug. Use the resized
+    // thumbnail when available to keep the row small; fall back to the hosted
+    // URL only when no base64 is provided.
+    let url: string | null = null;
+    const b64 = f.resizedFileData ?? f.fileData;
+    if (b64 && contentType) url = `data:${contentType};base64,${b64}`;
+    if (!url) url = f.secureUrl ?? f.url ?? null;
     const existing = await db.helpdeskReturnFile.findFirst({
       where: { returnCaseId, ebayFileId: f.fileId },
     });
     if (existing) {
       // Backfill URL/submitter on previously-synced rows (e.g. before this fix).
-      if ((!existing.url && url) || (!existing.submitter && f.submitter)) {
+      // Also REPLACE a previously-stored secureUrl (renders broken without auth)
+      // with the inline base64 data URL when we now have one.
+      const hasInlineNow = !!url && url.startsWith("data:");
+      const existingIsRemote = !!existing.url && !existing.url.startsWith("data:");
+      const needsUrl = (!existing.url && url) || (hasInlineNow && existingIsRemote);
+      if (needsUrl || (!existing.submitter && f.submitter) || (!existing.contentType && contentType)) {
         await db.helpdeskReturnFile.update({
           where: { id: existing.id },
           data: {
-            ...(existing.url ? {} : url ? { url } : {}),
+            ...(needsUrl && url ? { url } : {}),
             ...(existing.submitter ? {} : f.submitter ? { submitter: f.submitter } : {}),
+            ...(existing.contentType ? {} : contentType ? { contentType } : {}),
           },
         });
       }
@@ -533,8 +578,17 @@ export async function previewReturnAction(args: {
 
   switch (args.action) {
     case "APPROVE_RETURN": {
-      headline = "Approve this return request";
-      lines.push("eBay will notify the buyer the return is approved.");
+      headline = "Accept this return request";
+      lines.push("eBay will notify the buyer the return is accepted.");
+      lines.push("You'll then provide a return label for the buyer.");
+      break;
+    }
+    case "DECLINE_RETURN": {
+      headline = "Decline this return request";
+      lines.push("Closes the return request; the buyer keeps the item.");
+      lines.push("This is a final action that resolves the case against the buyer.");
+      requiresTypedConfirmation = true;
+      if (args.params.comments) requestPayload.comments = args.params.comments;
       break;
     }
     case "MARK_AS_RECEIVED": {
@@ -568,7 +622,6 @@ export async function previewReturnAction(args: {
       lines.push(`Carrier: ${args.params.carrierEnum}`);
       lines.push(`Tracking: ${args.params.trackingNumber.trim()}`);
       lines.push("eBay attaches this label file + tracking and shares it with the buyer.");
-      requiresTypedConfirmation = true;
       requestPayload.carrierEnum = args.params.carrierEnum;
       requestPayload.trackingNumber = args.params.trackingNumber.trim();
       requestPayload.labelFileData = args.params.labelFileData;
@@ -773,6 +826,15 @@ export async function commitReturnAction(args: {
           config,
           returnId: args.returnId,
           decision: "APPROVE",
+          comments,
+        });
+        break;
+      case "DECLINE_RETURN":
+        result = await decideReturn({
+          integrationId: integration.id,
+          config,
+          returnId: args.returnId,
+          decision: "DECLINE",
           comments,
         });
         break;

@@ -305,11 +305,143 @@ export function humanizeReturnState(state: string | null | undefined): string {
     .join(" ");
 }
 
+export type ReturnStatusTone = "attention" | "progress" | "shipped" | "delivered" | "closed";
+
+export interface ReturnStatusDescriptor {
+  /** Plain-English, action-oriented label shown on the badge + list. */
+  label: string;
+  tone: ReturnStatusTone;
+}
+
+/**
+ * Map an eBay ReturnStateEnum to a clear, action-oriented status the way Seller
+ * Hub phrases it (e.g. ITEM_READY_TO_SHIP → "Label provided - awaiting return").
+ * `sellerActionDue` upgrades the label to make the seller's to-do obvious.
+ */
+export function describeReturnStatus(args: {
+  state: string | null | undefined;
+  status?: string | null;
+  sellerActionDue?: boolean;
+}): ReturnStatusDescriptor {
+  const s = normalizeState(args.state);
+
+  if (isReturnClosed(s)) {
+    if (/PARTIAL/.test(s)) return { label: "Closed - partially refunded", tone: "closed" };
+    if (/REFUND/.test(s)) return { label: "Closed - refunded", tone: "closed" };
+    if (/TIMEOUT/.test(s)) return { label: "Closed - no action needed", tone: "closed" };
+    if (/ITEM_KEPT/.test(s)) return { label: "Closed - item kept", tone: "closed" };
+    return { label: "Closed", tone: "closed" };
+  }
+
+  switch (s) {
+    case "RETURN_REQUESTED":
+    case "REPLACEMENT_REQUESTED":
+      return { label: "Return requested - respond to buyer", tone: "attention" };
+    case "RETURN_LABEL_PENDING":
+    case "WAITING_FOR_RETURN_LABEL":
+      return { label: "Provide a return label", tone: "attention" };
+    case "ITEM_READY_TO_SHIP":
+    case "RETURN_LABEL_PROVIDED":
+      return { label: "Label provided - awaiting returned item", tone: "progress" };
+    case "ITEM_SHIPPED":
+    case "REPLACEMENT_SHIPPED":
+      return { label: "Return shipped - in transit to you", tone: "shipped" };
+    case "ITEM_DELIVERED":
+    case "REPLACEMENT_DELIVERED":
+      return { label: "Return delivered - inspect & refund", tone: "delivered" };
+    case "REFUND_INITIATED":
+    case "REFUND_SENT_PENDING_CONFIRMATION":
+    case "AUTO_REFUND_INITIATED":
+    case "PAYOUT_INITIATED":
+    case "REFUND_AS_PAYOUT_INITIATED":
+      return { label: "Refund in progress", tone: "progress" };
+    case "PARTIAL_REFUND_INITIATED":
+    case "PARTIAL_REFUND_REQUESTED":
+      return { label: "Partial refund offered", tone: "progress" };
+    case "ESCALATED":
+    case "RETURN_ESCALATED":
+      return { label: "Escalated to eBay", tone: "attention" };
+    default:
+      break;
+  }
+
+  const fallback = humanizeReturnState(s);
+  return {
+    label: args.sellerActionDue ? `${fallback} - action needed` : fallback,
+    tone: args.sellerActionDue ? "attention" : "progress",
+  };
+}
+
+// ─── Return shipment tracking (from Get Return detail) ───────────────────────
+
+export interface ReturnShipmentTracking {
+  carrier: string | null;
+  /** Carrier code accepted by the GET /return/{id}/tracking endpoint. */
+  carrierUsed: string | null;
+  trackingNumber: string | null;
+  deliveryStatus: string | null;
+  shippedAt: string | null;
+  deliveredAt: string | null;
+}
+
+interface RawShipmentTracking {
+  carrierEnum?: string;
+  carrierName?: string;
+  carrierUsed?: string;
+  trackingNumber?: string;
+  deliveryStatus?: string;
+  shippedBy?: string;
+  actualShipDate?: EbayDateTime;
+  shipDate?: EbayDateTime;
+  actualDeliveryDate?: EbayDateTime;
+  deliveryDate?: EbayDateTime;
+}
+
+/**
+ * Pull the buyer's return-shipment tracking out of a Get Return detail payload.
+ * eBay puts it under detail.returnShipmentInfo.shipmentTracking (and an
+ * allShipmentTrackings[] history). The trackingNumber + carrierUsed feed the
+ * GET /return/{id}/tracking call (both are REQUIRED query params there).
+ */
+export function extractReturnShipmentTracking(
+  raw: EbayReturnSummary | null | undefined,
+): ReturnShipmentTracking {
+  const root = (raw ?? {}) as Record<string, unknown>;
+  const detail = (root.detail ?? root.summary ?? root) as Record<string, unknown>;
+  const info = detail.returnShipmentInfo as
+    | { shipmentTracking?: RawShipmentTracking; allShipmentTrackings?: RawShipmentTracking[] }
+    | undefined;
+  const t =
+    info?.shipmentTracking ??
+    info?.allShipmentTrackings?.[info.allShipmentTrackings.length - 1] ??
+    info?.allShipmentTrackings?.[0];
+  if (!t) {
+    return {
+      carrier: null,
+      carrierUsed: null,
+      trackingNumber: null,
+      deliveryStatus: null,
+      shippedAt: null,
+      deliveredAt: null,
+    };
+  }
+  const carrierUsed = t.carrierUsed ?? t.carrierEnum ?? null;
+  return {
+    carrier: t.carrierName ?? t.carrierEnum ?? t.carrierUsed ?? null,
+    carrierUsed: carrierUsed ? String(carrierUsed) : null,
+    trackingNumber: t.trackingNumber ? String(t.trackingNumber) : null,
+    deliveryStatus: t.deliveryStatus ? String(t.deliveryStatus) : null,
+    shippedAt: parseEbayDate(t.actualShipDate ?? t.shipDate)?.toISOString() ?? null,
+    deliveredAt: parseEbayDate(t.actualDeliveryDate ?? t.deliveryDate)?.toISOString() ?? null,
+  };
+}
+
 // ─── Seller action availability ──────────────────────────────────────────────
 
 /** Our internal live-write action keys. */
 export type ReturnActionKey =
   | "APPROVE_RETURN"
+  | "DECLINE_RETURN"
   | "OFFER_PARTIAL_REFUND"
   | "UPLOAD_LABEL"
   | "CONFIRM_LABEL_SENT"
@@ -323,11 +455,11 @@ export type ReturnActionKey =
  */
 const ACTION_OPTION_MAP: Record<ReturnActionKey, string[]> = {
   APPROVE_RETURN: ["SELLER_APPROVE_REQUEST"],
+  DECLINE_RETURN: ["SELLER_DECLINE_REQUEST"],
   OFFER_PARTIAL_REFUND: ["SELLER_OFFER_PARTIAL_REFUND"],
   // eBay exposes a single SELLER_PROVIDE_LABEL option that fans out into the
-  // three label choices seen in Seller Hub (provide an eBay label / upload a
-  // label / confirm you sent one). All three map to that one option; the
-  // distinction is the labelAction we send to add_shipping_label.
+  // label choices seen in Seller Hub (provide an eBay label / upload a label).
+  // The distinction is the labelAction we send to add_shipping_label.
   PROVIDE_EBAY_LABEL: ["SELLER_PROVIDE_LABEL", "SELLER_PRINT_SHIPPING_LABEL"],
   UPLOAD_LABEL: ["SELLER_PROVIDE_LABEL"],
   CONFIRM_LABEL_SENT: ["SELLER_PROVIDE_LABEL", "SELLER_PROVIDE_TRACKING_INFO", "SELLER_UPDATE_TRACKING"],
@@ -380,6 +512,186 @@ export function isActionExecutable(
   if (POLICY_BLOCKED_ACTIONS.includes(action)) return false;
   const present = new Set(extractActionTypes(options));
   return ACTION_OPTION_MAP[action].some((opt) => present.has(opt));
+}
+
+// ─── eBay-parity action model ────────────────────────────────────────────────
+
+/**
+ * A single executable action inside a group (the leaf the user clicks). `kind`
+ * tells the client which modal to open.
+ */
+export interface ReturnActionChoice {
+  actionKey: ReturnActionKey;
+  label: string;
+  description?: string;
+  /** Modal flavor: confirm | refund-amount | label-upload | label-ebay. */
+  kind: "confirm" | "refund_full" | "refund_partial" | "label_upload" | "label_ebay";
+  /** Paid / irreversible → red styling + extra warning in the UI. */
+  destructive?: boolean;
+}
+
+/** A top-level option block in the "Action needed" panel (mirrors Seller Hub). */
+export interface ReturnActionGroup {
+  /** Stable id for React keys. */
+  id: string;
+  label: string;
+  description?: string;
+  /** "action" = clickable choices; "track" = read-only Track Package modal. */
+  kind: "action" | "track";
+  choices: ReturnActionChoice[];
+}
+
+/**
+ * Build the seller action panel EXACTLY the way eBay Seller Hub presents it for
+ * the return's current lifecycle, driven by the live sellerAvailableOptions.
+ *
+ * Parity rules (verified against live eBay payloads + the Seller Hub UI):
+ *   - RETURN_REQUESTED  → Accept the return / Decline the return / Offer a full
+ *     or partial refund.
+ *   - waiting on seller label (RETURN_LABEL_PENDING) → Provide an eBay label /
+ *     Upload a label.
+ *   - label provided, awaiting buyer ship (ITEM_READY_TO_SHIP) → Offer refund
+ *     (full / partial). NOT mark-as-received (eBay hides it here even though the
+ *     API still lists it).
+ *   - in transit / delivered (ITEM_SHIPPED / ITEM_DELIVERED) → Mark as received
+ *     / Track package / Start refund (full / partial).
+ *   - closed → no actions.
+ */
+export function getReturnActionModel(args: {
+  state: string | null | undefined;
+  sellerOptions: EbayAvailableOption[] | null | undefined;
+}): ReturnActionGroup[] {
+  if (isReturnClosed(args.state)) return [];
+
+  const present = new Set(extractActionTypes(args.sellerOptions));
+  const has = (opt: string) => present.has(opt);
+  const lifecycle = getReturnLifecycle(args.state);
+  const shippedOrDelivered = lifecycle === "in_transit" || lifecycle === "delivered";
+
+  const groups: ReturnActionGroup[] = [];
+
+  // 1) Accept / decline — only while the buyer's request awaits a seller verdict.
+  if (has("SELLER_APPROVE_REQUEST")) {
+    groups.push({
+      id: "accept",
+      label: "Accept the return",
+      description: "Approve the return, then provide a return label.",
+      kind: "action",
+      choices: [
+        {
+          actionKey: "APPROVE_RETURN",
+          label: "Accept the return",
+          kind: "confirm",
+        },
+      ],
+    });
+  }
+  if (has("SELLER_DECLINE_REQUEST")) {
+    groups.push({
+      id: "decline",
+      label: "Decline the return",
+      description: "Close this return request; the buyer keeps the item.",
+      kind: "action",
+      choices: [
+        {
+          actionKey: "DECLINE_RETURN",
+          label: "Decline the return",
+          kind: "confirm",
+          destructive: true,
+        },
+      ],
+    });
+  }
+
+  // 2) Provide a label — only while eBay is still waiting on the seller's label
+  //    (before the buyer has shipped). Once an item is in transit we never show
+  //    label actions.
+  const needsLabel =
+    (has("SELLER_PROVIDE_LABEL") || has("SELLER_PRINT_SHIPPING_LABEL")) &&
+    !shippedOrDelivered &&
+    !has("SELLER_VOID_LABEL"); // a void option means a label is already provided
+  if (needsLabel) {
+    groups.push({
+      id: "label",
+      label: "Provide a return label",
+      description: "Give the buyer a return shipping label.",
+      kind: "action",
+      choices: [
+        {
+          actionKey: "PROVIDE_EBAY_LABEL",
+          label: "Provide an eBay label",
+          description: "eBay generates a prepaid label and charges you for it.",
+          kind: "label_ebay",
+          destructive: true,
+        },
+        {
+          actionKey: "UPLOAD_LABEL",
+          label: "Upload a label",
+          description: "Attach your own prepaid label (PDF or image) + tracking.",
+          kind: "label_upload",
+        },
+      ],
+    });
+  }
+
+  // 3) Mark as received + Track package — only after the buyer has shipped.
+  if (shippedOrDelivered) {
+    if (has("SELLER_MARK_AS_RECEIVED")) {
+      groups.push({
+        id: "mark_received",
+        label: "Mark as received",
+        description: "Confirm you received the returned item.",
+        kind: "action",
+        choices: [
+          { actionKey: "MARK_AS_RECEIVED", label: "Mark as received", kind: "confirm" },
+        ],
+      });
+    }
+    groups.push({
+      id: "track",
+      label: "Track package",
+      description: "See the return shipment's tracking events.",
+      kind: "track",
+      choices: [],
+    });
+  }
+
+  // 4) Refund — full and/or partial, whenever eBay offers a refund path.
+  const refundChoices: ReturnActionChoice[] = [];
+  if (has("SELLER_ISSUE_REFUND")) {
+    refundChoices.push({
+      actionKey: "ISSUE_REFUND",
+      label: "Send a full refund",
+      description: "Refund the buyer in full. The return closes.",
+      kind: "refund_full",
+      destructive: true,
+    });
+  }
+  if (has("SELLER_OFFER_PARTIAL_REFUND")) {
+    refundChoices.push({
+      actionKey: "OFFER_PARTIAL_REFUND",
+      label: "Offer a partial refund",
+      description: "Offer a partial refund and let the buyer keep the item.",
+      kind: "refund_partial",
+    });
+  }
+  if (refundChoices.length > 0) {
+    // eBay labels this block differently by stage.
+    const label = has("SELLER_APPROVE_REQUEST")
+      ? "Offer a full or partial refund"
+      : shippedOrDelivered
+        ? "Start refund"
+        : "Offer refund";
+    groups.push({
+      id: "refund",
+      label,
+      description: "Send a full refund or offer the buyer a partial refund.",
+      kind: "action",
+      choices: refundChoices,
+    });
+  }
+
+  return groups;
 }
 
 /** True when eBay currently has a seller action due (drives needs-attention badge). */

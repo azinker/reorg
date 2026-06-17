@@ -6,6 +6,9 @@ import {
   getReturnLifecycle,
   matchesStatusFilter,
   getSellerActionAvailability,
+  getReturnActionModel,
+  describeReturnStatus,
+  extractReturnShipmentTracking,
   isActionExecutable,
   deriveSellerActionDue,
   normalizeTotalRefund,
@@ -365,4 +368,108 @@ test("normalizeReturnSummary marks closed returns with no action due", () => {
   });
   assert.equal(out.sellerActionDue, false);
   assert.ok(out.closedAt instanceof Date);
+});
+
+// ─── eBay-parity action model ────────────────────────────────────────────────
+
+test("getReturnActionModel: RETURN_REQUESTED shows Accept / Decline / Offer refund", () => {
+  const groups = getReturnActionModel({
+    state: "RETURN_REQUESTED",
+    sellerOptions: opts(
+      "SELLER_APPROVE_REQUEST",
+      "SELLER_DECLINE_REQUEST",
+      "SELLER_ISSUE_REFUND",
+      "SELLER_OFFER_PARTIAL_REFUND",
+    ),
+  });
+  const ids = groups.map((g) => g.id);
+  assert.deepEqual(ids, ["accept", "decline", "refund"]);
+  const refund = groups.find((g) => g.id === "refund")!;
+  assert.equal(refund.label, "Offer a full or partial refund");
+  assert.deepEqual(
+    refund.choices.map((c) => c.actionKey),
+    ["ISSUE_REFUND", "OFFER_PARTIAL_REFUND"],
+  );
+  // No label or track actions while the request awaits a verdict.
+  assert.equal(ids.includes("label"), false);
+  assert.equal(ids.includes("track"), false);
+});
+
+test("getReturnActionModel: label stage shows Provide eBay label / Upload a label", () => {
+  const groups = getReturnActionModel({
+    state: "RETURN_LABEL_PENDING",
+    sellerOptions: opts("SELLER_PROVIDE_LABEL", "SELLER_ISSUE_REFUND"),
+  });
+  const label = groups.find((g) => g.id === "label");
+  assert.ok(label, "expected a label group");
+  assert.deepEqual(
+    label!.choices.map((c) => c.actionKey),
+    ["PROVIDE_EBAY_LABEL", "UPLOAD_LABEL"],
+  );
+});
+
+test("getReturnActionModel: in-transit shows Mark received + Track + Start refund, no label", () => {
+  const groups = getReturnActionModel({
+    state: "ITEM_SHIPPED",
+    sellerOptions: opts(
+      "SELLER_MARK_AS_RECEIVED",
+      "SELLER_ISSUE_REFUND",
+      "SELLER_OFFER_PARTIAL_REFUND",
+      // Even if eBay still lists a label option, we hide it once shipped.
+      "SELLER_PROVIDE_LABEL",
+    ),
+  });
+  const ids = groups.map((g) => g.id);
+  assert.equal(ids.includes("mark_received"), true);
+  assert.equal(ids.includes("track"), true);
+  assert.equal(ids.includes("label"), false);
+  const refund = groups.find((g) => g.id === "refund")!;
+  assert.equal(refund.label, "Start refund");
+});
+
+test("getReturnActionModel: closed returns expose no actions", () => {
+  assert.deepEqual(
+    getReturnActionModel({ state: "CLOSED", sellerOptions: opts("SELLER_ISSUE_REFUND") }),
+    [],
+  );
+});
+
+// ─── Status descriptors ──────────────────────────────────────────────────────
+
+test("describeReturnStatus: label-provided stage reads clearly", () => {
+  const d = describeReturnStatus({ state: "ITEM_READY_TO_SHIP" });
+  assert.equal(d.label, "Label provided - awaiting returned item");
+  assert.equal(d.tone, "progress");
+});
+
+test("describeReturnStatus: shipped/delivered/closed tones", () => {
+  assert.equal(describeReturnStatus({ state: "ITEM_SHIPPED" }).tone, "shipped");
+  assert.equal(describeReturnStatus({ state: "ITEM_DELIVERED" }).tone, "delivered");
+  assert.equal(describeReturnStatus({ state: "CLOSED" }).tone, "closed");
+});
+
+// ─── Return shipment tracking extraction ─────────────────────────────────────
+
+test("extractReturnShipmentTracking pulls carrier + tracking from Get Return detail", () => {
+  const t = extractReturnShipmentTracking({
+    detail: {
+      returnShipmentInfo: {
+        shipmentTracking: {
+          carrierUsed: "USPS",
+          carrierName: "USPS",
+          trackingNumber: "9302086041594397619130",
+          deliveryStatus: "IN_TRANSIT",
+        },
+      },
+    },
+  } as unknown as Parameters<typeof extractReturnShipmentTracking>[0]);
+  assert.equal(t.carrierUsed, "USPS");
+  assert.equal(t.trackingNumber, "9302086041594397619130");
+  assert.equal(t.deliveryStatus, "IN_TRANSIT");
+});
+
+test("extractReturnShipmentTracking is null-safe on an empty payload", () => {
+  const t = extractReturnShipmentTracking({});
+  assert.equal(t.trackingNumber, null);
+  assert.equal(t.carrierUsed, null);
 });

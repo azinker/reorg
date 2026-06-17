@@ -6,6 +6,8 @@ import {
 } from "@/lib/services/helpdesk-returns";
 import {
   getSellerActionAvailability,
+  getReturnActionModel,
+  describeReturnStatus,
   getReturnLifecycle,
   isReturnClosed,
   normalizeTotalRefund,
@@ -58,6 +60,12 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
 
   const sellerOptions = (caseRow.sellerAvailableOptions ?? []) as unknown as EbayAvailableOption[];
   const availability = getSellerActionAvailability(sellerOptions);
+  const actionModel = getReturnActionModel({ state: caseRow.returnState, sellerOptions });
+  const statusDescriptor = describeReturnStatus({
+    state: caseRow.returnState,
+    status: caseRow.returnStatus,
+    sellerActionDue: caseRow.sellerActionDue,
+  });
   const returnsLiveWritesEnabled = await getReturnsLiveWritesEnabled();
   const sellerRefund = normalizeTotalRefund({
     actualRefundAmount: caseRow.refundIsActual
@@ -86,6 +94,13 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       currentType: caseRow.currentType,
       lifecycle: getReturnLifecycle(caseRow.returnState),
       isClosed: isReturnClosed(caseRow.returnState),
+      statusDescriptor,
+      returnTracking: {
+        trackingNumber: caseRow.returnTrackingNumber,
+        carrier: caseRow.returnCarrier,
+        carrierUsed: caseRow.returnCarrierUsed,
+        deliveryStatus: caseRow.returnDeliveryStatus,
+      },
       sellerActionDue: caseRow.sellerActionDue,
       escalated: caseRow.escalated,
       caseId: caseRow.caseId,
@@ -102,6 +117,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       detailFetchedAt: caseRow.detailFetchedAt?.toISOString() ?? null,
       lastSyncedAt: caseRow.lastSyncedAt.toISOString(),
       availability,
+      actionModel,
       returnsLiveWritesEnabled,
       trackingEvents: caseRow.trackingEvents.map((t) => ({
         id: t.id,
@@ -114,6 +130,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       })),
       files: caseRow.files.map((f) => ({
         id: f.id,
+        ebayFileId: f.ebayFileId,
         fileName: f.fileName,
         filePurpose: f.filePurpose,
         contentType: f.contentType,

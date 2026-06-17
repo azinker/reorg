@@ -229,11 +229,36 @@ export interface SearchReturnsArgs {
   limit?: number;
 }
 
+export interface EbayCountSummary {
+  count?: number;
+  type?: string;
+}
+
+interface SearchReturnsBody {
+  members?: unknown[];
+  total?: number;
+  countSummary?: EbayCountSummary[];
+  paginationOutput?: {
+    limit?: number;
+    offset?: number;
+    totalEntries?: number;
+    totalPages?: number;
+  };
+}
+
 export interface SearchReturnsResult {
   members: unknown[];
+  /**
+   * Authoritative total number of returns that match the query. Comes from
+   * `paginationOutput.totalEntries` — NOT the top-level `total`, which eBay
+   * documents as "not currently used" and which returns the page size instead
+   * of the real count (this was the bug that capped every bucket at one page).
+   */
   total: number;
   totalPages: number;
-  result: EbayReturnsCallResult<{ members?: unknown[]; total?: number }>;
+  /** Per-state counts (ALL_OPEN, ITEM_SHIPPED, CLOSED, …) for the whole query. */
+  countSummary: EbayCountSummary[];
+  result: EbayReturnsCallResult<SearchReturnsBody>;
 }
 
 /**
@@ -255,7 +280,7 @@ export async function searchReturns(args: SearchReturnsArgs): Promise<SearchRetu
     offset: String(args.offset ?? 0),
   };
   if (args.returnState) query.return_state = args.returnState;
-  const result = await postOrderRequest<{ members?: unknown[]; total?: number }>({
+  const result = await postOrderRequest<SearchReturnsBody>({
     integrationId: args.integrationId,
     config: args.config,
     method: "GET",
@@ -265,11 +290,21 @@ export async function searchReturns(args: SearchReturnsArgs): Promise<SearchRetu
   });
   if (!result.ok || !result.body) {
     // 204/404 → empty window, not an error worth surfacing.
-    return { members: [], total: 0, totalPages: 0, result };
+    return { members: [], total: 0, totalPages: 0, countSummary: [], result };
   }
   const members = result.body.members ?? [];
-  const total = result.body.total ?? members.length;
-  return { members, total, totalPages: Math.ceil(total / limit), result };
+  const pagination = result.body.paginationOutput ?? {};
+  // paginationOutput.totalEntries is the real count; fall back to derived only
+  // when eBay omits it. The legacy top-level `total` is intentionally ignored.
+  const total =
+    typeof pagination.totalEntries === "number"
+      ? pagination.totalEntries
+      : members.length;
+  const totalPages =
+    typeof pagination.totalPages === "number"
+      ? pagination.totalPages
+      : Math.max(1, Math.ceil(total / limit));
+  return { members, total, totalPages, countSummary: result.body.countSummary ?? [], result };
 }
 
 /**
@@ -299,18 +334,31 @@ export async function getReturnDetail(args: {
   });
 }
 
-/** GET /post-order/v2/return/{returnId}/get_shipment_tracking — tracking scans. */
+/**
+ * GET /post-order/v2/return/{returnId}/tracking — carrier scan history.
+ * eBay REQUIRES `carrier_used` + `tracking_number` query params (both come from
+ * the return detail's returnShipmentInfo.shipmentTracking). Without them this
+ * endpoint 404s. Response is { carrierUsed, trackingNumber, trackingStatus,
+ * scanHistory: [{ eventCity, eventStateOrProvince, eventDesc, eventStatus,
+ * eventTime }] }. Read-only.
+ */
 export async function getReturnTracking(args: {
   integrationId: string;
   config: EbayConfig;
   returnId: string;
+  carrierUsed: string;
+  trackingNumber: string;
 }): Promise<EbayReturnsCallResult> {
   return postOrderRequest({
     integrationId: args.integrationId,
     config: args.config,
     method: "GET",
-    path: `/post-order/v2/return/${encodeURIComponent(args.returnId)}/get_shipment_tracking`,
-    callName: "return/get_shipment_tracking",
+    path: `/post-order/v2/return/${encodeURIComponent(args.returnId)}/tracking`,
+    query: {
+      carrier_used: args.carrierUsed,
+      tracking_number: args.trackingNumber,
+    },
+    callName: "return/tracking",
   });
 }
 
