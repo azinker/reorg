@@ -541,6 +541,149 @@ async function syncReturnFiles(
   }
 }
 
+export interface ReturnFileDownload {
+  bytes: Buffer;
+  contentType: string;
+  fileName: string;
+}
+
+function dataUrlToBuffer(
+  url: string,
+): { bytes: Buffer; contentType: string } | null {
+  const m = /^data:([^;]+);base64,([\s\S]*)$/.exec(url);
+  if (!m) return null;
+  try {
+    return { bytes: Buffer.from(m[2], "base64"), contentType: m[1] };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Resolve a return file's actual bytes for download.
+ *
+ * The eBay-hosted file URL (return.nuobject.io) is a short-lived (~15 min)
+ * pre-signed S3 link that also frequently won't resolve from a browser, so we
+ * never hand it to the client. Instead we resolve the bytes server-side, in
+ * priority order:
+ *   1. Inline base64 already stored on the row (fullUrl/url data: URLs).
+ *   2. A FRESH copy from eBay Get Files (prefer inline base64; else fetch the
+ *      fresh secureUrl server-side — bypasses the browser DNS/expiry issue).
+ *   3. The original bytes from the reorG UPLOAD_LABEL attempt payload.
+ *   4. Last resort: fetch the stored (possibly stale) remote URL server-side.
+ * Read-only against eBay.
+ */
+export async function getReturnFileDownload(
+  returnId: string,
+  fileRowId: string,
+): Promise<ReturnFileDownload | null> {
+  const caseRow = await resolveCaseByReturnId(returnId);
+  if (!caseRow) return null;
+  const file = await db.helpdeskReturnFile.findFirst({
+    where: { id: fileRowId, returnCaseId: caseRow.id },
+  });
+  if (!file) return null;
+
+  const baseName = file.fileName?.trim() || `return-${returnId}-label`;
+  const extFor = (ct: string | null): string => {
+    if (!ct) return "";
+    if (ct === "application/pdf") return ".pdf";
+    if (ct.startsWith("image/")) return "." + ct.split("/")[1];
+    return "";
+  };
+  const nameWithExt = (ct: string | null): string =>
+    /\.[a-z0-9]+$/i.test(baseName) ? baseName : baseName + extFor(ct);
+
+  // 1) Inline base64 already on the row.
+  for (const candidate of [file.fullUrl, file.url]) {
+    if (candidate && candidate.startsWith("data:")) {
+      const decoded = dataUrlToBuffer(candidate);
+      if (decoded) {
+        const ct = file.contentType ?? decoded.contentType;
+        return { bytes: decoded.bytes, contentType: ct, fileName: nameWithExt(ct) };
+      }
+    }
+  }
+
+  // 2) Re-fetch a fresh copy from eBay.
+  const integration = await db.integration.findUnique({
+    where: { id: caseRow.integrationId },
+  });
+  if (integration && file.ebayFileId) {
+    try {
+      const config = buildEbayConfig(integration);
+      const res = await getReturnFiles({ integrationId: integration.id, config, returnId });
+      if (res.ok && res.body) {
+        const files = (res.body as { files?: RawReturnFile[] }).files ?? [];
+        const match = files.find((f) => f.fileId === file.ebayFileId);
+        if (match) {
+          const ct =
+            match.contentType ??
+            fileFormatToMime(match.fileFormat ?? match.fileType) ??
+            file.contentType ??
+            "application/octet-stream";
+          if (match.fileData) {
+            return {
+              bytes: Buffer.from(match.fileData, "base64"),
+              contentType: ct,
+              fileName: nameWithExt(ct),
+            };
+          }
+          const fresh = match.secureUrl ?? match.url;
+          if (fresh) {
+            const resp = await fetch(fresh);
+            if (resp.ok) {
+              const buf = Buffer.from(await resp.arrayBuffer());
+              const respCt = resp.headers.get("content-type") ?? ct;
+              return { bytes: buf, contentType: respCt, fileName: nameWithExt(respCt) };
+            }
+          }
+        }
+      }
+    } catch {
+      // fall through
+    }
+  }
+
+  // 3) Original bytes from a reorG UPLOAD_LABEL attempt.
+  const attempt = await db.helpdeskReturnActionAttempt.findFirst({
+    where: {
+      returnCaseId: caseRow.id,
+      actionType: "UPLOAD_LABEL",
+      status: HelpdeskReturnActionStatus.COMMITTED,
+    },
+    orderBy: { committedAt: "desc" },
+  });
+  const payload = (attempt?.requestPayload ?? null) as {
+    labelFileData?: string;
+    labelFileName?: string;
+  } | null;
+  if (payload?.labelFileData) {
+    const ct = file.contentType ?? "application/pdf";
+    return {
+      bytes: Buffer.from(payload.labelFileData, "base64"),
+      contentType: ct,
+      fileName: payload.labelFileName?.trim() || nameWithExt(ct),
+    };
+  }
+
+  // 4) Last resort: fetch the stored remote URL server-side.
+  if (file.url && !file.url.startsWith("data:")) {
+    try {
+      const resp = await fetch(file.url);
+      if (resp.ok) {
+        const buf = Buffer.from(await resp.arrayBuffer());
+        const ct = resp.headers.get("content-type") ?? file.contentType ?? "application/octet-stream";
+        return { bytes: buf, contentType: ct, fileName: nameWithExt(ct) };
+      }
+    } catch {
+      // give up
+    }
+  }
+
+  return null;
+}
+
 export async function getReturnCaseDetail(returnId: string): Promise<{
   caseRow:
     | (HelpdeskReturnCase & {

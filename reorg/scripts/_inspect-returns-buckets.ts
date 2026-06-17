@@ -107,7 +107,21 @@ async function main() {
     // FULL returns BOTH `summary` and `detail`; returnShipmentInfo (tracking)
     // lives only under `detail`.
     const fullDetail = (b.detail ?? c) as Record<string, unknown>;
+    const itemDetailS = (c.itemDetail ?? {}) as Record<string, unknown>;
+    const itemDetailD = (fullDetail.itemDetail ?? {}) as Record<string, unknown>;
+    console.log("   itemDetail(summary):", {
+      itemTitle: itemDetailS.itemTitle,
+      sku: itemDetailS.sku,
+      itemId: itemDetailS.itemId,
+    });
+    console.log("   itemDetail(detail):", {
+      itemTitle: itemDetailD.itemTitle,
+      sku: itemDetailD.sku,
+      itemId: itemDetailD.itemId,
+    });
     const shipInfo = (fullDetail.returnShipmentInfo ?? {}) as Record<string, unknown>;
+    console.log("   returnShipmentInfo keys:", Object.keys(shipInfo));
+    console.log("   returnShipmentInfo:", JSON.stringify(shipInfo)?.slice(0, 1200));
     const st = (shipInfo.shipmentTracking ?? {}) as Record<string, unknown>;
     const carrierUsed = String(st.carrierUsed ?? st.carrierEnum ?? "");
     const trackingNumber = String(st.trackingNumber ?? "");

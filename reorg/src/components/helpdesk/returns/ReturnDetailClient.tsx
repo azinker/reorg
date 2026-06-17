@@ -1281,12 +1281,10 @@ function Timeline({ detail }: { detail: ReturnDetail }) {
               <span className="font-medium">{tn}</span>
             </span>
           ) : null}
-          {labelFile?.url ? (
+          {labelFile ? (
             <a
-              href={labelFile.url}
-              target="_blank"
+              href={`/api/helpdesk/returns/${encodeURIComponent(detail.returnId)}/files/${encodeURIComponent(labelFile.id)}/download`}
               rel="noreferrer"
-              download={labelFile.fileName ?? undefined}
               className="inline-flex items-center gap-1 text-[11px] font-medium text-brand hover:underline"
             >
               <Download className="h-3 w-3" /> Download label
