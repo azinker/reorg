@@ -20,6 +20,8 @@ import {
   type HelpdeskReturnCase,
 } from "@prisma/client";
 import { buildEbayConfig } from "@/lib/services/helpdesk-ebay";
+import { getOrderContextCached } from "@/lib/services/helpdesk-order-context-cache";
+import type { EbayOrderContext } from "@/lib/services/auto-responder-ebay";
 import {
   getReturnDetail,
   getReturnTracking,
@@ -249,6 +251,49 @@ function fingerprintTrackingEvent(e: {
 }
 
 /**
+ * Resolve the SKU the buyer ACTUALLY purchased from the live eBay order.
+ *
+ * eBay's Post-Order return `itemDetail.sku` is unreliable for multi-variation
+ * listings — it frequently reports the listing's default/first variation SKU
+ * instead of the variant the buyer bought (e.g. a return for CB129_MAG_BACK_3XL
+ * coming back as CB109_MAG_BACK_S). The order's transaction record is the
+ * ground truth, so we match the return's transaction id (most precise), then a
+ * unique item-id line, then a single-line order. Returns null if no confident
+ * match — the caller decides the fallback. This is what guarantees the SkuVault
+ * add-back restocks the correct SKU.
+ */
+function pickOrderLineSku(
+  ctx: EbayOrderContext | null | undefined,
+  args: { transactionId: string | null; itemId: string | null },
+): string | null {
+  const lines = ctx?.lineItems ?? [];
+  if (lines.length === 0) return null;
+  // 1. Exact transaction match — the only signal that disambiguates which
+  //    variation of a multi-variation listing was bought.
+  if (args.transactionId) {
+    const byTx = lines.find(
+      (l) => l.transactionId && l.transactionId === args.transactionId,
+    );
+    const sku = byTx?.sku?.trim();
+    if (sku) return sku;
+  }
+  // 2. Item-id match, but ONLY when unambiguous (a single line for that item).
+  if (args.itemId) {
+    const byItem = lines.filter((l) => l.itemId === args.itemId);
+    if (byItem.length === 1) {
+      const sku = byItem[0].sku?.trim();
+      if (sku) return sku;
+    }
+  }
+  // 3. Single-line order — no ambiguity possible.
+  if (lines.length === 1) {
+    const sku = lines[0].sku?.trim();
+    if (sku) return sku;
+  }
+  return null;
+}
+
+/**
  * Re-fetch a single return's detail (+ tracking + files) directly from eBay and
  * persist it. This is the authoritative read used by the detail page and
  * ALWAYS run immediately before any write so the availability check is fresh.
@@ -288,19 +333,51 @@ export async function refreshReturnDetail(returnId: string): Promise<{
   const fields = normalizeReturnSummary(raw);
   const shipTracking = extractReturnShipmentTracking(raw);
 
-  // SKU catalog fallback: eBay's return detail often omits the SKU even when it
-  // returns the item title. Resolve it from our cached MarketplaceListing by the
-  // eBay item id so the detail page always shows the real SKU when we have it.
-  let resolvedSku = fields.sku ?? existing.sku ?? null;
-  if (!resolvedSku) {
-    const itemId = fields.ebayItemId ?? existing.ebayItemId;
-    if (itemId) {
-      const listing = await db.marketplaceListing.findFirst({
-        where: { integrationId: integration.id, platformItemId: itemId },
-        select: { sku: true },
+  // ── Accurate SKU resolution ────────────────────────────────────────────────
+  // The SKU on the actual ORDER line item the buyer purchased is the ground
+  // truth. eBay's return itemDetail.sku is unreliable for multi-variation
+  // listings (it can report the listing's default variant, not the one bought),
+  // so resolve from the order's transaction FIRST and OVERWRITE any prior value.
+  // Only fall back to the return detail / catalog when the order can't be read.
+  const orderNumber = fields.ebayOrderNumber ?? existing.ebayOrderNumber;
+  const skuTransactionId = fields.transactionId ?? existing.transactionId;
+  const skuItemId = fields.ebayItemId ?? existing.ebayItemId;
+
+  let resolvedSku: string | null = null;
+  if (orderNumber) {
+    try {
+      const ctx = await getOrderContextCached(integration.id, config, orderNumber, {
+        awaitFresh: true,
       });
-      resolvedSku = listing?.sku ?? null;
+      resolvedSku = pickOrderLineSku(ctx ?? null, {
+        transactionId: skuTransactionId,
+        itemId: skuItemId,
+      });
+    } catch (err) {
+      console.warn(
+        "[helpdesk-returns] order-context SKU resolve failed",
+        err instanceof Error ? err.message : err,
+      );
     }
+  }
+  // Fallbacks only when the authoritative order line SKU is unavailable.
+  if (!resolvedSku) resolvedSku = fields.sku ?? existing.sku ?? null;
+  if (!resolvedSku && skuItemId) {
+    // Catalog fallback by item id — trust it ONLY when the listing maps to a
+    // single SKU (non-variation). Multiple distinct SKUs means it's a variation
+    // listing and the item id alone can't tell us which variant was bought.
+    const listings = await db.marketplaceListing.findMany({
+      where: { integrationId: integration.id, platformItemId: skuItemId },
+      select: { sku: true },
+    });
+    const distinct = Array.from(
+      new Set(
+        listings
+          .map((l) => l.sku?.trim())
+          .filter((s): s is string => !!s),
+      ),
+    );
+    if (distinct.length === 1) resolvedSku = distinct[0];
   }
 
   const updated = await db.helpdeskReturnCase.update({
