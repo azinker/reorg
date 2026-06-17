@@ -49,6 +49,35 @@ test("getReturnLifecycle maps states to coarse buckets", () => {
   assert.equal(getReturnLifecycle("ITEM_DELIVERED"), "delivered");
   assert.equal(getReturnLifecycle("REFUND_INITIATED"), "refund_pending");
   assert.equal(getReturnLifecycle("CLOSED"), "closed");
+  // A partial refund that was already issued is a refund stage, not "requested".
+  assert.equal(
+    getReturnLifecycle("LESS_THAN_A_FULL_REFUND_ISSUED"),
+    "refund_pending",
+  );
+  assert.equal(getReturnLifecycle("FULL_REFUND_ISSUED"), "refund_pending");
+});
+
+test("describeReturnStatus: a refund already issued reads as issued, not action-needed", () => {
+  const partial = describeReturnStatus({
+    state: "LESS_THAN_A_FULL_REFUND_ISSUED",
+    sellerActionDue: true, // must NOT bleed an "- action needed" suffix
+  });
+  assert.equal(partial.label, "Partial refund issued");
+  assert.equal(partial.tone, "closed");
+  assert.equal(describeReturnStatus({ state: "FULL_REFUND_ISSUED" }).label, "Refund issued");
+});
+
+test("deriveSellerActionDue: a refund already issued is NOT a seller to-do", () => {
+  // eBay still returns an escalation respondByDate after a partial refund, but
+  // there's nothing for the seller to do — must resolve to false.
+  assert.equal(
+    deriveSellerActionDue({
+      sellerAvailableOptions: opts("OTHER"),
+      sellerResponseDueAt: new Date("2026-06-23T06:59:59.000Z"),
+      state: "LESS_THAN_A_FULL_REFUND_ISSUED",
+    }),
+    false,
+  );
 });
 
 // ─── Status filters (eBay dropdown parity) ───────────────────────────────────

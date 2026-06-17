@@ -230,6 +230,25 @@ const REFUND_PENDING_STATES = new Set([
   "AUTO_REFUND_INITIATED",
 ]);
 
+/**
+ * A refund (full or partial) has ALREADY been issued. eBay keeps the case open
+ * for a buyer-response window — it can still auto-close or be escalated — so
+ * these are neither "pending" (money already moved) nor "closed" yet. No seller
+ * action is required even though eBay still returns a `respondByDate` for the
+ * escalation window. `LESS_THAN_A_FULL_REFUND_ISSUED` is the partial-refund case.
+ */
+const REFUND_ISSUED_STATES = new Set([
+  "LESS_THAN_A_FULL_REFUND_ISSUED",
+  "FULL_REFUND_ISSUED",
+]);
+
+/** True when a refund was already issued (set membership or `*_REFUND_ISSUED`). */
+export function isRefundIssued(state: string | null | undefined): boolean {
+  const s = normalizeState(state);
+  if (!s) return false;
+  return REFUND_ISSUED_STATES.has(s) || /REFUND_ISSUED$/.test(s);
+}
+
 const REFUNDED_OR_CLOSED_SUFFIX = /(REFUNDED|CLOSED)$/;
 
 export function normalizeState(state: string | null | undefined): string {
@@ -254,7 +273,7 @@ export function isReplacement(state: string | null | undefined, currentType?: st
 export function getReturnLifecycle(state: string | null | undefined): ReturnLifecycle {
   const s = normalizeState(state);
   if (isReturnClosed(s)) return "closed";
-  if (REFUND_PENDING_STATES.has(s)) return "refund_pending";
+  if (REFUND_PENDING_STATES.has(s) || isRefundIssued(s)) return "refund_pending";
   if (DELIVERED_STATES.has(s)) return "delivered";
   if (SHIPPED_STATES.has(s)) return "in_transit";
   return "requested";
@@ -331,6 +350,14 @@ export function describeReturnStatus(args: {
     if (/TIMEOUT/.test(s)) return { label: "Closed - no action needed", tone: "closed" };
     if (/ITEM_KEPT/.test(s)) return { label: "Closed - item kept", tone: "closed" };
     return { label: "Closed", tone: "closed" };
+  }
+
+  // A refund has already been issued (the case is open only for the buyer's
+  // accept/escalate window). Surface it as done, not as "action needed".
+  if (isRefundIssued(s)) {
+    return s === "LESS_THAN_A_FULL_REFUND_ISSUED"
+      ? { label: "Partial refund issued", tone: "closed" }
+      : { label: "Refund issued", tone: "closed" };
   }
 
   switch (s) {
@@ -707,6 +734,11 @@ export function deriveSellerActionDue(args: {
   state?: string | null;
 }): boolean {
   if (isReturnClosed(args.state)) return false;
+  // A refund (full or partial) has already been issued, or one is mid-flight —
+  // the seller has nothing to do. eBay still returns a buyer-escalation
+  // respondByDate here, so we must not treat that date as a seller to-do.
+  const st = normalizeState(args.state);
+  if (isRefundIssued(st) || REFUND_PENDING_STATES.has(st)) return false;
   const actions = extractActionTypes(args.sellerAvailableOptions);
   // Any actionable seller option (approve, refund, provide label, mark received)
   // means the ball is in the seller's court.
