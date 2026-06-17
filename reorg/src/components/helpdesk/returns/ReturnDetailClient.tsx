@@ -160,6 +160,12 @@ interface ReturnDetail {
   reasonType: string | null;
   buyerComments: string | null;
   sellerRefund: { value: number | null; currency: string | null; isActual: boolean };
+  refundBreakdown: {
+    deductionAllowed: boolean;
+    total: number;
+    currency: string;
+    lines: { feeType: string; label: string; amount: number; editable: boolean }[];
+  } | null;
   sellerResponseDueAt: string | null;
   buyerResponseDueAt: string | null;
   timeoutDate: string | null;
@@ -1764,15 +1770,34 @@ function ActionModal({
   const [skuMsg, setSkuMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
   // Live refund math for the ISSUE_REFUND screen.
-  const purchasePrice = detail.sellerRefund.value ?? 0;
+  // eBay returns a per-fee-type estimate (item price + original shipping …) and
+  // flags whether the seller may deduct. Deductions are only allowed on remorse
+  // returns with seller-paid (free) returns; not-as-described / buyer-paid-return
+  // cases must refund in full (eBay marks the lines non-editable).
+  const refundBreakdown = detail.refundBreakdown;
+  const deductionAllowed = refundBreakdown ? refundBreakdown.deductionAllowed : true;
+  // Gross (full) refund = sum of eBay's estimated lines, else the stored total.
+  const grossRefund = refundBreakdown
+    ? refundBreakdown.total
+    : detail.sellerRefund.value ?? 0;
+  // A deduction can only come off the editable lines (eBay caps it there).
+  const deductionBase = refundBreakdown
+    ? round2(
+        refundBreakdown.lines
+          .filter((l) => l.editable)
+          .reduce((s, l) => s + l.amount, 0),
+      )
+    : grossRefund;
   const dedRaw = Number(deductionValue);
   const dedNum = Number.isFinite(dedRaw) && dedRaw > 0 ? dedRaw : 0;
-  const deductionAmount = round2(
-    refundMode === "percent"
-      ? (purchasePrice * Math.min(dedNum, MAX_DEDUCTION_PCT)) / 100
-      : Math.min(dedNum, round2(purchasePrice * (MAX_DEDUCTION_PCT / 100))),
-  );
-  const totalRefund = round2(Math.max(purchasePrice - deductionAmount, 0));
+  const deductionAmount = deductionAllowed
+    ? round2(
+        refundMode === "percent"
+          ? (deductionBase * Math.min(dedNum, MAX_DEDUCTION_PCT)) / 100
+          : Math.min(dedNum, round2(deductionBase * (MAX_DEDUCTION_PCT / 100))),
+      )
+    : 0;
+  const totalRefund = round2(Math.max(grossRefund - deductionAmount, 0));
   const hasDeduction = deductionAmount > 0;
   const refundReturnQty = detail.returnQuantity ?? 1;
 
@@ -1812,7 +1837,7 @@ function ActionModal({
         body.comments = comments;
       }
       if (action === "ISSUE_REFUND") {
-        if (purchasePrice > 0) body.amount = round2(purchasePrice);
+        if (grossRefund > 0) body.amount = round2(grossRefund);
         if (hasDeduction) {
           if (deductionReasons.length === 0) {
             throw new Error("Select at least one deduction reason.");
@@ -2062,15 +2087,43 @@ function ActionModal({
 
               {action === "ISSUE_REFUND" ? (
                 <div className="space-y-3">
-                  {/* Purchase price → deduction → total refund, like eBay's
-                      "Provide a refund" page. */}
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="text-muted-foreground">Purchase price</span>
-                    <span className="font-medium text-foreground">
-                      {fmtMoney(purchasePrice, currency)}
-                    </span>
-                  </div>
+                  {/* eBay's "Provide a refund" breakdown: item price + original
+                      shipping (and any other fee lines) → deduction → total. */}
+                  {refundBreakdown ? (
+                    refundBreakdown.lines.map((l) => (
+                      <div
+                        key={l.feeType}
+                        className="flex items-center justify-between text-sm"
+                      >
+                        <span className="text-muted-foreground">{l.label}</span>
+                        <span className="font-medium text-foreground">
+                          {fmtMoney(l.amount, currency)}
+                        </span>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-muted-foreground">Purchase price</span>
+                      <span className="font-medium text-foreground">
+                        {fmtMoney(grossRefund, currency)}
+                      </span>
+                    </div>
+                  )}
 
+                  {!deductionAllowed ? (
+                    <div className="rounded-lg border border-hairline bg-surface p-3">
+                      <p className="text-xs font-medium text-foreground">
+                        No deduction available
+                      </p>
+                      <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
+                        eBay doesn&apos;t allow a refund deduction on this return,
+                        so the buyer must be refunded in full. Deductions only
+                        apply to seller-paid &ldquo;free return&rdquo; cases for
+                        remorse reasons — not when the buyer paid return shipping
+                        or the item was not as described.
+                      </p>
+                    </div>
+                  ) : (
                   <div className="rounded-lg border border-hairline bg-surface p-3">
                     <div className="mb-2 flex items-center justify-between">
                       <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
@@ -2131,7 +2184,7 @@ function ActionModal({
                       ) : null}
                     </div>
                     <p className="mt-1.5 text-[11px] text-muted-foreground">
-                      Max deduction is {MAX_DEDUCTION_PCT}% of the purchase price.
+                      Max deduction is {MAX_DEDUCTION_PCT}% of the item price.
                     </p>
 
                     {hasDeduction ? (
@@ -2165,11 +2218,8 @@ function ActionModal({
                       </div>
                     ) : null}
                   </div>
+                  )}
 
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="text-muted-foreground">Original shipping</span>
-                    <span className="text-foreground">Free</span>
-                  </div>
                   <div className="flex items-center justify-between border-t border-hairline pt-2 text-base">
                     <span className="font-semibold text-foreground">Total refund</span>
                     <span className="font-semibold text-foreground">
@@ -2283,10 +2333,19 @@ function ActionModal({
                   </span>
                 </div>
                 <div className="mt-2 space-y-1 border-t border-hairline pt-2 text-xs">
-                  <div className="flex items-center justify-between">
-                    <span className="text-muted-foreground">Purchase price</span>
-                    <span className="text-foreground">{fmtMoney(purchasePrice, currency)}</span>
-                  </div>
+                  {refundBreakdown ? (
+                    refundBreakdown.lines.map((l) => (
+                      <div key={l.feeType} className="flex items-center justify-between">
+                        <span className="text-muted-foreground">{l.label}</span>
+                        <span className="text-foreground">{fmtMoney(l.amount, currency)}</span>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="flex items-center justify-between">
+                      <span className="text-muted-foreground">Purchase price</span>
+                      <span className="text-foreground">{fmtMoney(grossRefund, currency)}</span>
+                    </div>
+                  )}
                   {hasDeduction ? (
                     <>
                       <div className="flex items-center justify-between">
@@ -2301,10 +2360,6 @@ function ActionModal({
                       </div>
                     </>
                   ) : null}
-                  <div className="flex items-center justify-between">
-                    <span className="text-muted-foreground">Original shipping</span>
-                    <span className="text-foreground">Free</span>
-                  </div>
                 </div>
                 <p className="mt-2 border-t border-hairline pt-2 text-[11px] text-muted-foreground">
                   eBay credits your selling fees on this refund automatically.

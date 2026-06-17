@@ -422,6 +422,24 @@ export interface ItemizedRefundLine {
   amount: number;
 }
 
+/** Buyer-friendly label for an eBay refund fee type (Seller Hub phrasing). */
+export function labelForRefundFeeType(feeType: string): string {
+  switch (feeType.trim().toUpperCase()) {
+    case "PURCHASE_PRICE":
+      return "Item price";
+    case "ORIGINAL_SHIPPING":
+      return "Original shipping";
+    case "RETURN_SHIPPING":
+      return "Return shipping";
+    case "RESTOCKING_FEE":
+      return "Restocking fee";
+    case "TAX":
+      return "Tax";
+    default:
+      return humanizeReturnState(feeType);
+  }
+}
+
 export type BuildItemizedRefundResult =
   | { ok: true; lines: ItemizedRefundLine[]; total: number }
   | { ok: false; error: string };

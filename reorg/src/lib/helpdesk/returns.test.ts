@@ -20,6 +20,7 @@ import {
   extractItemPresentation,
   parseEstimatedRefundLines,
   buildItemizedRefund,
+  labelForRefundFeeType,
   type EbayAvailableOption,
 } from "@/lib/helpdesk/returns";
 
@@ -160,6 +161,13 @@ test("buildItemizedRefund: deduction comes off the editable line first", () => {
 test("buildItemizedRefund: empty estimate falls back (caller uses single line)", () => {
   const out = buildItemizedRefund([], 10);
   assert.equal(out.ok, false);
+});
+
+test("labelForRefundFeeType: buyer-friendly fee labels", () => {
+  assert.equal(labelForRefundFeeType("PURCHASE_PRICE"), "Item price");
+  assert.equal(labelForRefundFeeType("ORIGINAL_SHIPPING"), "Original shipping");
+  assert.equal(labelForRefundFeeType("RESTOCKING_FEE"), "Restocking fee");
+  assert.equal(labelForRefundFeeType("SOMETHING_ELSE"), "Something Else");
 });
 
 test("deriveSellerActionDue: a refund already issued is NOT a seller to-do", () => {

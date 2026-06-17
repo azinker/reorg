@@ -12,6 +12,8 @@ import {
   getReturnLifecycle,
   isReturnClosed,
   normalizeTotalRefund,
+  parseEstimatedRefundLines,
+  labelForRefundFeeType,
   type EbayAvailableOption,
   type EbayReturnSummary,
 } from "@/lib/helpdesk/returns";
@@ -77,6 +79,26 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       : undefined,
   });
 
+  // eBay's per-fee-type refund estimate (item price + shipping etc.) and whether
+  // it permits a seller deduction. Deductions are only editable on remorse
+  // returns with seller-paid (free) returns — eBay marks the lines non-editable
+  // for not-as-described / buyer-paid-return cases, which must refund in full.
+  const estLines = parseEstimatedRefundLines(caseRow.rawDetail);
+  const refundBreakdown =
+    estLines.length > 0
+      ? {
+          deductionAllowed: estLines.some((l) => l.editable),
+          total: Math.round(estLines.reduce((s, l) => s + l.estimated, 0) * 100) / 100,
+          currency: caseRow.sellerRefundCurrency ?? "USD",
+          lines: estLines.map((l) => ({
+            feeType: l.refundFeeType,
+            label: labelForRefundFeeType(l.refundFeeType),
+            amount: l.estimated,
+            editable: l.editable,
+          })),
+        }
+      : null;
+
   return NextResponse.json({
     data: {
       id: caseRow.id,
@@ -109,6 +131,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       reasonType: caseRow.reasonType,
       buyerComments: caseRow.buyerComments,
       sellerRefund,
+      refundBreakdown,
       sellerResponseDueAt: caseRow.sellerResponseDueAt?.toISOString() ?? null,
       buyerResponseDueAt: caseRow.buyerResponseDueAt?.toISOString() ?? null,
       timeoutDate: caseRow.timeoutDate?.toISOString() ?? null,
