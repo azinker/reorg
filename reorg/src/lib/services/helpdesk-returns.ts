@@ -51,6 +51,7 @@ import {
   describeReturnStatus,
   parseEstimatedRefundLines,
   buildItemizedRefund,
+  isDeductionAllowedForShippingService,
   type EbayReturnSummary,
   type EbayAvailableOption,
   type ReturnActionKey,
@@ -379,11 +380,31 @@ export async function refreshReturnDetail(returnId: string): Promise<{
   const skuTransactionId = fields.transactionId ?? existing.transactionId;
   const skuItemId = fields.ebayItemId ?? existing.ebayItemId;
 
-  let resolvedSku = await resolveOrderLineSku(integration.id, config, {
-    orderNumber,
+  // Fetch the live order ONCE — it's the ground truth for BOTH the SKU the buyer
+  // bought AND the shipping service they used. The shipping service decides
+  // refund-deduction eligibility (eBay's return API has no usable deduction
+  // flag), so we persist it here. Cached, so the cost is shared.
+  let orderCtx: EbayOrderContext | null = null;
+  if (orderNumber) {
+    try {
+      orderCtx =
+        (await getOrderContextCached(integration.id, config, orderNumber, {
+          awaitFresh: true,
+        })) ?? null;
+    } catch (err) {
+      console.warn(
+        "[helpdesk-returns] order-context fetch failed",
+        err instanceof Error ? err.message : err,
+      );
+    }
+  }
+
+  let resolvedSku = pickOrderLineSku(orderCtx, {
     transactionId: skuTransactionId,
     itemId: skuItemId,
   });
+  const buyerShippingServiceCode =
+    orderCtx?.shippingService ?? existing.buyerShippingServiceCode ?? null;
   // Fallbacks only when the authoritative order line SKU is unavailable.
   if (!resolvedSku) resolvedSku = fields.sku ?? existing.sku ?? null;
   if (!resolvedSku && skuItemId) {
@@ -418,6 +439,7 @@ export async function refreshReturnDetail(returnId: string): Promise<{
       itemTitle: fields.itemTitle ?? existing.itemTitle,
       imageUrl: fields.imageUrl ?? existing.imageUrl,
       sku: resolvedSku,
+      buyerShippingServiceCode,
       buyerUserId: fields.buyerUserId ?? existing.buyerUserId,
       sellerUserId: fields.sellerUserId ?? existing.sellerUserId,
       returnState: fields.returnState ?? existing.returnState,
@@ -1246,7 +1268,14 @@ export async function commitReturnAction(args: {
         // original shipping.
         const estLines = parseEstimatedRefundLines(refresh.detailResult?.body);
         if (estLines.length > 0) {
-          const built = buildItemizedRefund(estLines, requested);
+          // Deduction eligibility is decided off the buyer's original shipping
+          // service (eBay exposes no usable deduction flag). buildItemizedRefund
+          // blocks a deduction only when we're certain none is allowed; for the
+          // allow case eBay remains the final authority on issue_refund.
+          const deductionAllowed = isDeductionAllowedForShippingService(
+            freshCase.buyerShippingServiceCode,
+          );
+          const built = buildItemizedRefund(estLines, requested, deductionAllowed);
           if (!built.ok) {
             await db.helpdeskReturnActionAttempt.update({
               where: { id: attempt.id },

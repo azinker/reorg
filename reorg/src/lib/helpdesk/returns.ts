@@ -413,11 +413,11 @@ export interface EstimatedRefundLine {
   /** eBay's estimated (max) refundable amount for this fee type, in dollars. */
   estimated: number;
   /**
-   * Whether a deduction may be taken off this line. True only for the item
-   * price (PURCHASE_PRICE) when the buyer did NOT pay original shipping — i.e.
-   * seller free-shipping / free-return items, the only case eBay permits a
-   * deduction. Derived from the shipping line, not eBay's (unreliable)
-   * amountEditable flag.
+   * Whether a seller deduction can be subtracted from this line. True only for
+   * the item price (PURCHASE_PRICE) — you never deduct from shipping/tax. This
+   * does NOT decide whether a deduction is *allowed at all*; that's governed by
+   * the buyer's shipping service (see `isDeductionAllowedForShippingService`)
+   * and passed into `buildItemizedRefund` separately.
    */
   editable: boolean;
 }
@@ -486,21 +486,49 @@ export function parseEstimatedRefundLines(body: unknown): EstimatedRefundLine[] 
     parsed.push({ refundFeeType: feeType, estimated: toNumber(amt?.value) });
   }
 
-  // Deductions (up to 50% off the item price) are only available when the buyer
-  // did NOT pay original shipping — i.e. seller free-shipping / free-return
-  // items. When the buyer paid shipping, eBay itemizes an ORIGINAL_SHIPPING line
-  // and requires a full refund (no deduction). eBay's own amountEditable /
-  // overwritableBySeller flags are unreliable here (always false), so we derive
-  // deductibility from the shipping line instead. The deductible line is the
-  // item price (PURCHASE_PRICE).
-  const buyerPaidShipping = parsed.some(
-    (l) => l.refundFeeType.trim().toUpperCase() === "ORIGINAL_SHIPPING" && l.estimated > 0,
-  );
+  // `editable` flags the line a seller deduction is subtracted FROM — always the
+  // item price (PURCHASE_PRICE); you never deduct from shipping/tax. Whether a
+  // deduction is *allowed at all* is a separate question answered by the buyer's
+  // shipping service (see `isDeductionAllowedForShippingService`) — eBay's own
+  // amountEditable / overwritableBySeller flags are unusable (always false, even
+  // on deduction-eligible open returns).
   return parsed.map((l) => ({
     refundFeeType: l.refundFeeType,
     estimated: l.estimated,
-    editable: l.refundFeeType.trim().toUpperCase() === "PURCHASE_PRICE" && !buyerPaidShipping,
+    editable: l.refundFeeType.trim().toUpperCase() === "PURCHASE_PRICE",
   }));
+}
+
+/**
+ * Whether eBay permits a seller deduction on a return, derived from the shipping
+ * service the buyer used on the ORIGINAL order. This is the authoritative local
+ * signal because eBay's Post-Order return API exposes NO reliable deduction flag
+ * (amountEditable / overwritableBySeller are always false, even on open returns
+ * where a deduction IS allowed — verified against live production).
+ *
+ * eBay maps the buyer's chosen shipping to a service code we can read off the
+ * order (GetOrders → ShippingServiceOptions.ShippingService):
+ *   • "USPSParcel" (and other free/economy codes) — buyer used free shipping →
+ *     a free option existed → deduction allowed.
+ *   • a named expedited service ("USPSPriority", "USPSExpress", "Expedited", …)
+ *     — a free option existed but the buyer upgraded to paid faster shipping →
+ *     deduction still allowed (it's about the *availability* of free shipping).
+ *   • "ShippingMethodStandard" — the buyer had NO free option and had to pay
+ *     (e.g. the US-protectorate $1.99 surcharge) → eBay requires a full refund,
+ *     no deduction.
+ *
+ * Unknown / unmapped codes default to ALLOW so we never wrongly BLOCK a
+ * legitimate deduction. eBay remains the final authority at issue_refund time:
+ * if a future/alternate "paid-only" scenario truly forbids a deduction, eBay
+ * rejects it and we surface that error verbatim rather than guessing wrong.
+ */
+const NO_FREE_SHIPPING_SERVICE_CODES = new Set(["shippingmethodstandard"]);
+export function isDeductionAllowedForShippingService(
+  code: string | null | undefined,
+): boolean {
+  const c = (code ?? "").trim().toLowerCase();
+  if (!c) return true;
+  return !NO_FREE_SHIPPING_SERVICE_CODES.has(c);
 }
 
 /**
@@ -508,14 +536,20 @@ export function parseEstimatedRefundLines(body: unknown): EstimatedRefundLine[] 
  * seller's requested refund total. Uses integer cents to avoid float drift.
  *
  * - A full refund sends every line at its estimated cap.
- * - A deduction (requested < total estimated) is applied ONLY to editable lines
- *   (largest first). If eBay marks every line non-editable, a deduction is
- *   rejected with a clear message (e.g. SNAD returns must refund in full).
+ * - A deduction (requested < total estimated) is applied ONLY to the item-price
+ *   line(s) (largest first), and ONLY when `deductionAllowed` is true. When the
+ *   buyer had no free-shipping option, a deduction is rejected with a clear
+ *   message (the buyer must be refunded in full).
  * - The requested total is clamped so it can never exceed eBay's estimate.
+ *
+ * `deductionAllowed` comes from {@link isDeductionAllowedForShippingService} —
+ * eBay's return API has no reliable per-line deduction flag, so we decide off
+ * the buyer's original shipping service.
  */
 export function buildItemizedRefund(
   estLines: EstimatedRefundLine[],
   requestedRefund: number,
+  deductionAllowed = true,
 ): BuildItemizedRefundResult {
   if (estLines.length === 0) return { ok: false, error: "No estimated refund detail from eBay." };
 
@@ -534,6 +568,13 @@ export function buildItemizedRefund(
 
   let reductionCents = totalEstCents - reqCents;
   if (reductionCents > 0) {
+    if (!deductionAllowed) {
+      return {
+        ok: false,
+        error:
+          "This buyer had no free-shipping option, so eBay requires a full refund — no deduction can be taken. Clear the deduction and try again.",
+      };
+    }
     const editableCapacity = lines
       .filter((l) => l.editable)
       .reduce((s, l) => s + l.cents, 0);
@@ -541,7 +582,7 @@ export function buildItemizedRefund(
       return {
         ok: false,
         error:
-          "This buyer paid for shipping, so eBay requires a full refund — no deduction is available. Clear the deduction and try again.",
+          "eBay didn't return an item-price line for this return, so a deduction can't be applied. Clear the deduction and try again.",
       };
     }
     if (reductionCents > editableCapacity) {

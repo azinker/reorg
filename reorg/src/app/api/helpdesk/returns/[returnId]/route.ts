@@ -14,6 +14,7 @@ import {
   normalizeTotalRefund,
   parseEstimatedRefundLines,
   labelForRefundFeeType,
+  isDeductionAllowedForShippingService,
   type EbayAvailableOption,
   type EbayReturnSummary,
 } from "@/lib/helpdesk/returns";
@@ -79,15 +80,19 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       : undefined,
   });
 
-  // eBay's per-fee-type refund estimate (item price + shipping etc.) and whether
-  // it permits a seller deduction. Deductions are only editable on remorse
-  // returns with seller-paid (free) returns — eBay marks the lines non-editable
-  // for not-as-described / buyer-paid-return cases, which must refund in full.
+  // eBay's per-fee-type refund estimate (item price + shipping etc.). Whether a
+  // seller deduction is permitted is decided off the buyer's original shipping
+  // service (eBay's return API has no usable deduction flag): a deduction is
+  // forbidden only when the buyer had NO free-shipping option available
+  // (ShippingMethodStandard). See `isDeductionAllowedForShippingService`.
+  const deductionAllowed = isDeductionAllowedForShippingService(
+    caseRow.buyerShippingServiceCode,
+  );
   const estLines = parseEstimatedRefundLines(caseRow.rawDetail);
   const refundBreakdown =
     estLines.length > 0
       ? {
-          deductionAllowed: estLines.some((l) => l.editable),
+          deductionAllowed,
           total: Math.round(estLines.reduce((s, l) => s + l.estimated, 0) * 100) / 100,
           currency: caseRow.sellerRefundCurrency ?? "USD",
           lines: estLines.map((l) => ({

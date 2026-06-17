@@ -1796,6 +1796,14 @@ model HelpdeskReturnCase {
   itemTitle       String?  @db.Text
   imageUrl        String?
   sku             String?
+  /// Raw eBay shipping service code the buyer used on the original order
+  /// (e.g. "USPSParcel" = free shipping, "ShippingMethodStandard" = the buyer
+  /// had no free option and paid, "USPSPriority"/expedited = a free option
+  /// existed but the buyer upgraded). Resolved from the live order (GetOrders).
+  /// Drives refund deduction eligibility: a deduction is only forbidden when the
+  /// buyer had NO possible free-shipping option (ShippingMethodStandard). See
+  /// `isDeductionAllowedForShippingService`.
+  buyerShippingServiceCode String?
 
   buyerUserId  String?
   sellerUserId String?

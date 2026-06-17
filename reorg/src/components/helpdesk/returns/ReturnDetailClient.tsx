@@ -2116,10 +2116,11 @@ function ActionModal({
                         No deduction available
                       </p>
                       <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
-                        This buyer paid for original shipping, so eBay requires a
-                        full refund — no deduction can be taken. Deductions (up to
-                        50% off the item price) are only available when the buyer
-                        received free shipping (seller free returns).
+                        This buyer had no free-shipping option on this order, so
+                        eBay requires a full refund — no deduction can be taken.
+                        Deductions (up to 50% off the item price) are only
+                        available when a free-shipping option was available to the
+                        buyer (even if they upgraded to faster paid shipping).
                       </p>
                     </div>
                   ) : (
