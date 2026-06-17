@@ -85,7 +85,7 @@ async function main() {
       integrationId: integration.id,
       config,
       returnId: rid,
-      fieldgroups: "SUMMARY",
+      fieldgroups: "FULL",
     });
     console.log(`\n=== Get Return ${rid} ok=${res.ok} status=${res.status} ===`);
     if (!res.ok) {
@@ -104,7 +104,10 @@ async function main() {
       buyerResponseDue: c.buyerResponseDue,
     });
 
-    const shipInfo = (c.returnShipmentInfo ?? {}) as Record<string, unknown>;
+    // FULL returns BOTH `summary` and `detail`; returnShipmentInfo (tracking)
+    // lives only under `detail`.
+    const fullDetail = (b.detail ?? c) as Record<string, unknown>;
+    const shipInfo = (fullDetail.returnShipmentInfo ?? {}) as Record<string, unknown>;
     const st = (shipInfo.shipmentTracking ?? {}) as Record<string, unknown>;
     const carrierUsed = String(st.carrierUsed ?? st.carrierEnum ?? "");
     const trackingNumber = String(st.trackingNumber ?? "");

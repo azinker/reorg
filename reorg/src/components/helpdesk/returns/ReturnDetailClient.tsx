@@ -1283,11 +1283,15 @@ function ReturnTrackingBox({
           <span className="text-muted-foreground">{carrier}:</span>
           <span className="font-medium text-foreground">{tn}</span>
           <CopyButton value={tn} label="tracking number" />
-          {status ? (
+          {status && !["UNKNOWN", "UNCONFIRMED"].includes(status.toUpperCase()) ? (
             <span className="inline-flex items-center rounded-full bg-indigo-500/15 px-2 py-0.5 text-[11px] font-semibold text-indigo-600 dark:text-indigo-300">
               {humanizeTrackingStatus(status)}
             </span>
-          ) : null}
+          ) : (
+            <span className="inline-flex items-center rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
+              Awaiting carrier scan
+            </span>
+          )}
         </div>
       ) : (
         <p className="text-sm text-muted-foreground">

@@ -310,13 +310,14 @@ export async function searchReturns(args: SearchReturnsArgs): Promise<SearchRetu
 /**
  * GET /post-order/v2/return/{returnId} — single return. Read-only.
  *
- * `fieldgroups` controls which containers come back:
- *   - FULL (default)  → the `detail` container only (item title/pic, refundInfo).
- *   - SUMMARY         → the `summary` container only — this is the ONLY place
- *                       sellerAvailableOptions / sellerResponseDue / state live.
- * We default to SUMMARY for the action + availability path because the detail
- * page and the pre-write safety gate need the seller's available options. The
- * sync's title/image enrichment passes FULL to read itemDetail.
+ * `fieldgroups` controls which containers come back (verified against live data):
+ *   - SUMMARY → ONLY the `summary` container (sellerAvailableOptions /
+ *               sellerResponseDue / state). Its `returnShipmentInfo` is empty.
+ *   - FULL    → BOTH the `summary` AND `detail` containers. `detail` adds
+ *               returnShipmentInfo (buyer return-shipment tracking), refundInfo,
+ *               itemDetail, and files.
+ * We default to SUMMARY for the cheap availability path. The detail refresh and
+ * enrichment pass FULL so they also get tracking + item detail in one call.
  */
 export async function getReturnDetail(args: {
   integrationId: string;

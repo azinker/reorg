@@ -245,10 +245,15 @@ export async function refreshReturnDetail(returnId: string): Promise<{
   }
   const config = buildEbayConfig(integration);
 
+  // FULL returns BOTH the `summary` container (sellerAvailableOptions / state /
+  // response-due) AND the `detail` container (returnShipmentInfo with the buyer's
+  // return-shipment tracking, refundInfo, item detail, files). SUMMARY omits
+  // returnShipmentInfo entirely, so we'd never learn the return tracking number.
   const detailResult = await getReturnDetail({
     integrationId: integration.id,
     config,
     returnId,
+    fieldgroups: "FULL",
   });
   if (!detailResult.ok || !detailResult.body) {
     return { caseRow: existing, detailResult, error: detailResult.errorMessage };
