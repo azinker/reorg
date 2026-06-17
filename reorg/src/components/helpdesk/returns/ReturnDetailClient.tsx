@@ -33,10 +33,13 @@ import {
   AlertTriangle,
   ExternalLink,
   MessageSquare,
+  MessagesSquare,
   ChevronDown,
   ChevronUp,
   Copy,
   Check,
+  Upload,
+  X,
 } from "lucide-react";
 import {
   StoreBadge,
@@ -45,6 +48,7 @@ import {
   fmtDateTime,
   fmtMoney,
   humanizeReason,
+  reasonDefectAssociation,
   STORE_FULL,
   type ReturnLifecycle,
 } from "./returns-ui";
@@ -78,6 +82,8 @@ interface ReturnFile {
   id: string;
   fileName: string | null;
   filePurpose: string | null;
+  contentType: string | null;
+  submitter: string | null;
   url: string | null;
   source: string | null;
   createdAt: string;
@@ -152,12 +158,14 @@ const CARRIERS = [
 ];
 
 // Actions the v1 write flow can actually execute (subset of ActionKey).
-// PROVIDE_EBAY_LABEL is intentionally NOT here — it purchases a paid eBay label
-// and is handled as a deep-link to eBay's own label-purchase flow instead.
+// PROVIDE_EBAY_LABEL is now wired: it asks eBay to generate a prepaid return
+// label for the buyer (eBay charges the seller). It runs through the same
+// preview → typed-confirm → commit + safety-gate chain as every other write.
 const EXECUTABLE: ActionKey[] = [
   "APPROVE_RETURN",
   "OFFER_PARTIAL_REFUND",
   "UPLOAD_LABEL",
+  "PROVIDE_EBAY_LABEL",
   "CONFIRM_LABEL_SENT",
   "MARK_AS_RECEIVED",
   "ISSUE_REFUND",
@@ -191,8 +199,8 @@ const ACTION_META: Record<
   },
   UPLOAD_LABEL: {
     label: "Upload a label",
-    desc: "Upload a return label and tracking from your preferred carrier.",
-    icon: Truck,
+    desc: "Upload a PDF/image return label file + tracking from your own carrier.",
+    icon: Upload,
   },
   CONFIRM_LABEL_SENT: {
     label: "Confirm you sent a label",
@@ -201,7 +209,7 @@ const ACTION_META: Record<
   },
   PROVIDE_EBAY_LABEL: {
     label: "Provide an eBay label",
-    desc: "Purchase an eBay return label based on eBay-negotiated rates (opens eBay).",
+    desc: "eBay generates a prepaid return label for the buyer and charges you for it.",
     icon: Truck,
   },
   MARK_AS_RECEIVED: {
@@ -219,6 +227,104 @@ const ACTION_META: Record<
 /** Deep link to the eBay return case (opens in a new tab). */
 function ebayReturnUrl(returnId: string): string {
   return `https://www.ebay.com/rtn/Return/ReturnsDetail?returnId=${encodeURIComponent(returnId)}`;
+}
+
+/** Deep link to the live eBay listing for an item id (opens in a new tab). */
+function ebayListingUrl(itemId: string): string {
+  return `https://www.ebay.com/itm/${encodeURIComponent(itemId)}`;
+}
+
+/** True for image files we can render inline (jpeg/png/gif/bmp or a data: image URL). */
+function isImageFile(f: ReturnFile): boolean {
+  if (f.contentType && f.contentType.startsWith("image/")) return true;
+  if (f.url && f.url.startsWith("data:image/")) return true;
+  return false;
+}
+
+/** A photo the buyer attached to the return (proof / item condition). */
+function isBuyerPhoto(f: ReturnFile): boolean {
+  const sub = (f.submitter ?? "").toUpperCase();
+  return sub === "BUYER" && isImageFile(f) && !!f.url;
+}
+
+/** Reason value with the seller-defect association badge (Return details). */
+function ReasonValue({
+  reason,
+  reasonType,
+}: {
+  reason: string | null;
+  reasonType: string | null;
+}) {
+  const defect = reasonDefectAssociation(reason, reasonType);
+  return (
+    <span className="inline-flex flex-wrap items-center gap-1.5">
+      <span>{humanizeReason(reason)}</span>
+      {defect === null ? null : (
+        <span
+          className={
+            "inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-semibold " +
+            (defect
+              ? "bg-red-500/15 text-red-600 dark:text-red-300"
+              : "bg-emerald-500/15 text-emerald-600 dark:text-emerald-300")
+          }
+        >
+          {defect ? "Defect Associated" : "No Defect Associated"}
+        </span>
+      )}
+    </span>
+  );
+}
+
+/** Buyer-uploaded photos rendered as clickable thumbnails (expand to lightbox). */
+function BuyerPhotos({ files }: { files: ReturnFile[] }) {
+  const photos = files.filter(isBuyerPhoto);
+  const [active, setActive] = useState<string | null>(null);
+  if (photos.length === 0) return null;
+  return (
+    <>
+      <div className="mt-3">
+        <p className="mb-1.5 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+          Buyer photos ({photos.length})
+        </p>
+        <div className="flex flex-wrap gap-2">
+          {photos.map((p) => (
+            <button
+              key={p.id}
+              type="button"
+              onClick={() => setActive(p.url)}
+              className="h-16 w-16 overflow-hidden rounded-md border border-hairline bg-surface transition-transform hover:scale-105 cursor-pointer"
+              title="Click to expand"
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={p.url ?? ""} alt="" className="h-full w-full object-cover" />
+            </button>
+          ))}
+        </div>
+      </div>
+      {active ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-6"
+          onClick={() => setActive(null)}
+        >
+          <button
+            type="button"
+            onClick={() => setActive(null)}
+            className="absolute right-4 top-4 rounded-full bg-white/10 p-2 text-white hover:bg-white/20 cursor-pointer"
+            aria-label="Close"
+          >
+            <X className="h-5 w-5" />
+          </button>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={active}
+            alt=""
+            className="max-h-[85vh] max-w-[90vw] rounded-lg object-contain"
+            onClick={(e) => e.stopPropagation()}
+          />
+        </div>
+      ) : null}
+    </>
+  );
 }
 
 export default function ReturnDetailClient({ returnId }: { returnId: string }) {
@@ -241,6 +347,8 @@ export default function ReturnDetailClient({ returnId }: { returnId: string }) {
 
   // Action modal state
   const [activeAction, setActiveAction] = useState<ActionKey | null>(null);
+  // Message-correspondence popup state
+  const [showCorrespondence, setShowCorrespondence] = useState(false);
 
   const load = useCallback(
     async (refresh: boolean) => {
@@ -334,13 +442,7 @@ export default function ReturnDetailClient({ returnId }: { returnId: string }) {
       return { enabled: false, reason: "eBay does not currently offer this action." };
     }
     if (a.policyBlocked) {
-      return {
-        enabled: false,
-        reason:
-          key === "PROVIDE_EBAY_LABEL"
-            ? "Buying an eBay-paid label is blocked by reorG policy."
-            : "Blocked by reorG policy.",
-      };
+      return { enabled: false, reason: "Blocked by reorG policy." };
     }
     if (!EXECUTABLE.includes(key)) {
       return { enabled: false, reason: "Not supported in reorG v1." };
@@ -448,37 +550,6 @@ export default function ReturnDetailClient({ returnId }: { returnId: string }) {
                 {offeredActions.map((a) => {
                   const meta = ACTION_META[a.key];
                   const Icon = meta.icon;
-
-                  // "Provide an eBay label" buys a paid eBay label through
-                  // eBay's own purchase flow — deep-link there instead of
-                  // firing an ambiguous paid API write.
-                  if (a.key === "PROVIDE_EBAY_LABEL") {
-                    return (
-                      <a
-                        key={a.key}
-                        href={ebayReturnUrl(detail.returnId)}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="flex w-full items-start gap-3 rounded-lg border border-brand/30 bg-brand/5 p-3 text-left transition-colors hover:bg-brand/10 cursor-pointer"
-                      >
-                        <Icon className="mt-0.5 h-4 w-4 shrink-0 text-brand" />
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-2">
-                            <span className="text-sm font-medium text-foreground">
-                              {meta.label}
-                            </span>
-                            <span className="inline-flex items-center gap-1 rounded bg-brand/15 px-1.5 py-0.5 text-[10px] font-semibold text-brand">
-                              <ExternalLink className="h-2.5 w-2.5" /> eBay
-                            </span>
-                          </div>
-                          <p className="mt-0.5 text-xs text-muted-foreground">
-                            {meta.desc}
-                          </p>
-                        </div>
-                      </a>
-                    );
-                  }
-
                   const st = actionState(a.key);
                   return (
                     <button
@@ -528,7 +599,10 @@ export default function ReturnDetailClient({ returnId }: { returnId: string }) {
               Return details
             </h2>
             <dl className="grid grid-cols-2 gap-x-6 gap-y-3 text-sm">
-              <Detail label="Reason" value={humanizeReason(detail.reason)} />
+              <Detail
+                label="Reason"
+                value={<ReasonValue reason={detail.reason} reasonType={detail.reasonType} />}
+              />
               <Detail label="Return type" value={detail.currentType ?? "Return"} />
               <Detail
                 label="Quantity"
@@ -553,15 +627,37 @@ export default function ReturnDetailClient({ returnId }: { returnId: string }) {
                   </a>
                 }
               />
+              {!detail.isClosed && detail.sellerResponseDueAt ? (
+                <Detail
+                  label="Approve / respond by"
+                  value={
+                    <span className="inline-flex items-center gap-1 font-medium text-amber-600 dark:text-amber-300">
+                      <Clock className="h-3.5 w-3.5" />
+                      {fmtDateTime(detail.sellerResponseDueAt)}
+                    </span>
+                  }
+                />
+              ) : null}
             </dl>
-            {detail.buyerComments ? (
+            {!detail.isClosed && detail.sellerResponseDueAt ? (
+              <p className="mt-3 flex items-start gap-1.5 rounded-md border border-amber-500/25 bg-amber-500/5 px-2.5 py-1.5 text-[11px] text-amber-700 dark:text-amber-300">
+                <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
+                If you don&apos;t respond by this date, eBay may auto-escalate —
+                closing the case against the seller or providing the buyer a
+                return label automatically.
+              </p>
+            ) : null}
+            {detail.buyerComments || detail.files.some((f) => isBuyerPhoto(f)) ? (
               <div className="mt-4 rounded-lg border border-hairline bg-surface p-3">
                 <p className="mb-1 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
                   Buyer comments
                 </p>
-                <p className="whitespace-pre-wrap text-sm text-foreground">
-                  {detail.buyerComments}
-                </p>
+                {detail.buyerComments ? (
+                  <p className="whitespace-pre-wrap text-sm text-foreground">
+                    {detail.buyerComments}
+                  </p>
+                ) : null}
+                <BuyerPhotos files={detail.files} />
               </div>
             ) : null}
           </section>
@@ -616,9 +712,21 @@ export default function ReturnDetailClient({ returnId }: { returnId: string }) {
               </div>
               <div className="min-w-0">
                 <StoreBadge platform={detail.platform} />
-                <p className="mt-1 line-clamp-3 text-sm font-medium text-foreground">
-                  {detail.itemTitle ?? "(no title)"}
-                </p>
+                {detail.itemTitle && detail.ebayItemId ? (
+                  <a
+                    href={ebayListingUrl(detail.ebayItemId)}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="mt-1 line-clamp-3 inline-flex text-sm font-medium text-foreground hover:text-brand hover:underline"
+                    title="Open the listing on eBay"
+                  >
+                    {detail.itemTitle}
+                  </a>
+                ) : (
+                  <p className="mt-1 line-clamp-3 text-sm font-medium text-foreground">
+                    {detail.itemTitle ?? "(no title)"}
+                  </p>
+                )}
               </div>
             </div>
 
@@ -691,14 +799,16 @@ export default function ReturnDetailClient({ returnId }: { returnId: string }) {
                 value={
                   detail.buyerUserId ? (
                     <span className="inline-flex items-center gap-1">
-                      <Link
+                      <a
                         href={`/help-desk?q=${encodeURIComponent(detail.buyerUserId)}`}
+                        target="_blank"
+                        rel="noreferrer"
                         className="inline-flex items-center gap-1 text-brand hover:underline"
-                        title="Search this buyer in Help Desk"
+                        title="Search this buyer in Help Desk (new tab)"
                       >
                         {detail.buyerUserId}
                         <MessageSquare className="h-3 w-3" />
-                      </Link>
+                      </a>
                       <CopyButton value={detail.buyerUserId} label="buyer username" />
                     </span>
                   ) : (
@@ -786,8 +896,27 @@ export default function ReturnDetailClient({ returnId }: { returnId: string }) {
               ) : null}
             </div>
           ) : null}
+
+          {/* Message correspondence — opens a popup with this buyer's threads. */}
+          <button
+            type="button"
+            onClick={() => setShowCorrespondence(true)}
+            className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-hairline bg-card px-4 py-2.5 text-sm font-medium text-foreground hover:bg-surface-2 cursor-pointer"
+          >
+            <MessagesSquare className="h-4 w-4 text-brand" />
+            View Message Correspondence
+          </button>
         </aside>
       </div>
+
+      {/* Correspondence popup */}
+      {showCorrespondence ? (
+        <CorrespondenceModal
+          returnId={detail.returnId}
+          buyerUserId={detail.buyerUserId}
+          onClose={() => setShowCorrespondence(false)}
+        />
+      ) : null}
 
       {/* Action modal */}
       {activeAction ? (
@@ -1074,6 +1203,10 @@ function ActionModal({
   const [carrier, setCarrier] = useState("USPS");
   const [tracking, setTracking] = useState("");
   const [comments, setComments] = useState("");
+  // UPLOAD_LABEL file attachment (base64, no data: prefix)
+  const [labelFileName, setLabelFileName] = useState<string | null>(null);
+  const [labelFileData, setLabelFileData] = useState<string | null>(null);
+  const [fileBusy, setFileBusy] = useState(false);
   const [deductionType, setDeductionType] = useState<"none" | "percent" | "amount">(
     "none",
   );
@@ -1110,6 +1243,13 @@ function ActionModal({
         if (!tracking.trim()) throw new Error("Enter the tracking number.");
         body.trackingNumber = tracking.trim();
         if (comments) body.comments = comments;
+      }
+      if (action === "UPLOAD_LABEL") {
+        if (!labelFileData || !labelFileName) {
+          throw new Error("Choose a label file (PDF or image) to upload.");
+        }
+        body.labelFileData = labelFileData;
+        body.labelFileName = labelFileName;
       }
       if (action === "ISSUE_REFUND" && deductionType !== "none") {
         const n = Number(deductionValue);
@@ -1208,6 +1348,61 @@ function ActionModal({
                     onChange={(e) => setAmount(e.target.value)}
                     className="h-9 w-full rounded-md border border-hairline bg-surface px-2 text-sm text-foreground"
                   />
+                </Labeled>
+              ) : null}
+
+              {action === "UPLOAD_LABEL" ? (
+                <Labeled label="Label file (PDF or image)">
+                  <div className="flex items-center gap-2">
+                    <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-brand/40 bg-brand/10 px-3 py-1.5 text-xs font-medium text-brand hover:bg-brand/20">
+                      {fileBusy ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <Upload className="h-3.5 w-3.5" />
+                      )}
+                      Browse…
+                      <input
+                        type="file"
+                        accept="application/pdf,image/png,image/jpeg,image/gif"
+                        className="hidden"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (!file) return;
+                          if (file.size > 10 * 1024 * 1024) {
+                            setErr("Label file must be 10 MB or smaller.");
+                            return;
+                          }
+                          setErr(null);
+                          setFileBusy(true);
+                          const reader = new FileReader();
+                          reader.onload = () => {
+                            const result = String(reader.result ?? "");
+                            const base64 = result.includes(",")
+                              ? result.slice(result.indexOf(",") + 1)
+                              : result;
+                            setLabelFileData(base64);
+                            setLabelFileName(file.name);
+                            setFileBusy(false);
+                          };
+                          reader.onerror = () => {
+                            setErr("Could not read that file.");
+                            setFileBusy(false);
+                          };
+                          reader.readAsDataURL(file);
+                        }}
+                      />
+                    </label>
+                    {labelFileName ? (
+                      <span className="inline-flex min-w-0 items-center gap-1 text-xs text-foreground">
+                        <Check className="h-3.5 w-3.5 shrink-0 text-emerald-500" />
+                        <span className="truncate">{labelFileName}</span>
+                      </span>
+                    ) : (
+                      <span className="text-xs text-muted-foreground">
+                        No file chosen
+                      </span>
+                    )}
+                  </div>
                 </Labeled>
               ) : null}
 
@@ -1404,5 +1599,205 @@ function Labeled({
       </span>
       {children}
     </label>
+  );
+}
+
+// ── Message correspondence popup ──────────────────────────────────────────────
+
+interface CorrespondenceMessage {
+  id: string;
+  direction: string;
+  source: string;
+  fromName: string | null;
+  bodyText: string;
+  isHtml: boolean;
+  sentAt: string;
+}
+interface CorrespondenceThread {
+  ticketId: string;
+  subject: string | null;
+  ebayOrderNumber: string | null;
+  messages: CorrespondenceMessage[];
+}
+interface CorrespondenceData {
+  buyerUserId: string | null;
+  threads: CorrespondenceThread[];
+  ticketSearchHref: string | null;
+}
+
+function CorrespondenceModal({
+  returnId,
+  buyerUserId,
+  onClose,
+}: {
+  returnId: string;
+  buyerUserId: string | null;
+  onClose: () => void;
+}) {
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState<string | null>(null);
+  const [data, setData] = useState<CorrespondenceData | null>(null);
+
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") onClose();
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(
+          `/api/helpdesk/returns/${encodeURIComponent(returnId)}/correspondence`,
+          { cache: "no-store" },
+        );
+        const json = (await res.json().catch(() => null)) as {
+          data?: CorrespondenceData;
+          error?: string;
+        } | null;
+        if (!res.ok) throw new Error(json?.error ?? `Failed (${res.status})`);
+        if (!cancelled) setData(json?.data ?? null);
+      } catch (e) {
+        if (!cancelled) setErr(e instanceof Error ? e.message : "Failed to load.");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [returnId]);
+
+  const totalMessages =
+    data?.threads.reduce((n, t) => n + t.messages.length, 0) ?? 0;
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+      onClick={onClose}
+    >
+      <div
+        className="flex max-h-[85vh] w-full max-w-2xl flex-col rounded-xl border border-hairline bg-card shadow-xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between border-b border-hairline px-5 py-3">
+          <div className="min-w-0">
+            <h3 className="flex items-center gap-2 text-sm font-semibold text-foreground">
+              <MessagesSquare className="h-4 w-4 text-brand" />
+              Message correspondence
+            </h3>
+            {buyerUserId ? (
+              <p className="mt-0.5 text-[11px] text-muted-foreground">
+                Buyer {buyerUserId} · {totalMessages} message
+                {totalMessages === 1 ? "" : "s"}
+              </p>
+            ) : null}
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="text-muted-foreground hover:text-foreground cursor-pointer"
+            aria-label="Close"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+          {loading ? (
+            <div className="flex items-center justify-center py-10">
+              <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+            </div>
+          ) : err ? (
+            <p className="py-6 text-center text-sm text-red-600 dark:text-red-300">
+              {err}
+            </p>
+          ) : !data || data.threads.length === 0 ? (
+            <div className="py-8 text-center">
+              <MessageSquare className="mx-auto mb-2 h-6 w-6 text-muted-foreground/50" />
+              <p className="text-sm text-muted-foreground">
+                No Help Desk messages found for this buyer yet.
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-5">
+              {data.threads.map((t) => (
+                <div key={t.ticketId}>
+                  <div className="mb-2 flex items-center justify-between gap-2">
+                    <p className="truncate text-xs font-semibold text-foreground">
+                      {t.subject ?? "(no subject)"}
+                    </p>
+                    {t.ebayOrderNumber ? (
+                      <span className="shrink-0 rounded bg-surface-2 px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                        {t.ebayOrderNumber}
+                      </span>
+                    ) : null}
+                  </div>
+                  <div className="space-y-2">
+                    {t.messages.map((m) => {
+                      const outbound = m.direction === "OUTBOUND";
+                      return (
+                        <div
+                          key={m.id}
+                          className={
+                            "flex " + (outbound ? "justify-end" : "justify-start")
+                          }
+                        >
+                          <div
+                            className={
+                              "max-w-[80%] rounded-lg px-3 py-2 text-sm " +
+                              (outbound
+                                ? "bg-brand/10 text-foreground"
+                                : "bg-surface text-foreground")
+                            }
+                          >
+                            <p className="mb-0.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+                              {m.fromName ?? (outbound ? "You" : "Buyer")} ·{" "}
+                              {fmtDateTime(m.sentAt)}
+                            </p>
+                            {m.isHtml ? (
+                              <div
+                                className="prose prose-sm max-w-none text-foreground [&_*]:!text-foreground"
+                                dangerouslySetInnerHTML={{ __html: m.bodyText }}
+                              />
+                            ) : (
+                              <p className="whitespace-pre-wrap">{m.bodyText}</p>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <Link
+                    href={`/help-desk?ticket=${encodeURIComponent(t.ticketId)}`}
+                    target="_blank"
+                    className="mt-2 inline-flex items-center gap-1 text-[11px] text-brand hover:underline"
+                  >
+                    Open ticket <ExternalLink className="h-3 w-3" />
+                  </Link>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {data?.ticketSearchHref ? (
+          <div className="border-t border-hairline px-5 py-3">
+            <a
+              href={data.ticketSearchHref}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1.5 text-xs font-medium text-brand hover:underline"
+            >
+              <MessageSquare className="h-3.5 w-3.5" />
+              Open full conversation in Help Desk
+            </a>
+          </div>
+        ) : null}
+      </div>
+    </div>
   );
 }

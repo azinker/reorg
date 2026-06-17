@@ -29,11 +29,14 @@ import {
   markAsReceived,
   addForwardedShippingLabel,
   uploadReturnShippingLabel,
+  uploadReturnFile,
+  provideEbayReturnLabel,
   type EbayReturnsCallResult,
 } from "@/lib/services/helpdesk-ebay-returns-client";
 import {
   normalizeReturnSummary,
   matchesStatusFilter,
+  matchesBucketFilter,
   getReturnLifecycle,
   isReturnClosed,
   validateDeduction,
@@ -76,6 +79,7 @@ export interface ReturnListItem {
   isClosed: boolean;
   sellerActionDue: boolean;
   reason: string | null;
+  reasonType: string | null;
   sellerRefundValue: number | null;
   sellerRefundCurrency: string | null;
   refundIsActual: boolean;
@@ -101,6 +105,7 @@ function toListItem(row: HelpdeskReturnCase): ReturnListItem {
     isClosed: isReturnClosed(row.returnState),
     sellerActionDue: row.sellerActionDue,
     reason: row.reason,
+    reasonType: row.reasonType,
     sellerRefundValue: row.sellerRefundValue,
     sellerRefundCurrency: row.sellerRefundCurrency,
     refundIsActual: row.refundIsActual,
@@ -154,13 +159,21 @@ export async function listReturnCases(filters: ListReturnsFilters): Promise<{
   });
 
   const statusKey = filters.status ?? "open_all";
-  const filtered = candidates.filter((row) =>
-    matchesStatusFilter(statusKey, {
+  const filtered = candidates.filter((row) => {
+    // Prefer the authoritative eBay-bucket membership recorded on the last
+    // sync (matches Seller Hub's status dropdown exactly). Fall back to the
+    // state-derived heuristic only for rows not yet re-synced with buckets.
+    const buckets = Array.isArray(row.ebayBuckets)
+      ? (row.ebayBuckets as unknown[]).map((b) => String(b))
+      : [];
+    const byBucket = matchesBucketFilter(statusKey, buckets);
+    if (byBucket !== null) return byBucket;
+    return matchesStatusFilter(statusKey, {
       state: row.returnState,
       currentType: row.currentType,
       sellerActionDue: row.sellerActionDue,
-    }),
-  );
+    });
+  });
 
   const sort = filters.sort ?? "opened_desc";
   filtered.sort((a, b) => {
@@ -342,9 +355,30 @@ interface RawReturnFile {
   fileName?: string;
   filePurpose?: string;
   fileType?: string;
+  fileFormat?: string;
   contentType?: string;
   fileSize?: number;
   url?: string;
+  /** eBay's hosted URL for the file (Get Files). */
+  secureUrl?: string;
+  /** base64 binary (Get Files returns this for attached files). */
+  fileData?: string;
+  /** base64 thumbnail (smaller — preferred for inline preview). */
+  resizedFileData?: string;
+  /** BUYER | SELLER | EBAY | SYSTEM | OTHER. */
+  submitter?: string;
+}
+
+/** Map an eBay fileFormat (e.g. "JPEG", "PNG", "PDF") to a MIME content type. */
+function fileFormatToMime(fmt?: string | null): string | null {
+  if (!fmt) return null;
+  const f = fmt.trim().toUpperCase();
+  if (f === "JPEG" || f === "JPG") return "image/jpeg";
+  if (f === "PNG") return "image/png";
+  if (f === "GIF") return "image/gif";
+  if (f === "BMP") return "image/bmp";
+  if (f === "PDF") return "application/pdf";
+  return null;
 }
 
 async function syncReturnFiles(
@@ -358,19 +392,42 @@ async function syncReturnFiles(
   const body = res.body as { files?: RawReturnFile[] };
   for (const f of body.files ?? []) {
     if (!f.fileId) continue;
+    const contentType = f.contentType ?? fileFormatToMime(f.fileFormat ?? f.fileType) ?? null;
+    // Prefer eBay's hosted URL; otherwise build a data: URL from the base64 the
+    // Get Files response carries so buyer-uploaded photos render inline without
+    // needing a second authenticated fetch. Use the resized thumbnail when
+    // available to keep the row small.
+    let url: string | null = f.secureUrl ?? f.url ?? null;
+    if (!url) {
+      const b64 = f.resizedFileData ?? f.fileData;
+      if (b64 && contentType) url = `data:${contentType};base64,${b64}`;
+    }
     const existing = await db.helpdeskReturnFile.findFirst({
       where: { returnCaseId, ebayFileId: f.fileId },
     });
-    if (existing) continue;
+    if (existing) {
+      // Backfill URL/submitter on previously-synced rows (e.g. before this fix).
+      if ((!existing.url && url) || (!existing.submitter && f.submitter)) {
+        await db.helpdeskReturnFile.update({
+          where: { id: existing.id },
+          data: {
+            ...(existing.url ? {} : url ? { url } : {}),
+            ...(existing.submitter ? {} : f.submitter ? { submitter: f.submitter } : {}),
+          },
+        });
+      }
+      continue;
+    }
     await db.helpdeskReturnFile.create({
       data: {
         returnCaseId,
         ebayFileId: f.fileId,
         fileName: f.fileName ?? null,
         filePurpose: f.filePurpose ?? null,
-        contentType: f.contentType ?? f.fileType ?? null,
+        contentType,
         sizeBytes: typeof f.fileSize === "number" ? f.fileSize : null,
-        url: f.url ?? null,
+        url,
+        submitter: f.submitter ?? null,
         source: "EBAY",
         rawData: f as unknown as Prisma.InputJsonValue,
       },
@@ -417,10 +474,13 @@ export interface ActionParams {
   deductionValue?: number;
   deductionReason?: string;
   deductionComment?: string;
-  /** CONFIRM_LABEL_SENT: forwarded label details. */
+  /** CONFIRM_LABEL_SENT / UPLOAD_LABEL: forwarded label details. */
   carrierEnum?: string;
   trackingNumber?: string;
   comments?: string;
+  /** UPLOAD_LABEL: base64 (no data: prefix) of a PDF/image label file. */
+  labelFileData?: string;
+  labelFileName?: string;
 }
 
 export interface PreviewResult {
@@ -500,13 +560,29 @@ export async function previewReturnAction(args: {
       if (!args.params.trackingNumber || !args.params.trackingNumber.trim()) {
         return { ok: false, error: "Enter the tracking number on your label." };
       }
+      if (!args.params.labelFileData || !args.params.labelFileName) {
+        return { ok: false, error: "Attach the PDF or image label file to upload." };
+      }
       headline = "Upload your return shipping label";
+      lines.push(`File: ${args.params.labelFileName}`);
       lines.push(`Carrier: ${args.params.carrierEnum}`);
       lines.push(`Tracking: ${args.params.trackingNumber.trim()}`);
-      lines.push("eBay shares this label + tracking with the buyer.");
+      lines.push("eBay attaches this label file + tracking and shares it with the buyer.");
       requiresTypedConfirmation = true;
       requestPayload.carrierEnum = args.params.carrierEnum;
       requestPayload.trackingNumber = args.params.trackingNumber.trim();
+      requestPayload.labelFileData = args.params.labelFileData;
+      requestPayload.labelFileName = args.params.labelFileName;
+      break;
+    }
+    case "PROVIDE_EBAY_LABEL": {
+      headline = "Provide an eBay return label (eBay charges you)";
+      lines.push("eBay generates a prepaid return label and gives it to the buyer.");
+      lines.push("eBay charges YOU, the seller, for the cost of this label.");
+      lines.push("This is a paid, live action and cannot be undone from reorG.");
+      if (args.params.carrierEnum) lines.push(`Carrier: ${args.params.carrierEnum}`);
+      requiresTypedConfirmation = true;
+      if (args.params.carrierEnum) requestPayload.carrierEnum = args.params.carrierEnum;
       break;
     }
     case "OFFER_PARTIAL_REFUND": {
@@ -737,15 +813,45 @@ export async function commitReturnAction(args: {
           comments,
         });
         break;
-      case "UPLOAD_LABEL":
+      case "UPLOAD_LABEL": {
+        // First base64-upload the label file to eBay (if attached), then
+        // reference the returned fileId from add_shipping_label.
+        let fileId: string | undefined;
+        const labelFileData = payload.labelFileData as string | undefined;
+        const labelFileName = payload.labelFileName as string | undefined;
+        if (labelFileData && labelFileName) {
+          const upload = await uploadReturnFile({
+            integrationId: integration.id,
+            config,
+            returnId: args.returnId,
+            data: labelFileData,
+            fileName: labelFileName,
+            filePurpose: "LABEL_RELATED",
+          });
+          if (!upload.ok || !upload.body?.fileId) {
+            throw new Error(upload.errorMessage ?? "Failed to upload the label file to eBay.");
+          }
+          fileId = upload.body.fileId;
+        }
         result = await uploadReturnShippingLabel({
           integrationId: integration.id,
           config,
           returnId: args.returnId,
           carrierEnum: payload.carrierEnum as string,
           trackingNumber: payload.trackingNumber as string,
+          fileId,
           comments,
         });
+        break;
+      }
+      case "PROVIDE_EBAY_LABEL":
+        result = (await provideEbayReturnLabel({
+          integrationId: integration.id,
+          config,
+          returnId: args.returnId,
+          carrierEnum: payload.carrierEnum as string | undefined,
+          comments,
+        })) as unknown as EbayReturnsCallResult<{ refundStatus?: string }>;
         break;
       default:
         return { ok: false, status: "FAILED", error: "Unsupported action." };
@@ -815,6 +921,107 @@ export async function commitReturnAction(args: {
   }
 
   return { ok: true, status: "COMMITTED", ebayRequestId: result.requestId, refundStatus };
+}
+
+// ─── Message correspondence (read-only) ───────────────────────────────────────
+
+export interface CorrespondenceMessage {
+  id: string;
+  direction: string;
+  source: string;
+  fromName: string | null;
+  bodyText: string;
+  isHtml: boolean;
+  sentAt: string;
+}
+
+export interface CorrespondenceThread {
+  ticketId: string;
+  subject: string | null;
+  ebayOrderNumber: string | null;
+  messages: CorrespondenceMessage[];
+}
+
+export interface ReturnCorrespondence {
+  buyerUserId: string | null;
+  threads: CorrespondenceThread[];
+  ticketSearchHref: string | null;
+}
+
+/**
+ * Gather the Help Desk message correspondence tied to a return's buyer so the
+ * detail page can show it inline (read-only). Prefers the directly-linked
+ * ticket, then widens to every ticket for the same buyer on the same store.
+ * Never writes anything.
+ */
+export async function getReturnCorrespondence(returnId: string): Promise<ReturnCorrespondence | null> {
+  const caseRow = await resolveCaseByReturnId(returnId);
+  if (!caseRow) return null;
+
+  const orFilters: Prisma.HelpdeskTicketWhereInput[] = [];
+  if (caseRow.ticketId) orFilters.push({ id: caseRow.ticketId });
+  if (caseRow.buyerUserId) {
+    orFilters.push({
+      integrationId: caseRow.integrationId,
+      buyerUserId: { equals: caseRow.buyerUserId, mode: Prisma.QueryMode.insensitive },
+    });
+  }
+  if (caseRow.ebayOrderNumber) {
+    orFilters.push({
+      integrationId: caseRow.integrationId,
+      ebayOrderNumber: caseRow.ebayOrderNumber,
+    });
+  }
+
+  const ticketSearchHref = caseRow.buyerUserId
+    ? `/help-desk?q=${encodeURIComponent(caseRow.buyerUserId)}`
+    : null;
+
+  if (orFilters.length === 0) {
+    return { buyerUserId: caseRow.buyerUserId, threads: [], ticketSearchHref };
+  }
+
+  const tickets = await db.helpdeskTicket.findMany({
+    where: { OR: orFilters },
+    orderBy: { lastBuyerMessageAt: "desc" },
+    take: 10,
+    select: {
+      id: true,
+      subject: true,
+      ebayOrderNumber: true,
+      messages: {
+        where: { deletedAt: null },
+        orderBy: { sentAt: "asc" },
+        take: 200,
+        select: {
+          id: true,
+          direction: true,
+          source: true,
+          fromName: true,
+          bodyText: true,
+          isHtml: true,
+          sentAt: true,
+        },
+      },
+    },
+  });
+
+  const threads: CorrespondenceThread[] = tickets.map((t) => ({
+    ticketId: t.id,
+    subject: t.subject,
+    ebayOrderNumber: t.ebayOrderNumber,
+    messages: t.messages.map((m) => ({
+      id: m.id,
+      direction: m.direction,
+      source: m.source,
+      fromName: m.fromName,
+      bodyText: m.bodyText,
+      isHtml: m.isHtml,
+      sentAt: m.sentAt.toISOString(),
+    })),
+  }));
+
+  return { buyerUserId: caseRow.buyerUserId, threads, ticketSearchHref };
 }
 
 export { parseAmount };

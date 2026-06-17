@@ -116,6 +116,8 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         id: f.id,
         fileName: f.fileName,
         filePurpose: f.filePurpose,
+        contentType: f.contentType,
+        submitter: f.submitter,
         url: f.url,
         source: f.source,
         createdAt: f.createdAt.toISOString(),

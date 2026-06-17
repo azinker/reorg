@@ -33,6 +33,7 @@ import {
   fmtAgo,
   fmtMoney,
   humanizeReason,
+  reasonDefectAssociation,
   type ReturnLifecycle,
 } from "./returns-ui";
 
@@ -49,6 +50,7 @@ interface ReturnRow {
   isClosed: boolean;
   sellerActionDue: boolean;
   reason: string | null;
+  reasonType: string | null;
   sellerRefundValue: number | null;
   sellerRefundCurrency: string | null;
   refundIsActual: boolean;
@@ -417,7 +419,9 @@ export default function ReturnsListClient() {
         <span className="mb-1 block text-[10px] font-medium uppercase tracking-wider text-brand">
           Search (Return ID, order number, buyer, item title)
         </span>
-        <div className="flex w-full">
+        {/* Single bordered container so the search button never overlaps the
+            field's border. The whole control gets one ring on focus. */}
+        <div className="flex w-full overflow-hidden rounded-md border border-hairline bg-surface focus-within:ring-2 focus-within:ring-brand/40">
           <input
             value={searchInput}
             onChange={(e) => setSearchInput(e.target.value)}
@@ -425,12 +429,12 @@ export default function ReturnsListClient() {
               if (e.key === "Enter") applySearch();
             }}
             placeholder="Search returns…"
-            className="h-9 w-full min-w-0 flex-1 rounded-l-md border border-r-0 border-hairline bg-surface px-3 text-sm text-foreground"
+            className="h-9 w-full min-w-0 flex-1 border-0 bg-transparent px-3 text-sm text-foreground outline-none"
           />
           <button
             type="button"
             onClick={applySearch}
-            className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-r-md border border-hairline bg-surface-2 px-4 text-sm font-medium text-foreground hover:bg-surface cursor-pointer"
+            className="inline-flex h-9 shrink-0 items-center gap-1.5 border-l border-hairline bg-surface-2 px-4 text-sm font-medium text-foreground hover:bg-surface cursor-pointer"
           >
             <Search className="h-4 w-4" />
             Search
@@ -444,8 +448,9 @@ export default function ReturnsListClient() {
 
       {/* Table */}
       <div className="overflow-hidden rounded-xl border border-hairline bg-card">
-        <div className="grid grid-cols-[1fr_auto_auto_auto] gap-4 border-b border-brand/20 bg-brand/[0.06] px-4 py-2 text-[11px] font-semibold uppercase tracking-wider text-brand/80">
+        <div className="grid grid-cols-[1fr_auto_auto_auto_auto] gap-4 border-b border-brand/20 bg-brand/[0.06] px-4 py-2 text-[11px] font-semibold uppercase tracking-wider text-brand/80">
           <span>Item</span>
+          <span className="w-48">Return Reason</span>
           <span className="w-44">Status</span>
           <span className="w-28 text-right">Refund</span>
           <span className="w-52">Buyer</span>
@@ -472,7 +477,7 @@ export default function ReturnsListClient() {
               <li key={r.id}>
                 <Link
                   href={`/help-desk/returns/${encodeURIComponent(r.returnId)}`}
-                  className="grid grid-cols-[1fr_auto_auto_auto] items-center gap-4 px-4 py-3 transition-colors hover:bg-surface-2 cursor-pointer"
+                  className="grid grid-cols-[1fr_auto_auto_auto_auto] items-center gap-4 px-4 py-3 transition-colors hover:bg-surface-2 cursor-pointer"
                 >
                   {/* Item cell */}
                   <div className="flex min-w-0 items-center gap-3">
@@ -507,9 +512,37 @@ export default function ReturnsListClient() {
                         {r.ebayOrderNumber ? ` · Order ${r.ebayOrderNumber}` : ""}
                         {" · "}
                         {fmtDate(r.openedAt)}
-                        {r.reason ? ` · ${humanizeReason(r.reason)}` : ""}
                       </p>
                     </div>
+                  </div>
+
+                  {/* Return Reason cell */}
+                  <div className="w-48">
+                    {r.reason ? (
+                      <>
+                        <p className="text-xs font-medium text-foreground">
+                          {humanizeReason(r.reason)}
+                        </p>
+                        {(() => {
+                          const defect = reasonDefectAssociation(r.reason, r.reasonType);
+                          if (defect === null) return null;
+                          return (
+                            <span
+                              className={
+                                "mt-0.5 inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-semibold " +
+                                (defect
+                                  ? "bg-red-500/15 text-red-600 dark:text-red-300"
+                                  : "bg-emerald-500/15 text-emerald-600 dark:text-emerald-300")
+                              }
+                            >
+                              {defect ? "Defect Associated" : "No Defect Associated"}
+                            </span>
+                          );
+                        })()}
+                      </>
+                    ) : (
+                      <span className="text-xs text-muted-foreground">—</span>
+                    )}
                   </div>
 
                   {/* Status cell */}

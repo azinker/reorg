@@ -110,14 +110,15 @@ test("isActionExecutable: maps eBay options to internal actions", () => {
   assert.equal(isActionExecutable("MARK_AS_RECEIVED", opts("SELLER_ISSUE_REFUND")), false);
 });
 
-test("isActionExecutable: PROVIDE_EBAY_LABEL is policy-blocked even when eBay offers it", () => {
-  // eBay offering SELLER_PRINT_SHIPPING_LABEL must NOT make our paid eBay-label
-  // purchase executable — it stays blocked by policy (ambiguous/paid/no sandbox).
-  assert.equal(isActionExecutable("PROVIDE_EBAY_LABEL", opts("SELLER_PRINT_SHIPPING_LABEL")), false);
+test("isActionExecutable: PROVIDE_EBAY_LABEL is executable when eBay offers it", () => {
+  // PROVIDE_EBAY_LABEL is now wired: when eBay offers SELLER_PRINT_SHIPPING_LABEL
+  // we let the seller buy a prepaid eBay label (eBay charges the seller). It is
+  // no longer policy-blocked — it runs through the standard preview/commit gate.
+  assert.equal(isActionExecutable("PROVIDE_EBAY_LABEL", opts("SELLER_PRINT_SHIPPING_LABEL")), true);
   const avail = getSellerActionAvailability(opts("SELLER_PRINT_SHIPPING_LABEL"));
   const ebayLabel = avail.find((a) => a.key === "PROVIDE_EBAY_LABEL");
   assert.equal(ebayLabel?.availableOnEbay, true);
-  assert.equal(ebayLabel?.policyBlocked, true);
+  assert.equal(ebayLabel?.policyBlocked, false);
 });
 
 test("deriveSellerActionDue: true when an actionable seller option exists and not closed", () => {

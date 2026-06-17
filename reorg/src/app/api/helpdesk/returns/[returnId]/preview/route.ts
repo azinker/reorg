@@ -16,6 +16,7 @@ const bodySchema = z.object({
     "APPROVE_RETURN",
     "OFFER_PARTIAL_REFUND",
     "UPLOAD_LABEL",
+    "PROVIDE_EBAY_LABEL",
     "CONFIRM_LABEL_SENT",
     "MARK_AS_RECEIVED",
     "ISSUE_REFUND",
@@ -28,6 +29,9 @@ const bodySchema = z.object({
   carrierEnum: z.string().max(40).optional(),
   trackingNumber: z.string().max(60).optional(),
   comments: z.string().max(1000).optional(),
+  // UPLOAD_LABEL: base64 (no data: prefix) of the PDF/image label, ~10MB cap.
+  labelFileData: z.string().max(14_000_000).optional(),
+  labelFileName: z.string().max(200).optional(),
 });
 
 /**

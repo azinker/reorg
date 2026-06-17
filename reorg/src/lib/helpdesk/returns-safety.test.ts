@@ -72,12 +72,13 @@ test("empty fresh options → unavailable with state-based message", () => {
   assert.match(r.reason, /not available on the current return state/i);
 });
 
-test("PROVIDE_EBAY_LABEL is policy-blocked even when eBay offers it", () => {
+test("PROVIDE_EBAY_LABEL is allowed when eBay offers it (now wired)", () => {
+  // Buying a prepaid eBay return label is wired in v1, so the gate must allow it
+  // once eBay offers SELLER_PRINT_SHIPPING_LABEL and the live-write lock is off.
   const r = evaluateReturnWriteGate(
     ctx({ action: "PROVIDE_EBAY_LABEL", freshSellerOptions: opts("SELLER_PRINT_SHIPPING_LABEL") }),
   );
-  assert.equal(r.allowed, false);
-  assert.equal(r.code, "ACTION_POLICY_BLOCKED");
+  assert.equal(r.allowed, true);
 });
 
 test("gate order: admin checked before everything (non-admin in staging still NOT_ADMIN)", () => {

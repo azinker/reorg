@@ -217,6 +217,14 @@ export interface SearchReturnsArgs {
   config: EbayConfig;
   fromDate: Date;
   toDate?: Date;
+  /**
+   * Optional ReturnCountFilterEnum bucket (ALL_OPEN, RETURN_STARTED,
+   * ITEM_SHIPPED, ITEM_DELIVERED, SELLER_ACTION_DUE, CLOSED, …). When set,
+   * eBay returns only returns currently in that bucket — this is exactly how
+   * Seller Hub's "Manage returns" status dropdown is driven, so we sync per
+   * bucket to make our list filters match eBay 1:1.
+   */
+  returnState?: string;
   offset?: number;
   limit?: number;
 }
@@ -234,23 +242,25 @@ export interface SearchReturnsResult {
  */
 export async function searchReturns(args: SearchReturnsArgs): Promise<SearchReturnsResult> {
   const limit = args.limit ?? READ_PAGE_SIZE;
+  // NOTE: the documented filter is `creation_date_range_from/to` (return
+  // creation date). The older `item_creation_date_range_*` names are NOT
+  // recognized by eBay and were silently ignored, which dropped returns from
+  // the sync. Sort newest-first so the first pages always carry the most
+  // recent (and most likely actionable) returns.
+  const query: Record<string, string> = {
+    creation_date_range_from: args.fromDate.toISOString(),
+    creation_date_range_to: (args.toDate ?? new Date()).toISOString(),
+    sort: "-FILING_DATE",
+    limit: String(limit),
+    offset: String(args.offset ?? 0),
+  };
+  if (args.returnState) query.return_state = args.returnState;
   const result = await postOrderRequest<{ members?: unknown[]; total?: number }>({
     integrationId: args.integrationId,
     config: args.config,
     method: "GET",
     path: "/post-order/v2/return/search",
-    query: {
-      // NOTE: the documented filter is `creation_date_range_from/to` (return
-      // creation date). The older `item_creation_date_range_*` names are NOT
-      // recognized by eBay and were silently ignored, which dropped returns
-      // from the sync. Sort newest-first so the first pages always carry the
-      // most recent (and most likely actionable) returns.
-      creation_date_range_from: args.fromDate.toISOString(),
-      creation_date_range_to: (args.toDate ?? new Date()).toISOString(),
-      sort: "-FILING_DATE",
-      limit: String(limit),
-      offset: String(args.offset ?? 0),
-    },
+    query,
     callName: "return/search",
   });
   if (!result.ok || !result.body) {
@@ -304,7 +314,7 @@ export async function getReturnTracking(args: {
   });
 }
 
-/** GET /post-order/v2/casemanagement/{returnId}/files — file metadata. */
+/** GET /post-order/v2/return/{returnId}/files — file metadata (incl. buyer photos). */
 export async function getReturnFiles(args: {
   integrationId: string;
   config: EbayConfig;
@@ -314,7 +324,7 @@ export async function getReturnFiles(args: {
     integrationId: args.integrationId,
     config: args.config,
     method: "GET",
-    path: `/post-order/v2/casemanagement/${encodeURIComponent(args.returnId)}/files`,
+    path: `/post-order/v2/return/${encodeURIComponent(args.returnId)}/files`,
     callName: "return/get_files",
   });
 }
@@ -424,18 +434,43 @@ export async function markAsReceived(args: {
 }
 
 /**
+ * POST /post-order/v2/return/{returnId}/file/upload.
+ * Base64-uploads a seller-provided file (e.g. a PDF/image return label) and
+ * associates it with the return. Returns the eBay `fileId` that must then be
+ * referenced from add_shipping_label (labelAction=UPLOAD_LABEL). The system
+ * accepts BMP/GIF/JPEG/PNG for images and additionally PDF for labels.
+ */
+export async function uploadReturnFile(args: {
+  integrationId: string;
+  config: EbayConfig;
+  returnId: string;
+  /** base64-encoded binary (NO data: prefix). */
+  data: string;
+  fileName: string;
+  /** FilePurposeEnum — LABEL_RELATED for shipping labels. */
+  filePurpose: "LABEL_RELATED" | "ITEM_RELATED" | "REFUND_RELATED";
+}): Promise<EbayReturnsCallResult<{ fileId?: string }>> {
+  return postOrderRequest({
+    integrationId: args.integrationId,
+    config: args.config,
+    method: "POST",
+    path: `/post-order/v2/return/${encodeURIComponent(args.returnId)}/file/upload`,
+    jsonBody: {
+      data: args.data,
+      fileName: args.fileName,
+      filePurpose: args.filePurpose,
+    },
+    callName: "return/file_upload",
+  });
+}
+
+/**
  * POST /post-order/v2/return/{returnId}/add_shipping_label.
  * Used for the "upload a label" path: the seller provides their own return
- * label (one they already created/purchased off-eBay) by setting
- * `forwardShippingLabelProvided: true` and attaching the carrier + tracking so
- * the buyer can ship the item back. An optional `shippingLabelFileId` attaches
- * the uploaded label image when present. This spends no money on our side (the
- * seller already arranged the label elsewhere) — the paid "buy an eBay label"
- * path is policy-blocked and deep-linked to eBay instead.
- *
- * NOTE: the AddShippingLabel request has NO `labelAction` field — the meaningful
- * flag is `forwardShippingLabelProvided`, and the file field is
- * `shippingLabelFileId` (not `fileId`). This mirrors `addForwardedShippingLabel`.
+ * label (one they already created/purchased off-eBay). `labelAction` is a
+ * REQUIRED field — for an uploaded label it is `UPLOAD_LABEL`, and the uploaded
+ * file is referenced by `fileId` (from {@link uploadReturnFile}). This spends
+ * no eBay money — the seller already arranged the label.
  */
 export async function uploadReturnShippingLabel(args: {
   integrationId: string;
@@ -447,11 +482,12 @@ export async function uploadReturnShippingLabel(args: {
   comments?: string;
 }): Promise<EbayReturnsCallResult<{ refundStatus?: string }>> {
   const jsonBody: Record<string, unknown> = {
+    labelAction: "UPLOAD_LABEL",
     forwardShippingLabelProvided: true,
     carrierEnum: args.carrierEnum,
     trackingNumber: args.trackingNumber,
   };
-  if (args.fileId) jsonBody.shippingLabelFileId = args.fileId;
+  if (args.fileId) jsonBody.fileId = args.fileId;
   if (args.comments) jsonBody.comments = { content: args.comments };
   return postOrderRequest({
     integrationId: args.integrationId,
@@ -465,10 +501,10 @@ export async function uploadReturnShippingLabel(args: {
 
 /**
  * POST /post-order/v2/return/{returnId}/add_shipping_label.
- * Used for the "confirm label already sent" path: the seller has already given
- * the buyer a return label off-eBay, so we set `forwardShippingLabelProvided:
- * true` and pass the carrier + tracking. We never purchase a paid eBay label
- * here (that path is policy-blocked in the safety layer).
+ * "Confirm you sent a label" path: the seller has already given the buyer a
+ * return label off-eBay. `labelAction` is REQUIRED and is `MARK_AS_SENT` here,
+ * with `forwardShippingLabelProvided: true` and the carrier + tracking. No paid
+ * eBay label is purchased.
  */
 export async function addForwardedShippingLabel(args: {
   integrationId: string;
@@ -481,12 +517,40 @@ export async function addForwardedShippingLabel(args: {
   comments?: string;
 }): Promise<EbayReturnsCallResult<{ refundStatus?: string }>> {
   const jsonBody: Record<string, unknown> = {
+    labelAction: "MARK_AS_SENT",
     forwardShippingLabelProvided: true,
   };
   if (args.carrierEnum) jsonBody.carrierEnum = args.carrierEnum;
   if (args.carrierName) jsonBody.carrierName = args.carrierName;
   if (args.trackingNumber) jsonBody.trackingNumber = args.trackingNumber;
-  if (args.fileId) jsonBody.shippingLabelFileId = args.fileId;
+  if (args.fileId) jsonBody.fileId = args.fileId;
+  if (args.comments) jsonBody.comments = { content: args.comments };
+  return postOrderRequest({
+    integrationId: args.integrationId,
+    config: args.config,
+    method: "POST",
+    path: `/post-order/v2/return/${encodeURIComponent(args.returnId)}/add_shipping_label`,
+    jsonBody,
+    callName: "return/add_shipping_label",
+  });
+}
+
+/**
+ * POST /post-order/v2/return/{returnId}/add_shipping_label with
+ * labelAction=EBAY_LABEL — purchases an eBay-generated return label and makes
+ * it available to the buyer. eBay charges the seller for this label. This is a
+ * PAID, irreversible live write; it is gated by the full safety chain + typed
+ * confirmation in the service layer before it can fire.
+ */
+export async function provideEbayReturnLabel(args: {
+  integrationId: string;
+  config: EbayConfig;
+  returnId: string;
+  carrierEnum?: string;
+  comments?: string;
+}): Promise<EbayReturnsCallResult<{ labelId?: string; labelURL?: string; trackingNumber?: string }>> {
+  const jsonBody: Record<string, unknown> = { labelAction: "EBAY_LABEL" };
+  if (args.carrierEnum) jsonBody.carrierEnum = args.carrierEnum;
   if (args.comments) jsonBody.comments = { content: args.comments };
   return postOrderRequest({
     integrationId: args.integrationId,

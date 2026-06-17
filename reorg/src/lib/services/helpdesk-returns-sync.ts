@@ -25,6 +25,7 @@ import {
 import {
   normalizeReturnSummary,
   extractItemPresentation,
+  RETURN_SYNC_BUCKETS,
   type EbayReturnSummary,
 } from "@/lib/helpdesk/returns";
 
@@ -36,6 +37,13 @@ const INITIAL_LOOKBACK_DAYS = Number.parseInt(
 );
 const MAX_PAGES_PER_TICK = 10;
 const PAGE_SIZE = 100;
+/**
+ * The CLOSED bucket can hold thousands of returns. We cap how deep we page it
+ * each tick so the sync stays well under the serverless budget while still
+ * surfacing a large, representative, newest-first slice. Open buckets are tiny
+ * and page to completion.
+ */
+const CLOSED_MAX_PAGES = 8;
 /** How many returns missing a title/image we enrich (via Get Return) per tick. */
 const ENRICH_BUDGET_PER_TICK = 30;
 
@@ -90,95 +98,116 @@ async function syncReturnsForIntegration(
   // and (2) state changes on already-synced returns (approved → shipped →
   // refunded) get refreshed in the list, not just on the detail page.
   const fromDate = new Date(Date.now() - INITIAL_LOOKBACK_DAYS * 86_400_000);
+  const toDate = new Date();
+
+  // Query eBay once per ReturnCountFilterEnum bucket and union the buckets each
+  // return appears in. This is exactly how Seller Hub's status dropdown counts
+  // are computed, so our list filters (in progress / shipped / delivered /
+  // closed) now match eBay 1:1 instead of guessing from a single raw state.
+  const collected = new Map<
+    string,
+    { raw: EbayReturnSummary; fields: ReturnType<typeof normalizeReturnSummary>; buckets: Set<string> }
+  >();
+
+  for (const bucket of RETURN_SYNC_BUCKETS) {
+    const maxPages = bucket === "CLOSED" ? CLOSED_MAX_PAGES : MAX_PAGES_PER_TICK;
+    let offset = 0;
+    for (let page = 0; page < maxPages; page++) {
+      const { members, totalPages, result } = await searchReturns({
+        integrationId: integration.id,
+        config,
+        fromDate,
+        toDate,
+        returnState: bucket,
+        offset,
+        limit: PAGE_SIZE,
+      });
+      if (page === 0 && members.length === 0 && result.status >= 400 && result.status !== 404) {
+        // Surface a hard failure on the very first page; empty buckets (204/404)
+        // come back ok-ish with members=[] and are not errors.
+        throw new Error(result.errorMessage ?? `return/search ${bucket} ${result.status}`);
+      }
+
+      for (const member of members) {
+        const raw = member as EbayReturnSummary;
+        const fields = normalizeReturnSummary(raw);
+        if (!fields.returnId) continue;
+        const existing = collected.get(fields.returnId);
+        if (existing) {
+          existing.buckets.add(bucket);
+        } else {
+          collected.set(fields.returnId, { raw, fields, buckets: new Set([bucket]) });
+        }
+      }
+
+      if (members.length < PAGE_SIZE || page + 1 >= totalPages) break;
+      offset += PAGE_SIZE;
+    }
+  }
 
   let upserted = 0;
-  let offset = 0;
-  for (let page = 0; page < MAX_PAGES_PER_TICK; page++) {
-    const { members, totalPages, result } = await searchReturns({
+  for (const [returnId, { raw, fields, buckets }] of collected.entries()) {
+    const ticketId = await findTicketIdForReturn({
       integrationId: integration.id,
-      config,
-      fromDate,
-      toDate: new Date(),
-      offset,
-      limit: PAGE_SIZE,
+      ebayOrderNumber: fields.ebayOrderNumber,
+      buyerUserId: fields.buyerUserId,
     });
-    if (!result.ok && result.status !== 0 && members.length === 0 && page === 0) {
-      // Surface a hard failure on the very first page; empty windows (204/404)
-      // come back ok-ish with members=[] and are not errors.
-      if (result.status >= 400 && result.status !== 404) {
-        throw new Error(result.errorMessage ?? `return/search ${result.status}`);
-      }
-    }
 
-    for (const member of members) {
-      const raw = member as EbayReturnSummary;
-      const fields = normalizeReturnSummary(raw);
-      if (!fields.returnId) continue;
+    const commonData = {
+      platform: integration.platform,
+      ebayOrderNumber: fields.ebayOrderNumber,
+      ebayItemId: fields.ebayItemId,
+      transactionId: fields.transactionId,
+      returnQuantity: fields.returnQuantity,
+      buyerUserId: fields.buyerUserId,
+      sellerUserId: fields.sellerUserId,
+      returnState: fields.returnState,
+      returnStatus: fields.returnStatus,
+      currentType: fields.currentType,
+      ebayBuckets: Array.from(buckets) as unknown as Prisma.InputJsonValue,
+      sellerActionDue: fields.sellerActionDue || buckets.has("SELLER_ACTION_DUE"),
+      escalated: fields.escalated,
+      caseId: fields.caseId,
+      reason: fields.reason,
+      reasonType: fields.reasonType,
+      buyerComments: fields.buyerComments,
+      sellerRefundValue: fields.sellerRefundValue,
+      sellerRefundCurrency: fields.sellerRefundCurrency,
+      buyerRefundValue: fields.buyerRefundValue,
+      buyerRefundCurrency: fields.buyerRefundCurrency,
+      refundIsActual: fields.refundIsActual,
+      sellerResponseDueAt: fields.sellerResponseDueAt,
+      buyerResponseDueAt: fields.buyerResponseDueAt,
+      timeoutDate: fields.timeoutDate,
+      openedAt: fields.openedAt ?? new Date(),
+      closedAt: fields.closedAt,
+      sellerAvailableOptions: fields.sellerAvailableOptions as unknown as Prisma.InputJsonValue,
+      buyerAvailableOptions: fields.buyerAvailableOptions as unknown as Prisma.InputJsonValue,
+      rawSummary: raw as unknown as Prisma.InputJsonValue,
+      lastSyncedAt: new Date(),
+    };
 
-      const ticketId = await findTicketIdForReturn({
-        integrationId: integration.id,
-        ebayOrderNumber: fields.ebayOrderNumber,
-        buyerUserId: fields.buyerUserId,
-      });
-
-      const commonData = {
-        platform: integration.platform,
-        ebayOrderNumber: fields.ebayOrderNumber,
-        ebayItemId: fields.ebayItemId,
-        transactionId: fields.transactionId,
-        returnQuantity: fields.returnQuantity,
-        buyerUserId: fields.buyerUserId,
-        sellerUserId: fields.sellerUserId,
-        returnState: fields.returnState,
-        returnStatus: fields.returnStatus,
-        currentType: fields.currentType,
-        sellerActionDue: fields.sellerActionDue,
-        escalated: fields.escalated,
-        caseId: fields.caseId,
-        reason: fields.reason,
-        reasonType: fields.reasonType,
-        buyerComments: fields.buyerComments,
-        sellerRefundValue: fields.sellerRefundValue,
-        sellerRefundCurrency: fields.sellerRefundCurrency,
-        buyerRefundValue: fields.buyerRefundValue,
-        buyerRefundCurrency: fields.buyerRefundCurrency,
-        refundIsActual: fields.refundIsActual,
-        sellerResponseDueAt: fields.sellerResponseDueAt,
-        buyerResponseDueAt: fields.buyerResponseDueAt,
-        timeoutDate: fields.timeoutDate,
-        openedAt: fields.openedAt ?? new Date(),
-        closedAt: fields.closedAt,
-        sellerAvailableOptions: fields.sellerAvailableOptions as unknown as Prisma.InputJsonValue,
-        buyerAvailableOptions: fields.buyerAvailableOptions as unknown as Prisma.InputJsonValue,
-        rawSummary: raw as unknown as Prisma.InputJsonValue,
-        lastSyncedAt: new Date(),
-      };
-
-      await db.helpdeskReturnCase.upsert({
-        where: {
-          integrationId_returnId: {
-            integrationId: integration.id,
-            returnId: fields.returnId,
-          },
-        },
-        create: {
+    await db.helpdeskReturnCase.upsert({
+      where: {
+        integrationId_returnId: {
           integrationId: integration.id,
-          returnId: fields.returnId,
-          // Only set the ticket linkage on create; on update we fill it only
-          // when we found one (never clear an existing link).
-          ticketId,
-          ...commonData,
+          returnId,
         },
-        update: {
-          ...commonData,
-          ...(ticketId ? { ticketId } : {}),
-        },
-      });
-      upserted++;
-    }
-
-    if (members.length < PAGE_SIZE || page + 1 >= totalPages) break;
-    offset += PAGE_SIZE;
+      },
+      create: {
+        integrationId: integration.id,
+        returnId,
+        // Only set the ticket linkage on create; on update we fill it only
+        // when we found one (never clear an existing link).
+        ticketId,
+        ...commonData,
+      },
+      update: {
+        ...commonData,
+        ...(ticketId ? { ticketId } : {}),
+      },
+    });
+    upserted++;
   }
 
   // Search summaries don't carry the listing title/image — only Get Return
@@ -206,45 +235,63 @@ async function enrichMissingItemDetails(
   config: Awaited<ReturnType<typeof buildEbayConfig>>,
 ): Promise<void> {
   const missing = await db.helpdeskReturnCase.findMany({
-    where: { integrationId: integration.id, itemTitle: null },
+    // Rows still missing a title OR an image need hydration. Including
+    // image-less rows lets us correct variation thumbnails once we learn the
+    // purchased variant's SKU (see SKU-match step below).
+    where: { integrationId: integration.id, OR: [{ itemTitle: null }, { imageUrl: null }] },
     orderBy: { openedAt: "desc" },
     take: ENRICH_BUDGET_PER_TICK,
-    select: { id: true, returnId: true, ebayItemId: true },
+    select: { id: true, returnId: true, ebayItemId: true, itemTitle: true, sku: true },
   });
   if (missing.length === 0) return;
 
   for (const row of missing) {
-    let itemTitle: string | null = null;
+    let itemTitle: string | null = row.itemTitle;
     let imageUrl: string | null = null;
-    let sku: string | null = null;
+    let sku: string | null = row.sku;
 
-    // (1) Local catalog lookup — free, no eBay call.
-    if (row.ebayItemId) {
-      const listing = await db.marketplaceListing.findFirst({
-        where: { integrationId: integration.id, platformItemId: row.ebayItemId },
-        select: { title: true, imageUrl: true, sku: true },
-      });
-      if (listing?.title) {
-        itemTitle = listing.title;
-        imageUrl = listing.imageUrl ?? null;
-        sku = listing.sku ?? null;
-      }
-    }
-
-    // (2) Fall back to Get Return detail (authoritative title + pic url).
-    if (!itemTitle) {
+    // (1) Get Return detail is authoritative for the purchased variant — it
+    // carries the exact SKU the buyer bought, which the search summary omits.
+    // We need that SKU to pick the right variation thumbnail below.
+    if (!itemTitle || !sku) {
       const detail = await getReturnDetail({
         integrationId: integration.id,
         config,
         returnId: row.returnId,
-        // itemDetail (title + pic) only ships in the FULL/`detail` container.
+        // itemDetail (title + pic + sku) only ships in the FULL/`detail` container.
         fieldgroups: "FULL",
       });
       if (detail.ok && detail.body) {
         const p = extractItemPresentation(detail.body as EbayReturnSummary);
-        itemTitle = p.itemTitle;
-        imageUrl = imageUrl ?? p.imageUrl;
+        itemTitle = itemTitle ?? p.itemTitle;
+        imageUrl = p.imageUrl; // eBay's pic (often the parent/default variant image)
         sku = sku ?? p.sku;
+      }
+    }
+
+    // (2) Variant-accurate thumbnail: match the purchased SKU against our own
+    // catalog. Each variation child listing has its own SKU + imageUrl, so a
+    // SKU match yields the exact variant the buyer purchased (e.g. the BLACK
+    // controller, not the parent's WHITE default). This overrides the eBay pic.
+    if (sku) {
+      const bySku = await db.marketplaceListing.findFirst({
+        where: { integrationId: integration.id, sku },
+        select: { title: true, imageUrl: true },
+      });
+      if (bySku?.imageUrl) imageUrl = bySku.imageUrl;
+      if (!itemTitle && bySku?.title) itemTitle = bySku.title;
+    }
+
+    // (3) Last-resort fallbacks from the parent listing by item id (free).
+    if ((!itemTitle || !imageUrl) && row.ebayItemId) {
+      const listing = await db.marketplaceListing.findFirst({
+        where: { integrationId: integration.id, platformItemId: row.ebayItemId },
+        select: { title: true, imageUrl: true, sku: true },
+      });
+      if (listing) {
+        itemTitle = itemTitle ?? listing.title ?? null;
+        imageUrl = imageUrl ?? listing.imageUrl ?? null;
+        sku = sku ?? listing.sku ?? null;
       }
     }
 

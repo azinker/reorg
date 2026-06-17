@@ -1807,6 +1807,13 @@ model HelpdeskReturnCase {
   returnState     String?
   returnStatus    String?
   currentType     String?
+  /// Set of eBay ReturnCountFilterEnum buckets this return appeared in on the
+  /// most recent sync (e.g. ["ALL_OPEN","RETURN_STARTED","SELLER_ACTION_DUE"]
+  /// or ["CLOSED"]). eBay's own "Manage returns" status dropdown is driven by
+  /// these buckets, not by the raw state, so we mirror them here to make the
+  /// list filters (in progress / shipped / delivered / closed) match Seller Hub
+  /// exactly. Recomputed every sync.
+  ebayBuckets     Json    @default("[]")
   /// True when eBay currently has an action due from the seller — drives the
   /// "needs attention" badge count. Recomputed on every sync.
   sellerActionDue Boolean @default(false)
@@ -1881,8 +1888,11 @@ model HelpdeskReturnFile {
   filePurpose      String?
   contentType      String?
   sizeBytes        Int?
-  /// Where the file is viewable, when eBay returns a URL.
+  /// Where the file is viewable, when eBay returns a URL (secureUrl).
   url              String?  @db.Text
+  /// ReturnUserRoleEnum of who attached the file: BUYER | SELLER | EBAY |
+  /// SYSTEM | OTHER. Used to surface buyer-uploaded photos in the comments UI.
+  submitter        String?
   /// "EBAY" (synced) or "UPLOAD" (agent-provided then pushed).
   source           String   @default("EBAY")
   uploadedByUserId String?

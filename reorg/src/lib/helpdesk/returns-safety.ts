@@ -27,6 +27,7 @@ import { getAppEnv } from "@/lib/env";
 import { checkWriteSafety } from "@/lib/safety";
 import {
   isActionExecutable,
+  POLICY_BLOCKED_ACTIONS,
   type EbayAvailableOption,
   type ReturnActionKey,
 } from "@/lib/helpdesk/returns";
@@ -107,12 +108,11 @@ export function evaluateReturnWriteGate(
     // Distinguish "we refuse by policy" from "eBay isn't offering it right now"
     // so the audit + UI message is precise.
     const present = (ctx.freshSellerOptions ?? []).some((o) => !!o?.actionType);
-    if (ctx.action === "PROVIDE_EBAY_LABEL") {
+    if (POLICY_BLOCKED_ACTIONS.includes(ctx.action)) {
       return {
         allowed: false,
         code: "ACTION_POLICY_BLOCKED",
-        reason:
-          "Purchasing a paid eBay return label from reorG is disabled by policy. Handle eBay-paid labels in Seller Hub.",
+        reason: "This action is disabled by policy in reorG. Handle it in eBay Seller Hub.",
       };
     }
     return {

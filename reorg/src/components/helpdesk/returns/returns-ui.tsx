@@ -222,3 +222,70 @@ export function humanizeReason(reason: string | null | undefined): string {
     .toLowerCase()
     .replace(/^\w/, (c) => c.toUpperCase());
 }
+
+/**
+ * Return-reason codes that count as "Significant Not As Described" (SNAD) —
+ * the buyer says the item is defective, damaged, wrong, missing parts, or not
+ * authentic. On eBay these reasons put a defect / "item not as described"
+ * mark on the SELLER's account when the return is filed. Remorse reasons
+ * (changed mind, doesn't fit, ordered by mistake, found a better price) never
+ * carry a seller defect.
+ *
+ * Source: eBay buyer-return reasons & seller-protection / defect rules —
+ * SNAD reasons are seller-responsibility; "buyer changed their mind" reasons
+ * are not. Codes verified against the Post-Order ReturnReasonEnum.
+ */
+const DEFECT_ASSOCIATED_REASONS = new Set<string>([
+  "NOT_AS_DESCRIBED",
+  "WRONG_ITEM",
+  "WRONG_ITEM_RECEIVED",
+  "ARRIVED_DAMAGED",
+  "DEFECTIVE_ITEM",
+  "ITEM_DEFECTIVE",
+  "MISSING_PARTS",
+  "MISSING_PARTS_OR_PIECES",
+  "EXTRA_ITEM",
+  "AUTHENTICITY",
+  "COUNTERFEIT",
+]);
+
+const NO_DEFECT_REASONS = new Set<string>([
+  "ORDERED_WRONG_ITEM",
+  "JUST_DONT_WANT",
+  "NO_LONGER_NEED_ITEM",
+  "ORDERED_ACCIDENTALLY",
+  "FOUND_BETTER_PRICE",
+  "WRONG_SIZE",
+  "DOESNT_FIT",
+]);
+
+/**
+ * Whether a return reason puts a defect on the seller's eBay account.
+ * Prefers the explicit reason code; falls back to eBay's `reasonType`
+ * (SNAD => defect, anything else => no defect) when the code is unknown.
+ * Returns `null` when we genuinely can't tell, so the UI can stay silent
+ * rather than guess.
+ */
+export function reasonDefectAssociation(
+  reason: string | null | undefined,
+  reasonType?: string | null,
+): boolean | null {
+  const key = (reason ?? "").trim().toUpperCase();
+  if (DEFECT_ASSOCIATED_REASONS.has(key)) return true;
+  if (NO_DEFECT_REASONS.has(key)) return false;
+  const rt = (reasonType ?? "").trim().toUpperCase();
+  if (rt === "SNAD" || rt === "NOT_AS_DESCRIBED" || rt === "ITEM_NOT_AS_DESCRIBED") return true;
+  if (rt === "REMORSE" || rt === "BUYER_REMORSE" || rt === "CANCEL" || rt === "INSTORE_RETURN") return false;
+  return null;
+}
+
+/** "Doesn't fit - No Defect Associated" style label for a return reason. */
+export function reasonWithDefectLabel(
+  reason: string | null | undefined,
+  reasonType?: string | null,
+): string {
+  const base = humanizeReason(reason);
+  const defect = reasonDefectAssociation(reason, reasonType);
+  if (defect === null) return base;
+  return defect ? `${base} - Defect Associated` : `${base} - No Defect Associated`;
+}

@@ -148,6 +148,55 @@ export const RETURN_STATUS_FILTERS: ReturnStatusFilterDef[] = [
   { key: "closed", label: "Closed returns/replacements", ebayCountFilter: "CLOSED" },
 ];
 
+/**
+ * eBay ReturnCountFilterEnum buckets we sync, one search call each. Seller
+ * Hub's "Manage returns" status dropdown is driven by these exact buckets, so
+ * tagging each return with the buckets it appeared in (and filtering on that)
+ * is what makes our list counts match eBay's. CLOSED is included but capped at
+ * sync time because it can be very large.
+ */
+export const RETURN_SYNC_BUCKETS = [
+  "ALL_OPEN",
+  "ALL_OPEN_RETURN",
+  "ALL_OPEN_REPLACEMENT",
+  "RETURN_STARTED",
+  "ITEM_SHIPPED",
+  "ITEM_DELIVERED",
+  "SELLER_ACTION_DUE",
+  "CLOSED",
+] as const;
+
+export type ReturnSyncBucket = (typeof RETURN_SYNC_BUCKETS)[number];
+
+/** Which eBay bucket(s) back each list status filter. */
+const FILTER_BUCKET_MAP: Record<ReturnStatusFilterKey, string[]> = {
+  needs_attention: ["SELLER_ACTION_DUE"],
+  open_all: ["ALL_OPEN"],
+  open_replacements: ["ALL_OPEN_REPLACEMENT"],
+  open_returns: ["ALL_OPEN_RETURN"],
+  in_progress: ["RETURN_STARTED"],
+  shipped: ["ITEM_SHIPPED"],
+  delivered: ["ITEM_DELIVERED"],
+  closed: ["CLOSED"],
+};
+
+/**
+ * Does a return belong to the given list filter, using the eBay buckets it was
+ * tagged with on the last sync? This is the authoritative path (matches Seller
+ * Hub exactly). Returns null when the row has no bucket data yet so the caller
+ * can fall back to {@link matchesStatusFilter} (state-based).
+ */
+export function matchesBucketFilter(
+  filter: ReturnStatusFilterKey,
+  buckets: string[] | null | undefined,
+): boolean | null {
+  if (!Array.isArray(buckets) || buckets.length === 0) return null;
+  const wanted = FILTER_BUCKET_MAP[filter] ?? [];
+  if (wanted.length === 0) return true;
+  const set = new Set(buckets.map((b) => String(b).trim().toUpperCase()));
+  return wanted.some((b) => set.has(b));
+}
+
 /** Coarse lifecycle bucket used for the progress line + list grouping. */
 export type ReturnLifecycle =
   | "requested"
@@ -288,13 +337,12 @@ const ACTION_OPTION_MAP: Record<ReturnActionKey, string[]> = {
 
 /**
  * Actions we deliberately DO NOT execute as a live API write even when eBay
- * offers them, because the write semantics are paid/irreversible and there is
- * no eBay sandbox to validate against. PROVIDE_EBAY_LABEL purchases a paid eBay
- * return label; rather than fire an ambiguous paid call we deep-link the user
- * to eBay's label-purchase flow (handled in the UI). Keeping it here means the
- * commit endpoint will also refuse it as defense-in-depth.
+ * offers them. Empty in v1: PROVIDE_EBAY_LABEL (purchase a paid eBay return
+ * label) is now wired through the full safety gate + typed confirmation just
+ * like every other live write — it is NOT silently blocked. Keep this array as
+ * the single place to re-block an action if policy ever requires it.
  */
-export const POLICY_BLOCKED_ACTIONS: ReturnActionKey[] = ["PROVIDE_EBAY_LABEL"];
+export const POLICY_BLOCKED_ACTIONS: ReturnActionKey[] = [];
 
 export function extractActionTypes(
   options: EbayAvailableOption[] | null | undefined,
