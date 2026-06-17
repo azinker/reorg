@@ -35,6 +35,8 @@ import {
   MessageSquare,
   ChevronDown,
   ChevronUp,
+  Copy,
+  Check,
 } from "lucide-react";
 import {
   StoreBadge,
@@ -226,6 +228,16 @@ export default function ReturnDetailClient({ returnId }: { returnId: string }) {
   const [error, setError] = useState<string | null>(null);
   const [detail, setDetail] = useState<ReturnDetail | null>(null);
   const [showDebug, setShowDebug] = useState(false);
+  // The raw eBay payload debug panel is hidden from the normal seller view.
+  // It's only rendered when the page is opened with `?debug=1` for support.
+  const [debugEnabled, setDebugEnabled] = useState(false);
+  useEffect(() => {
+    try {
+      setDebugEnabled(new URLSearchParams(window.location.search).get("debug") === "1");
+    } catch {
+      /* no-op */
+    }
+  }, []);
 
   // Action modal state
   const [activeAction, setActiveAction] = useState<ActionKey | null>(null);
@@ -557,28 +569,31 @@ export default function ReturnDetailClient({ returnId }: { returnId: string }) {
           {/* Timeline */}
           <Timeline detail={detail} />
 
-          {/* Debug (admin) */}
-          <section className="rounded-xl border border-hairline bg-card">
-            <button
-              type="button"
-              onClick={() => setShowDebug((v) => !v)}
-              className="flex w-full items-center justify-between px-5 py-3 text-sm font-semibold text-muted-foreground hover:text-foreground cursor-pointer"
-            >
-              <span className="uppercase tracking-wider">Debug (admin)</span>
+          {/* Debug (admin) — hidden from the normal seller view; only shown
+              when the page is opened with ?debug=1 for support triage. */}
+          {debugEnabled ? (
+            <section className="rounded-xl border border-hairline bg-card">
+              <button
+                type="button"
+                onClick={() => setShowDebug((v) => !v)}
+                className="flex w-full items-center justify-between px-5 py-3 text-sm font-semibold text-muted-foreground hover:text-foreground cursor-pointer"
+              >
+                <span className="uppercase tracking-wider">Debug (admin)</span>
+                {showDebug ? (
+                  <ChevronUp className="h-4 w-4" />
+                ) : (
+                  <ChevronDown className="h-4 w-4" />
+                )}
+              </button>
               {showDebug ? (
-                <ChevronUp className="h-4 w-4" />
-              ) : (
-                <ChevronDown className="h-4 w-4" />
-              )}
-            </button>
-            {showDebug ? (
-              <div className="space-y-3 border-t border-hairline px-5 py-4">
-                <DebugBlock title="Availability" data={detail.availability} />
-                <DebugBlock title="Raw summary" data={detail.debug.rawSummary} />
-                <DebugBlock title="Raw detail" data={detail.debug.rawDetail} />
-              </div>
-            ) : null}
-          </section>
+                <div className="space-y-3 border-t border-hairline px-5 py-4">
+                  <DebugBlock title="Availability" data={detail.availability} />
+                  <DebugBlock title="Raw summary" data={detail.debug.rawSummary} />
+                  <DebugBlock title="Raw detail" data={detail.debug.rawDetail} />
+                </div>
+              ) : null}
+            </section>
+          ) : null}
         </div>
 
         {/* ── Right rail ──────────────────────────────────────────────── */}
@@ -613,15 +628,18 @@ export default function ReturnDetailClient({ returnId }: { returnId: string }) {
                 label="Order"
                 value={
                   detail.ebayOrderNumber ? (
-                    <a
-                      href={`https://www.ebay.com/sh/ord/details?orderid=${encodeURIComponent(detail.ebayOrderNumber)}`}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="inline-flex items-center gap-1 text-brand hover:underline"
-                    >
-                      {detail.ebayOrderNumber}
-                      <ExternalLink className="h-3 w-3" />
-                    </a>
+                    <span className="inline-flex items-center gap-1">
+                      <a
+                        href={`https://www.ebay.com/sh/ord/details?orderid=${encodeURIComponent(detail.ebayOrderNumber)}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-1 text-brand hover:underline"
+                      >
+                        {detail.ebayOrderNumber}
+                        <ExternalLink className="h-3 w-3" />
+                      </a>
+                      <CopyButton value={detail.ebayOrderNumber} label="order ID" />
+                    </span>
                   ) : (
                     "—"
                   )
@@ -630,30 +648,36 @@ export default function ReturnDetailClient({ returnId }: { returnId: string }) {
               <RailRow
                 label="Return ID"
                 value={
-                  <a
-                    href={ebayReturnUrl(detail.returnId)}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="inline-flex items-center gap-1 text-brand hover:underline"
-                  >
-                    {detail.returnId}
-                    <ExternalLink className="h-3 w-3" />
-                  </a>
-                }
-              />
-              {detail.caseId ? (
-                <RailRow
-                  label="eBay case ID"
-                  value={
+                  <span className="inline-flex items-center gap-1">
                     <a
                       href={ebayReturnUrl(detail.returnId)}
                       target="_blank"
                       rel="noreferrer"
                       className="inline-flex items-center gap-1 text-brand hover:underline"
                     >
-                      {detail.caseId}
+                      {detail.returnId}
                       <ExternalLink className="h-3 w-3" />
                     </a>
+                    <CopyButton value={detail.returnId} label="return ID" />
+                  </span>
+                }
+              />
+              {detail.caseId ? (
+                <RailRow
+                  label="eBay case ID"
+                  value={
+                    <span className="inline-flex items-center gap-1">
+                      <a
+                        href={ebayReturnUrl(detail.returnId)}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-1 text-brand hover:underline"
+                      >
+                        {detail.caseId}
+                        <ExternalLink className="h-3 w-3" />
+                      </a>
+                      <CopyButton value={detail.caseId} label="case ID" />
+                    </span>
                   }
                 />
               ) : null}
@@ -662,7 +686,26 @@ export default function ReturnDetailClient({ returnId }: { returnId: string }) {
                 value={fmtMoney(detail.sellerRefund.value, detail.sellerRefund.currency)}
               />
               <RailRow label="Reason" value={humanizeReason(detail.reason)} />
-              <RailRow label="Buyer" value={detail.buyerUserId ?? "—"} />
+              <RailRow
+                label="Buyer"
+                value={
+                  detail.buyerUserId ? (
+                    <span className="inline-flex items-center gap-1">
+                      <Link
+                        href={`/help-desk?q=${encodeURIComponent(detail.buyerUserId)}`}
+                        className="inline-flex items-center gap-1 text-brand hover:underline"
+                        title="Search this buyer in Help Desk"
+                      >
+                        {detail.buyerUserId}
+                        <MessageSquare className="h-3 w-3" />
+                      </Link>
+                      <CopyButton value={detail.buyerUserId} label="buyer username" />
+                    </span>
+                  ) : (
+                    "—"
+                  )
+                }
+              />
               <RailRow label="Opened" value={fmtDate(detail.openedAt)} />
               {detail.sellerResponseDueAt && !detail.isClosed ? (
                 <RailRow
@@ -953,6 +996,36 @@ function Detail({ label, value }: { label: string; value: React.ReactNode }) {
       </dt>
       <dd className="mt-0.5 text-foreground">{value}</dd>
     </div>
+  );
+}
+
+/** Small inline copy-to-clipboard button used next to IDs in the rail. */
+function CopyButton({ value, label }: { value: string; label: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      type="button"
+      title={`Copy ${label}`}
+      aria-label={`Copy ${label}`}
+      onClick={async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        try {
+          await navigator.clipboard.writeText(value);
+          setCopied(true);
+          setTimeout(() => setCopied(false), 1200);
+        } catch {
+          /* clipboard unavailable — no-op */
+        }
+      }}
+      className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-surface-2 hover:text-foreground cursor-pointer"
+    >
+      {copied ? (
+        <Check className="h-3 w-3 text-emerald-500" />
+      ) : (
+        <Copy className="h-3 w-3" />
+      )}
+    </button>
   );
 }
 

@@ -425,11 +425,17 @@ export async function markAsReceived(args: {
 
 /**
  * POST /post-order/v2/return/{returnId}/add_shipping_label.
- * Used for the "upload a label" path: labelAction=UPLOAD_LABEL with the
- * seller's own label that they already purchased off-eBay. carrierEnum +
- * trackingNumber are required so the buyer can track the return; an optional
- * fileId attaches the uploaded label image. This spends no money on our side
- * (the seller already bought the label elsewhere).
+ * Used for the "upload a label" path: the seller provides their own return
+ * label (one they already created/purchased off-eBay) by setting
+ * `forwardShippingLabelProvided: true` and attaching the carrier + tracking so
+ * the buyer can ship the item back. An optional `shippingLabelFileId` attaches
+ * the uploaded label image when present. This spends no money on our side (the
+ * seller already arranged the label elsewhere) — the paid "buy an eBay label"
+ * path is policy-blocked and deep-linked to eBay instead.
+ *
+ * NOTE: the AddShippingLabel request has NO `labelAction` field — the meaningful
+ * flag is `forwardShippingLabelProvided`, and the file field is
+ * `shippingLabelFileId` (not `fileId`). This mirrors `addForwardedShippingLabel`.
  */
 export async function uploadReturnShippingLabel(args: {
   integrationId: string;
@@ -441,11 +447,11 @@ export async function uploadReturnShippingLabel(args: {
   comments?: string;
 }): Promise<EbayReturnsCallResult<{ refundStatus?: string }>> {
   const jsonBody: Record<string, unknown> = {
-    labelAction: "UPLOAD_LABEL",
+    forwardShippingLabelProvided: true,
     carrierEnum: args.carrierEnum,
     trackingNumber: args.trackingNumber,
   };
-  if (args.fileId) jsonBody.fileId = args.fileId;
+  if (args.fileId) jsonBody.shippingLabelFileId = args.fileId;
   if (args.comments) jsonBody.comments = { content: args.comments };
   return postOrderRequest({
     integrationId: args.integrationId,
@@ -459,9 +465,10 @@ export async function uploadReturnShippingLabel(args: {
 
 /**
  * POST /post-order/v2/return/{returnId}/add_shipping_label.
- * Used for the "confirm label already sent" path: labelAction=MARK_AS_SENT with
- * a forwarded shipping label the seller arranged off-eBay. We never purchase a
- * paid eBay label here (that path is policy-blocked in the safety layer).
+ * Used for the "confirm label already sent" path: the seller has already given
+ * the buyer a return label off-eBay, so we set `forwardShippingLabelProvided:
+ * true` and pass the carrier + tracking. We never purchase a paid eBay label
+ * here (that path is policy-blocked in the safety layer).
  */
 export async function addForwardedShippingLabel(args: {
   integrationId: string;
@@ -474,13 +481,12 @@ export async function addForwardedShippingLabel(args: {
   comments?: string;
 }): Promise<EbayReturnsCallResult<{ refundStatus?: string }>> {
   const jsonBody: Record<string, unknown> = {
-    labelAction: "MARK_AS_SENT",
     forwardShippingLabelProvided: true,
   };
   if (args.carrierEnum) jsonBody.carrierEnum = args.carrierEnum;
   if (args.carrierName) jsonBody.carrierName = args.carrierName;
   if (args.trackingNumber) jsonBody.trackingNumber = args.trackingNumber;
-  if (args.fileId) jsonBody.fileId = args.fileId;
+  if (args.fileId) jsonBody.shippingLabelFileId = args.fileId;
   if (args.comments) jsonBody.comments = { content: args.comments };
   return postOrderRequest({
     integrationId: args.integrationId,
