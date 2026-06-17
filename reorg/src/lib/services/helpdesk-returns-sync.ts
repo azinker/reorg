@@ -28,6 +28,7 @@ import {
   RETURN_SYNC_BUCKETS,
   type EbayReturnSummary,
 } from "@/lib/helpdesk/returns";
+import { resolveOrderLineSku } from "@/lib/services/helpdesk-returns";
 
 const EBAY_PLATFORMS: Platform[] = [Platform.TPP_EBAY, Platform.TT_EBAY];
 
@@ -281,7 +282,15 @@ async function enrichMissingItemDetails(
     },
     orderBy: { openedAt: "desc" },
     take: ENRICH_BUDGET_PER_TICK,
-    select: { id: true, returnId: true, ebayItemId: true, itemTitle: true, sku: true },
+    select: {
+      id: true,
+      returnId: true,
+      ebayItemId: true,
+      ebayOrderNumber: true,
+      transactionId: true,
+      itemTitle: true,
+      sku: true,
+    },
   });
   if (missing.length === 0) return;
 
@@ -290,10 +299,20 @@ async function enrichMissingItemDetails(
     let imageUrl: string | null = null;
     let sku: string | null = row.sku;
 
-    // (1) Get Return detail is authoritative for the purchased variant — it
-    // carries the exact SKU the buyer bought, which the search summary omits.
-    // We need that SKU to pick the right variation thumbnail below.
-    if (!itemTitle || !sku) {
+    // (1) Authoritative SKU from the actual ORDER transaction the buyer
+    // purchased. This is the ground truth for the variant (eBay's return
+    // itemDetail.sku is wrong for multi-variation listings), so it OVERRIDES
+    // any prior value and drives the variation-thumbnail match below.
+    const orderSku = await resolveOrderLineSku(integration.id, config, {
+      orderNumber: row.ebayOrderNumber,
+      transactionId: row.transactionId,
+      itemId: row.ebayItemId,
+    });
+    if (orderSku) sku = orderSku;
+
+    // (2) Get Return detail for title/image (and SKU only as a fallback when
+    // the order didn't yield one). The pic is often the parent/default variant.
+    if (!itemTitle || !imageUrl || !sku) {
       const detail = await getReturnDetail({
         integrationId: integration.id,
         config,

@@ -294,6 +294,40 @@ function pickOrderLineSku(
 }
 
 /**
+ * Authoritative SKU for a return, resolved from the live eBay ORDER transaction
+ * the buyer purchased. Returns null when there's no confident match (the caller
+ * decides the fallback). Shared by the detail refresh, the bulk sync hydration,
+ * and the retroactive backfill so all three agree on the same ground truth.
+ * Read-only against eBay (GetOrders via the shared order-context cache).
+ */
+export async function resolveOrderLineSku(
+  integrationId: string,
+  config: ReturnType<typeof buildEbayConfig>,
+  args: {
+    orderNumber: string | null;
+    transactionId: string | null;
+    itemId: string | null;
+  },
+): Promise<string | null> {
+  if (!args.orderNumber) return null;
+  try {
+    const ctx = await getOrderContextCached(integrationId, config, args.orderNumber, {
+      awaitFresh: true,
+    });
+    return pickOrderLineSku(ctx ?? null, {
+      transactionId: args.transactionId,
+      itemId: args.itemId,
+    });
+  } catch (err) {
+    console.warn(
+      "[helpdesk-returns] order-context SKU resolve failed",
+      err instanceof Error ? err.message : err,
+    );
+    return null;
+  }
+}
+
+/**
  * Re-fetch a single return's detail (+ tracking + files) directly from eBay and
  * persist it. This is the authoritative read used by the detail page and
  * ALWAYS run immediately before any write so the availability check is fresh.
@@ -343,23 +377,11 @@ export async function refreshReturnDetail(returnId: string): Promise<{
   const skuTransactionId = fields.transactionId ?? existing.transactionId;
   const skuItemId = fields.ebayItemId ?? existing.ebayItemId;
 
-  let resolvedSku: string | null = null;
-  if (orderNumber) {
-    try {
-      const ctx = await getOrderContextCached(integration.id, config, orderNumber, {
-        awaitFresh: true,
-      });
-      resolvedSku = pickOrderLineSku(ctx ?? null, {
-        transactionId: skuTransactionId,
-        itemId: skuItemId,
-      });
-    } catch (err) {
-      console.warn(
-        "[helpdesk-returns] order-context SKU resolve failed",
-        err instanceof Error ? err.message : err,
-      );
-    }
-  }
+  let resolvedSku = await resolveOrderLineSku(integration.id, config, {
+    orderNumber,
+    transactionId: skuTransactionId,
+    itemId: skuItemId,
+  });
   // Fallbacks only when the authoritative order line SKU is unavailable.
   if (!resolvedSku) resolvedSku = fields.sku ?? existing.sku ?? null;
   if (!resolvedSku && skuItemId) {
