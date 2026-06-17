@@ -54,6 +54,7 @@ import {
   STORE_FULL,
   type ReturnLifecycle,
 } from "./returns-ui";
+import { BuyerFeedbackCard } from "./BuyerFeedbackCard";
 
 type ActionKey =
   | "APPROVE_RETURN"
@@ -1140,6 +1141,9 @@ export default function ReturnDetailClient({ returnId }: { returnId: string }) {
               ) : null}
             </div>
           ) : null}
+
+          {/* Buyer feedback — same history view as the Help Desk right rail. */}
+          <BuyerFeedbackCard returnId={detail.returnId} platform={detail.platform} />
 
           {/* Message correspondence — opens a popup with this buyer's threads. */}
           <button
