@@ -16,7 +16,7 @@
  * re-checks all of the above server-side; the client gating is UX only.
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import Link from "next/link";
 import {
   ArrowLeft,
@@ -622,6 +622,10 @@ export default function ReturnDetailClient({ returnId }: { returnId: string }) {
   // exit the flow automatically.
   const inAcceptFlow = acceptFlow && !!acceptGroup;
 
+  // Lifecycle-aware deadline messaging (approve-by vs. in-transit vs.
+  // refund-by). Computed once and reused in the detail card + right rail.
+  const deadline = deadlineNotice(detail);
+
   return (
     <div className="mx-auto max-w-6xl px-6 py-6">
       {/* Top bar */}
@@ -834,24 +838,46 @@ export default function ReturnDetailClient({ returnId }: { returnId: string }) {
                   </a>
                 }
               />
-              {!detail.isClosed && detail.sellerResponseDueAt ? (
+              {deadline ? (
                 <Detail
-                  label="Approve / respond by"
+                  label={deadline.label}
                   value={
-                    <span className="inline-flex items-center gap-1 font-medium text-amber-600 dark:text-amber-300">
-                      <Clock className="h-3.5 w-3.5" />
-                      {fmtDateTime(detail.sellerResponseDueAt)}
-                    </span>
+                    deadline.date ? (
+                      <span
+                        className={
+                          "inline-flex items-center gap-1 font-medium " +
+                          deadline.valueClass
+                        }
+                      >
+                        <Clock className="h-3.5 w-3.5" />
+                        {fmtDateTime(deadline.date)}
+                      </span>
+                    ) : (
+                      <span className={"font-medium " + deadline.valueClass}>
+                        {detail.lifecycle === "in_transit"
+                          ? "In transit back to you"
+                          : "Issued"}
+                      </span>
+                    )
                   }
                 />
               ) : null}
             </dl>
-            {!detail.isClosed && detail.sellerResponseDueAt ? (
-              <p className="mt-3 flex items-start gap-1.5 rounded-md border border-amber-500/25 bg-amber-500/5 px-2.5 py-1.5 text-[11px] text-amber-700 dark:text-amber-300">
-                <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
-                If you don&apos;t respond by this date, eBay may auto-escalate —
-                closing the case against the seller or providing the buyer a
-                return label automatically.
+            {deadline ? (
+              <p
+                className={
+                  "mt-3 flex items-start gap-1.5 rounded-md border px-2.5 py-1.5 text-[11px] " +
+                  (deadline.noteTone === "warn"
+                    ? "border-amber-500/25 bg-amber-500/5 text-amber-700 dark:text-amber-300"
+                    : "border-sky-500/25 bg-sky-500/5 text-sky-700 dark:text-sky-300")
+                }
+              >
+                {deadline.noteTone === "warn" ? (
+                  <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
+                ) : (
+                  <CheckCircle2 className="mt-0.5 h-3 w-3 shrink-0" />
+                )}
+                {deadline.note}
               </p>
             ) : null}
             {detail.buyerComments || detail.files.some((f) => isBuyerPhoto(f)) ? (
@@ -1029,14 +1055,26 @@ export default function ReturnDetailClient({ returnId }: { returnId: string }) {
                 }
               />
               <RailRow label="Opened" value={fmtDate(detail.openedAt)} />
-              {detail.sellerResponseDueAt && !detail.isClosed ? (
+              {deadline ? (
                 <RailRow
-                  label="Respond by"
+                  label={deadline.label}
                   value={
-                    <span className="inline-flex items-center gap-1 text-amber-600 dark:text-amber-300">
-                      <Clock className="h-3 w-3" />
-                      {fmtDate(detail.sellerResponseDueAt)}
-                    </span>
+                    deadline.date ? (
+                      <span
+                        className={
+                          "inline-flex items-center gap-1 " + deadline.valueClass
+                        }
+                      >
+                        <Clock className="h-3 w-3" />
+                        {fmtDate(deadline.date)}
+                      </span>
+                    ) : (
+                      <span className={deadline.valueClass}>
+                        {detail.lifecycle === "in_transit"
+                          ? "In transit"
+                          : "Issued"}
+                      </span>
+                    )
                   }
                 />
               ) : null}
@@ -1370,6 +1408,79 @@ function labelizeAction(actionType: string): string {
     .replace(/_/g, " ")
     .toLowerCase()
     .replace(/^\w/, (c) => c.toUpperCase());
+}
+
+interface DeadlineNotice {
+  /** Short label for the detail/rail row. */
+  label: string;
+  /** Date to render (ISO) — null when the notice is purely informational. */
+  date: string | null;
+  /** Tailwind text-color classes for the date value. */
+  valueClass: string;
+  /** Explanatory sentence shown under RETURN DETAILS. */
+  note: string;
+  /** Visual treatment of the note box. */
+  noteTone: "warn" | "info";
+}
+
+/**
+ * eBay-parity deadline messaging that changes with the return lifecycle.
+ *
+ *   - requested      → "Approve / respond by" + auto-escalate warning (seller
+ *                       must accept/decline/refund before eBay steps in).
+ *   - in_transit     → already approved; buyer is shipping the item back. No
+ *                       seller deadline — purely informational.
+ *   - delivered      → item is back with the seller; show the refund/respond-by
+ *                       deadline (eBay can auto-refund if the seller stalls).
+ *   - refund_pending → refund issued; eBay is finalizing. Informational.
+ *   - closed / none  → no notice.
+ */
+function deadlineNotice(detail: ReturnDetail): DeadlineNotice | null {
+  if (detail.isClosed) return null;
+  const due = detail.sellerResponseDueAt;
+
+  switch (detail.lifecycle) {
+    case "requested":
+      if (!due) return null;
+      return {
+        label: "Approve / respond by",
+        date: due,
+        valueClass: "text-amber-600 dark:text-amber-300",
+        note:
+          "If you don't respond by this date, eBay may auto-escalate — closing the case against the seller or providing the buyer a return label automatically.",
+        noteTone: "warn",
+      };
+    case "in_transit":
+      return {
+        label: "Return approved",
+        date: null,
+        valueClass: "text-emerald-600 dark:text-emerald-300",
+        note: detail.buyerResponseDueAt
+          ? `You approved this return — the buyer is shipping the item back (they must ship by ${fmtDateTime(detail.buyerResponseDueAt)}). No action is needed until it's delivered to you.`
+          : "You approved this return — the buyer is shipping the item back. No action is needed until it's delivered to you.",
+        noteTone: "info",
+      };
+    case "delivered":
+      return {
+        label: due ? "Refund / respond by" : "Item delivered",
+        date: due,
+        valueClass: "text-amber-600 dark:text-amber-300",
+        note: due
+          ? "The item was delivered back to you. Issue the buyer's refund by this date, or eBay may automatically refund them on your behalf."
+          : "The item was delivered back to you. Review it and issue the buyer's refund to close this return.",
+        noteTone: "warn",
+      };
+    case "refund_pending":
+      return {
+        label: "Refund in progress",
+        date: null,
+        valueClass: "text-sky-600 dark:text-sky-300",
+        note: "A refund has been issued — eBay is finalizing this return.",
+        noteTone: "info",
+      };
+    default:
+      return null;
+  }
 }
 
 /** The seller-provided return label file (for re-download), if one exists. */
@@ -2371,6 +2482,7 @@ function CorrespondenceModal({
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [data, setData] = useState<CorrespondenceData | null>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -2379,6 +2491,21 @@ function CorrespondenceModal({
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
+
+  // Jump straight to the most recent message once the thread renders, so the
+  // user lands on the latest correspondence instead of the oldest message.
+  useLayoutEffect(() => {
+    if (loading || !data) return;
+    const el = scrollRef.current;
+    if (!el) return;
+    const jump = () => {
+      el.scrollTop = el.scrollHeight;
+    };
+    jump();
+    // Run again after paint in case HTML message bodies reflow the height.
+    const raf = requestAnimationFrame(jump);
+    return () => cancelAnimationFrame(raf);
+  }, [loading, data]);
 
   useEffect(() => {
     let cancelled = false;
@@ -2440,7 +2567,7 @@ function CorrespondenceModal({
           </button>
         </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+        <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
           {loading ? (
             <div className="flex items-center justify-center py-10">
               <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
