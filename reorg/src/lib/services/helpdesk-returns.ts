@@ -49,6 +49,8 @@ import {
   extractActionTypes,
   isActionExecutable,
   describeReturnStatus,
+  parseEstimatedRefundLines,
+  buildItemizedRefund,
   type EbayReturnSummary,
   type EbayAvailableOption,
   type ReturnActionKey,
@@ -1235,15 +1237,52 @@ export async function commitReturnAction(args: {
           comments,
         });
         break;
-      case "ISSUE_REFUND":
-        result = await issueRefund({
-          integrationId: integration.id,
-          config,
-          returnId: args.returnId,
-          totalAmount: { value: Number(payload.amount), currency },
-          comments,
-        });
+      case "ISSUE_REFUND": {
+        const requested = Number(payload.amount);
+        // eBay caps each itemized line (PURCHASE_PRICE, ORIGINAL_SHIPPING, …) at
+        // its estimated amount. Mirror that breakdown from the FRESH detail we
+        // just fetched; otherwise a single PURCHASE_PRICE line is rejected with
+        // "Refund amount cannot exceed estimated amount" whenever the order had
+        // original shipping.
+        const estLines = parseEstimatedRefundLines(refresh.detailResult?.body);
+        if (estLines.length > 0) {
+          const built = buildItemizedRefund(estLines, requested);
+          if (!built.ok) {
+            await db.helpdeskReturnActionAttempt.update({
+              where: { id: attempt.id },
+              data: { status: HelpdeskReturnActionStatus.FAILED, errorMessage: built.error },
+            });
+            await writeAudit({
+              userId: args.userId,
+              action: "HELPDESK_RETURN_ACTION_FAILED",
+              returnCaseId: caseRow.id,
+              details: { action, step: "itemize_refund", error: built.error, returnId: args.returnId },
+            });
+            return { ok: false, status: "FAILED", error: built.error };
+          }
+          result = await issueRefund({
+            integrationId: integration.id,
+            config,
+            returnId: args.returnId,
+            totalAmount: { value: built.total, currency },
+            itemizedRefundDetails: built.lines.map((l) => ({
+              refundFeeType: l.refundFeeType,
+              amount: { value: l.amount, currency },
+            })),
+            comments,
+          });
+        } else {
+          // No itemized estimate from eBay — fall back to a single line.
+          result = await issueRefund({
+            integrationId: integration.id,
+            config,
+            returnId: args.returnId,
+            totalAmount: { value: requested, currency },
+            comments,
+          });
+        }
         break;
+      }
       case "CONFIRM_LABEL_SENT":
         result = await addForwardedShippingLabel({
           integrationId: integration.id,

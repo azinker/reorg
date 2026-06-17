@@ -399,6 +399,138 @@ export function describeReturnStatus(args: {
   };
 }
 
+// ─── Refund itemization (issue_refund payload) ───────────────────────────────
+//
+// eBay's issue_refund call validates EACH itemized line against a per-fee-type
+// cap from refundInfo.estimatedRefundDetail (e.g. PURCHASE_PRICE $12.85 +
+// ORIGINAL_SHIPPING $1.99). Sending the whole amount as one PURCHASE_PRICE line
+// fails with "Refund amount cannot exceed estimated amount" whenever the order
+// had original shipping. We must mirror eBay's line items.
+
+/** One fee-type line from eBay's estimatedRefundDetail. */
+export interface EstimatedRefundLine {
+  refundFeeType: string;
+  /** eBay's estimated (max) refundable amount for this fee type, in dollars. */
+  estimated: number;
+  /** Whether eBay lets the seller reduce this line (deductions only here). */
+  editable: boolean;
+}
+
+/** A single line we send to eBay's issue_refund call. */
+export interface ItemizedRefundLine {
+  refundFeeType: string;
+  amount: number;
+}
+
+export type BuildItemizedRefundResult =
+  | { ok: true; lines: ItemizedRefundLine[]; total: number }
+  | { ok: false; error: string };
+
+function toNumber(v: unknown): number {
+  if (typeof v === "number") return v;
+  if (typeof v === "string") {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : 0;
+  }
+  return 0;
+}
+
+/**
+ * Pull eBay's per-fee-type estimated refund lines out of a Get Return detail
+ * body. Accepts the whole body or the `refundInfo` object. Returns [] when eBay
+ * didn't provide an itemized estimate (caller should fall back to a single line).
+ */
+export function parseEstimatedRefundLines(body: unknown): EstimatedRefundLine[] {
+  if (!body || typeof body !== "object") return [];
+  const b = body as Record<string, unknown>;
+  const detail = (b.detail ?? b.summary ?? b) as Record<string, unknown>;
+  const refundInfo =
+    (detail.refundInfo as Record<string, unknown> | undefined) ??
+    (b.refundInfo as Record<string, unknown> | undefined);
+  const est = refundInfo?.estimatedRefundDetail as Record<string, unknown> | undefined;
+  const raw = est?.itemizedRefundDetails;
+  if (!Array.isArray(raw)) return [];
+  const lines: EstimatedRefundLine[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue;
+    const r = item as Record<string, unknown>;
+    const feeType = typeof r.refundFeeType === "string" ? r.refundFeeType : null;
+    if (!feeType) continue;
+    const amt = r.estimatedAmount as Record<string, unknown> | undefined;
+    const estimated = toNumber(amt?.value);
+    const editable = r.amountEditable === true || r.overwritableBySeller === true;
+    lines.push({ refundFeeType: feeType, estimated, editable });
+  }
+  return lines;
+}
+
+/**
+ * Build the itemized issue_refund payload from eBay's estimated lines and the
+ * seller's requested refund total. Uses integer cents to avoid float drift.
+ *
+ * - A full refund sends every line at its estimated cap.
+ * - A deduction (requested < total estimated) is applied ONLY to editable lines
+ *   (largest first). If eBay marks every line non-editable, a deduction is
+ *   rejected with a clear message (e.g. SNAD returns must refund in full).
+ * - The requested total is clamped so it can never exceed eBay's estimate.
+ */
+export function buildItemizedRefund(
+  estLines: EstimatedRefundLine[],
+  requestedRefund: number,
+): BuildItemizedRefundResult {
+  if (estLines.length === 0) return { ok: false, error: "No estimated refund detail from eBay." };
+
+  const lines = estLines.map((l) => ({
+    refundFeeType: l.refundFeeType,
+    cents: Math.max(0, Math.round(l.estimated * 100)),
+    editable: l.editable,
+  }));
+  const totalEstCents = lines.reduce((s, l) => s + l.cents, 0);
+  if (totalEstCents <= 0) return { ok: false, error: "eBay reported a $0.00 estimated refund." };
+
+  let reqCents = Math.round((Number.isFinite(requestedRefund) ? requestedRefund : 0) * 100);
+  if (reqCents <= 0) return { ok: false, error: "The refund amount must be greater than $0.00." };
+  // Never exceed eBay's estimate (that's the exact error we're guarding against).
+  if (reqCents > totalEstCents) reqCents = totalEstCents;
+
+  let reductionCents = totalEstCents - reqCents;
+  if (reductionCents > 0) {
+    const editableCapacity = lines
+      .filter((l) => l.editable)
+      .reduce((s, l) => s + l.cents, 0);
+    if (editableCapacity <= 0) {
+      return {
+        ok: false,
+        error:
+          "eBay doesn't allow a deduction on this return — the full amount must be refunded. Clear the deduction and try again.",
+      };
+    }
+    if (reductionCents > editableCapacity) {
+      return {
+        ok: false,
+        error: `eBay only allows deducting up to $${(editableCapacity / 100).toFixed(2)} on this return.`,
+      };
+    }
+    // Subtract from editable lines, largest first.
+    const editableIdx = lines
+      .map((l, i) => ({ i, cents: l.cents, editable: l.editable }))
+      .filter((x) => x.editable)
+      .sort((a, b) => b.cents - a.cents);
+    for (const { i } of editableIdx) {
+      if (reductionCents <= 0) break;
+      const take = Math.min(lines[i].cents, reductionCents);
+      lines[i].cents -= take;
+      reductionCents -= take;
+    }
+  }
+
+  const outLines = lines
+    .filter((l) => l.cents > 0)
+    .map((l) => ({ refundFeeType: l.refundFeeType, amount: l.cents / 100 }));
+  const totalCents = lines.reduce((s, l) => s + l.cents, 0);
+  return { ok: true, lines: outLines, total: totalCents / 100 };
+}
+
 // ─── Return shipment tracking (from Get Return detail) ───────────────────────
 
 export interface ReturnShipmentTracking {

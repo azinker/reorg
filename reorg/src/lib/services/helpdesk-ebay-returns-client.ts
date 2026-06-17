@@ -426,27 +426,40 @@ export async function decideReturn(args: {
 
 /**
  * POST /post-order/v2/return/{returnId}/issue_refund.
- * `totalAmount` must equal the sum of itemized refund amounts. We issue a
- * single PURCHASE_PRICE line for the (possibly deduction-reduced) amount.
+ *
+ * eBay validates EACH itemized line against a per-fee-type cap from
+ * refundInfo.estimatedRefundDetail (e.g. PURCHASE_PRICE + ORIGINAL_SHIPPING).
+ * Always pass `itemizedRefundDetails` built from that estimate; the legacy
+ * single-PURCHASE_PRICE fallback (using `totalAmount`) is only safe when the
+ * order had no separate refundable lines (no original shipping).
+ * `totalAmount` must equal the sum of the itemized refund amounts.
  */
 export async function issueRefund(args: {
   integrationId: string;
   config: EbayConfig;
   returnId: string;
   totalAmount: EbayAmountInput;
+  itemizedRefundDetails?: Array<{ refundFeeType: string; amount: EbayAmountInput }>;
   comments?: string;
 }): Promise<EbayReturnsCallResult<{ refundStatus?: string }>> {
+  const itemized =
+    args.itemizedRefundDetails && args.itemizedRefundDetails.length > 0
+      ? args.itemizedRefundDetails.map((l) => ({
+          refundAmount: { value: l.amount.value, currency: l.amount.currency },
+          refundFeeType: l.refundFeeType,
+        }))
+      : [
+          {
+            refundAmount: {
+              value: args.totalAmount.value,
+              currency: args.totalAmount.currency,
+            },
+            refundFeeType: "PURCHASE_PRICE",
+          },
+        ];
   const jsonBody: Record<string, unknown> = {
     refundDetail: {
-      itemizedRefundDetail: [
-        {
-          refundAmount: {
-            value: args.totalAmount.value,
-            currency: args.totalAmount.currency,
-          },
-          refundFeeType: "PURCHASE_PRICE",
-        },
-      ],
+      itemizedRefundDetail: itemized,
       totalAmount: {
         value: args.totalAmount.value,
         currency: args.totalAmount.currency,

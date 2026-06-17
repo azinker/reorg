@@ -18,6 +18,8 @@ import {
   humanizeReturnState,
   normalizeReturnSummary,
   extractItemPresentation,
+  parseEstimatedRefundLines,
+  buildItemizedRefund,
   type EbayAvailableOption,
 } from "@/lib/helpdesk/returns";
 
@@ -65,6 +67,99 @@ test("describeReturnStatus: a refund already issued reads as issued, not action-
   assert.equal(partial.label, "Partial refund issued");
   assert.equal(partial.tone, "closed");
   assert.equal(describeReturnStatus({ state: "FULL_REFUND_ISSUED" }).label, "Refund issued");
+});
+
+// ─── Refund itemization (issue_refund payload) ───────────────────────────────
+
+const SNAD_REFUND_BODY = {
+  detail: {
+    refundInfo: {
+      estimatedRefundDetail: {
+        itemizedRefundDetails: [
+          {
+            refundFeeType: "PURCHASE_PRICE",
+            estimatedAmount: { value: 12.85, currency: "USD" },
+            overwritableBySeller: false,
+            amountEditable: false,
+          },
+          {
+            refundFeeType: "ORIGINAL_SHIPPING",
+            estimatedAmount: { value: 1.99, currency: "USD" },
+            overwritableBySeller: false,
+            amountEditable: false,
+          },
+        ],
+      },
+    },
+  },
+};
+
+test("parseEstimatedRefundLines: reads per-fee-type caps + editability", () => {
+  const lines = parseEstimatedRefundLines(SNAD_REFUND_BODY);
+  assert.deepEqual(lines, [
+    { refundFeeType: "PURCHASE_PRICE", estimated: 12.85, editable: false },
+    { refundFeeType: "ORIGINAL_SHIPPING", estimated: 1.99, editable: false },
+  ]);
+  assert.deepEqual(parseEstimatedRefundLines(null), []);
+  assert.deepEqual(parseEstimatedRefundLines({}), []);
+});
+
+test("buildItemizedRefund: full refund itemizes PURCHASE_PRICE + ORIGINAL_SHIPPING", () => {
+  // The exact bug: a full $14.84 refund must split, not lump into PURCHASE_PRICE.
+  const lines = parseEstimatedRefundLines(SNAD_REFUND_BODY);
+  const out = buildItemizedRefund(lines, 14.84);
+  assert.equal(out.ok, true);
+  if (out.ok) {
+    assert.equal(out.total, 14.84);
+    assert.deepEqual(out.lines, [
+      { refundFeeType: "PURCHASE_PRICE", amount: 12.85 },
+      { refundFeeType: "ORIGINAL_SHIPPING", amount: 1.99 },
+    ]);
+  }
+});
+
+test("buildItemizedRefund: a request over the estimate is clamped, never exceeds", () => {
+  const lines = parseEstimatedRefundLines(SNAD_REFUND_BODY);
+  const out = buildItemizedRefund(lines, 99);
+  assert.equal(out.ok, true);
+  if (out.ok) assert.equal(out.total, 14.84);
+});
+
+test("buildItemizedRefund: deduction on a non-editable (SNAD) return is rejected", () => {
+  const lines = parseEstimatedRefundLines(SNAD_REFUND_BODY);
+  const out = buildItemizedRefund(lines, 14.83); // $0.01 deduction
+  assert.equal(out.ok, false);
+  if (!out.ok) assert.match(out.error, /doesn't allow a deduction/i);
+});
+
+test("buildItemizedRefund: deduction comes off the editable line first", () => {
+  const editableBody = {
+    detail: {
+      refundInfo: {
+        estimatedRefundDetail: {
+          itemizedRefundDetails: [
+            { refundFeeType: "PURCHASE_PRICE", estimatedAmount: { value: 20, currency: "USD" }, amountEditable: true },
+            { refundFeeType: "ORIGINAL_SHIPPING", estimatedAmount: { value: 5, currency: "USD" }, amountEditable: false },
+          ],
+        },
+      },
+    },
+  };
+  const lines = parseEstimatedRefundLines(editableBody);
+  const out = buildItemizedRefund(lines, 22); // $3 deduction off the $20 line
+  assert.equal(out.ok, true);
+  if (out.ok) {
+    assert.equal(out.total, 22);
+    assert.deepEqual(out.lines, [
+      { refundFeeType: "PURCHASE_PRICE", amount: 17 },
+      { refundFeeType: "ORIGINAL_SHIPPING", amount: 5 },
+    ]);
+  }
+});
+
+test("buildItemizedRefund: empty estimate falls back (caller uses single line)", () => {
+  const out = buildItemizedRefund([], 10);
+  assert.equal(out.ok, false);
 });
 
 test("deriveSellerActionDue: a refund already issued is NOT a seller to-do", () => {
