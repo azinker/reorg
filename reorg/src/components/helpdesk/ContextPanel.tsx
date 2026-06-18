@@ -1240,10 +1240,10 @@ function CaseStatusSection({
                   target="_blank"
                   rel="noopener noreferrer"
                   className="inline-flex min-w-0 items-center gap-1 rounded border border-sky-500/40 bg-sky-500/10 px-1.5 py-0.5 text-[11px] font-medium text-sky-700 underline-offset-2 transition-colors hover:border-sky-500/60 hover:bg-sky-500/15 hover:text-sky-800 hover:underline dark:text-sky-200 dark:hover:text-sky-100 cursor-pointer"
-                  title="Open this return case inside reorG Help Desk in a new tab"
+                  title="Open this return case in the Help Desk Returns area in a new tab"
                 >
                   <Package className="h-3 w-3 shrink-0 opacity-80" />
-                  Open in reorG
+                  Open in Returns Area
                 </a>
               ) : null}
             </div>
