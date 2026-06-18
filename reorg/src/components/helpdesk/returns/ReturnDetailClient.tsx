@@ -8,12 +8,13 @@
  * a right rail with order/return context, return details, a unified timeline,
  * and admin debug panels.
  *
- * Every seller action is gated three ways before it can fire a live write:
+ * Returns run live in production (no per-portal live-write toggle). Every
+ * seller action is still gated before it can fire a live write:
  *   1. eBay currently offers the option (availability.availableOnEbay)
  *   2. we don't policy-block it (availability.policyBlocked)
- *   3. the returns live-write lock is OFF (returnsLiveWritesEnabled)
  * and even then it runs preview → (typed) confirm → commit. The commit endpoint
- * re-checks all of the above server-side; the client gating is UX only.
+ * re-checks all of the above server-side (plus admin/env/global write lock);
+ * the client gating is UX only.
  */
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
@@ -29,7 +30,6 @@ import {
   Truck,
   DollarSign,
   Clock,
-  Lock,
   AlertTriangle,
   ExternalLink,
   MessageSquare,
@@ -604,7 +604,6 @@ export default function ReturnDetailClient({ returnId }: { returnId: string }) {
     );
   }
 
-  const liveBlocked = !detail.returnsLiveWritesEnabled;
   const availMap = new Map(detail.availability.map((a) => [a.key, a]));
 
   function actionState(key: ActionKey): {
@@ -620,12 +619,6 @@ export default function ReturnDetailClient({ returnId }: { returnId: string }) {
     }
     if (!EXECUTABLE.includes(key)) {
       return { enabled: false, reason: "Not supported in reorG v1." };
-    }
-    if (liveBlocked) {
-      return {
-        enabled: false,
-        reason: "Live return writes are locked. Turn the lock OFF on the Return Cases page.",
-      };
     }
     return { enabled: true, reason: null };
   }
@@ -685,15 +678,6 @@ export default function ReturnDetailClient({ returnId }: { returnId: string }) {
         <div className="mb-4 flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
           <AlertTriangle className="h-4 w-4 shrink-0" />
           Live refresh failed — showing cached data. {detail.debug.refreshError}
-        </div>
-      ) : null}
-
-      {liveBlocked ? (
-        <div className="mb-4 flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
-          <Lock className="h-4 w-4 shrink-0" />
-          Live return writes are <strong>LOCKED</strong>. You can preview every
-          action, but commits are disabled until an admin turns the lock OFF on
-          the Return Cases page.
         </div>
       ) : null}
 

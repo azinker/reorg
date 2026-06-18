@@ -23,8 +23,6 @@ import {
   PackageOpen,
   AlertTriangle,
   ChevronRight,
-  Lock,
-  Unlock,
   X,
 } from "lucide-react";
 import {
@@ -160,10 +158,6 @@ export default function ReturnsListClient() {
   const [syncMsg, setSyncMsg] = useState<string | null>(null);
   const [lastSyncAt, setLastSyncAt] = useState<Date | null>(null);
 
-  // Live-write toggle (returns_live_writes). Default LOCKED.
-  const [liveWrites, setLiveWrites] = useState<boolean | null>(null);
-  const [liveToggling, setLiveToggling] = useState(false);
-
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -232,41 +226,6 @@ export default function ReturnsListClient() {
   useEffect(() => {
     loadRef.current = load;
   }, [load]);
-
-  // Load live-write setting once.
-  useEffect(() => {
-    let cancelled = false;
-    fetch("/api/settings?key=returns_live_writes", { cache: "no-store" })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((json) => {
-        if (cancelled) return;
-        setLiveWrites(Boolean(json?.data ?? false));
-      })
-      .catch(() => {
-        if (!cancelled) setLiveWrites(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  async function onToggleLiveWrites() {
-    if (liveWrites === null) return;
-    setLiveToggling(true);
-    try {
-      const newVal = !liveWrites;
-      const res = await fetch("/api/settings", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ key: "returns_live_writes", value: newVal }),
-      });
-      if (res.ok) setLiveWrites(newVal);
-    } catch {
-      /* best-effort */
-    } finally {
-      setLiveToggling(false);
-    }
-  }
 
   const runSync = useCallback(async () => {
     setSyncing(true);
@@ -414,28 +373,6 @@ export default function ReturnsListClient() {
             </p>
           ) : null}
         </div>
-        {/* Live-write lock control */}
-        <button
-          type="button"
-          onClick={onToggleLiveWrites}
-          disabled={liveToggling || liveWrites === null}
-          title="When OFF, all live eBay return writes are blocked (preview still works). Default OFF."
-          className={
-            "inline-flex shrink-0 items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition-colors disabled:opacity-50 cursor-pointer " +
-            (liveWrites
-              ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/25"
-              : "bg-amber-500/15 text-amber-700 dark:text-amber-300 hover:bg-amber-500/25")
-          }
-        >
-          {liveToggling ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-          ) : liveWrites ? (
-            <Unlock className="h-3.5 w-3.5" />
-          ) : (
-            <Lock className="h-3.5 w-3.5" />
-          )}
-          Live writes {liveWrites ? "ON" : "LOCKED"}
-        </button>
       </header>
 
       {/* Filter bar */}

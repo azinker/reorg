@@ -22,7 +22,6 @@
  * is the DB-consulting wrapper used by routes.
  */
 
-import { db } from "@/lib/db";
 import { getAppEnv } from "@/lib/env";
 import { checkWriteSafety } from "@/lib/safety";
 import {
@@ -126,17 +125,17 @@ export function evaluateReturnWriteGate(
   return { allowed: true, code: "OK", reason: "Allowed." };
 }
 
-/** Read the returns master toggle. Absent row ⇒ false (LOCKED) — the safe default. */
+/**
+ * Returns-portal live writes are permanently ON (live production). The
+ * per-portal on/off toggle was removed — return writes are gated only by the
+ * broader safety chain (admin, non-staging env, the global/per-integration
+ * write lock, and eBay action availability/policy), plus the mandatory
+ * per-action preview → typed-confirm → commit flow. This always resolves true
+ * so the returns master gate never blocks; flip the GLOBAL write lock in
+ * Integrations if you need to stop all marketplace writes.
+ */
 export async function getReturnsLiveWritesEnabled(): Promise<boolean> {
-  try {
-    const row = await db.appSetting.findUnique({
-      where: { key: "returns_live_writes" },
-    });
-    return row?.value === true;
-  } catch {
-    // On any read failure, fail CLOSED.
-    return false;
-  }
+  return true;
 }
 
 export interface AssertReturnWriteArgs {
