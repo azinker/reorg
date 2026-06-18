@@ -38,7 +38,6 @@ import {
 import {
   normalizeReturnSummary,
   matchesStatusFilter,
-  matchesBucketFilter,
   getReturnLifecycle,
   isReturnClosed,
   validateDeduction,
@@ -183,15 +182,20 @@ export async function listReturnCases(filters: ListReturnsFilters): Promise<{
     statusKey === "all"
       ? candidates
       : candidates.filter((row) => {
-          // Prefer the authoritative eBay-bucket membership recorded on the
-          // last sync (matches Seller Hub's status dropdown exactly). Fall back
-          // to the state-derived heuristic only for rows not yet re-synced with
-          // buckets.
-          const buckets = Array.isArray(row.ebayBuckets)
-            ? (row.ebayBuckets as unknown[]).map((b) => String(b))
-            : [];
-          const byBucket = matchesBucketFilter(statusKey, buckets);
-          if (byBucket !== null) return byBucket;
+          // Classify off the CURRENT return state, not the eBay bucket tags
+          // recorded at the last bulk sync. The per-case detail refresh (run on
+          // every open + after every write) updates `returnState` but NOT the
+          // `ebayBuckets` tags, and eBay's CLOSED bucket sync is page-capped —
+          // so a freshly-closed/delivered case keeps a stale ITEM_SHIPPED /
+          // ITEM_DELIVERED tag and leaked into the wrong filter. State is the
+          // single source of truth that also drives the status badge, so the
+          // filter and the badge now always agree.
+          const closedNow = isReturnClosed(row.returnState);
+          // Closed is authoritative: a closed case belongs ONLY to "Closed
+          // returns/replacements" and must leave every open/shipped/delivered/
+          // in-progress bucket; a still-open case never shows under Closed.
+          if (statusKey === "closed") return closedNow;
+          if (closedNow) return false;
           return matchesStatusFilter(statusKey, {
             state: row.returnState,
             currentType: row.currentType,

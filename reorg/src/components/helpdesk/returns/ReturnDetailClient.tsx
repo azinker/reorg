@@ -232,11 +232,14 @@ function blobToBase64(blob: Blob): Promise<string> {
 }
 
 // Actions the v1 write flow can actually execute (subset of ActionKey).
-// PROVIDE_EBAY_LABEL is now wired: it asks eBay to generate a prepaid return
-// label for the buyer (eBay charges the seller). It runs through the same
-// preview → typed-confirm → commit + safety-gate chain as every other write.
+// PROVIDE_EBAY_LABEL is wired: it asks eBay to generate a prepaid return label
+// for the buyer (eBay charges the seller). DECLINE_RETURN is wired: it declines
+// the buyer's request (eBay decideReturn DECLINE) behind a typed confirmation.
+// Each runs through the same preview → typed-confirm → commit + safety-gate
+// chain as every other write.
 const EXECUTABLE: ActionKey[] = [
   "APPROVE_RETURN",
+  "DECLINE_RETURN",
   "OFFER_PARTIAL_REFUND",
   "UPLOAD_LABEL",
   "PROVIDE_EBAY_LABEL",
