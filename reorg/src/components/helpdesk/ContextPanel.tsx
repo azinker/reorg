@@ -1232,6 +1232,20 @@ function CaseStatusSection({
                   </span>
                 )
               ) : null}
+              {/* Return cases also have an in-app reorG page — distinct
+                  blue button (vs. the amber eBay pill) opens it in a new tab. */}
+              {isReturnCase && summary.caseId ? (
+                <a
+                  href={`/help-desk/returns/${encodeURIComponent(summary.caseId)}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex min-w-0 items-center gap-1 rounded border border-sky-500/40 bg-sky-500/10 px-1.5 py-0.5 text-[11px] font-medium text-sky-700 underline-offset-2 transition-colors hover:border-sky-500/60 hover:bg-sky-500/15 hover:text-sky-800 hover:underline dark:text-sky-200 dark:hover:text-sky-100 cursor-pointer"
+                  title="Open this return case inside reorG Help Desk in a new tab"
+                >
+                  <Package className="h-3 w-3 shrink-0 opacity-80" />
+                  Open in reorG
+                </a>
+              ) : null}
             </div>
             {isReturnCase ? (
               <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1.5 text-[11px]">

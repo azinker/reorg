@@ -43,6 +43,7 @@ import {
   MapPin,
   X,
   PackagePlus,
+  FileText,
 } from "lucide-react";
 import {
   StoreBadge,
@@ -55,6 +56,8 @@ import {
   type ReturnLifecycle,
 } from "./returns-ui";
 import { BuyerFeedbackCard } from "./BuyerFeedbackCard";
+import { useCurrentUser } from "@/contexts/current-user-context";
+import { canUseHelpdeskOrderActionsPermission } from "@/lib/helpdesk/order-actions-permission";
 
 type ActionKey =
   | "APPROVE_RETURN"
@@ -213,6 +216,19 @@ const MAX_DEDUCTION_PCT = 50;
 
 function round2(n: number): number {
   return Math.round((n + Number.EPSILON) * 100) / 100;
+}
+
+/** Reads a Blob (the generated label PDF) into base64 with no data: prefix. */
+function blobToBase64(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      const result = String(reader.result ?? "");
+      resolve(result.includes(",") ? result.slice(result.indexOf(",") + 1) : result);
+    };
+    reader.onerror = () => reject(new Error("Could not read the generated label."));
+    reader.readAsDataURL(blob);
+  });
 }
 
 // Actions the v1 write flow can actually execute (subset of ActionKey).
@@ -1747,6 +1763,16 @@ function ActionModal({
   const meta = ACTION_META[action];
   const currency = detail.sellerRefund.currency ?? "USD";
 
+  // "Generate return label" reuses the ticket-pane LabelCrow generator, which
+  // is keyed by ticket and gated by the helpdesk order-actions permission.
+  const currentUser = useCurrentUser();
+  const isEbayPlatform =
+    detail.platform === "TPP_EBAY" || detail.platform === "TT_EBAY";
+  const canGenerateLabel =
+    isEbayPlatform &&
+    Boolean(detail.ticketId) &&
+    canUseHelpdeskOrderActionsPermission(currentUser ?? {});
+
   // params
   const [amount, setAmount] = useState("");
   const [carrier, setCarrier] = useState("USPS");
@@ -1756,6 +1782,9 @@ function ActionModal({
   const [labelFileName, setLabelFileName] = useState<string | null>(null);
   const [labelFileData, setLabelFileData] = useState<string | null>(null);
   const [fileBusy, setFileBusy] = useState(false);
+  // UPLOAD_LABEL "Generate return label" (reuses the ticket-pane generator).
+  const [genBusy, setGenBusy] = useState(false);
+  const [genNote, setGenNote] = useState<string | null>(null);
   // ISSUE_REFUND (eBay "Provide a refund" parity): Amount/Percent toggle, live
   // deduction calc, required reason checkboxes + comment.
   const [refundMode, setRefundMode] = useState<"amount" | "percent">("amount");
@@ -1812,6 +1841,62 @@ function ActionModal({
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
+
+  // Generate a USPS return label via the existing ticket generator, then load
+  // its PDF into this modal's file + carrier + tracking so the user can submit
+  // it to the eBay case exactly like a hand-uploaded label.
+  async function generateAndAttachLabel(force: boolean) {
+    if (!detail.ticketId) return;
+    setGenBusy(true);
+    setErr(null);
+    setGenNote(null);
+    try {
+      const res = await fetch(
+        `/api/helpdesk/tickets/${encodeURIComponent(detail.ticketId)}/return-labels`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ force }),
+        },
+      );
+      const json = (await res.json().catch(() => ({}))) as {
+        data?: { label?: { trackingNumber: string; openUrl: string } };
+        error?: string;
+        code?: string;
+      };
+      if (res.status === 409 && json?.code === "ALREADY_GENERATED") {
+        setGenBusy(false);
+        if (
+          window.confirm(
+            "A return label was already generated for this order. Generate another one?",
+          )
+        ) {
+          await generateAndAttachLabel(true);
+        }
+        return;
+      }
+      if (!res.ok || !json?.data?.label) {
+        throw new Error(json?.error ?? "Return label generation failed.");
+      }
+      const label = json.data.label;
+      const pdfRes = await fetch(label.openUrl, { cache: "no-store" });
+      if (!pdfRes.ok) {
+        throw new Error("Generated the label but could not load its PDF.");
+      }
+      const base64 = await blobToBase64(await pdfRes.blob());
+      setLabelFileData(base64);
+      setLabelFileName(`return-label-${label.trackingNumber}.pdf`);
+      setCarrier("USPS");
+      setTracking(label.trackingNumber);
+      setGenNote(
+        `Generated USPS label ${label.trackingNumber}. Review and submit below to attach it to the case.`,
+      );
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Return label generation failed.");
+    } finally {
+      setGenBusy(false);
+    }
+  }
 
   async function runPreview() {
     setBusy(true);
@@ -2007,6 +2092,37 @@ function ActionModal({
                     className="h-9 w-full rounded-md border border-hairline bg-surface px-2 text-sm text-foreground"
                   />
                 </Labeled>
+              ) : null}
+
+              {action === "UPLOAD_LABEL" && canGenerateLabel ? (
+                <div className="rounded-lg border border-brand/30 bg-brand/5 p-3">
+                  <button
+                    type="button"
+                    onClick={() => void generateAndAttachLabel(false)}
+                    disabled={genBusy}
+                    className="inline-flex h-9 w-full cursor-pointer items-center justify-center gap-1.5 rounded-md bg-brand px-2 text-xs font-semibold text-primary-foreground hover:bg-brand/90 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {genBusy ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <FileText className="h-3.5 w-3.5" />
+                    )}
+                    Generate return label
+                  </button>
+                  <p className="mt-1.5 text-[11px] leading-relaxed text-muted-foreground">
+                    Creates a USPS Ground return label (from the buyer&apos;s
+                    address to our returns dept) and attaches it below. Submit to
+                    provide it to the buyer on this case.
+                  </p>
+                  {genNote ? (
+                    <p className="mt-1.5 rounded border border-emerald-500/30 bg-emerald-500/10 px-2 py-1.5 text-[11px] leading-snug text-emerald-800 dark:text-emerald-200">
+                      {genNote}
+                    </p>
+                  ) : null}
+                  <p className="mt-2 text-center text-[10px] uppercase tracking-wider text-muted-foreground">
+                    or upload your own
+                  </p>
+                </div>
               ) : null}
 
               {action === "UPLOAD_LABEL" ? (
