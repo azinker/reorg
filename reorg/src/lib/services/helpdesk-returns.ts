@@ -66,7 +66,8 @@ const EBAY_PLATFORMS: Platform[] = [Platform.TPP_EBAY, Platform.TT_EBAY];
 
 export interface ListReturnsFilters {
   platform?: Platform | null;
-  status?: ReturnStatusFilterKey | null;
+  /** "all" bypasses the status-bucket filter entirely (search any status). */
+  status?: ReturnStatusFilterKey | "all" | null;
   search?: string | null;
   fromDate?: Date | null;
   toDate?: Date | null;
@@ -175,21 +176,28 @@ export async function listReturnCases(filters: ListReturnsFilters): Promise<{
   });
 
   const statusKey = filters.status ?? "open_all";
-  const filtered = candidates.filter((row) => {
-    // Prefer the authoritative eBay-bucket membership recorded on the last
-    // sync (matches Seller Hub's status dropdown exactly). Fall back to the
-    // state-derived heuristic only for rows not yet re-synced with buckets.
-    const buckets = Array.isArray(row.ebayBuckets)
-      ? (row.ebayBuckets as unknown[]).map((b) => String(b))
-      : [];
-    const byBucket = matchesBucketFilter(statusKey, buckets);
-    if (byBucket !== null) return byBucket;
-    return matchesStatusFilter(statusKey, {
-      state: row.returnState,
-      currentType: row.currentType,
-      sellerActionDue: row.sellerActionDue,
-    });
-  });
+  // "all" = search across every status bucket (used by the "search all
+  // statuses" toggle); skip status filtering entirely and keep the
+  // store/date/search-scoped candidates as-is.
+  const filtered =
+    statusKey === "all"
+      ? candidates
+      : candidates.filter((row) => {
+          // Prefer the authoritative eBay-bucket membership recorded on the
+          // last sync (matches Seller Hub's status dropdown exactly). Fall back
+          // to the state-derived heuristic only for rows not yet re-synced with
+          // buckets.
+          const buckets = Array.isArray(row.ebayBuckets)
+            ? (row.ebayBuckets as unknown[]).map((b) => String(b))
+            : [];
+          const byBucket = matchesBucketFilter(statusKey, buckets);
+          if (byBucket !== null) return byBucket;
+          return matchesStatusFilter(statusKey, {
+            state: row.returnState,
+            currentType: row.currentType,
+            sellerActionDue: row.sellerActionDue,
+          });
+        });
 
   const sort = filters.sort ?? "opened_desc";
   filtered.sort((a, b) => {

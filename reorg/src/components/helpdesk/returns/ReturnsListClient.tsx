@@ -118,6 +118,7 @@ type PersistedFilters = {
   store: string;
   status: string;
   search: string;
+  searchAllStatuses: boolean;
   sort: string;
   dateRange: string;
   page: number;
@@ -148,6 +149,9 @@ export default function ReturnsListClient() {
   const [status, setStatus] = useState(initialFilters.current.status ?? "open_all");
   const [search, setSearch] = useState(initialFilters.current.search ?? "");
   const [searchInput, setSearchInput] = useState(initialFilters.current.search ?? "");
+  const [searchAllStatuses, setSearchAllStatuses] = useState(
+    initialFilters.current.searchAllStatuses ?? false,
+  );
   const [sort, setSort] = useState(initialFilters.current.sort ?? "opened_desc");
   const [dateRange, setDateRange] = useState(initialFilters.current.dateRange ?? "90");
   const [page, setPage] = useState(initialFilters.current.page ?? 1);
@@ -166,7 +170,10 @@ export default function ReturnsListClient() {
     try {
       const qs = new URLSearchParams();
       if (store) qs.set("store", store);
-      if (status) qs.set("status", status);
+      // "Search across all statuses" sends the special "all" bucket so the
+      // query ignores the selected status filter entirely.
+      const effectiveStatus = searchAllStatuses ? "all" : status;
+      if (effectiveStatus) qs.set("status", effectiveStatus);
       if (search) qs.set("q", search);
       if (sort) qs.set("sort", sort);
       if (dateRange) {
@@ -192,7 +199,7 @@ export default function ReturnsListClient() {
     } finally {
       setLoading(false);
     }
-  }, [store, status, search, sort, dateRange, page]);
+  }, [store, status, searchAllStatuses, search, sort, dateRange, page]);
 
   useEffect(() => {
     void load();
@@ -203,12 +210,20 @@ export default function ReturnsListClient() {
   useEffect(() => {
     if (typeof window === "undefined") return;
     try {
-      const payload: PersistedFilters = { store, status, search, sort, dateRange, page };
+      const payload: PersistedFilters = {
+        store,
+        status,
+        search,
+        searchAllStatuses,
+        sort,
+        dateRange,
+        page,
+      };
       window.sessionStorage.setItem(FILTERS_STORAGE_KEY, JSON.stringify(payload));
     } catch {
       /* sessionStorage unavailable — non-fatal */
     }
-  }, [store, status, search, sort, dateRange, page]);
+  }, [store, status, searchAllStatuses, search, sort, dateRange, page]);
 
   // Keep a stable handle to the latest loader so the auto-sync interval can
   // refresh the list (with whatever filters are active) without re-subscribing
@@ -526,6 +541,23 @@ export default function ReturnsListClient() {
             Search
           </button>
         </div>
+        {/* When checked, the search spans every status bucket instead of just
+            the selected status filter. */}
+        <label className="mt-2 inline-flex cursor-pointer items-center gap-2 text-[11px] text-muted-foreground">
+          <input
+            type="checkbox"
+            checked={searchAllStatuses}
+            onChange={(e) => {
+              setSearchAllStatuses(e.target.checked);
+              setPage(1);
+            }}
+            className="h-3.5 w-3.5 cursor-pointer accent-brand"
+          />
+          <span>
+            Search across <span className="font-medium text-foreground">all statuses</span>{" "}
+            (ignore the status filter above)
+          </span>
+        </label>
       </div>
 
       {syncMsg ? (
@@ -536,7 +568,9 @@ export default function ReturnsListClient() {
       {data && !loading && !error ? (
         <div className="mb-2 flex flex-wrap items-center justify-between gap-2 px-1 text-xs text-muted-foreground">
           <span className="font-medium text-foreground">
-            {filters.find((f) => f.key === status)?.label ?? "All returns"}
+            {searchAllStatuses
+              ? "All statuses"
+              : filters.find((f) => f.key === status)?.label ?? "All returns"}
           </span>
           <span>
             {total === 0

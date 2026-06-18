@@ -27,6 +27,7 @@ const querySchema = z.object({
       "shipped",
       "delivered",
       "closed",
+      "all",
     ])
     .optional(),
   q: z.string().max(200).optional(),
@@ -71,7 +72,7 @@ export async function GET(request: NextRequest) {
     const [list, attention] = await Promise.all([
       listReturnCases({
         platform: store ? (store as Platform) : null,
-        status: (status as ReturnStatusFilterKey | undefined) ?? null,
+        status: (status as ReturnStatusFilterKey | "all" | undefined) ?? null,
         search: q ?? null,
         fromDate: parseDate(from),
         toDate: parseDate(to),
