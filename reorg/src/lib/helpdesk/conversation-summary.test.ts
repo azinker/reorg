@@ -195,7 +195,7 @@ test("buildCaseStatusSummary marks a completed return as refunded", () => {
 
   assert.ok(summary);
   assert.equal(summary.status, "Refunded");
-  assert.equal(summary.latestEventText, "Refunded");
+  assert.equal(summary.latestEventText, "Closed - Refunded");
   assert.equal(summary.refundDueAt, "2026-05-06T16:00:00.000Z");
   assert.equal(summary.closedAt, "2026-05-06T18:19:07.000Z");
 });
@@ -227,7 +227,7 @@ test("buildCaseStatusSummary marks a refunded INR request as refunded", () => {
   assert.equal(summary.title, "Item Not Received Case");
   assert.equal(summary.caseId, "5381255286");
   assert.equal(summary.status, "Refunded");
-  assert.equal(summary.latestEventText, "Refunded");
+  assert.equal(summary.latestEventText, "Closed - Refunded");
   assert.equal(summary.closedAt, "2026-06-12T20:46:46.000Z");
 });
 
@@ -324,7 +324,7 @@ test("buildCaseStatusSummary treats legacy return delivery and refund labels as 
   assert.equal(summary.status, "Refunded");
   assert.equal(summary.returnDeliveredAt, "2026-05-04T18:25:48.000Z");
   assert.equal(summary.refundDueAt, "2026-05-06T16:00:00.000Z");
-  assert.equal(summary.latestEventText, "Refunded");
+  assert.equal(summary.latestEventText, "Closed - Refunded");
 });
 
 function event(

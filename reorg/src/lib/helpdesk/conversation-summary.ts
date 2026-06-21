@@ -147,7 +147,7 @@ export function buildCaseStatusSummary(
         : status === "Escalated to eBay"
           ? "The buyer escalated this to eBay. Keep replies factual and align next steps with the case state."
           : status === "Refunded"
-            ? `The ${title.toLowerCase()} is refunded. Confirm no follow-up from the buyer is still waiting before closing related work.`
+            ? `The ${title.toLowerCase()} is closed and refunded. Confirm no follow-up from the buyer is still waiting before closing related work.`
             : status === "Closed"
               ? "The case appears closed. Confirm the outcome before promising any additional resolution."
               : "The case appears open. Keep the agent response tied to tracking, delivery, refund, or replacement status.";
@@ -166,7 +166,7 @@ export function buildCaseStatusSummary(
     holdAt: hold?.at ?? null,
     holdUntil,
     closedAt: closed?.at ?? null,
-    latestEventText: refunded ? "Refunded" : latest?.shortText ?? latest?.text ?? null,
+    latestEventText: refunded ? "Closed - Refunded" : latest?.shortText ?? latest?.text ?? null,
     agentNote,
   };
 }

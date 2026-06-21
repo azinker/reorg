@@ -1171,6 +1171,8 @@ function CaseStatusSection({
 
   if (!summary && !error && (!loading || !likelyCaseTicket)) return null;
   const isReturnCase = summary?.title === "Return Case";
+  const statusLabel =
+    summary?.status === "Refunded" ? "Closed - Refunded" : summary?.status;
 
   return (
     <section className="border-b border-hairline bg-card/40 px-4 py-3">
@@ -1200,7 +1202,7 @@ function CaseStatusSection({
                 "bg-surface-2 text-muted-foreground",
             )}
           >
-            {summary.status}
+            {statusLabel}
           </span>
         ) : null}
       </div>
