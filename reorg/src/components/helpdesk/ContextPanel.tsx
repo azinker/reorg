@@ -1173,6 +1173,8 @@ function CaseStatusSection({
   const isReturnCase = summary?.title === "Return Case";
   const statusLabel =
     summary?.status === "Refunded" ? "Closed - Refunded" : summary?.status;
+  const isTerminalCase =
+    summary?.status === "Refunded" || summary?.status === "Closed";
 
   return (
     <section className="border-b border-hairline bg-card/40 px-4 py-3">
@@ -1257,16 +1259,17 @@ function CaseStatusSection({
                 />
                 <CaseStatusDatum
                   label="Buyer Shipped"
-                  value={formatHelpdeskDate(summary.returnShippedAt)}
+                  value={formatCaseDateOrState(summary.returnShippedAt, "Not shipped")}
                 />
                 <CaseStatusDatum
                   label="Item Returned"
-                  value={formatHelpdeskDate(summary.returnDeliveredAt)}
+                  value={formatCaseDateOrState(summary.returnDeliveredAt, "Not returned")}
                 />
                 <CaseStatusDatum
                   label={summary.status === "Refunded" ? "Refunded" : "Refund Due"}
-                  value={formatHelpdeskDate(
+                  value={formatCaseDateOrState(
                     summary.status === "Refunded" ? summary.closedAt : summary.refundDueAt,
+                    summary.status === "Refunded" ? "Refund date unknown" : "Not due yet",
                   )}
                 />
                 {summary.closedAt && summary.status !== "Refunded" ? (
@@ -1278,40 +1281,108 @@ function CaseStatusSection({
                 <CaseStatusDatum label="Opened" value={formatHelpdeskDate(summary.openedAt)} />
                 <CaseStatusDatum
                   label="Escalated"
-                  value={formatHelpdeskDate(summary.escalatedAt)}
+                  value={formatCaseDateOrState(summary.escalatedAt, "Not escalated")}
                 />
-                <CaseStatusDatum label="Hold Started" value={formatHelpdeskDate(summary.holdAt)} />
-                <CaseStatusDatum label="Hold Expires" value={summary.holdUntil ?? "-"} />
+                <CaseStatusDatum
+                  label="Hold Started"
+                  value={formatCaseDateOrState(summary.holdAt, "No hold")}
+                />
+                <CaseStatusDatum
+                  label="Hold Expires"
+                  value={summary.holdUntil ?? "No hold expiry"}
+                />
                 {summary.closedAt ? (
                   <CaseStatusDatum label="Closed" value={formatHelpdeskDate(summary.closedAt)} />
                 ) : null}
               </dl>
             )}
             {summary.latestEventText ? (
-              <p className="mt-2 line-clamp-2 text-[11px] text-muted-foreground">
-                Latest: {summary.latestEventText}
-              </p>
+              <CaseStatusLatestLine summary={summary} />
             ) : null}
+            <CaseStatusInlineNote summary={summary} />
           </div>
-          <p
-            className={cn(
-              "flex gap-2 rounded-md border px-2 py-1.5 text-[11px] leading-relaxed",
-              summary.status === "On Hold"
-                ? "border-sky-500/25 bg-sky-500/10 text-sky-700 dark:text-sky-200"
-                : summary.status === "Refunded"
-                  ? "border-emerald-500/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-200"
-                : "border-amber-500/25 bg-amber-500/10 text-amber-700 dark:text-amber-200",
-            )}
-          >
-            <CalendarClock className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-            <span>{summary.agentNote}</span>
-          </p>
+          {!isTerminalCase ? <CaseStatusOuterNote summary={summary} /> : null}
         </div>
       ) : (
         <p className="text-xs text-muted-foreground">Checking case timeline...</p>
       )}
     </section>
   );
+}
+
+function CaseStatusLatestLine({
+  summary,
+}: {
+  summary: NonNullable<ReturnType<typeof buildCaseStatusSummary>>;
+}) {
+  if (summary.status === "Refunded") {
+    const requestName =
+      summary.title === "Item Not Received Case"
+        ? "INR request"
+        : summary.title.toLowerCase();
+    return (
+      <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">
+        Latest:{" "}
+        <span className="font-semibold text-emerald-700 dark:text-emerald-300">
+          Closed - Refunded
+        </span>{" "}
+        by eBay after the buyer received the refund for this {requestName}.
+      </p>
+    );
+  }
+
+  return (
+    <p className="mt-2 line-clamp-2 text-[11px] text-muted-foreground">
+      Latest: {summary.latestEventText}
+    </p>
+  );
+}
+
+function CaseStatusInlineNote({
+  summary,
+}: {
+  summary: NonNullable<ReturnType<typeof buildCaseStatusSummary>>;
+}) {
+  if (summary.status !== "Refunded" && summary.status !== "Closed") return null;
+  return (
+    <p
+      className={cn(
+        "mt-2 rounded-md px-2 py-1.5 text-[11px] leading-relaxed",
+        summary.status === "Refunded"
+          ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-200"
+          : "bg-surface-2 text-muted-foreground",
+      )}
+    >
+      {summary.agentNote}
+    </p>
+  );
+}
+
+function CaseStatusOuterNote({
+  summary,
+}: {
+  summary: NonNullable<ReturnType<typeof buildCaseStatusSummary>>;
+}) {
+  return (
+    <p
+      className={cn(
+        "flex gap-2 rounded-md border px-2 py-1.5 text-[11px] leading-relaxed",
+        summary.status === "On Hold"
+          ? "border-sky-500/25 bg-sky-500/10 text-sky-700 dark:text-sky-200"
+          : "border-amber-500/25 bg-amber-500/10 text-amber-700 dark:text-amber-200",
+      )}
+    >
+      <CalendarClock className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+      <span>{summary.agentNote}</span>
+    </p>
+  );
+}
+
+function formatCaseDateOrState(
+  value: string | null | undefined,
+  fallback: string,
+): string {
+  return value ? formatHelpdeskDate(value) : fallback;
 }
 
 function CaseStatusDatum({ label, value }: { label: string; value: string }) {

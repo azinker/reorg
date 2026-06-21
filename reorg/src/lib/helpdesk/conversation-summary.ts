@@ -147,9 +147,9 @@ export function buildCaseStatusSummary(
         : status === "Escalated to eBay"
           ? "The buyer escalated this to eBay. Keep replies factual and align next steps with the case state."
           : status === "Refunded"
-            ? `The ${title.toLowerCase()} is closed and refunded. Confirm no follow-up from the buyer is still waiting before closing related work.`
+            ? "No case action remains unless the buyer sends a follow-up."
             : status === "Closed"
-              ? "The case appears closed. Confirm the outcome before promising any additional resolution."
+              ? "Case is closed; verify the outcome before offering more."
               : "The case appears open. Keep the agent response tied to tracking, delivery, refund, or replacement status.";
 
   return {
