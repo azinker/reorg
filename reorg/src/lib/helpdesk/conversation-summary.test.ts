@@ -200,6 +200,37 @@ test("buildCaseStatusSummary marks a completed return as refunded", () => {
   assert.equal(summary.closedAt, "2026-05-06T18:19:07.000Z");
 });
 
+test("buildCaseStatusSummary marks a refunded INR request as refunded", () => {
+  const summary = buildCaseStatusSummary([
+    event(
+      "inr-opened",
+      "EBAY_ITEM_NOT_RECEIVED_CASE",
+      "case",
+      "Buyer Opened Item Not Received Claim #5381255286 on eBay",
+      "2026-06-12T14:57:33.000Z",
+      {
+        externalId: "5381255286",
+        href: "https://www.ebay.com/ItemNotReceived/5381255286",
+      },
+    ),
+    event(
+      "inr-refunded",
+      "EBAY_REFUND_ISSUED",
+      "case",
+      "Item Not Received Claim #5381255286 refunded on eBay",
+      "2026-06-12T20:46:46.000Z",
+      { externalId: "5381255286", shortText: "Refunded" },
+    ),
+  ]);
+
+  assert.ok(summary);
+  assert.equal(summary.title, "Item Not Received Case");
+  assert.equal(summary.caseId, "5381255286");
+  assert.equal(summary.status, "Refunded");
+  assert.equal(summary.latestEventText, "Refunded");
+  assert.equal(summary.closedAt, "2026-06-12T20:46:46.000Z");
+});
+
 test("buildCaseStatusSummary ignores feedback notifications and normal return wording", () => {
   const summary = buildCaseStatusSummary(
     [

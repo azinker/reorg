@@ -25,3 +25,15 @@ test("keeps item not received open notices classified as INR", () => {
   assert.equal(result.isFromEbay, true);
   assert.equal(result.systemMessageType, SYSTEM_MESSAGE_TYPES.ITEM_NOT_RECEIVED);
 });
+
+test("classifies buyer received refund notices as refund issued", () => {
+  const result = detectFromEbay({
+    sender: "eBay",
+    subject: "The buyer received your refund: Request 5381255286",
+    bodyText:
+      "Thanks for issuing a refund of US $8.99 to your buyer. This request is now closed.",
+  });
+
+  assert.equal(result.isFromEbay, true);
+  assert.equal(result.systemMessageType, SYSTEM_MESSAGE_TYPES.REFUND_ISSUED);
+});

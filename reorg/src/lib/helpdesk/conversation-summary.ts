@@ -94,10 +94,8 @@ export function buildCaseStatusSummary(
   const refunded = last(
     caseEvents.filter(
       (event) =>
-        isReturnRefundedEvent(event) ||
-        (isReturnCase &&
-          event.action === "EBAY_REFUND_ISSUED" &&
-          /refund issued/i.test(event.text)),
+        isCaseRefundedEvent(event) ||
+        (isReturnCase && event.action === "EBAY_REFUND_ISSUED" && /refund/i.test(event.text)),
     ),
   );
   const refundDueAt = refundDue?.deadlineAt ?? returnDelivered?.deadlineAt ?? null;
@@ -146,13 +144,13 @@ export function buildCaseStatusSummary(
           : "The returned item is back. Inspect it and issue the refund if everything checks out."
         : status === "In Transit Back"
           ? "The buyer shipped the return back. Wait for delivery, then inspect the item before refunding."
-          : status === "Escalated to eBay"
-        ? "The buyer escalated this to eBay. Keep replies factual and align next steps with the case state."
-        : status === "Refunded"
-          ? "The return case is refunded. Confirm no follow-up from the buyer is still waiting before closing related work."
-        : status === "Closed"
-          ? "The case appears closed. Confirm the outcome before promising any additional resolution."
-          : "The case appears open. Keep the agent response tied to tracking, delivery, refund, or replacement status.";
+        : status === "Escalated to eBay"
+          ? "The buyer escalated this to eBay. Keep replies factual and align next steps with the case state."
+          : status === "Refunded"
+            ? `The ${title.toLowerCase()} is refunded. Confirm no follow-up from the buyer is still waiting before closing related work.`
+            : status === "Closed"
+              ? "The case appears closed. Confirm the outcome before promising any additional resolution."
+              : "The case appears open. Keep the agent response tied to tracking, delivery, refund, or replacement status.";
 
   return {
     title,
@@ -317,10 +315,13 @@ function isRefundDueEvent(event: HelpdeskTimelineEvent): boolean {
   return event.action === "EBAY_RETURN_REFUND_DUE" || /refund due/i.test(event.text);
 }
 
-function isReturnRefundedEvent(event: HelpdeskTimelineEvent): boolean {
+function isCaseRefundedEvent(event: HelpdeskTimelineEvent): boolean {
   return (
     event.action === "EBAY_RETURN_REFUNDED" ||
-    /refund issued for return|return case refunded/i.test(event.text)
+    (event.action === "EBAY_REFUND_ISSUED" &&
+      (event.kind === "case" || Boolean(event.externalId) || /case|claim|request|return/i.test(event.text)) &&
+      /refund/i.test(event.text)) ||
+    /refund issued for return|return case refunded|refunded on ebay/i.test(event.text)
   );
 }
 

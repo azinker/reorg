@@ -668,6 +668,7 @@ function extractEbayRequestContext(args: {
   isOnHold: boolean;
   isDeliveredUpdate: boolean;
   isClosed: boolean;
+  isRefunded: boolean;
   closedByBuyer: boolean;
 } {
   const plain = stripHtmlToPlainText(args.bodyText);
@@ -733,10 +734,16 @@ function extractEbayRequestContext(args: {
     /closed\s+by\s+the\s+buyer|buyer\s+has\s+closed\s+this\s+request|the\s+buyer\s+closed\s+this\s+request/i.test(
       haystack,
     );
+  const isRefunded =
+    /buyer\s+received\s+your\s+refund|thanks\s+for\s+issuing\s+a\s+refund|you\s+refunded\s+the\s+buyer|refund\s+of\s+(?:US\s*)?\$?\d/i.test(
+      haystack,
+    );
   const isClosed =
     !isOnHold &&
     (closedByBuyer ||
-      /case\s+closed|case\s+is\s+now\s+closed|request\s+was\s+closed/i.test(haystack));
+      /case\s+closed|case\s+is\s+now\s+closed|request\s+(?:is\s+now|was)\s+closed/i.test(
+        haystack,
+      ));
 
   return {
     caseId,
@@ -756,6 +763,7 @@ function extractEbayRequestContext(args: {
     isOnHold,
     isDeliveredUpdate,
     isClosed,
+    isRefunded,
     closedByBuyer,
   };
 }
@@ -856,7 +864,22 @@ function systemTicketTimelineEvents(args: {
     });
   }
 
-  if (ctx.caseId && ctx.isClosed) {
+  if (ctx.caseId && ctx.isRefunded) {
+    events.push({
+      id: `related-case-refunded-${baseId}-${ctx.caseId}`,
+      type: "system",
+      action: "EBAY_REFUND_ISSUED",
+      kind: "case",
+      text: `${ctx.longCaseLabel} #${ctx.caseId} refunded on eBay`,
+      shortText: "Refunded",
+      href: ctx.href,
+      externalId: ctx.caseId,
+      actor: null,
+      at: args.at,
+    });
+  }
+
+  if (ctx.caseId && ctx.isClosed && !ctx.isRefunded) {
     events.push({
       id: `related-case-closed-${baseId}-${ctx.caseId}`,
       type: "system",

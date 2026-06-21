@@ -151,6 +151,7 @@ const SUBJECT_PATTERNS: Array<{ pattern: RegExp; type: SystemMessageType }> = [
   { pattern: /remember\s+to\s+ship/i, type: SYSTEM_MESSAGE_TYPES.REMINDER_TO_SHIP },
 
   // Refunds
+  { pattern: /buyer\s+received\s+your\s+refund/i, type: SYSTEM_MESSAGE_TYPES.REFUND_ISSUED },
   { pattern: /refund\s+issued/i, type: SYSTEM_MESSAGE_TYPES.REFUND_ISSUED },
   { pattern: /(processing|hang\s+tight).*refund\s+request/i, type: SYSTEM_MESSAGE_TYPES.REFUND_REQUESTED },
   { pattern: /issue\s+refund/i, type: SYSTEM_MESSAGE_TYPES.REFUND_REQUESTED },
