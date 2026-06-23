@@ -95,6 +95,7 @@ function parseEbayErrors(body: unknown): EbayApiError[] {
   if (!body || typeof body !== "object") return [];
   const obj = body as Record<string, unknown>;
   const raw =
+    (obj.error as unknown) ??
     (obj.errors as unknown) ??
     (obj.errorMessage as unknown) ??
     (obj.warnings as unknown);
@@ -117,7 +118,7 @@ function parseEbayErrors(body: unknown): EbayApiError[] {
         message:
           (r.message as string | undefined) ??
           (r.longMessage as string | undefined),
-        parameters: r.parameters as EbayApiError["parameters"],
+        parameters: (r.parameters ?? r.parameter) as EbayApiError["parameters"],
       } satisfies EbayApiError;
     })
     .flat()

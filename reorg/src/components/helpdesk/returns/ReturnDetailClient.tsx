@@ -196,6 +196,32 @@ interface PreviewSummary {
   currency?: string;
 }
 
+interface ActionTechnicalErrorParameter {
+  name?: string;
+  value?: string;
+}
+
+interface ActionTechnicalEbayError {
+  errorId?: number | string;
+  domain?: string;
+  category?: string;
+  message?: string;
+  parameters?: ActionTechnicalErrorParameter[];
+}
+
+interface ActionTechnicalDetails {
+  source?: "EBAY" | "APP";
+  message?: string | null;
+  httpStatus?: number | null;
+  ebayRequestId?: string | null;
+  ebayErrors?: ActionTechnicalEbayError[];
+}
+
+interface ActionModalError {
+  message: string;
+  technicalDetails?: ActionTechnicalDetails | null;
+}
+
 const CARRIERS = [
   { value: "USPS", label: "USPS" },
   { value: "UPS", label: "UPS" },
@@ -229,6 +255,81 @@ function blobToBase64(blob: Blob): Promise<string> {
     reader.onerror = () => reject(new Error("Could not read the generated label."));
     reader.readAsDataURL(blob);
   });
+}
+
+function actionErrorFromUnknown(error: unknown, fallback: string): ActionModalError {
+  return { message: error instanceof Error ? error.message : fallback };
+}
+
+function actionErrorFromApi(
+  json: { error?: string; technicalDetails?: ActionTechnicalDetails | null } | null,
+  fallback: string,
+): ActionModalError {
+  return {
+    message: json?.error ?? fallback,
+    technicalDetails: json?.technicalDetails ?? null,
+  };
+}
+
+function TechnicalErrorDisclosure({
+  details,
+}: {
+  details: ActionTechnicalDetails;
+}) {
+  const first = details.ebayErrors?.[0];
+  const code = first?.errorId ? String(first.errorId) : null;
+  const rows = [
+    ["Source", details.source],
+    ["HTTP status", details.httpStatus != null ? String(details.httpStatus) : null],
+    ["eBay error code", code],
+    ["Domain", first?.domain],
+    ["Category", first?.category],
+    ["Message", first?.message ?? details.message],
+    ["Request ID", details.ebayRequestId],
+  ].filter((row): row is [string, string] => Boolean(row[1]));
+  const params = first?.parameters?.filter((p) => p.name || p.value) ?? [];
+
+  return (
+    <details className="mt-2 rounded-md border border-red-500/20 bg-red-500/[0.04] px-2 py-1.5">
+      <summary className="cursor-pointer text-[11px] font-medium text-red-700 dark:text-red-300">
+        Technical details{code ? ` · code ${code}` : ""}
+      </summary>
+      <div className="mt-2 space-y-1 text-[11px] text-red-800 dark:text-red-200">
+        {rows.map(([label, value]) => (
+          <div key={label} className="grid grid-cols-[92px_minmax(0,1fr)] gap-2">
+            <span className="text-red-700/70 dark:text-red-200/70">{label}</span>
+            <span className="break-words font-mono">{value}</span>
+          </div>
+        ))}
+        {params.length > 0 ? (
+          <div className="pt-1">
+            <span className="text-red-700/70 dark:text-red-200/70">Parameters</span>
+            <div className="mt-1 space-y-1">
+              {params.map((p, index) => (
+                <div key={`${p.name ?? "param"}-${index}`} className="break-words font-mono">
+                  {p.name ?? "parameter"}: {p.value ?? "-"}
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
+      </div>
+    </details>
+  );
+}
+
+function ActionErrorCallout({ error }: { error: ActionModalError }) {
+  return (
+    <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-700 dark:text-red-200">
+      <div className="flex items-start gap-2">
+        <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+        <p className="leading-relaxed">{error.message}</p>
+      </div>
+      {error.technicalDetails ? (
+        <TechnicalErrorDisclosure details={error.technicalDetails} />
+      ) : null}
+    </div>
+  );
 }
 
 // Actions the v1 write flow can actually execute (subset of ActionKey).
@@ -1782,7 +1883,7 @@ function ActionModal({
   const [idemKey, setIdemKey] = useState<string | null>(null);
   const [typed, setTyped] = useState("");
   const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
+  const [err, setErr] = useState<ActionModalError | null>(null);
 
   // Post-commit "Your refund is being processed" screen + SkuVault add-back result.
   const [committed, setCommitted] = useState(false);
@@ -1879,7 +1980,7 @@ function ActionModal({
         `Generated USPS label ${label.trackingNumber}. Review and submit below to attach it to the case.`,
       );
     } catch (e) {
-      setErr(e instanceof Error ? e.message : "Return label generation failed.");
+      setErr(actionErrorFromUnknown(e, "Return label generation failed."));
     } finally {
       setGenBusy(false);
     }
@@ -1947,7 +2048,7 @@ function ActionModal({
       setPreview(json.data.summary);
       setIdemKey(json.data.idempotencyKey ?? null);
     } catch (e) {
-      setErr(e instanceof Error ? e.message : "Preview failed.");
+      setErr(actionErrorFromUnknown(e, "Preview failed."));
     } finally {
       setBusy(false);
     }
@@ -2021,9 +2122,12 @@ function ActionModal({
       const json = (await res.json().catch(() => null)) as {
         data?: { status?: string };
         error?: string;
+        technicalDetails?: ActionTechnicalDetails | null;
       } | null;
       if (!res.ok) {
-        throw new Error(json?.error ?? `Commit failed (${res.status})`);
+        setErr(actionErrorFromApi(json, `Commit failed (${res.status})`));
+        setBusy(false);
+        return;
       }
 
       if (action === "ISSUE_REFUND") {
@@ -2037,7 +2141,7 @@ function ActionModal({
       }
       onCommitted();
     } catch (e) {
-      setErr(e instanceof Error ? e.message : "Commit failed.");
+      setErr(actionErrorFromUnknown(e, "Commit failed."));
       setBusy(false);
     }
   }
@@ -2130,7 +2234,7 @@ function ActionModal({
                           const file = e.target.files?.[0];
                           if (!file) return;
                           if (file.size > 10 * 1024 * 1024) {
-                            setErr("Label file must be 10 MB or smaller.");
+                            setErr({ message: "Label file must be 10 MB or smaller." });
                             return;
                           }
                           setErr(null);
@@ -2146,7 +2250,7 @@ function ActionModal({
                             setFileBusy(false);
                           };
                           reader.onerror = () => {
-                            setErr("Could not read that file.");
+                            setErr({ message: "Could not read that file." });
                             setFileBusy(false);
                           };
                           reader.readAsDataURL(file);
@@ -2366,9 +2470,7 @@ function ActionModal({
                 </Labeled>
               ) : null}
 
-              {err ? (
-                <p className="text-xs text-red-600 dark:text-red-300">{err}</p>
-              ) : null}
+              {err ? <ActionErrorCallout error={err} /> : null}
 
               <div className="flex justify-end gap-2 pt-1">
                 <button
@@ -2479,9 +2581,7 @@ function ActionModal({
                 This sends a single live refund to eBay and cannot be undone.
               </div>
 
-              {err ? (
-                <p className="text-xs text-red-600 dark:text-red-300">{err}</p>
-              ) : null}
+              {err ? <ActionErrorCallout error={err} /> : null}
 
               <div className="space-y-2 pt-1">
                 <button
@@ -2557,9 +2657,7 @@ function ActionModal({
                 </Labeled>
               ) : null}
 
-              {err ? (
-                <p className="text-xs text-red-600 dark:text-red-300">{err}</p>
-              ) : null}
+              {err ? <ActionErrorCallout error={err} /> : null}
 
               <div className="flex justify-end gap-2 pt-1">
                 <button

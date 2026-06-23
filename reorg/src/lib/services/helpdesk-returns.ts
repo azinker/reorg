@@ -58,6 +58,10 @@ import {
   type ReturnStatusDescriptor,
 } from "@/lib/helpdesk/returns";
 import { assertReturnWriteAllowed } from "@/lib/helpdesk/returns-safety";
+import {
+  normalizeReturnActionError,
+  type ReturnActionTechnicalDetails,
+} from "@/lib/helpdesk/returns-errors";
 
 const EBAY_PLATFORMS: Platform[] = [Platform.TPP_EBAY, Platform.TT_EBAY];
 
@@ -1058,6 +1062,7 @@ export interface CommitResult {
   ok: boolean;
   status: "COMMITTED" | "FAILED" | "BLOCKED";
   error?: string;
+  technicalDetails?: ReturnActionTechnicalDetails;
   ebayRequestId?: string | null;
   refundStatus?: string | null;
 }
@@ -1176,20 +1181,38 @@ export async function commitReturnAction(args: {
       decision: "APPROVE",
     });
     if (!acceptRes.ok) {
+      const normalized = normalizeReturnActionError({
+        source: "EBAY",
+        message: acceptRes.errorMessage,
+        httpStatus: acceptRes.status,
+        ebayRequestId: acceptRes.requestId,
+        ebayErrors: acceptRes.errors,
+      });
       await db.helpdeskReturnActionAttempt.update({
         where: { id: attempt.id },
         data: {
           status: HelpdeskReturnActionStatus.FAILED,
-          errorMessage: acceptRes.errorMessage ?? "Failed to accept the return before providing the label.",
+          errorMessage: normalized.userMessage,
         },
       });
       await writeAudit({
         userId: args.userId,
         action: "HELPDESK_RETURN_ACTION_FAILED",
         returnCaseId: caseRow.id,
-        details: { action, step: "auto_accept", error: acceptRes.errorMessage, returnId: args.returnId },
+        details: {
+          action,
+          step: "auto_accept",
+          error: normalized.userMessage,
+          technicalDetails: normalized.technicalDetails,
+          returnId: args.returnId,
+        },
       });
-      return { ok: false, status: "FAILED", error: acceptRes.errorMessage ?? undefined };
+      return {
+        ok: false,
+        status: "FAILED",
+        error: normalized.userMessage,
+        technicalDetails: normalized.technicalDetails,
+      };
     }
     await writeAudit({
       userId: args.userId,
@@ -1379,22 +1402,43 @@ export async function commitReturnAction(args: {
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
+    const normalized = normalizeReturnActionError({ source: "APP", message });
     await db.helpdeskReturnActionAttempt.update({
       where: { id: attempt.id },
-      data: { status: HelpdeskReturnActionStatus.FAILED, errorMessage: message },
+      data: { status: HelpdeskReturnActionStatus.FAILED, errorMessage: normalized.userMessage },
     });
     await writeAudit({
       userId: args.userId,
       action: "HELPDESK_RETURN_ACTION_FAILED",
       returnCaseId: caseRow.id,
-      details: { action, error: message, returnId: args.returnId },
+      details: {
+        action,
+        error: normalized.userMessage,
+        technicalDetails: normalized.technicalDetails,
+        returnId: args.returnId,
+      },
     });
-    return { ok: false, status: "FAILED", error: message };
+    return {
+      ok: false,
+      status: "FAILED",
+      error: normalized.userMessage,
+      technicalDetails: normalized.technicalDetails,
+    };
   }
 
   const refundStatus = result.body?.refundStatus ?? null;
 
   // STEP 4 — audit + persist outcome.
+  const normalizedError = result.ok
+    ? null
+    : normalizeReturnActionError({
+        source: "EBAY",
+        message: result.errorMessage,
+        httpStatus: result.status,
+        ebayRequestId: result.requestId,
+        ebayErrors: result.errors,
+      });
+
   await db.helpdeskReturnActionAttempt.update({
     where: { id: attempt.id },
     data: {
@@ -1405,8 +1449,9 @@ export async function commitReturnAction(args: {
         status: result.status,
         refundStatus,
         errors: result.errors,
+        technicalDetails: normalizedError?.technicalDetails,
       } as unknown as Prisma.InputJsonValue,
-      errorMessage: result.ok ? null : result.errorMessage,
+      errorMessage: result.ok ? null : normalizedError?.userMessage,
     },
   });
   await writeAudit({
@@ -1420,6 +1465,8 @@ export async function commitReturnAction(args: {
       ebayRequestId: result.requestId,
       refundStatus,
       ok: result.ok,
+      error: normalizedError?.userMessage ?? null,
+      technicalDetails: normalizedError?.technicalDetails ?? null,
       amount: payload.amount ?? null,
       currency,
     },
@@ -1429,7 +1476,8 @@ export async function commitReturnAction(args: {
     return {
       ok: false,
       status: "FAILED",
-      error: result.errorMessage ?? undefined,
+      error: normalizedError?.userMessage ?? "eBay did not accept this return action.",
+      technicalDetails: normalizedError?.technicalDetails,
       ebayRequestId: result.requestId,
     };
   }

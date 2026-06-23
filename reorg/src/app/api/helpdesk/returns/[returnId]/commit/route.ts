@@ -54,7 +54,14 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     if (!result.ok) {
       // BLOCKED → 423 (locked), other failures → 400.
       const status = result.status === "BLOCKED" ? 423 : 400;
-      return NextResponse.json({ error: result.error, status: result.status }, { status });
+      return NextResponse.json(
+        {
+          error: result.error,
+          status: result.status,
+          technicalDetails: result.technicalDetails,
+        },
+        { status },
+      );
     }
     return NextResponse.json({ data: result });
   } catch (err) {

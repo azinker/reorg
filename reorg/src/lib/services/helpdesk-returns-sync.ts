@@ -25,7 +25,6 @@ import {
 import {
   normalizeReturnSummary,
   extractItemPresentation,
-  RETURN_SYNC_BUCKETS,
   type EbayReturnSummary,
 } from "@/lib/helpdesk/returns";
 import { resolveOrderLineSku } from "@/lib/services/helpdesk-returns";
@@ -47,7 +46,10 @@ const MAX_PAGES_PER_TICK = 20;
  * cron never exceeds its serverless maxDuration. Open buckets are tiny and
  * always page to completion.
  */
-const CLOSED_MAX_PAGES = 12;
+const CLOSED_MAX_PAGES = Number.parseInt(
+  process.env.HELPDESK_RETURNS_CLOSED_MAX_PAGES ?? "1",
+  10,
+);
 /**
  * Wall-clock budget for the whole multi-integration sync. Open/shipped/
  * delivered always finish (they're small); CLOSED stops paging once we cross
@@ -56,7 +58,20 @@ const CLOSED_MAX_PAGES = 12;
  */
 const SYNC_TIME_BUDGET_MS = 95_000;
 /** How many returns missing a title/image we enrich (via Get Return) per tick. */
-const ENRICH_BUDGET_PER_TICK = 30;
+const ENRICH_BUDGET_PER_TICK = Number.parseInt(
+  process.env.HELPDESK_RETURNS_ENRICH_BUDGET ?? "10",
+  10,
+);
+const ENRICH_DEADLINE_BUFFER_MS = 20_000;
+
+/**
+ * Keep the cron inside Vercel's 120s cap. `ALL_OPEN` already returns every
+ * open return with its real state/status, and the list filters classify from
+ * those state fields. `SELLER_ACTION_DUE` is still pulled to preserve eBay's
+ * exact needs-attention badge. `CLOSED` is limited to the newest page by
+ * default because closed returns are display-only and can be thousands deep.
+ */
+const RETURN_POLL_BUCKETS = ["ALL_OPEN", "SELLER_ACTION_DUE", "CLOSED"] as const;
 
 export interface ReturnsSyncSummary {
   integrationId: string;
@@ -66,31 +81,70 @@ export interface ReturnsSyncSummary {
 }
 
 /** Best-effort ticket linkage by order number then buyer (read-only). */
-async function findTicketIdForReturn(args: {
+async function findTicketIdsForReturns(args: {
   integrationId: string;
-  ebayOrderNumber: string | null;
-  buyerUserId: string | null;
-}): Promise<string | null> {
-  if (args.ebayOrderNumber) {
-    const t = await db.helpdeskTicket.findFirst({
-      where: { integrationId: args.integrationId, ebayOrderNumber: args.ebayOrderNumber },
+  returns: Array<{
+    returnId: string;
+    ebayOrderNumber: string | null;
+    buyerUserId: string | null;
+  }>;
+}): Promise<Map<string, string | null>> {
+  const orderNumbers = Array.from(
+    new Set(
+      args.returns
+        .map((r) => r.ebayOrderNumber?.trim())
+        .filter((v): v is string => !!v),
+    ),
+  );
+  const buyerUserIds = Array.from(
+    new Set(
+      args.returns
+        .map((r) => r.buyerUserId?.trim())
+        .filter((v): v is string => !!v),
+    ),
+  );
+
+  const ticketByOrder = new Map<string, string>();
+  if (orderNumbers.length > 0) {
+    const tickets = await db.helpdeskTicket.findMany({
+      where: { integrationId: args.integrationId, ebayOrderNumber: { in: orderNumbers } },
       orderBy: { createdAt: "desc" },
-      select: { id: true },
+      select: { id: true, ebayOrderNumber: true },
     });
-    if (t) return t.id;
+    for (const ticket of tickets) {
+      if (ticket.ebayOrderNumber && !ticketByOrder.has(ticket.ebayOrderNumber)) {
+        ticketByOrder.set(ticket.ebayOrderNumber, ticket.id);
+      }
+    }
   }
-  if (args.buyerUserId) {
-    const t = await db.helpdeskTicket.findFirst({
+
+  const ticketByBuyer = new Map<string, string>();
+  if (buyerUserIds.length > 0) {
+    const tickets = await db.helpdeskTicket.findMany({
       where: {
         integrationId: args.integrationId,
-        buyerUserId: { equals: args.buyerUserId, mode: Prisma.QueryMode.insensitive },
+        buyerUserId: { in: buyerUserIds, mode: Prisma.QueryMode.insensitive },
       },
       orderBy: { createdAt: "desc" },
-      select: { id: true },
+      select: { id: true, buyerUserId: true },
     });
-    if (t) return t.id;
+    for (const ticket of tickets) {
+      const key = ticket.buyerUserId?.trim().toLowerCase();
+      if (key && !ticketByBuyer.has(key)) ticketByBuyer.set(key, ticket.id);
+    }
   }
-  return null;
+
+  const ticketByReturnId = new Map<string, string | null>();
+  for (const item of args.returns) {
+    const byOrder = item.ebayOrderNumber
+      ? ticketByOrder.get(item.ebayOrderNumber.trim())
+      : null;
+    const byBuyer = item.buyerUserId
+      ? ticketByBuyer.get(item.buyerUserId.trim().toLowerCase())
+      : null;
+    ticketByReturnId.set(item.returnId, byOrder ?? byBuyer ?? null);
+  }
+  return ticketByReturnId;
 }
 
 async function syncReturnsForIntegration(
@@ -112,16 +166,16 @@ async function syncReturnsForIntegration(
   const fromDate = new Date(Date.now() - INITIAL_LOOKBACK_DAYS * 86_400_000);
   const toDate = new Date();
 
-  // Query eBay once per ReturnCountFilterEnum bucket and union the buckets each
-  // return appears in. This is exactly how Seller Hub's status dropdown counts
-  // are computed, so our list filters (in progress / shipped / delivered /
-  // closed) now match eBay 1:1 instead of guessing from a single raw state.
+  // Query eBay for the buckets needed to keep the operational mirror fresh.
+  // The UI status filters classify from the return's state/status (not bucket
+  // tags), so walking every ReturnCountFilterEnum bucket every tick only adds
+  // duplicate API calls and risks missing the serverless time budget.
   const collected = new Map<
     string,
     { raw: EbayReturnSummary; fields: ReturnType<typeof normalizeReturnSummary>; buckets: Set<string> }
   >();
 
-  for (const bucket of RETURN_SYNC_BUCKETS) {
+  for (const bucket of RETURN_POLL_BUCKETS) {
     const isClosed = bucket === "CLOSED";
     const maxPages = isClosed ? CLOSED_MAX_PAGES : MAX_PAGES_PER_TICK;
     let offset = 0;
@@ -176,18 +230,20 @@ async function syncReturnsForIntegration(
     select: { returnId: true, ticketId: true },
   });
   const existingTicketByReturnId = new Map(existingRows.map((r) => [r.returnId, r.ticketId]));
+  const ticketLookup = await findTicketIdsForReturns({
+    integrationId: integration.id,
+    returns: Array.from(collected.entries()).map(([returnId, { fields }]) => ({
+      returnId,
+      ebayOrderNumber: fields.ebayOrderNumber,
+      buyerUserId: fields.buyerUserId,
+    })),
+  });
 
   let upserted = 0;
   for (const [returnId, { raw, fields, buckets }] of collected.entries()) {
     // Only resolve ticket linkage when we don't already have one for this row.
     let ticketId = existingTicketByReturnId.get(returnId) ?? null;
-    if (!ticketId) {
-      ticketId = await findTicketIdForReturn({
-        integrationId: integration.id,
-        ebayOrderNumber: fields.ebayOrderNumber,
-        buyerUserId: fields.buyerUserId,
-      });
-    }
+    if (!ticketId) ticketId = ticketLookup.get(returnId) ?? null;
 
     const commonData = {
       platform: integration.platform,
@@ -249,7 +305,7 @@ async function syncReturnsForIntegration(
   // Search summaries don't carry the listing title/image — only Get Return
   // does. Hydrate rows that are still missing a title, prefering our local
   // catalog (no API call) and falling back to a budgeted Get Return.
-  await enrichMissingItemDetails(integration, config);
+  await enrichMissingItemDetails(integration, config, deadline);
 
   await db.helpdeskReturnSyncCheckpoint.update({
     where: { id: checkpoint.id },
@@ -269,7 +325,10 @@ async function syncReturnsForIntegration(
 async function enrichMissingItemDetails(
   integration: Integration,
   config: Awaited<ReturnType<typeof buildEbayConfig>>,
+  deadline: number,
 ): Promise<void> {
+  if (Date.now() > deadline - ENRICH_DEADLINE_BUFFER_MS) return;
+
   const missing = await db.helpdeskReturnCase.findMany({
     // Rows still missing a title, image, OR sku need hydration. Including
     // image-less rows lets us correct variation thumbnails once we learn the
@@ -295,6 +354,8 @@ async function enrichMissingItemDetails(
   if (missing.length === 0) return;
 
   for (const row of missing) {
+    if (Date.now() > deadline - ENRICH_DEADLINE_BUFFER_MS) break;
+
     let itemTitle: string | null = row.itemTitle;
     let imageUrl: string | null = null;
     let sku: string | null = row.sku;
