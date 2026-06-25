@@ -1,7 +1,7 @@
 "use client";
 
 import { startTransition, useCallback, useEffect, useRef, useState, useMemo } from "react";
-import { useSearchParams } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
   useHelpdesk,
   type HelpdeskFolderKey,
@@ -49,8 +49,11 @@ export default function HelpDeskClient() {
     null,
   );
   const prefs = useHelpdeskPrefs();
+  const router = useRouter();
+  const pathname = usePathname();
   const searchParams = useSearchParams();
-  const initialTicketIdRef = useRef<string | null>(searchParams.get("ticket"));
+  /** Skip one URL→state sync cycle after we write `?ticket=` ourselves. */
+  const urlTicketWriteRef = useRef(false);
   const lastQParamRef = useRef<string | null>(null);
 
   // Pick up `?q=` from the URL — sub-pages (filters, dashboard, profile,
@@ -244,11 +247,32 @@ export default function HelpDeskClient() {
       : undefined;
 
   /**
-   * Deep-link support: when another page links here as `/help-desk?ticket=<id>`
-   * (e.g. the "Other Tickets from this Buyer" links in ContextPanel), pre-select
-   * that ticket on first mount. Once the user starts clicking around we leave
-   * the URL alone — replicating the URL on every selection would fight the
-   * native browser back-button experience.
+   * Keep `?ticket=` in sync with the open thread so refresh / share / bookmark
+   * land back on the same ticket. Uses `replace` (not `push`) so opening
+   * tickets does not stack browser history entries.
+   */
+  const syncTicketToUrl = useCallback(
+    (ticketId: string | null) => {
+      if (typeof window === "undefined") return;
+      const params = new URLSearchParams(window.location.search);
+      const current = params.get("ticket");
+      if (ticketId) {
+        if (current === ticketId) return;
+        params.set("ticket", ticketId);
+      } else {
+        if (!params.has("ticket")) return;
+        params.delete("ticket");
+      }
+      const qs = params.toString();
+      urlTicketWriteRef.current = true;
+      router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
+    },
+    [router, pathname],
+  );
+
+  /**
+   * Deep-link + refresh: `/help-desk?ticket=<id>` opens that thread. Also
+   * handles browser back/forward when the URL gains or loses `?ticket=`.
    */
   const {
     tickets,
@@ -292,6 +316,40 @@ export default function HelpDeskClient() {
     pendingResolveAdvanceRef.current.set(ticketId, advance);
   }, []);
 
+  /**
+   * All selection changes (open ticket, back-to-inbox, prev/next, folder
+   * change clearing the selection) go through this helper. We wrap the
+   * `setSelectedTicketId` call in React 18's `startTransition` so the click
+   * event itself resolves immediately — React then renders the resulting
+   * mount/unmount of TicketReader as a *low-priority* update that is allowed
+   * to be interrupted by subsequent user input. Without this, the click
+   * handler returns only after React has finished mounting/unmounting the
+   * (very heavy) reader subtree, which on production can take 30+ seconds
+   * for long eBay HTML threads and makes the UI feel completely frozen.
+   */
+  const selectTicket = useCallback(
+    (id: string | null) => {
+      startTransition(() => {
+        setSelectedTicketId(id);
+      });
+      syncTicketToUrl(id);
+    },
+    [setSelectedTicketId, syncTicketToUrl],
+  );
+
+  // Hydrate selection from `?ticket=` on refresh, deep links, and back/forward.
+  useEffect(() => {
+    const urlTicketId = searchParams.get("ticket");
+    if (urlTicketWriteRef.current) {
+      urlTicketWriteRef.current = false;
+      return;
+    }
+    if (urlTicketId === selectedTicketId) return;
+    startTransition(() => {
+      setSelectedTicketId(urlTicketId);
+    });
+  }, [searchParams, selectedTicketId, setSelectedTicketId]);
+
   // Honor ?q=... → seed search field. We compare against a ref so we
   // don't fight ourselves when the user types after navigation. On a
   // brand-new q= we also wipe any pre-selected ticket so the inbox
@@ -311,34 +369,12 @@ export default function HelpDeskClient() {
       lastQParamRef.current = q;
       if (q != null) {
         setSearch(q);
-        setSelectedTicketId(null);
+        selectTicket(null);
       } else if (previous != null) {
         setSearch("");
       }
     }
-    // setSelectedTicketId is stable across renders.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchParams]);
-
-  /**
-   * All selection changes (open ticket, back-to-inbox, prev/next, folder
-   * change clearing the selection) go through this helper. We wrap the
-   * `setSelectedTicketId` call in React 18's `startTransition` so the click
-   * event itself resolves immediately — React then renders the resulting
-   * mount/unmount of TicketReader as a *low-priority* update that is allowed
-   * to be interrupted by subsequent user input. Without this, the click
-   * handler returns only after React has finished mounting/unmounting the
-   * (very heavy) reader subtree, which on production can take 30+ seconds
-   * for long eBay HTML threads and makes the UI feel completely frozen.
-   */
-  const selectTicket = useCallback(
-    (id: string | null) => {
-      startTransition(() => {
-        setSelectedTicketId(id);
-      });
-    },
-    [setSelectedTicketId],
-  );
+  }, [searchParams, selectTicket]);
 
   /**
    * Last non-null ticket detail we showed in the reader. We pass this to
@@ -396,17 +432,6 @@ export default function HelpDeskClient() {
       my_tickets: Math.max(counts.my_tickets ?? 0, visibleMine.size),
     };
   }, [agent?.id, counts, selectedTicket, tickets]);
-
-  // Apply deep-link selection once the hook has loaded its setter.
-  useEffect(() => {
-    const id = initialTicketIdRef.current;
-    if (id) {
-      setSelectedTicketId(id);
-      initialTicketIdRef.current = null;
-    }
-    // setSelectedTicketId is stable; we only want this to run on first mount.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   const lastSelectedListIndexRef = useRef<number>(-1);
   useEffect(() => {
