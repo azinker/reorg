@@ -85,6 +85,11 @@ import { Avatar, AvatarStack } from "@/components/ui/avatar";
 import { fetchOrderContextShared } from "@/components/helpdesk/order-context-client";
 import { useCurrentUser } from "@/contexts/current-user-context";
 import { canUseHelpdeskOrderActionsPermission } from "@/lib/helpdesk/order-actions-permission";
+import {
+  formatOrderLineWeightLbs,
+  formatOrderLineWeightOz,
+  totalWeightOzFromCatalogLabel,
+} from "@/lib/services/calculation";
 
 interface ContextPanelProps {
   ticket: HelpdeskTicketDetail | null;
@@ -2009,7 +2014,10 @@ function OrderInfoSection({
                       />
                     ) : null}
                     {item.catalogWeight ? (
-                      <CatalogWeightBlurb weight={item.catalogWeight} />
+                      <CatalogWeightBlurb
+                        weight={item.catalogWeight}
+                        quantity={item.quantity ?? 1}
+                      />
                     ) : null}
                   </div>
                   <div className="shrink-0 text-right text-xs">
@@ -2586,8 +2594,22 @@ function SkuInventoryLine({
   );
 }
 
-/** Catalog grid–style weight label from MasterRow (oz / LBS). */
-function CatalogWeightBlurb({ weight }: { weight: string }) {
+/** Catalog weight × qty; click toggles oz ↔ lbs (total line weight). */
+function CatalogWeightBlurb({
+  weight,
+  quantity = 1,
+}: {
+  weight: string;
+  quantity?: number;
+}) {
+  const [showLbs, setShowLbs] = useState(false);
+  const totalOz = totalWeightOzFromCatalogLabel(weight, quantity);
+  if (totalOz == null) return null;
+
+  const display = showLbs
+    ? formatOrderLineWeightLbs(totalOz)
+    : formatOrderLineWeightOz(totalOz);
+
   return (
     <p className="mt-1 text-[11px] leading-snug text-muted-foreground">
       <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/85">
@@ -2596,7 +2618,19 @@ function CatalogWeightBlurb({ weight }: { weight: string }) {
       <span className="mx-1.5 text-foreground/35" aria-hidden>
         ·
       </span>
-      <span className="font-medium tabular-nums text-foreground/90">{weight}</span>
+      <button
+        type="button"
+        onClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          setShowLbs((v) => !v);
+        }}
+        className="cursor-pointer font-medium tabular-nums text-foreground/90 underline-offset-2 hover:text-brand hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/30"
+        title={showLbs ? "Show ounces" : "Show pounds"}
+        aria-label={`Total weight ${display}. Click to show ${showLbs ? "ounces" : "pounds"}.`}
+      >
+        {display}
+      </button>
     </p>
   );
 }

@@ -65,17 +65,40 @@ export function parseWeightToOz(weightDisplay: string): number | null {
 
   const trimmed = weightDisplay.trim().toUpperCase();
 
-  const lbsMatch = trimmed.match(/^(\d+)\s*LBS?$/i);
+  const lbsMatch = trimmed.match(/^(\d+(?:\.\d+)?)\s*LBS?$/i);
   if (lbsMatch) {
-    return parseInt(lbsMatch[1], 10) * 16;
+    return Math.round(parseFloat(lbsMatch[1]) * 16);
   }
 
-  const ozMatch = trimmed.match(/^(\d+)\s*(OZ)?$/i);
+  const ozMatch = trimmed.match(/^(\d+(?:\.\d+)?)\s*(OZ)?$/i);
   if (ozMatch) {
-    return parseInt(ozMatch[1], 10);
+    return Math.round(parseFloat(ozMatch[1]));
   }
 
   return null;
+}
+
+/** Unit catalog weight × line quantity (ounces). */
+export function totalWeightOzFromCatalogLabel(
+  weightDisplay: string,
+  quantity: number,
+): number | null {
+  const unitOz = parseWeightToOz(weightDisplay);
+  if (unitOz == null || quantity <= 0) return null;
+  return unitOz * quantity;
+}
+
+/** Help Desk product line — total weight in ounces. */
+export function formatOrderLineWeightOz(totalOz: number): string {
+  return `${totalOz}oz`;
+}
+
+/** Help Desk product line — total weight in pounds (click-toggle alternate). */
+export function formatOrderLineWeightLbs(totalOz: number): string {
+  const lbs = totalOz / 16;
+  if (Number.isInteger(lbs)) return `${lbs}lbs`;
+  const rounded = Math.round(lbs * 100) / 100;
+  return `${rounded}lbs`;
 }
 
 /**
