@@ -1113,28 +1113,35 @@ function ProductInquirySection({
       <p className="mb-3 text-xs text-muted-foreground">
         Buyer is asking a pre-purchase question about this listing.
       </p>
-      <a
-        href={ebayUrl}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="flex items-start gap-2 rounded-md border border-hairline bg-surface p-2 shadow-sm transition-colors hover:border-brand/30 hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/30"
-      >
-        {listing.imageUrl ? (
-          /* eslint-disable-next-line @next/next/no-img-element */
-          <img
-            src={listing.imageUrl}
-            alt=""
-            className="h-12 w-12 shrink-0 rounded border border-hairline object-cover"
-          />
-        ) : (
-          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded border border-hairline bg-surface-2 text-muted-foreground">
-            <Package className="h-4 w-4" />
-          </div>
-        )}
+      <div className="flex items-start gap-2 rounded-md border border-hairline bg-surface p-2 shadow-sm">
+        <a
+          href={ebayUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="shrink-0 rounded transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/30"
+        >
+          {listing.imageUrl ? (
+            /* eslint-disable-next-line @next/next/no-img-element */
+            <img
+              src={listing.imageUrl}
+              alt=""
+              className="h-12 w-12 rounded border border-hairline object-cover"
+            />
+          ) : (
+            <div className="flex h-12 w-12 items-center justify-center rounded border border-hairline bg-surface-2 text-muted-foreground">
+              <Package className="h-4 w-4" />
+            </div>
+          )}
+        </a>
         <div className="min-w-0 flex-1">
-          <p className="line-clamp-3 text-sm text-brand">
+          <a
+            href={ebayUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="line-clamp-3 text-sm text-brand hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/30"
+          >
             {listing.title ?? listing.itemId}
-          </p>
+          </a>
           {listing.sku ? (
             <SkuInventoryLine
               sku={listing.sku}
@@ -1144,12 +1151,17 @@ function ProductInquirySection({
           {listing.catalogWeight ? (
             <CatalogWeightBlurb weight={listing.catalogWeight} />
           ) : null}
-          <p className="mt-1 inline-flex items-center gap-1 truncate font-mono text-[11px] text-muted-foreground">
+          <a
+            href={ebayUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="mt-1 inline-flex items-center gap-1 truncate font-mono text-[11px] text-muted-foreground hover:text-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/30"
+          >
             Item #{listing.itemId}
             <ExternalLink className="h-3 w-3 shrink-0 opacity-70" />
-          </p>
+          </a>
         </div>
-      </a>
+      </div>
     </section>
   );
 }
@@ -1983,56 +1995,68 @@ function OrderInfoSection({
               Products
             </p>
             <div className="space-y-2">
-              {productItems.map((item) => (
-                <a
-                  key={item.itemId}
-                  href={`https://www.ebay.com/itm/${item.itemId}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-start gap-2 rounded-md border border-hairline bg-surface p-2 shadow-sm transition-colors hover:border-brand/30 hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/30"
-                >
-                  {item.pictureUrl ? (
-                    /* eslint-disable-next-line @next/next/no-img-element */
-                    <img
-                      src={item.pictureUrl}
-                      alt=""
-                      className="h-10 w-10 shrink-0 rounded border border-hairline object-cover"
-                    />
-                  ) : (
-                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded border border-hairline bg-surface-2 text-muted-foreground">
-                      <Package className="h-4 w-4" />
+              {productItems.map((item) => {
+                const ebayItemUrl = `https://www.ebay.com/itm/${item.itemId}`;
+                return (
+                  <div
+                    key={item.itemId}
+                    className="flex items-start gap-2 rounded-md border border-hairline bg-surface p-2 shadow-sm"
+                  >
+                    <a
+                      href={ebayItemUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="shrink-0 rounded transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/30"
+                    >
+                      {item.pictureUrl ? (
+                        /* eslint-disable-next-line @next/next/no-img-element */
+                        <img
+                          src={item.pictureUrl}
+                          alt=""
+                          className="h-10 w-10 rounded border border-hairline object-cover"
+                        />
+                      ) : (
+                        <div className="flex h-10 w-10 items-center justify-center rounded border border-hairline bg-surface-2 text-muted-foreground">
+                          <Package className="h-4 w-4" />
+                        </div>
+                      )}
+                    </a>
+                    <div className="min-w-0 flex-1">
+                      <a
+                        href={ebayItemUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="line-clamp-2 text-sm text-brand hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/30"
+                      >
+                        {item.title}
+                      </a>
+                      {item.sku ? (
+                        <SkuInventoryLine
+                          sku={item.sku}
+                          currentInventory={item.currentInventory}
+                        />
+                      ) : null}
+                      {item.catalogWeight ? (
+                        <CatalogWeightBlurb
+                          weight={item.catalogWeight}
+                          quantity={item.quantity ?? 1}
+                        />
+                      ) : null}
                     </div>
-                  )}
-                  <div className="min-w-0 flex-1">
-                    <p className="line-clamp-2 text-sm text-brand">
-                      {item.title}
-                    </p>
-                    {item.sku ? (
-                      <SkuInventoryLine
-                        sku={item.sku}
-                        currentInventory={item.currentInventory}
-                      />
-                    ) : null}
-                    {item.catalogWeight ? (
-                      <CatalogWeightBlurb
-                        weight={item.catalogWeight}
-                        quantity={item.quantity ?? 1}
-                      />
-                    ) : null}
+                    <div className="shrink-0 text-right text-xs">
+                      <p className="font-semibold text-foreground">
+                        {item.unitPriceCents != null && item.quantity != null
+                          ? formatMoney(
+                              item.unitPriceCents * item.quantity,
+                              ctx?.currency,
+                            )
+                          : "—"}
+                      </p>
+                      <p className="text-muted-foreground">Qty {item.quantity}</p>
+                    </div>
                   </div>
-                  <div className="shrink-0 text-right text-xs">
-                    <p className="font-semibold text-foreground">
-                      {item.unitPriceCents != null && item.quantity != null
-                        ? formatMoney(
-                            item.unitPriceCents * item.quantity,
-                            ctx?.currency,
-                          )
-                        : "—"}
-                    </p>
-                    <p className="text-muted-foreground">Qty {item.quantity}</p>
-                  </div>
-                </a>
-              ))}
+                );
+              })}
               {productItems.length === 0 ? (
                 <p className="text-xs text-muted-foreground">
                   No products on this ticket.
@@ -2620,12 +2644,8 @@ function CatalogWeightBlurb({
       </span>
       <button
         type="button"
-        onClick={(e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          setShowLbs((v) => !v);
-        }}
-        className="cursor-pointer font-medium tabular-nums text-foreground/90 underline-offset-2 hover:text-brand hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/30"
+        onClick={() => setShowLbs((v) => !v)}
+        className="relative z-10 cursor-pointer font-medium tabular-nums text-foreground/90 underline-offset-2 hover:text-brand hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/30"
         title={showLbs ? "Show ounces" : "Show pounds"}
         aria-label={`Total weight ${display}. Click to show ${showLbs ? "ounces" : "pounds"}.`}
       >
