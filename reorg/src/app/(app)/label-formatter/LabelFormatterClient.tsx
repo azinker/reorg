@@ -18,7 +18,8 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
-  LABEL_FORMATTER_RESHIP_ZIP_FILENAME,
+  LABEL_FORMATTER_RESHIP_DATA_FILENAME,
+  LABEL_FORMATTER_RESHIP_PDF_FILENAME,
   LABEL_FORMATTER_ZIP_FILENAME,
   sourceStoreLabel,
   type LabelFormatterLineItem,
@@ -645,28 +646,38 @@ export function LabelFormatterClient() {
           fromAddress: form.fromAddress,
         }),
       });
+
+      const batchId = res.headers.get("X-Label-Formatter-Reship-Batch-Id");
+
       if (!res.ok) {
-        const json = (await res.json().catch(() => ({}))) as { error?: string };
-        setBanner({ type: "error", message: json.error ?? "Label creation failed." });
+        const json = (await res.json().catch(() => ({}))) as {
+          error?: string;
+          firstError?: string;
+          batchId?: string;
+          dataSheetPath?: string;
+        };
+        const detail = json.firstError ?? json.error ?? "Label creation failed.";
+        setBanner({ type: "error", message: detail });
+        const sheetBatchId = json.batchId ?? batchId;
+        if (sheetBatchId) {
+          await downloadReshipDataSheet(sheetBatchId);
+        }
         return;
       }
 
       const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement("a");
-      anchor.href = url;
-      anchor.download = LABEL_FORMATTER_RESHIP_ZIP_FILENAME;
-      document.body.appendChild(anchor);
-      anchor.click();
-      anchor.remove();
-      URL.revokeObjectURL(url);
+      triggerDownload(blob, LABEL_FORMATTER_RESHIP_PDF_FILENAME);
+
+      if (batchId) {
+        await downloadReshipDataSheet(batchId);
+      }
 
       const successCount = Number(res.headers.get("X-Label-Formatter-Reship-Success") ?? selectedRows.length);
       const failedCount = Number(res.headers.get("X-Label-Formatter-Reship-Failed") ?? 0);
-      const failedNote = failedCount > 0 ? ` ${failedCount} failed — see the data sheet in the ZIP.` : "";
+      const failedNote = failedCount > 0 ? ` ${failedCount} failed — see ${LABEL_FORMATTER_RESHIP_DATA_FILENAME}.` : "";
       setBanner({
         type: failedCount > 0 ? "warning" : "success",
-        message: `Created ${successCount} label${successCount === 1 ? "" : "s"}.${failedNote}`,
+        message: `Created ${successCount} label${successCount === 1 ? "" : "s"} in one PDF.${failedNote}`,
       });
       setShipModalOpen(false);
       setHistoryTab("reshipped");
@@ -676,6 +687,26 @@ export function LabelFormatterClient() {
     } finally {
       setShipLoading(false);
     }
+  }
+
+  function triggerDownload(blob: Blob, filename: string) {
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = filename;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  async function downloadReshipDataSheet(batchId: string) {
+    const res = await fetch(`/api/label-formatter/reship-batches/${encodeURIComponent(batchId)}/data-sheet`, {
+      cache: "no-store",
+    });
+    if (!res.ok) return;
+    const blob = await res.blob();
+    triggerDownload(blob, LABEL_FORMATTER_RESHIP_DATA_FILENAME);
   }
 
   function openManualAdd() {

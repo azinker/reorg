@@ -1,45 +1,31 @@
-import { PassThrough } from "node:stream";
-import { finished } from "node:stream/promises";
-import archiver from "archiver";
 import { PDFDocument } from "pdf-lib";
 import { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
-import { resolveLabelCrowSeriesId } from "@/lib/label-formatter/labelcrow-options";
+import {
+  findLabelCrowSeries,
+  resolveLabelCrowSeriesId,
+} from "@/lib/label-formatter/labelcrow-options";
 import { appendMergedOrderPdf } from "@/lib/label-formatter/reship-pdf";
 import { buildReshipDataSheet, type ReshipDataSheetRow } from "@/lib/label-formatter/reship-data-sheet";
 import {
   LABEL_FORMATTER_RESHIP_DATA_FILENAME,
-  LABEL_FORMATTER_RESHIP_PDF_FILENAME,
-  LABEL_FORMATTER_RESHIP_ZIP_FILENAME,
   type LabelFormatterReshipInput,
 } from "@/lib/label-formatter/types";
 import {
   createLabelCrowLabel,
   downloadLabelCrowLabel,
+  fetchLabelCrowAccountSeries,
   type LabelCrowAddress,
 } from "@/lib/services/labelcrow";
 
 export type LabelFormatterReshipResult = {
   batchId: string;
-  zipBuffer: Buffer;
+  pdfBuffer: Buffer | null;
+  dataSheetBuffer: Buffer;
   successCount: number;
   failedCount: number;
+  firstError: string | null;
 };
-
-async function zipReshipFiles(pdfBuffer: Buffer, dataSheetBuffer: Buffer): Promise<Buffer> {
-  const archive = archiver("zip", { zlib: { level: 9 } });
-  const pass = new PassThrough();
-  const chunks: Buffer[] = [];
-
-  pass.on("data", (chunk: Buffer) => chunks.push(chunk));
-  archive.on("error", (error: Error) => pass.destroy(error));
-  archive.pipe(pass);
-  archive.append(pdfBuffer, { name: LABEL_FORMATTER_RESHIP_PDF_FILENAME });
-  archive.append(dataSheetBuffer, { name: LABEL_FORMATTER_RESHIP_DATA_FILENAME });
-  await archive.finalize();
-  await finished(pass);
-  return Buffer.concat(chunks);
-}
 
 function buildFromAddress(input: LabelFormatterReshipInput): LabelCrowAddress {
   return {
@@ -78,11 +64,22 @@ export async function createLabelFormatterReship(
   actorUserId: string,
 ): Promise<LabelFormatterReshipResult> {
   const fromAddress = buildFromAddress(input);
-  const seriesId = resolveLabelCrowSeriesId(input.seriesCode);
+  const accountSeries = await fetchLabelCrowAccountSeries();
+  const matchedSeries = findLabelCrowSeries(accountSeries, {
+    seriesCode: input.seriesCode,
+    serviceClass: input.serviceClass,
+  });
+  const seriesId = resolveLabelCrowSeriesId(accountSeries, {
+    seriesCode: input.seriesCode,
+    serviceClass: input.serviceClass,
+  });
+  const seriesCodeForApi = matchedSeries?.series_code ?? input.seriesCode;
+
   const combinedPdf = await PDFDocument.create();
   const dataSheetRows: ReshipDataSheetRow[] = [];
   let successCount = 0;
   let failedCount = 0;
+  let firstError: string | null = null;
 
   const batch = await db.labelFormatterReshipBatch.create({
     data: {
@@ -98,7 +95,7 @@ export async function createLabelFormatterReship(
       fromCity: input.fromAddress.city,
       fromState: input.fromAddress.state,
       fromZip: input.fromAddress.zip,
-      zipFileName: LABEL_FORMATTER_RESHIP_ZIP_FILENAME,
+      zipFileName: null,
     },
   });
 
@@ -123,7 +120,7 @@ export async function createLabelFormatterReship(
         serviceClass: input.serviceClass,
         providerKey: input.providerKey,
         seriesId,
-        seriesCode: input.seriesCode,
+        seriesCode: seriesCodeForApi,
         weightLbs: 2,
       });
       const labelPdf = await resolveLabelPdfBytes(label);
@@ -160,6 +157,7 @@ export async function createLabelFormatterReship(
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Label creation failed.";
+      if (!firstError) firstError = message;
       failedCount += 1;
 
       await db.labelFormatterReshipRow.create({
@@ -192,17 +190,9 @@ export async function createLabelFormatterReship(
     }
   }
 
-  if (successCount === 0) {
-    await db.labelFormatterReshipBatch.update({
-      where: { id: batch.id },
-      data: { successCount: 0, failedCount },
-    });
-    throw new Error("No labels were created. Check the data sheet errors and try again.");
-  }
-
-  const pdfBuffer = Buffer.from(await combinedPdf.save());
   const dataSheetBuffer = await buildReshipDataSheet(dataSheetRows);
-  const zipBuffer = await zipReshipFiles(pdfBuffer, dataSheetBuffer);
+  const pdfBuffer =
+    successCount > 0 ? Buffer.from(await combinedPdf.save()) : null;
 
   await db.$transaction([
     db.labelFormatterReshipBatch.update({
@@ -222,12 +212,53 @@ export async function createLabelFormatterReship(
           serviceClass: input.serviceClass,
           providerKey: input.providerKey,
           seriesCode: input.seriesCode,
+          seriesId,
+          firstError,
         } as Prisma.InputJsonValue,
       },
     }),
   ]);
 
-  return { batchId: batch.id, zipBuffer, successCount, failedCount };
+  return {
+    batchId: batch.id,
+    pdfBuffer,
+    dataSheetBuffer,
+    successCount,
+    failedCount,
+    firstError,
+  };
+}
+
+export async function buildReshipDataSheetForBatch(batchId: string): Promise<Buffer | null> {
+  const batch = await db.labelFormatterReshipBatch.findUnique({
+    where: { id: batchId },
+    include: { rows: { orderBy: { createdAt: "asc" } } },
+  });
+  if (!batch) return null;
+
+  const rows: ReshipDataSheetRow[] = batch.rows.map((row) => ({
+    note: row.note ?? "",
+    orderNumber: row.orderNumber,
+    sourceStore: row.sourceStore as ReshipDataSheetRow["sourceStore"],
+    buyerName: row.buyerName,
+    addressLine1: row.addressLine1,
+    addressLine2: row.addressLine2 ?? "",
+    city: row.city,
+    state: row.state,
+    zipCode: row.zipCode,
+    lineItems: Array.isArray(row.lineItems)
+      ? (row.lineItems as ReshipDataSheetRow["lineItems"])
+      : [],
+    trackingNumber: row.trackingNumber,
+    labelStatus: row.status === "created" ? "created" : "failed",
+    errorMessage: row.errorMessage,
+    carrier: row.carrier,
+    serviceClass: row.serviceClass,
+    providerKey: row.providerKey,
+    seriesCode: row.seriesCode,
+  }));
+
+  return buildReshipDataSheet(rows);
 }
 
 export async function listLabelFormatterReshipHistory(limit = 25) {

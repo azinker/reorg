@@ -43,6 +43,15 @@ export interface LabelCrowDownloadedLabel {
   filename: string;
 }
 
+export interface LabelCrowAccountSeries {
+  id: number;
+  series_code: string;
+  display_name: string | null;
+  carrier: string;
+  service_class: string;
+  provider_key: string;
+}
+
 interface LabelCrowLabelRow {
   id: string | null;
   tracking: string | null;
@@ -150,6 +159,46 @@ function labelCrowError(status: number, buffer: Buffer): Error {
     // Fall through to a terse status-only error.
   }
   return new Error(`LabelCrow request failed with HTTP ${status}.`);
+}
+
+let cachedAccountSeries: { fetchedAt: number; rows: LabelCrowAccountSeries[] } | null = null;
+const SERIES_CACHE_MS = 5 * 60 * 1000;
+
+function parseAccountSeries(value: unknown): LabelCrowAccountSeries[] {
+  const root = asRecord(value);
+  const raw = root?.data;
+  if (!Array.isArray(raw)) return [];
+
+  return raw.flatMap((entry) => {
+    const row = asRecord(entry);
+    if (!row) return [];
+    const id = row.id;
+    const seriesCode = stringField(row, "series_code");
+    if (typeof id !== "number" || !seriesCode) return [];
+    return [{
+      id,
+      series_code: seriesCode,
+      display_name: stringField(row, "display_name"),
+      carrier: stringField(row, "carrier") ?? "usps",
+      service_class: stringField(row, "service_class") ?? "ground",
+      provider_key: stringField(row, "provider_key") ?? "",
+    }];
+  });
+}
+
+/** LabelCrow account series (cached ~5 min). Required to map UI series codes → numeric series_id. */
+export async function fetchLabelCrowAccountSeries(): Promise<LabelCrowAccountSeries[]> {
+  if (cachedAccountSeries && Date.now() - cachedAccountSeries.fetchedAt < SERIES_CACHE_MS) {
+    return cachedAccountSeries.rows;
+  }
+
+  const response = await labelCrowFetch("/api/v1/account/series", { method: "GET" });
+  const buffer = Buffer.from(await response.arrayBuffer());
+  if (!response.ok) throw labelCrowError(response.status, buffer);
+
+  const rows = parseAccountSeries(parseJsonBuffer(buffer));
+  cachedAccountSeries = { fetchedAt: Date.now(), rows };
+  return rows;
 }
 
 async function labelCrowFetch(path: string, init: RequestInit): Promise<Response> {

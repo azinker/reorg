@@ -1,3 +1,5 @@
+import type { LabelCrowAccountSeries } from "@/lib/services/labelcrow";
+
 export const LABELCROW_SERVICE_CLASSES = [
   { value: "ground", label: "Ground" },
   { value: "priority", label: "Priority" },
@@ -13,26 +15,77 @@ export const LABELCROW_PROVIDERS = [
 
 export type LabelCrowProviderKey = (typeof LABELCROW_PROVIDERS)[number]["value"];
 
-/** LabelCrow series dropdown options (code shown in LabelCrow UI). */
-export const LABELCROW_SERIES_OPTIONS = [
-  { value: "9121", label: "9121 — 9121" },
-  { value: "9155", label: "9155 — 9155" },
-  { value: "9201", label: "9201 — 9201" },
-  { value: "9202", label: "9202 — 9202" },
-  { value: "9300", label: "9300 — 9300" },
-  { value: "9302", label: "9302 — 9302" },
-  { value: "9434S", label: "9434S — 9434S" },
-  { value: "9500", label: "9500 — 9500" },
-  { value: "preshipment", label: "Preshipment" },
-] as const;
+/** UI label for a LabelCrow series code (92019 displays as 9201). */
+export function labelCrowSeriesDisplayCode(seriesCode: string): string {
+  if (seriesCode === "92019") return "9201";
+  return seriesCode;
+}
 
-export type LabelCrowSeriesCode = (typeof LABELCROW_SERIES_OPTIONS)[number]["value"];
+function normalizeSeriesCode(code: string): string {
+  return code.trim().toUpperCase();
+}
 
-/** Default series_id env override applies to 9302 only; otherwise use series code. */
-export function resolveLabelCrowSeriesId(seriesCode: string): string {
-  const normalized = seriesCode.trim();
-  if (normalized === "9302") {
-    return process.env.LABELCROW_USPS_GROUND_SERIES_ID?.trim() || "13";
+/** Ground-only alias: LabelCrow uses 92019 for what the UI shows as 9201. */
+function seriesCodesForLookup(seriesCode: string): string[] {
+  const normalized = normalizeSeriesCode(seriesCode);
+  if (normalized === "9201") return ["9201", "92019"];
+  return [normalized];
+}
+
+export function findLabelCrowSeries(
+  accountSeries: LabelCrowAccountSeries[],
+  input: { seriesCode: string; serviceClass: LabelCrowServiceClass },
+): LabelCrowAccountSeries | null {
+  const service = input.serviceClass.trim().toLowerCase();
+  const lookupCodes = new Set(seriesCodesForLookup(input.seriesCode));
+
+  return (
+    accountSeries.find((row) => {
+      if (row.service_class.toLowerCase() !== service) return false;
+      return lookupCodes.has(normalizeSeriesCode(row.series_code));
+    }) ?? null
+  );
+}
+
+export type LabelCrowSeriesOption = {
+  value: string;
+  label: string;
+  seriesId: number;
+};
+
+/** Build dropdown options for a service class from live LabelCrow account series. */
+export function labelCrowSeriesOptionsForService(
+  accountSeries: LabelCrowAccountSeries[],
+  serviceClass: LabelCrowServiceClass,
+): LabelCrowSeriesOption[] {
+  const service = serviceClass.toLowerCase();
+  const seen = new Set<string>();
+
+  return accountSeries
+    .filter((row) => row.service_class.toLowerCase() === service)
+    .flatMap((row) => {
+      const displayCode = labelCrowSeriesDisplayCode(row.series_code);
+      const key = `${service}:${displayCode}`;
+      if (seen.has(key)) return [];
+      seen.add(key);
+      return [{
+        value: displayCode,
+        seriesId: row.id,
+        label: `${displayCode} — ${displayCode}`,
+      }];
+    })
+    .sort((a, b) => a.label.localeCompare(b.label, undefined, { numeric: true }));
+}
+
+export function resolveLabelCrowSeriesId(
+  accountSeries: LabelCrowAccountSeries[],
+  input: { seriesCode: string; serviceClass: LabelCrowServiceClass },
+): string {
+  const match = findLabelCrowSeries(accountSeries, input);
+  if (!match) {
+    throw new Error(
+      `No LabelCrow series for ${input.seriesCode} (${input.serviceClass}). Pick a different series or service class.`,
+    );
   }
-  return normalized;
+  return String(match.id);
 }

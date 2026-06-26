@@ -4,8 +4,8 @@ import { useEffect, useState } from "react";
 import { Loader2, Truck, X } from "lucide-react";
 import {
   LABELCROW_PROVIDERS,
-  LABELCROW_SERIES_OPTIONS,
   LABELCROW_SERVICE_CLASSES,
+  type LabelCrowSeriesOption,
 } from "@/lib/label-formatter/labelcrow-options";
 import type { LabelFormatterRow, LabelFormatterShipFrom } from "@/lib/label-formatter/types";
 
@@ -14,7 +14,7 @@ const SHIP_FROM_STORAGE_KEY = "reorg.labelFormatter.shipFrom.v1";
 export type ShipOrdersFormValues = {
   serviceClass: "ground" | "priority";
   providerKey: "stamps" | "api" | "pitneybowes";
-  seriesCode: (typeof LABELCROW_SERIES_OPTIONS)[number]["value"];
+  seriesCode: string;
   fromAddress: LabelFormatterShipFrom;
 };
 
@@ -58,6 +58,7 @@ function validateForm(form: ShipOrdersFormValues): string | null {
   if (!form.fromAddress.city.trim()) return "City is required.";
   if (!form.fromAddress.state.trim()) return "State is required.";
   if (!form.fromAddress.zip.trim()) return "Zip is required.";
+  if (!form.seriesCode.trim()) return "Series is required.";
   return null;
 }
 
@@ -76,6 +77,8 @@ export function ShipOrdersModal({
     ...DEFAULT_FORM,
     fromAddress: DEFAULT_FROM,
   }));
+  const [seriesOptions, setSeriesOptions] = useState<LabelCrowSeriesOption[]>([]);
+  const [seriesLoading, setSeriesLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -84,6 +87,49 @@ export function ShipOrdersModal({
       fromAddress: loadStoredFromAddress(),
     }));
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadSeries() {
+      setSeriesLoading(true);
+      try {
+        const res = await fetch(
+          `/api/label-formatter/series?serviceClass=${encodeURIComponent(form.serviceClass)}`,
+          { cache: "no-store" },
+        );
+        const json = (await res.json()) as {
+          data?: { options: LabelCrowSeriesOption[] };
+          error?: string;
+        };
+        if (!res.ok || !json.data?.options) {
+          throw new Error(json.error ?? "Could not load LabelCrow series.");
+        }
+        if (cancelled) return;
+
+        setSeriesOptions(json.data.options);
+        setForm((current) => {
+          const stillValid = json.data!.options.some((option) => option.value === current.seriesCode);
+          return {
+            ...current,
+            seriesCode: stillValid ? current.seriesCode : (json.data!.options[0]?.value ?? ""),
+          };
+        });
+      } catch (loadError) {
+        if (!cancelled) {
+          setSeriesOptions([]);
+          setError(loadError instanceof Error ? loadError.message : "Could not load LabelCrow series.");
+        }
+      } finally {
+        if (!cancelled) setSeriesLoading(false);
+      }
+    }
+
+    void loadSeries();
+    return () => {
+      cancelled = true;
+    };
+  }, [form.serviceClass]);
 
   function updateFromAddress(patch: Partial<LabelFormatterShipFrom>) {
     setForm((current) => ({
@@ -122,7 +168,7 @@ export function ShipOrdersModal({
               Ship Orders via LabelCrow
             </h2>
             <p className="mt-1 text-sm text-muted-foreground">
-              Create USPS labels for {rows.length} selected order{rows.length === 1 ? "" : "s"}. Labels are purchased through LabelCrow.
+              Create USPS labels for {rows.length} selected order{rows.length === 1 ? "" : "s"}. One combined PDF downloads with each label followed by its packing slip.
             </p>
           </div>
           <button
@@ -191,16 +237,23 @@ export function ShipOrdersModal({
                 onChange={(event) =>
                   setForm((current) => ({
                     ...current,
-                    seriesCode: event.target.value as ShipOrdersFormValues["seriesCode"],
+                    seriesCode: event.target.value,
                   }))
                 }
-                className="h-10 w-full cursor-pointer rounded-md border border-input bg-background px-3 text-sm"
+                disabled={seriesLoading || seriesOptions.length === 0}
+                className="h-10 w-full cursor-pointer rounded-md border border-input bg-background px-3 text-sm disabled:cursor-not-allowed disabled:opacity-45"
               >
-                {LABELCROW_SERIES_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
+                {seriesLoading ? (
+                  <option value="">Loading series…</option>
+                ) : seriesOptions.length === 0 ? (
+                  <option value="">No series available</option>
+                ) : (
+                  seriesOptions.map((option) => (
+                    <option key={`${option.seriesId}-${option.value}`} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))
+                )}
               </select>
             </label>
           </div>
@@ -276,7 +329,7 @@ export function ShipOrdersModal({
             </button>
             <button
               type="submit"
-              disabled={loading}
+              disabled={loading || seriesLoading || !form.seriesCode}
               className="inline-flex h-10 cursor-pointer items-center gap-2 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-45"
             >
               {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Truck className="h-4 w-4" />}

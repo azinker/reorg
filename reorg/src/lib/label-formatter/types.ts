@@ -77,17 +77,7 @@ export const labelFormatterReshipSchema = z.object({
   rows: z.array(labelFormatterRowSchema).min(1).max(100),
   serviceClass: z.enum(["ground", "priority"]),
   providerKey: z.enum(["stamps", "api", "pitneybowes"]),
-  seriesCode: z.enum([
-    "9121",
-    "9155",
-    "9201",
-    "9202",
-    "9300",
-    "9302",
-    "9434S",
-    "9500",
-    "preshipment",
-  ]),
+  seriesCode: z.string().trim().min(1).max(20),
   fromAddress: labelFormatterShipFromSchema,
 });
 
