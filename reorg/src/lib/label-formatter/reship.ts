@@ -1,3 +1,6 @@
+import { PassThrough } from "node:stream";
+import { finished } from "node:stream/promises";
+import archiver from "archiver";
 import { PDFDocument } from "pdf-lib";
 import { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
@@ -9,6 +12,7 @@ import { appendMergedOrderPdf } from "@/lib/label-formatter/reship-pdf";
 import { buildReshipDataSheet, type ReshipDataSheetRow } from "@/lib/label-formatter/reship-data-sheet";
 import {
   LABEL_FORMATTER_RESHIP_DATA_FILENAME,
+  LABEL_FORMATTER_RESHIP_PDF_FILENAME,
   type LabelFormatterReshipInput,
 } from "@/lib/label-formatter/types";
 import {
@@ -20,12 +24,31 @@ import {
 
 export type LabelFormatterReshipResult = {
   batchId: string;
-  pdfBuffer: Buffer | null;
-  dataSheetBuffer: Buffer;
+  zipBuffer: Buffer;
   successCount: number;
   failedCount: number;
   firstError: string | null;
 };
+
+async function zipReshipFiles(
+  pdfBuffer: Buffer | null,
+  dataSheetBuffer: Buffer,
+): Promise<Buffer> {
+  const archive = archiver("zip", { zlib: { level: 9 } });
+  const pass = new PassThrough();
+  const chunks: Buffer[] = [];
+
+  pass.on("data", (chunk: Buffer) => chunks.push(chunk));
+  archive.on("error", (error: Error) => pass.destroy(error));
+  archive.pipe(pass);
+  if (pdfBuffer) {
+    archive.append(pdfBuffer, { name: LABEL_FORMATTER_RESHIP_PDF_FILENAME });
+  }
+  archive.append(dataSheetBuffer, { name: LABEL_FORMATTER_RESHIP_DATA_FILENAME });
+  await archive.finalize();
+  await finished(pass);
+  return Buffer.concat(chunks);
+}
 
 function buildFromAddress(input: LabelFormatterReshipInput): LabelCrowAddress {
   return {
@@ -193,6 +216,7 @@ export async function createLabelFormatterReship(
   const dataSheetBuffer = await buildReshipDataSheet(dataSheetRows);
   const pdfBuffer =
     successCount > 0 ? Buffer.from(await combinedPdf.save()) : null;
+  const zipBuffer = await zipReshipFiles(pdfBuffer, dataSheetBuffer);
 
   await db.$transaction([
     db.labelFormatterReshipBatch.update({
@@ -221,8 +245,7 @@ export async function createLabelFormatterReship(
 
   return {
     batchId: batch.id,
-    pdfBuffer,
-    dataSheetBuffer,
+    zipBuffer,
     successCount,
     failedCount,
     firstError,

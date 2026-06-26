@@ -18,8 +18,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
-  LABEL_FORMATTER_RESHIP_DATA_FILENAME,
-  LABEL_FORMATTER_RESHIP_PDF_FILENAME,
+  LABEL_FORMATTER_RESHIP_ZIP_FILENAME,
   LABEL_FORMATTER_ZIP_FILENAME,
   sourceStoreLabel,
   type LabelFormatterLineItem,
@@ -647,41 +646,35 @@ export function LabelFormatterClient() {
         }),
       });
 
-      const batchId = res.headers.get("X-Label-Formatter-Reship-Batch-Id");
+      const contentType = res.headers.get("Content-Type") ?? "";
+      if (contentType.includes("application/zip")) {
+        const blob = await res.blob();
+        triggerDownload(blob, LABEL_FORMATTER_RESHIP_ZIP_FILENAME);
 
-      if (!res.ok) {
-        const json = (await res.json().catch(() => ({}))) as {
-          error?: string;
-          firstError?: string;
-          batchId?: string;
-          dataSheetPath?: string;
-        };
-        const detail = json.firstError ?? json.error ?? "Label creation failed.";
-        setBanner({ type: "error", message: detail });
-        const sheetBatchId = json.batchId ?? batchId;
-        if (sheetBatchId) {
-          await downloadReshipDataSheet(sheetBatchId);
+        const successCount = Number(res.headers.get("X-Label-Formatter-Reship-Success") ?? 0);
+        const failedCount = Number(res.headers.get("X-Label-Formatter-Reship-Failed") ?? 0);
+        const firstError = res.headers.get("X-Label-Formatter-Reship-First-Error");
+
+        if (successCount === 0) {
+          setBanner({
+            type: "error",
+            message: firstError ?? "No labels were created. See RESHIP_DATA.xlsx in the ZIP.",
+          });
+        } else {
+          const failedNote = failedCount > 0 ? ` ${failedCount} failed — see RESHIP_DATA.xlsx in the ZIP.` : "";
+          setBanner({
+            type: failedCount > 0 ? "warning" : "success",
+            message: `Created ${successCount} label${successCount === 1 ? "" : "s"}. ZIP includes merged PDF + data sheet.${failedNote}`,
+          });
+          setShipModalOpen(false);
+          setHistoryTab("reshipped");
+          await refreshReshipHistory();
         }
         return;
       }
 
-      const blob = await res.blob();
-      triggerDownload(blob, LABEL_FORMATTER_RESHIP_PDF_FILENAME);
-
-      if (batchId) {
-        await downloadReshipDataSheet(batchId);
-      }
-
-      const successCount = Number(res.headers.get("X-Label-Formatter-Reship-Success") ?? selectedRows.length);
-      const failedCount = Number(res.headers.get("X-Label-Formatter-Reship-Failed") ?? 0);
-      const failedNote = failedCount > 0 ? ` ${failedCount} failed — see ${LABEL_FORMATTER_RESHIP_DATA_FILENAME}.` : "";
-      setBanner({
-        type: failedCount > 0 ? "warning" : "success",
-        message: `Created ${successCount} label${successCount === 1 ? "" : "s"} in one PDF.${failedNote}`,
-      });
-      setShipModalOpen(false);
-      setHistoryTab("reshipped");
-      await refreshReshipHistory();
+      const json = (await res.json().catch(() => ({}))) as { error?: string };
+      setBanner({ type: "error", message: json.error ?? "Label creation failed." });
     } catch {
       setBanner({ type: "error", message: "Network error during label creation." });
     } finally {
@@ -698,15 +691,6 @@ export function LabelFormatterClient() {
     anchor.click();
     anchor.remove();
     URL.revokeObjectURL(url);
-  }
-
-  async function downloadReshipDataSheet(batchId: string) {
-    const res = await fetch(`/api/label-formatter/reship-batches/${encodeURIComponent(batchId)}/data-sheet`, {
-      cache: "no-store",
-    });
-    if (!res.ok) return;
-    const blob = await res.blob();
-    triggerDownload(blob, LABEL_FORMATTER_RESHIP_DATA_FILENAME);
   }
 
   function openManualAdd() {

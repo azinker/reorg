@@ -4,8 +4,7 @@ import { isAuthBypassEnabled } from "@/lib/app-env";
 import { db } from "@/lib/db";
 import { createLabelFormatterReship } from "@/lib/label-formatter/reship";
 import {
-  LABEL_FORMATTER_RESHIP_DATA_FILENAME,
-  LABEL_FORMATTER_RESHIP_PDF_FILENAME,
+  LABEL_FORMATTER_RESHIP_ZIP_FILENAME,
   labelFormatterReshipSchema,
 } from "@/lib/label-formatter/types";
 import { queueCurrentRequestBinaryResponseSample } from "@/lib/services/network-transfer-samples";
@@ -34,13 +33,16 @@ async function getActorUserId() {
 }
 
 function reshipHeaders(result: Awaited<ReturnType<typeof createLabelFormatterReship>>) {
-  return {
+  const headers: Record<string, string> = {
     "Cache-Control": "no-store",
     "X-Label-Formatter-Reship-Batch-Id": result.batchId,
     "X-Label-Formatter-Reship-Success": String(result.successCount),
     "X-Label-Formatter-Reship-Failed": String(result.failedCount),
-    "X-Label-Formatter-Reship-Data-Sheet": LABEL_FORMATTER_RESHIP_DATA_FILENAME,
   };
+  if (result.firstError) {
+    headers["X-Label-Formatter-Reship-First-Error"] = result.firstError.slice(0, 500);
+  }
+  return headers;
 }
 
 export async function POST(request: NextRequest) {
@@ -61,35 +63,23 @@ export async function POST(request: NextRequest) {
 
     const result = await createLabelFormatterReship(parsed.data, actorUserId);
 
-    if (!result.pdfBuffer) {
-      return NextResponse.json({
-        error: result.firstError ?? "No labels were created.",
-        firstError: result.firstError,
-        batchId: result.batchId,
-        failedCount: result.failedCount,
-        dataSheetPath: `/api/label-formatter/reship-batches/${result.batchId}/data-sheet`,
-      }, {
-        status: 422,
-        headers: reshipHeaders(result),
-      });
-    }
-
     queueCurrentRequestBinaryResponseSample({
-      bytesEstimate: result.pdfBuffer.length,
+      bytesEstimate: result.zipBuffer.length,
       metadata: {
         batchId: result.batchId,
         rowCount: parsed.data.rows.length,
         successCount: result.successCount,
         failedCount: result.failedCount,
-        contentType: "application/pdf",
+        contentType: "application/zip",
       },
     });
 
-    return new NextResponse(new Uint8Array(result.pdfBuffer), {
+    return new NextResponse(new Uint8Array(result.zipBuffer), {
+      status: result.successCount > 0 ? 200 : 422,
       headers: {
         ...reshipHeaders(result),
-        "Content-Type": "application/pdf",
-        "Content-Disposition": `attachment; filename="${LABEL_FORMATTER_RESHIP_PDF_FILENAME}"`,
+        "Content-Type": "application/zip",
+        "Content-Disposition": `attachment; filename="${LABEL_FORMATTER_RESHIP_ZIP_FILENAME}"`,
       },
     });
   } catch (error) {

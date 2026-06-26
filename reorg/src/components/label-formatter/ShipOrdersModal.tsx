@@ -168,7 +168,7 @@ export function ShipOrdersModal({
               Ship Orders via LabelCrow
             </h2>
             <p className="mt-1 text-sm text-muted-foreground">
-              Create USPS labels for {rows.length} selected order{rows.length === 1 ? "" : "s"}. One combined PDF downloads with each label followed by its packing slip.
+              Create USPS labels for {rows.length} selected order{rows.length === 1 ? "" : "s"}. Downloads a ZIP with one merged labels + packing slips PDF and a data sheet.
             </p>
           </div>
           <button
