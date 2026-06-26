@@ -17,10 +17,10 @@ export interface LabelCrowCreateInput {
   to: LabelCrowAddress;
   orderNumber: string;
   carrier?: "usps";
-  serviceClass?: "ground";
-  providerKey?: "api";
+  serviceClass?: "ground" | "priority";
+  providerKey?: "api" | "stamps" | "pitneybowes";
   seriesId?: string;
-  seriesCode?: "9302";
+  seriesCode?: string;
   weightLbs?: number;
 }
 

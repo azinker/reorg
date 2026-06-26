@@ -3,6 +3,9 @@ import { z } from "zod";
 export const LABEL_FORMATTER_EXCEL_FILENAME = "ADAM_RESENDS.xlsx";
 export const LABEL_FORMATTER_PDF_FILENAME = "PACKINGSLIP_ADAM_RESENDS.pdf";
 export const LABEL_FORMATTER_ZIP_FILENAME = "LABEL_FORMATTER_EXPORT.zip";
+export const LABEL_FORMATTER_RESHIP_ZIP_FILENAME = "LABEL_FORMATTER_RESHIP.zip";
+export const LABEL_FORMATTER_RESHIP_PDF_FILENAME = "LABELS_AND_PACKINGSLIPS.pdf";
+export const LABEL_FORMATTER_RESHIP_DATA_FILENAME = "RESHIP_DATA.xlsx";
 
 export const labelFormatterSourceStoreSchema = z.enum([
   "EBAY_TPP",
@@ -60,6 +63,36 @@ export const labelFormatterExportSchema = z.object({
 });
 
 export type LabelFormatterExportInput = z.infer<typeof labelFormatterExportSchema>;
+
+export const labelFormatterShipFromSchema = z.object({
+  name: trimmedString(160).min(1, "Shipper name is required"),
+  street: trimmedString(200).min(1, "Street address is required"),
+  aptSuite: trimmedString(200).optional().default(""),
+  city: trimmedString(100).min(1, "City is required"),
+  state: trimmedString(40).min(1, "State is required"),
+  zip: trimmedString(40).min(1, "Zip is required"),
+});
+
+export const labelFormatterReshipSchema = z.object({
+  rows: z.array(labelFormatterRowSchema).min(1).max(100),
+  serviceClass: z.enum(["ground", "priority"]),
+  providerKey: z.enum(["stamps", "api", "pitneybowes"]),
+  seriesCode: z.enum([
+    "9121",
+    "9155",
+    "9201",
+    "9202",
+    "9300",
+    "9302",
+    "9434S",
+    "9500",
+    "preshipment",
+  ]),
+  fromAddress: labelFormatterShipFromSchema,
+});
+
+export type LabelFormatterReshipInput = z.infer<typeof labelFormatterReshipSchema>;
+export type LabelFormatterShipFrom = z.infer<typeof labelFormatterShipFromSchema>;
 
 const draftString = (max: number) => z.string().trim().max(max);
 

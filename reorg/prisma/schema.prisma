@@ -337,6 +337,7 @@ model User {
   helpdeskColumnPrefs         HelpdeskColumnPref[]        @relation("HelpdeskColumnPrefUser")
   helpdeskPresence            HelpdeskPresence[]          @relation("HelpdeskPresenceUser")
   labelFormatterExportBatches LabelFormatterExportBatch[] @relation("LabelFormatterExportBatchCreator")
+  labelFormatterReshipBatches  LabelFormatterReshipBatch[]  @relation("LabelFormatterReshipBatchCreator")
   labelFormatterWorkingRows   LabelFormatterWorkingRow[]  @relation("LabelFormatterWorkingRowOwner")
 
   @@map("users")
@@ -715,6 +716,64 @@ model LabelFormatterWorkingRow {
   @@index([createdByUserId, sortOrder])
   @@index([createdByUserId, updatedAt])
   @@map("label_formatter_working_rows")
+}
+
+model LabelFormatterReshipBatch {
+  id              String   @id @default(cuid())
+  createdByUserId String?
+  rowCount        Int
+  successCount    Int      @default(0)
+  failedCount     Int      @default(0)
+  carrier         String   @default("usps")
+  serviceClass    String
+  providerKey     String
+  seriesCode      String
+  fromName        String
+  fromStreet      String
+  fromStreet2     String?
+  fromCity        String
+  fromState       String
+  fromZip         String
+  zipFileName     String?
+  createdAt       DateTime @default(now())
+
+  createdBy User?                     @relation("LabelFormatterReshipBatchCreator", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  rows      LabelFormatterReshipRow[]
+
+  @@index([createdByUserId])
+  @@index([createdAt])
+  @@map("label_formatter_reship_batches")
+}
+
+model LabelFormatterReshipRow {
+  id             String   @id @default(cuid())
+  batchId        String
+  note           String?
+  orderNumber    String
+  sourceStore    String
+  buyerName      String
+  addressLine1   String
+  addressLine2   String?
+  city           String
+  state          String
+  zipCode        String
+  lineItems      Json     @default("[]")
+  trackingNumber String?
+  labelCrowId    String?
+  carrier        String   @default("usps")
+  serviceClass   String
+  providerKey    String
+  seriesCode     String
+  status         String   @default("pending")
+  errorMessage   String?
+  createdAt      DateTime @default(now())
+
+  batch LabelFormatterReshipBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+
+  @@index([batchId])
+  @@index([orderNumber])
+  @@index([trackingNumber])
+  @@map("label_formatter_reship_rows")
 }
 
 // ─── App Settings ────────────────────────────────────────────────────────────

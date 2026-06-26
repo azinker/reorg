@@ -13,16 +13,22 @@ import {
   Save,
   Search,
   Trash2,
+  Truck,
   X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
+  LABEL_FORMATTER_RESHIP_ZIP_FILENAME,
   LABEL_FORMATTER_ZIP_FILENAME,
   sourceStoreLabel,
   type LabelFormatterLineItem,
   type LabelFormatterRow,
   type LabelFormatterSourceStore,
 } from "@/lib/label-formatter/types";
+import {
+  ShipOrdersModal,
+  type ShipOrdersFormValues,
+} from "@/components/label-formatter/ShipOrdersModal";
 
 type WorkingRow = LabelFormatterRow & {
   id: string;
@@ -46,6 +52,43 @@ type HistoryRow = {
   pdfFileName: string;
   zipFileName: string | null;
 };
+
+type ReshipHistoryOrderRow = {
+  id: string;
+  note: string;
+  orderNumber: string;
+  sourceStoreLabel: string;
+  buyerName: string;
+  addressLine1: string;
+  addressLine2: string;
+  city: string;
+  state: string;
+  zipCode: string;
+  lineItems: LabelFormatterLineItem[];
+  trackingNumber: string | null;
+  status: string;
+  errorMessage: string | null;
+  serviceClass: string;
+  providerKey: string;
+  seriesCode: string;
+  createdAt: string;
+};
+
+type ReshipHistoryRow = {
+  id: string;
+  createdAt: string;
+  createdBy: { name: string | null; email: string | null } | null;
+  rowCount: number;
+  successCount: number;
+  failedCount: number;
+  serviceClass: string;
+  providerKey: string;
+  seriesCode: string;
+  zipFileName: string | null;
+  rows: ReshipHistoryOrderRow[];
+};
+
+type HistoryTab = "exported" | "reshipped";
 
 type WorkingRowsResponse = {
   data?: WorkingRow[];
@@ -227,6 +270,10 @@ export function LabelFormatterClient() {
   const [manualOpen, setManualOpen] = useState(false);
   const [manualDraft, setManualDraft] = useState<LabelFormatterRow>(EMPTY_MANUAL_ROW);
   const [history, setHistory] = useState<HistoryRow[]>([]);
+  const [reshipHistory, setReshipHistory] = useState<ReshipHistoryRow[]>([]);
+  const [historyTab, setHistoryTab] = useState<HistoryTab>("exported");
+  const [shipModalOpen, setShipModalOpen] = useState(false);
+  const [shipLoading, setShipLoading] = useState(false);
   const [workingRowsHydrated, setWorkingRowsHydrated] = useState(false);
   const [workingRowsCanSave, setWorkingRowsCanSave] = useState(false);
   const [workingRowsSyncStatus, setWorkingRowsSyncStatus] = useState<WorkingRowsSyncStatus>("loading");
@@ -294,6 +341,7 @@ export function LabelFormatterClient() {
 
     void hydrateWorkingRows();
     void refreshHistory();
+    void refreshReshipHistory();
 
     return () => {
       cancelled = true;
@@ -331,6 +379,16 @@ export function LabelFormatterClient() {
       if (res.ok && json.data) setHistory(json.data);
     } catch {
       // History is secondary to the working export flow.
+    }
+  }
+
+  async function refreshReshipHistory() {
+    try {
+      const res = await fetch("/api/label-formatter/reship-history?limit=20", { cache: "no-store" });
+      const json = (await res.json()) as { data?: ReshipHistoryRow[] };
+      if (res.ok && json.data) setReshipHistory(json.data);
+    } catch {
+      // Reship history is secondary to the working export flow.
     }
   }
 
@@ -570,6 +628,56 @@ export function LabelFormatterClient() {
     }
   }
 
+  async function shipSelectedRows(form: ShipOrdersFormValues) {
+    if (selectedRows.length === 0) return;
+
+    setShipLoading(true);
+    setBanner(null);
+    try {
+      const res = await fetch("/api/label-formatter/ship", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          rows: selectedRows,
+          serviceClass: form.serviceClass,
+          providerKey: form.providerKey,
+          seriesCode: form.seriesCode,
+          fromAddress: form.fromAddress,
+        }),
+      });
+      if (!res.ok) {
+        const json = (await res.json().catch(() => ({}))) as { error?: string };
+        setBanner({ type: "error", message: json.error ?? "Label creation failed." });
+        return;
+      }
+
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = LABEL_FORMATTER_RESHIP_ZIP_FILENAME;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+
+      const successCount = Number(res.headers.get("X-Label-Formatter-Reship-Success") ?? selectedRows.length);
+      const failedCount = Number(res.headers.get("X-Label-Formatter-Reship-Failed") ?? 0);
+      const failedNote = failedCount > 0 ? ` ${failedCount} failed — see the data sheet in the ZIP.` : "";
+      setBanner({
+        type: failedCount > 0 ? "warning" : "success",
+        message: `Created ${successCount} label${successCount === 1 ? "" : "s"}.${failedNote}`,
+      });
+      setShipModalOpen(false);
+      setHistoryTab("reshipped");
+      await refreshReshipHistory();
+    } catch {
+      setBanner({ type: "error", message: "Network error during label creation." });
+    } finally {
+      setShipLoading(false);
+    }
+  }
+
   function openManualAdd() {
     setManualDraft({
       ...EMPTY_MANUAL_ROW,
@@ -595,13 +703,21 @@ export function LabelFormatterClient() {
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Label Formatter</h1>
           <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
-            Look up eBay, BigCommerce, or Shopify orders, prepare resend rows, and export LabelCrow Excel + 4x6 packing slips.
+            Look up eBay, BigCommerce, or Shopify orders, prepare resend rows, export LabelCrow Excel + packing slips, or purchase USPS labels via LabelCrow.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <button
+            onClick={() => setShipModalOpen(true)}
+            disabled={selectedRows.length === 0 || shipLoading || exportLoading !== null}
+            className="inline-flex h-10 cursor-pointer items-center gap-2 rounded-md border border-border px-3 text-sm font-medium text-foreground hover:bg-accent disabled:cursor-not-allowed disabled:opacity-45"
+          >
+            {shipLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Truck className="h-4 w-4" />}
+            Ship Orders{selectedRows.length > 0 ? ` (${selectedRows.length})` : ""}
+          </button>
+          <button
             onClick={() => void exportRows("selected")}
-            disabled={selectedRows.length === 0 || exportLoading !== null}
+            disabled={selectedRows.length === 0 || exportLoading !== null || shipLoading}
             className="inline-flex h-10 cursor-pointer items-center gap-2 rounded-md border border-border px-3 text-sm font-medium text-foreground hover:bg-accent disabled:cursor-not-allowed disabled:opacity-45"
           >
             {exportLoading === "selected" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
@@ -609,7 +725,7 @@ export function LabelFormatterClient() {
           </button>
           <button
             onClick={() => void exportRows("all")}
-            disabled={rows.length === 0 || exportLoading !== null}
+            disabled={rows.length === 0 || exportLoading !== null || shipLoading}
             className="inline-flex h-10 cursor-pointer items-center gap-2 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-45"
           >
             {exportLoading === "all" ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileSpreadsheet className="h-4 w-4" />}
@@ -858,9 +974,38 @@ export function LabelFormatterClient() {
 
       <section className="rounded-lg border border-border bg-card">
         <div className="border-b border-border px-4 py-3">
-          <h2 className="text-sm font-semibold">Export History</h2>
-          <p className="mt-1 text-xs text-muted-foreground">Generated files download immediately; history records the exported batches.</p>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="text-sm font-semibold">Export History</h2>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Generated files download immediately; history records exported and reshipped batches.
+              </p>
+            </div>
+            <div className="inline-flex rounded-md border border-border p-0.5">
+              <button
+                type="button"
+                onClick={() => setHistoryTab("exported")}
+                className={cn(
+                  "cursor-pointer rounded px-3 py-1.5 text-xs font-medium",
+                  historyTab === "exported" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-accent",
+                )}
+              >
+                Exported Only
+              </button>
+              <button
+                type="button"
+                onClick={() => setHistoryTab("reshipped")}
+                className={cn(
+                  "cursor-pointer rounded px-3 py-1.5 text-xs font-medium",
+                  historyTab === "reshipped" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-accent",
+                )}
+              >
+                Reshipped
+              </button>
+            </div>
+          </div>
         </div>
+        {historyTab === "exported" ? (
         <div className="overflow-x-auto">
           <table className="w-full min-w-[820px] text-left text-sm">
             <thead className="border-b border-border bg-muted/30 text-xs uppercase text-muted-foreground">
@@ -891,6 +1036,61 @@ export function LabelFormatterClient() {
             </tbody>
           </table>
         </div>
+        ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[1400px] text-left text-sm">
+            <thead className="border-b border-border bg-muted/30 text-xs uppercase text-muted-foreground">
+              <tr>
+                <th className="px-4 py-3">Batch Date</th>
+                <th className="px-4 py-3">Created By</th>
+                <th className="px-4 py-3">Order</th>
+                <th className="px-4 py-3">Note</th>
+                <th className="px-4 py-3">Store</th>
+                <th className="px-4 py-3">Buyer</th>
+                <th className="px-4 py-3">Address</th>
+                <th className="px-4 py-3">SKU / Qty</th>
+                <th className="px-4 py-3">Tracking</th>
+                <th className="px-4 py-3">Status</th>
+                <th className="px-4 py-3">Service</th>
+                <th className="px-4 py-3">Provider</th>
+                <th className="px-4 py-3">Series</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border">
+              {reshipHistory.length === 0 ? (
+                <tr><td colSpan={13} className="px-4 py-6 text-center text-muted-foreground">No reshipped labels yet.</td></tr>
+              ) : reshipHistory.flatMap((batch) =>
+                batch.rows.map((row) => (
+                  <tr key={row.id}>
+                    <td className="px-4 py-3 text-xs text-muted-foreground">{new Date(batch.createdAt).toLocaleString()}</td>
+                    <td className="px-4 py-3 text-xs">{batch.createdBy?.name ?? batch.createdBy?.email ?? "Unknown"}</td>
+                    <td className="px-4 py-3 font-mono text-xs">{row.orderNumber}</td>
+                    <td className="px-4 py-3 text-xs">{row.note || "—"}</td>
+                    <td className="px-4 py-3 text-xs">{row.sourceStoreLabel}</td>
+                    <td className="px-4 py-3 text-xs">{row.buyerName}</td>
+                    <td className="px-4 py-3 text-xs">
+                      {row.addressLine1}
+                      {row.addressLine2 ? `, ${row.addressLine2}` : ""}, {row.city}, {row.state} {row.zipCode}
+                    </td>
+                    <td className="px-4 py-3 text-xs">{skuSummary(row.lineItems)}</td>
+                    <td className="px-4 py-3 font-mono text-xs">{row.trackingNumber ?? "—"}</td>
+                    <td className="px-4 py-3 text-xs">
+                      {row.status === "created" ? (
+                        <span className="text-emerald-400">Created</span>
+                      ) : (
+                        <span className="text-red-300" title={row.errorMessage ?? undefined}>Failed</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-xs capitalize">{row.serviceClass}</td>
+                    <td className="px-4 py-3 text-xs capitalize">{row.providerKey}</td>
+                    <td className="px-4 py-3 text-xs uppercase">{row.seriesCode}</td>
+                  </tr>
+                )),
+              )}
+            </tbody>
+          </table>
+        </div>
+        )}
       </section>
 
       {duplicatePending ? (
@@ -925,6 +1125,15 @@ export function LabelFormatterClient() {
           setDraft={setManualDraft}
           onCancel={() => setManualOpen(false)}
           onSave={saveManualRow}
+        />
+      ) : null}
+
+      {shipModalOpen ? (
+        <ShipOrdersModal
+          rows={selectedRows}
+          loading={shipLoading}
+          onClose={() => !shipLoading && setShipModalOpen(false)}
+          onConfirm={(form) => void shipSelectedRows(form)}
         />
       ) : null}
     </div>

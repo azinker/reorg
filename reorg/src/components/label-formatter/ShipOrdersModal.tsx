@@ -1,0 +1,290 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import { Loader2, Truck, X } from "lucide-react";
+import {
+  LABELCROW_PROVIDERS,
+  LABELCROW_SERIES_OPTIONS,
+  LABELCROW_SERVICE_CLASSES,
+} from "@/lib/label-formatter/labelcrow-options";
+import type { LabelFormatterRow, LabelFormatterShipFrom } from "@/lib/label-formatter/types";
+
+const SHIP_FROM_STORAGE_KEY = "reorg.labelFormatter.shipFrom.v1";
+
+export type ShipOrdersFormValues = {
+  serviceClass: "ground" | "priority";
+  providerKey: "stamps" | "api" | "pitneybowes";
+  seriesCode: (typeof LABELCROW_SERIES_OPTIONS)[number]["value"];
+  fromAddress: LabelFormatterShipFrom;
+};
+
+const DEFAULT_FROM: LabelFormatterShipFrom = {
+  name: "",
+  street: "",
+  aptSuite: "",
+  city: "",
+  state: "",
+  zip: "",
+};
+
+const DEFAULT_FORM: ShipOrdersFormValues = {
+  serviceClass: "ground",
+  providerKey: "api",
+  seriesCode: "9302",
+  fromAddress: DEFAULT_FROM,
+};
+
+function loadStoredFromAddress(): LabelFormatterShipFrom {
+  try {
+    const raw = window.localStorage.getItem(SHIP_FROM_STORAGE_KEY);
+    if (!raw) return DEFAULT_FROM;
+    const parsed = JSON.parse(raw) as Partial<LabelFormatterShipFrom>;
+    return {
+      name: parsed.name ?? "",
+      street: parsed.street ?? "",
+      aptSuite: parsed.aptSuite ?? "",
+      city: parsed.city ?? "",
+      state: parsed.state ?? "",
+      zip: parsed.zip ?? "",
+    };
+  } catch {
+    return DEFAULT_FROM;
+  }
+}
+
+function validateForm(form: ShipOrdersFormValues): string | null {
+  if (!form.fromAddress.name.trim()) return "Shipper name is required.";
+  if (!form.fromAddress.street.trim()) return "Street address is required.";
+  if (!form.fromAddress.city.trim()) return "City is required.";
+  if (!form.fromAddress.state.trim()) return "State is required.";
+  if (!form.fromAddress.zip.trim()) return "Zip is required.";
+  return null;
+}
+
+export function ShipOrdersModal({
+  rows,
+  loading,
+  onClose,
+  onConfirm,
+}: {
+  rows: LabelFormatterRow[];
+  loading: boolean;
+  onClose: () => void;
+  onConfirm: (values: ShipOrdersFormValues) => void;
+}) {
+  const [form, setForm] = useState<ShipOrdersFormValues>(() => ({
+    ...DEFAULT_FORM,
+    fromAddress: DEFAULT_FROM,
+  }));
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setForm((current) => ({
+      ...current,
+      fromAddress: loadStoredFromAddress(),
+    }));
+  }, []);
+
+  function updateFromAddress(patch: Partial<LabelFormatterShipFrom>) {
+    setForm((current) => ({
+      ...current,
+      fromAddress: { ...current.fromAddress, ...patch },
+    }));
+  }
+
+  function handleSubmit(event: React.FormEvent) {
+    event.preventDefault();
+    const validationError = validateForm(form);
+    if (validationError) {
+      setError(validationError);
+      return;
+    }
+    setError(null);
+    try {
+      window.localStorage.setItem(SHIP_FROM_STORAGE_KEY, JSON.stringify(form.fromAddress));
+    } catch {
+      // Non-blocking if storage is unavailable.
+    }
+    onConfirm(form);
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="ship-orders-title"
+        className="max-h-[92vh] w-full max-w-2xl overflow-y-auto rounded-lg border border-border bg-card shadow-xl"
+      >
+        <div className="flex items-start justify-between border-b border-border px-5 py-4">
+          <div>
+            <h2 id="ship-orders-title" className="text-lg font-semibold">
+              Ship Orders via LabelCrow
+            </h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Create USPS labels for {rows.length} selected order{rows.length === 1 ? "" : "s"}. Labels are purchased through LabelCrow.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={loading}
+            className="inline-flex h-9 w-9 cursor-pointer items-center justify-center rounded-md border border-border text-muted-foreground hover:bg-accent"
+            aria-label="Close"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <form onSubmit={handleSubmit} className="space-y-5 px-5 py-4">
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="space-y-1.5 text-sm">
+              <span className="font-medium">Carrier</span>
+              <input
+                value="USPS"
+                readOnly
+                className="h-10 w-full cursor-not-allowed rounded-md border border-input bg-muted/40 px-3 text-sm"
+              />
+            </label>
+            <label className="space-y-1.5 text-sm">
+              <span className="font-medium">Service Class</span>
+              <select
+                value={form.serviceClass}
+                onChange={(event) =>
+                  setForm((current) => ({
+                    ...current,
+                    serviceClass: event.target.value as ShipOrdersFormValues["serviceClass"],
+                  }))
+                }
+                className="h-10 w-full cursor-pointer rounded-md border border-input bg-background px-3 text-sm"
+              >
+                {LABELCROW_SERVICE_CLASSES.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="space-y-1.5 text-sm">
+              <span className="font-medium">Provider</span>
+              <select
+                value={form.providerKey}
+                onChange={(event) =>
+                  setForm((current) => ({
+                    ...current,
+                    providerKey: event.target.value as ShipOrdersFormValues["providerKey"],
+                  }))
+                }
+                className="h-10 w-full cursor-pointer rounded-md border border-input bg-background px-3 text-sm"
+              >
+                {LABELCROW_PROVIDERS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="space-y-1.5 text-sm">
+              <span className="font-medium">Series</span>
+              <select
+                value={form.seriesCode}
+                onChange={(event) =>
+                  setForm((current) => ({
+                    ...current,
+                    seriesCode: event.target.value as ShipOrdersFormValues["seriesCode"],
+                  }))
+                }
+                className="h-10 w-full cursor-pointer rounded-md border border-input bg-background px-3 text-sm"
+              >
+                {LABELCROW_SERIES_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+
+          <fieldset className="space-y-3 rounded-md border border-border p-4">
+            <legend className="px-1 text-sm font-medium">Ship From (Return Address)</legend>
+            <label className="block space-y-1.5 text-sm">
+              <span className="font-medium">Shipper Name</span>
+              <input
+                value={form.fromAddress.name}
+                onChange={(event) => updateFromAddress({ name: event.target.value })}
+                className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+              />
+            </label>
+            <label className="block space-y-1.5 text-sm">
+              <span className="font-medium">Street Address</span>
+              <input
+                value={form.fromAddress.street}
+                onChange={(event) => updateFromAddress({ street: event.target.value })}
+                className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+              />
+            </label>
+            <label className="block space-y-1.5 text-sm">
+              <span className="font-medium">Apt / Suite</span>
+              <input
+                value={form.fromAddress.aptSuite ?? ""}
+                onChange={(event) => updateFromAddress({ aptSuite: event.target.value })}
+                className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+              />
+            </label>
+            <div className="grid gap-3 sm:grid-cols-3">
+              <label className="space-y-1.5 text-sm sm:col-span-1">
+                <span className="font-medium">City</span>
+                <input
+                  value={form.fromAddress.city}
+                  onChange={(event) => updateFromAddress({ city: event.target.value })}
+                  className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+                />
+              </label>
+              <label className="space-y-1.5 text-sm">
+                <span className="font-medium">State</span>
+                <input
+                  value={form.fromAddress.state}
+                  onChange={(event) => updateFromAddress({ state: event.target.value })}
+                  className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+                />
+              </label>
+              <label className="space-y-1.5 text-sm">
+                <span className="font-medium">Zip</span>
+                <input
+                  value={form.fromAddress.zip}
+                  onChange={(event) => updateFromAddress({ zip: event.target.value })}
+                  className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+                />
+              </label>
+            </div>
+          </fieldset>
+
+          {error ? (
+            <p className="rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-300">
+              {error}
+            </p>
+          ) : null}
+
+          <div className="flex flex-wrap items-center justify-end gap-2 border-t border-border pt-4">
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={loading}
+              className="inline-flex h-10 cursor-pointer items-center rounded-md border border-border px-4 text-sm font-medium hover:bg-accent disabled:cursor-not-allowed disabled:opacity-45"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={loading}
+              className="inline-flex h-10 cursor-pointer items-center gap-2 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-45"
+            >
+              {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Truck className="h-4 w-4" />}
+              Produce Labels
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
