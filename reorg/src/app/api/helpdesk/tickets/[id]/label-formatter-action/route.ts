@@ -13,6 +13,7 @@ import {
   InsufficientSkuVaultQuantityError,
   type SkuVaultAdjustmentResult,
 } from "@/lib/services/skuvault";
+import { resolveLabelFormatterActionNote } from "@/lib/helpdesk/label-formatter-action";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -23,6 +24,7 @@ interface RouteParams {
 
 const bodySchema = z.object({
   inr: z.boolean().default(false),
+  postageIssue: z.boolean().default(false),
 });
 
 const LABEL_FORMATTER_ACTION = "HELPDESK_ORDER_TO_LABEL_FORMATTER";
@@ -356,6 +358,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
           ticketId: ticket.id,
           lineItem: line,
           inrNoteRequested: parsed.data.inr,
+          postageIssueNoteRequested: parsed.data.postageIssue,
           result,
         },
       },
@@ -364,7 +367,10 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
 
   const address = order.shippingAddress;
   const labelResult = await appendOrUpdateLabelFormatterWorkingRow(actor.userId, {
-    note: parsed.data.inr ? "INR CASE" : "",
+    note: resolveLabelFormatterActionNote({
+      inr: parsed.data.inr,
+      postageIssue: parsed.data.postageIssue,
+    }),
     orderNumber: order.orderId || ticket.ebayOrderNumber,
     sourceStore,
     buyerName:
@@ -393,6 +399,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         labelFormatterCreated: labelResult.created,
         totalLabelFormatterRows: labelResult.totalRows,
         inr: parsed.data.inr,
+        postageIssue: parsed.data.postageIssue,
         skuvaultDeducted: skuvault.length > 0,
         skuvaultAlreadyDeducted,
       },

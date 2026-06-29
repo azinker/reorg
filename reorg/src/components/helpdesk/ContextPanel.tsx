@@ -86,6 +86,10 @@ import { fetchOrderContextShared } from "@/components/helpdesk/order-context-cli
 import { useCurrentUser } from "@/contexts/current-user-context";
 import { canUseHelpdeskOrderActionsPermission } from "@/lib/helpdesk/order-actions-permission";
 import {
+  labelFormatterActionNoteSuffix,
+  resolveLabelFormatterActionNote,
+} from "@/lib/helpdesk/label-formatter-action";
+import {
   formatOrderLineWeightLbs,
   formatOrderLineWeightOz,
   totalWeightOzFromCatalogLabel,
@@ -1437,6 +1441,7 @@ function OrderInfoSection({
   */
   const [open, setOpen] = useState(true);
   const [inrChecked, setInrChecked] = useState(false);
+  const [postageIssueChecked, setPostageIssueChecked] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
   const [actionBanner, setActionBanner] = useState<{
     type: "success" | "error";
@@ -1603,7 +1608,7 @@ function OrderInfoSection({
       const res = await fetch(`/api/helpdesk/tickets/${ticket.id}/label-formatter-action`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ inr: inrChecked }),
+        body: JSON.stringify({ inr: inrChecked, postageIssue: postageIssueChecked }),
       });
       const json = (await res.json().catch(() => ({}))) as LabelFormatterActionResponse;
       if (!res.ok || !json.data) {
@@ -1627,7 +1632,11 @@ function OrderInfoSection({
         : json.data.skuvault.alreadyDeducted || json.data.status.skuvault.deducted
           ? "SkuVault was already deducted for this ticket, so it was not deducted again."
           : "SkuVault deduction is still not recorded for this ticket.";
-      const notePart = inrChecked ? " Added INR CASE note." : "";
+      const note = resolveLabelFormatterActionNote({
+        inr: inrChecked,
+        postageIssue: postageIssueChecked,
+      });
+      const notePart = note ? ` Added ${note} note.` : "";
       setActionBanner({
         type: "success",
         message: `${labelPart} (${lines}). ${skuvaultPart}${notePart} Label Formatter now has ${json.data.labelFormatter.totalRows} working rows.`,
@@ -1641,6 +1650,12 @@ function OrderInfoSection({
       setActionLoading(false);
     }
   }
+
+  const labelFormatterNoteOptions = {
+    inr: inrChecked,
+    postageIssue: postageIssueChecked,
+  };
+  const labelFormatterNoteSuffix = labelFormatterActionNoteSuffix(labelFormatterNoteOptions);
 
   return (
     <section className="border-b border-hairline bg-card/40">
@@ -1731,7 +1746,7 @@ function OrderInfoSection({
                     Label Formatter action
                   </p>
                   <p className="text-[11px] leading-snug text-muted-foreground">
-                    Adds this order to Label Formatter and deducts the order SKUs from SkuVault. INR only adds the INR CASE note.
+                    Adds this order to Label Formatter and deducts the order SKUs from SkuVault. Optional notes: INR CASE or COUNTERFEIT (Postage Issue).
                   </p>
                 </div>
               </div>
@@ -1787,6 +1802,15 @@ function OrderInfoSection({
                 />
                 Add INR CASE note
               </label>
+              <label className="mb-2 flex cursor-pointer items-center gap-2 text-xs text-foreground">
+                <input
+                  type="checkbox"
+                  checked={postageIssueChecked}
+                  onChange={(event) => setPostageIssueChecked(event.target.checked)}
+                  disabled={actionLoading}
+                />
+                Postage Issue note
+              </label>
               <button
                 type="button"
                 onClick={() => void runLabelFormatterAction()}
@@ -1795,19 +1819,19 @@ function OrderInfoSection({
               >
                 {actionLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
                 {actionStatus?.labelFormatter.added && !actionStatus.labelFormatter.currentWorkingRow && !actionStatus.labelFormatter.exported
-                  ? inrChecked
-                    ? "Restore + INR CASE"
+                  ? labelFormatterNoteSuffix
+                    ? `Restore${labelFormatterNoteSuffix}`
                     : "Restore to Label Formatter"
                   : actionStatus?.labelFormatter.added
-                  ? inrChecked
-                    ? "Already Added + INR CASE"
+                  ? labelFormatterNoteSuffix
+                    ? `Already Added${labelFormatterNoteSuffix}`
                     : "Already Added To List"
                   : actionStatus?.skuvault.deducted
-                    ? inrChecked
-                      ? "Re-add + INR CASE"
+                    ? labelFormatterNoteSuffix
+                      ? `Re-add${labelFormatterNoteSuffix}`
                       : "Re-add to Label Formatter"
-                    : inrChecked
-                      ? "Add + Deduct + INR CASE"
+                    : labelFormatterNoteSuffix
+                      ? `Add + Deduct${labelFormatterNoteSuffix}`
                       : "Add + Deduct SkuVault"}
               </button>
               {actionBanner ? (
