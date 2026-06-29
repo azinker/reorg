@@ -360,3 +360,12 @@ export async function adjustSkuVaultQuantity(args: {
     quantityChanged: args.quantity,
   };
 }
+
+export function isSkuVaultConfigured(): boolean {
+  const tenantToken = process.env.SKUVAULT_TENANT_TOKEN?.trim();
+  const userToken = process.env.SKUVAULT_USER_TOKEN?.trim();
+  if (tenantToken && userToken) return true;
+  return Boolean(
+    process.env.SKUVAULT_USERNAME?.trim() && process.env.SKUVAULT_PASSWORD?.trim(),
+  );
+}

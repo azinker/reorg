@@ -1612,7 +1612,12 @@ function OrderInfoSection({
       });
       const json = (await res.json().catch(() => ({}))) as LabelFormatterActionResponse;
       if (!res.ok || !json.data) {
-        throw new Error(json.error ?? "Order action failed.");
+        throw new Error(
+          json.error ??
+            (res.status === 504
+              ? "Order action timed out while talking to eBay or SkuVault. Try again in a moment."
+              : `Order action failed (HTTP ${res.status}).`),
+        );
       }
       setActionStatus(json.data.status);
 

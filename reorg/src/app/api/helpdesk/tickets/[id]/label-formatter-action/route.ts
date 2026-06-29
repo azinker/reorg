@@ -11,12 +11,15 @@ import {
   adjustSkuVaultQuantity,
   getSkuVaultQuantity,
   InsufficientSkuVaultQuantityError,
+  isSkuVaultConfigured,
   type SkuVaultAdjustmentResult,
 } from "@/lib/services/skuvault";
 import { resolveLabelFormatterActionNote } from "@/lib/helpdesk/label-formatter-action";
+import { resolveLabelFormatterOrderLineItems } from "@/lib/helpdesk/label-formatter-order-lines";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
 interface RouteParams {
   params: Promise<{ id: string }>;
@@ -83,8 +86,8 @@ async function getActionStatus(
       currentWorkingRow: Boolean(workingRow),
       currentWorkingRowId: workingRow?.id ?? null,
       exported: Boolean(exportRow),
-      exportedAt: exportRow?.batch.createdAt.toISOString() ?? null,
-      exportBatchId: exportRow?.batch.id ?? null,
+      exportedAt: exportRow?.batch?.createdAt?.toISOString() ?? null,
+      exportBatchId: exportRow?.batch?.id ?? null,
     },
     skuvault: {
       deducted: skuLogs.length > 0,
@@ -112,17 +115,6 @@ function sourceStoreForPlatform(platform: string): LabelFormatterSourceStore {
   return "MANUAL";
 }
 
-function mergeLineItems(lines: Array<{ sku: string | null; quantity: number }>): LabelFormatterLineItem[] {
-  const bySku = new Map<string, number>();
-  for (const line of lines) {
-    const sku = line.sku?.trim();
-    if (!sku) continue;
-    const quantity = Number(line.quantity);
-    bySku.set(sku, (bySku.get(sku) ?? 0) + (Number.isInteger(quantity) && quantity > 0 ? quantity : 1));
-  }
-  return [...bySku.entries()].map(([sku, quantity]) => ({ sku, quantity }));
-}
-
 function formatInsufficientSkuVaultMessage(
   shortages: Array<{ sku: string; requestedQuantity: number; availableQuantity: number }>,
 ) {
@@ -132,7 +124,12 @@ function formatInsufficientSkuVaultMessage(
   return `Cannot add this order to Label Formatter because SkuVault does not have enough inventory. ${lines}. No inventory was deducted and no Label Formatter row was added.`;
 }
 
+function formatOrderActionError(error: unknown, fallback: string) {
+  return error instanceof Error ? error.message : fallback;
+}
+
 export async function POST(request: NextRequest, { params }: RouteParams) {
+  try {
   const actor = await getActor();
   if (!actor) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -147,6 +144,15 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     return NextResponse.json(
       { error: "This Help Desk order action is not enabled for your user." },
       { status: 403 },
+    );
+  }
+  if (!isSkuVaultConfigured()) {
+    return NextResponse.json(
+      {
+        error:
+          "SkuVault is not configured on this server. Set SKUVAULT_USERNAME and SKUVAULT_PASSWORD (or token pair) in production before running Help Desk order actions.",
+      },
+      { status: 503 },
     );
   }
 
@@ -204,16 +210,20 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     );
   }
 
-  const lineItems = mergeLineItems(order.lineItems);
+  const lineItems = await resolveLabelFormatterOrderLineItems(
+    ticket.integration.id,
+    order.lineItems.map((line) => ({
+      sku: line.sku,
+      quantity: line.quantity,
+      itemId: line.itemId,
+    })),
+  );
   if (lineItems.length === 0) {
     return NextResponse.json(
-      { error: "This order does not have SKU lines available to add or deduct." },
-      { status: 400 },
-    );
-  }
-  if (lineItems.some((line) => !line.sku.trim())) {
-    return NextResponse.json(
-      { error: "Every line needs a SKU before SkuVault can be deducted." },
+      {
+        error:
+          "This order does not have SKU lines available to add or deduct. eBay did not return a SKU and reorG could not resolve one from the catalog.",
+      },
       { status: 400 },
     );
   }
@@ -244,12 +254,25 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
   }
   const skuvaultAlreadyDeducted = skippedAlreadyDeducted === lineItems.length;
 
-  const quantityChecks = await Promise.all(
-    linesToDeduct.map(async (line) => ({
-      line,
-      current: await getSkuVaultQuantity(line.sku),
-    })),
-  );
+  let quantityChecks: Array<{
+    line: LabelFormatterLineItem;
+    current: Awaited<ReturnType<typeof getSkuVaultQuantity>>;
+  }> = [];
+  try {
+    quantityChecks = await Promise.all(
+      linesToDeduct.map(async (line) => ({
+        line,
+        current: await getSkuVaultQuantity(line.sku),
+      })),
+    );
+  } catch (error) {
+    return NextResponse.json(
+      {
+        error: `Could not read SkuVault inventory before deducting. ${formatOrderActionError(error, "SkuVault lookup failed.")}`,
+      },
+      { status: 502 },
+    );
+  }
   const shortages = quantityChecks
     .filter((check) => check.current.quantityOnHand < check.line.quantity)
     .map((check) => ({
@@ -337,7 +360,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
 
     return NextResponse.json(
       {
-        error: "SkuVault deduction failed. No Label Formatter row was added.",
+        error: `SkuVault deduction failed. No Label Formatter row was added. ${formatOrderActionError(error, "")}`.trim(),
       },
       { status: 502 },
     );
@@ -427,9 +450,17 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       }),
     },
   });
+  } catch (error) {
+    console.error("[helpdesk/label-formatter-action] POST failed", error);
+    return NextResponse.json(
+      { error: formatOrderActionError(error, "Order action failed.") },
+      { status: 500 },
+    );
+  }
 }
 
 export async function GET(_request: NextRequest, { params }: RouteParams) {
+  try {
   const actor = await getActor();
   if (!actor) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -464,4 +495,11 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
         : await getActionStatus(ticket.id),
     },
   });
+  } catch (error) {
+    console.error("[helpdesk/label-formatter-action] GET failed", error);
+    return NextResponse.json(
+      { error: formatOrderActionError(error, "Could not load order action status.") },
+      { status: 500 },
+    );
+  }
 }

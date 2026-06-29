@@ -1,5 +1,6 @@
 const HELPDESK_ORDER_ACTION_ALLOWED_EMAILS = new Set([
   "adam@theperfectpart.net",
+  "cory@theperfectpart.net",
   "mlmaschi@icloud.com",
 ]);
 
