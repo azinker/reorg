@@ -29,6 +29,16 @@ import {
   ShipOrdersModal,
   type ShipOrdersFormValues,
 } from "@/components/label-formatter/ShipOrdersModal";
+import { ShipValidationModal } from "@/components/label-formatter/ShipValidationModal";
+import {
+  formatLabelFormatterInvalidRowsMessage,
+  normalizeLabelFormatterReshipBody,
+} from "@/lib/label-formatter/request-validation";
+import {
+  validateLabelFormatterRowForShip,
+  validateLabelFormatterRowsForShip,
+  type LabelFormatterRowValidationIssue,
+} from "@/lib/label-formatter/row-validation";
 
 type WorkingRow = LabelFormatterRow & {
   id: string;
@@ -103,6 +113,11 @@ type InvalidExportRow = {
 };
 
 type ExportErrorResponse = {
+  error?: string;
+  invalidRows?: InvalidExportRow[];
+};
+
+type ShipErrorResponse = {
   error?: string;
   invalidRows?: InvalidExportRow[];
 };
@@ -231,16 +246,8 @@ function sourceStoreList(value: unknown) {
 }
 
 function validateManualRow(row: LabelFormatterRow) {
-  if (!row.orderNumber.trim()) return "Order number is required.";
-  if (!row.buyerName.trim()) return "Buyer name is required.";
-  if (!row.addressLine1.trim()) return "Address line 1 is required.";
-  if (!row.city.trim()) return "City is required.";
-  if (!row.state.trim()) return "State is required.";
-  if (!row.zipCode.trim()) return "Zip code is required.";
-  if (row.lineItems.length === 0 || row.lineItems.some((line) => !line.sku.trim() || !Number.isInteger(line.quantity) || line.quantity < 1)) {
-    return "Add at least one SKU with a positive quantity.";
-  }
-  return null;
+  const issues = validateLabelFormatterRowForShip(row, 1);
+  return issues[0] ? `${issues[0].field}: ${issues[0].message}` : null;
 }
 
 function formatExportErrorMessage(json: ExportErrorResponse) {
@@ -255,6 +262,10 @@ function formatExportErrorMessage(json: ExportErrorResponse) {
   const extraLabel = extraCount > 0 ? ` (${extraCount} more issue${extraCount === 1 ? "" : "s"} after this.)` : "";
 
   return `Invalid export. Fix row ${firstInvalidRow.rowIndex}${orderLabel}: ${fieldLabel}${firstInvalidRow.message}.${extraLabel}`;
+}
+
+function formatShipErrorMessage(json: ShipErrorResponse) {
+  return formatLabelFormatterInvalidRowsMessage(json.error ?? "Label creation failed.", json.invalidRows);
 }
 
 export function LabelFormatterClient() {
@@ -274,6 +285,7 @@ export function LabelFormatterClient() {
   const [historyTab, setHistoryTab] = useState<HistoryTab>("exported");
   const [shipModalOpen, setShipModalOpen] = useState(false);
   const [shipLoading, setShipLoading] = useState(false);
+  const [shipValidationIssues, setShipValidationIssues] = useState<LabelFormatterRowValidationIssue[] | null>(null);
   const [workingRowsHydrated, setWorkingRowsHydrated] = useState(false);
   const [workingRowsCanSave, setWorkingRowsCanSave] = useState(false);
   const [workingRowsSyncStatus, setWorkingRowsSyncStatus] = useState<WorkingRowsSyncStatus>("loading");
@@ -631,19 +643,28 @@ export function LabelFormatterClient() {
   async function shipSelectedRows(form: ShipOrdersFormValues) {
     if (selectedRows.length === 0) return;
 
+    const validationIssues = validateLabelFormatterRowsForShip(selectedRows);
+    if (validationIssues.length > 0) {
+      setShipModalOpen(false);
+      setShipValidationIssues(validationIssues);
+      return;
+    }
+
     setShipLoading(true);
     setBanner(null);
     try {
+      const payload = normalizeLabelFormatterReshipBody({
+        rows: selectedRows,
+        serviceClass: form.serviceClass,
+        providerKey: form.providerKey,
+        seriesCode: form.seriesCode,
+        fromAddress: form.fromAddress,
+      });
+
       const res = await fetch("/api/label-formatter/ship", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          rows: selectedRows,
-          serviceClass: form.serviceClass,
-          providerKey: form.providerKey,
-          seriesCode: form.seriesCode,
-          fromAddress: form.fromAddress,
-        }),
+        body: JSON.stringify(payload),
       });
 
       const contentType = res.headers.get("Content-Type") ?? "";
@@ -673,8 +694,20 @@ export function LabelFormatterClient() {
         return;
       }
 
-      const json = (await res.json().catch(() => ({}))) as { error?: string };
-      setBanner({ type: "error", message: json.error ?? "Label creation failed." });
+      const json = (await res.json().catch(() => ({}))) as ShipErrorResponse;
+      if (json.invalidRows?.length) {
+        setShipModalOpen(false);
+        setShipValidationIssues(
+          json.invalidRows.map((issue) => ({
+            rowIndex: issue.rowIndex,
+            orderNumber: issue.orderNumber ?? `(row ${issue.rowIndex})`,
+            field: issue.field ?? "Row",
+            message: issue.message,
+          })),
+        );
+        return;
+      }
+      setBanner({ type: "error", message: formatShipErrorMessage(json) });
     } catch {
       setBanner({ type: "error", message: "Network error during label creation." });
     } finally {
@@ -702,6 +735,15 @@ export function LabelFormatterClient() {
     setManualOpen(true);
   }
 
+  function openShipFlow() {
+    const validationIssues = validateLabelFormatterRowsForShip(selectedRows);
+    if (validationIssues.length > 0) {
+      setShipValidationIssues(validationIssues);
+      return;
+    }
+    setShipModalOpen(true);
+  }
+
   function saveManualRow() {
     const error = validateManualRow(manualDraft);
     if (error) {
@@ -723,7 +765,7 @@ export function LabelFormatterClient() {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <button
-            onClick={() => setShipModalOpen(true)}
+            onClick={openShipFlow}
             disabled={selectedRows.length === 0 || shipLoading || exportLoading !== null}
             className="inline-flex h-10 cursor-pointer items-center gap-2 rounded-md border border-border px-3 text-sm font-medium text-foreground hover:bg-accent disabled:cursor-not-allowed disabled:opacity-45"
           >
@@ -1149,6 +1191,13 @@ export function LabelFormatterClient() {
           loading={shipLoading}
           onClose={() => !shipLoading && setShipModalOpen(false)}
           onConfirm={(form) => void shipSelectedRows(form)}
+        />
+      ) : null}
+
+      {shipValidationIssues ? (
+        <ShipValidationModal
+          issues={shipValidationIssues}
+          onClose={() => setShipValidationIssues(null)}
         />
       ) : null}
     </div>

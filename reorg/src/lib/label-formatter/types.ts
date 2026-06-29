@@ -74,7 +74,7 @@ export const labelFormatterShipFromSchema = z.object({
 });
 
 export const labelFormatterReshipSchema = z.object({
-  rows: z.array(labelFormatterRowSchema).min(1).max(100),
+  rows: z.array(labelFormatterRowSchema).min(1).max(500),
   serviceClass: z.enum(["ground", "priority"]),
   providerKey: z.enum(["stamps", "api", "pitneybowes"]),
   seriesCode: z.string().trim().min(1).max(20),

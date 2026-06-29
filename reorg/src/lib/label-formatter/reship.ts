@@ -15,6 +15,7 @@ import {
   LABEL_FORMATTER_RESHIP_PDF_FILENAME,
   type LabelFormatterReshipInput,
 } from "@/lib/label-formatter/types";
+import { sortLabelFormatterRowsByPrimarySku } from "@/lib/label-formatter/row-validation";
 import {
   createLabelCrowLabel,
   downloadLabelCrowLabel,
@@ -97,6 +98,7 @@ export async function createLabelFormatterReship(
     serviceClass: input.serviceClass,
   });
   const seriesCodeForApi = matchedSeries?.series_code ?? input.seriesCode;
+  const sortedRows = sortLabelFormatterRowsByPrimarySku(input.rows);
 
   const combinedPdf = await PDFDocument.create();
   const dataSheetRows: ReshipDataSheetRow[] = [];
@@ -107,7 +109,7 @@ export async function createLabelFormatterReship(
   const batch = await db.labelFormatterReshipBatch.create({
     data: {
       createdByUserId: actorUserId,
-      rowCount: input.rows.length,
+      rowCount: sortedRows.length,
       carrier: "usps",
       serviceClass: input.serviceClass,
       providerKey: input.providerKey,
@@ -122,7 +124,7 @@ export async function createLabelFormatterReship(
     },
   });
 
-  for (const row of input.rows) {
+  for (const row of sortedRows) {
     const baseDataSheetRow: ReshipDataSheetRow = {
       ...row,
       carrier: "usps",
@@ -230,7 +232,7 @@ export async function createLabelFormatterReship(
         entityType: "label_formatter_reship_batch",
         entityId: batch.id,
         details: {
-          rowCount: input.rows.length,
+          rowCount: sortedRows.length,
           successCount,
           failedCount,
           serviceClass: input.serviceClass,

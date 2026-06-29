@@ -51,14 +51,30 @@ Write locks, dry-run mode, and per-store write enablement must be exposed in the
 
 ## eBay Reship Shortcut
 
-When the user says **"eBay Reship"** and provides an `.xlsx` path, this means:
+When the user says **"eBay Reship"**, this means:
 
-- The workbook uses column A = eBay order number and column B = USPS tracking number.
+- If the user only says "eBay Reship" and has not provided the batch details yet,
+  ask one concise follow-up for:
+  1. the first eBay order number to process,
+  2. the last eBay order number to process,
+  3. the `.xlsx` path,
+  4. which columns contain tracking number and order number if they are not the
+     default.
+- Default workbook format is column A = eBay order number and column B = USPS
+  tracking number.
+- If the user provides a start/end order range or non-default columns, inspect the
+  workbook first, find the inclusive contiguous row range from the start order to
+  the end order, and create a filtered workbook under `reorg/reports/` in the
+  script's expected format: column A = eBay order number, column B = USPS tracking
+  number.
+- Do not process any rows above the start order or below the end order. If either
+  boundary order is missing, duplicated ambiguously, or appears out of order, stop
+  and ask the user before running any dry-run.
 - Run the production dry-run first with the prod `little-fire` database guard:
 
 ```powershell
 cd reorg
-npx tsx scripts/_batch-add-ebay-tracking-numbers.ts --file="<provided .xlsx path>" --report="reports\ebay-reship-add-trackings-dry-run-<date>.json"
+npx tsx scripts/_batch-add-ebay-tracking-numbers.ts --file="<provided or filtered .xlsx path>" --report="reports\ebay-reship-add-trackings-dry-run-<date>.json"
 ```
 
 - Report: input rows, ready count, blocked count, TPP/TT split, and the dry-run report path.
@@ -69,12 +85,90 @@ npx tsx scripts/_batch-add-ebay-tracking-numbers.ts --file="<provided .xlsx path
 ```powershell
 cd reorg
 $env:ENABLE_LIVE_EBAY_ORDER_MUTATIONS = "true"
-npx tsx scripts/_batch-add-ebay-tracking-numbers.ts --file="<provided .xlsx path>" --send --confirmed-batch --report="reports\ebay-reship-add-trackings-dry-run-<date>-confirmed.json"
+npx tsx scripts/_batch-add-ebay-tracking-numbers.ts --file="<provided or filtered .xlsx path>" --send --confirmed-batch --report="reports\ebay-reship-add-trackings-dry-run-<date>-confirmed.json"
 ```
 
 - The script will write the live report as `reports\ebay-reship-add-trackings-live-<date>-confirmed.json`.
 - Summarize attempted count, successful eBay writes, failures, TPP/TT split, verified/unverified counts, and report path.
+- At the end of the live-run summary, include a plain log-friendly report table with:
+  order number, eBay store (`eBay TPP` or `eBay TT`), and the tracking number
+  added for each successful row.
 - `unverified` after the live run means eBay accepted `CompleteSale`, but `GetOrders` did not show the new tracking immediately.
+
+---
+
+## Revert to Old Pricing Shortcut
+
+When the user says **"Revert to old pricing"**, **"Revert the $1.60 pricing test"**, or
+**"Undo the pricing test bump"**, this means:
+
+- Undo the +$1.60 eBay TPP/TT pricing test only — restore each affected listing to
+  the **`oldPrice`** stored in the revert manifest.
+- **Only revert listings that were actually changed.** The manifest
+  (`reorg/reports/pricing-test-bump-160-manifest.json`) is the source of truth.
+  Revert rows where `appliedAt` is set and `revertedAt` is null. Do **not** touch
+  SKUs that were skipped (no manifest row) or failed (eBay never accepted the write).
+- Skipped SKUs (e.g. catalog had no active TPP/TT listing) and failed API writes
+  are out of scope — their eBay prices were never updated by the test.
+- Revert is **per listing** (item ID + variation SKU), not one blanket price per SKU.
+
+Workflow:
+
+1. Assert prod `little-fire` database guard (same pattern as other prod scripts).
+2. Read the manifest and count active entries (`!revertedAt`). Report listing count,
+   unique SKU count, TPP/TT split, and manifest path. No live write yet.
+3. Ask only for explicit confirmation: **"OKAY PROCEED"**.
+4. Do **not** run the live revert until the user confirms.
+5. After confirmation, run:
+
+```powershell
+cd reorg
+$env:ENABLE_LIVE_EBAY_PRICE_MUTATIONS = "true"
+npx dotenv-cli -e .env.prod -- npx tsx scripts/_batch-pricing-test-bump-160.ts --revert --confirmed-batch --report=reports/pricing-test-bump-160-revert-<date>.json
+```
+
+6. Summarize: reverted count, revert failures (if any), TPP/TT split, report paths
+   (`.json` and `.xlsx`). Include a plain log-friendly table: SKU, store (`eBay TPP`
+   or `eBay TT`), item ID, price restored to.
+
+There is no revert dry-run flag — the manifest preview step satisfies write
+confirmation. See `reorg/docs/revert-to-old-pricing.md` for the business-owner doc.
+
+---
+
+## Export USPS Trackings Shortcut
+
+When the user says **"EXPORT ME USPS TRACKINGS"** (or asks to export order/tracking
+pairs from a USPS label batch PDF), this means:
+
+- Read a multi-page **USPS label PDF** (one label per page, selectable text).
+- Extract per page:
+  1. **Order number** — line under recipient name. Formats: `XX-XXXXX-XXXXX` (eBay),
+     `XXX-XXXXXXX-XXXXXXX`, `#XXXXX`, or plain numeric (e.g. `4643810`).
+  2. **Tracking number** — from `USPS TRACKING #` line, format
+     `XXXX XXXX XXXX XXXX XXXX XX` → store as 22 digits without spaces.
+- Write **`<pdf-stem>_trackings.xlsx`** in the **same directory as the input PDF**:
+  column A = Order Number, column B = Tracking Number.
+
+If the user does not provide a PDF path, ask for it once.
+
+Workflow:
+
+1. Confirm the PDF exists.
+2. Run (adjust path):
+
+```powershell
+cd reorg
+python scripts/export-usps-label-trackings.py "C:\path\to\LABELS.pdf"
+```
+
+3. Report extracted page count, issue count (must be 0 for a clean delivery), order-format
+   breakdown, and output `.xlsx` path.
+4. Spot-check user-named sample pages when validating a new batch.
+5. If `issues` is non-zero, stop and fix before treating the export as complete.
+
+This is **read-only** — local PDF in, local xlsx out. No marketplace writes.
+See `reorg/docs/export-usps-trackings.md` for the full spec.
 
 ---
 

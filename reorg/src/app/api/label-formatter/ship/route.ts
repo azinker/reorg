@@ -4,6 +4,15 @@ import { isAuthBypassEnabled } from "@/lib/app-env";
 import { db } from "@/lib/db";
 import { createLabelFormatterReship } from "@/lib/label-formatter/reship";
 import {
+  normalizeLabelFormatterReshipBody,
+  summarizeInvalidLabelFormatterRows,
+} from "@/lib/label-formatter/request-validation";
+import {
+  formatLabelFormatterRowValidationSummary,
+  rowValidationIssuesToInvalidRows,
+  validateLabelFormatterRowsForShip,
+} from "@/lib/label-formatter/row-validation";
+import {
   LABEL_FORMATTER_RESHIP_ZIP_FILENAME,
   labelFormatterReshipSchema,
 } from "@/lib/label-formatter/types";
@@ -53,11 +62,22 @@ export async function POST(request: NextRequest) {
 
   try {
     const body = await request.json();
-    const parsed = labelFormatterReshipSchema.safeParse(body);
+    const normalizedBody = normalizeLabelFormatterReshipBody(body);
+    const parsed = labelFormatterReshipSchema.safeParse(normalizedBody);
     if (!parsed.success) {
       return NextResponse.json({
         error: "Invalid ship request",
+        invalidRows: summarizeInvalidLabelFormatterRows(normalizedBody, parsed.error.issues),
         details: parsed.error.flatten(),
+      }, { status: 400 });
+    }
+
+    const rowIssues = validateLabelFormatterRowsForShip(parsed.data.rows);
+    if (rowIssues.length > 0) {
+      return NextResponse.json({
+        error: "Fix selected orders before shipping",
+        invalidRows: rowValidationIssuesToInvalidRows(rowIssues),
+        details: formatLabelFormatterRowValidationSummary(rowIssues),
       }, { status: 400 });
     }
 
