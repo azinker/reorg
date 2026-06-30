@@ -120,16 +120,24 @@ export function MessageBuyersModal({
   useEffect(() => {
     void fetch("/api/helpdesk/sync-status", { cache: "no-store" })
       .then((res) => res.json())
-      .then((json: { data?: { safeMode?: boolean; effectiveCanSendEbay?: boolean; globalWriteLock?: boolean } }) => {
-        const data = json.data;
-        if (!data) return;
-        if (data.safeMode || data.globalWriteLock) {
+      .then((json: {
+        data?: {
+          flags?: {
+            safeMode?: boolean;
+            effectiveCanSendEbay?: boolean;
+            globalWriteLock?: boolean;
+          };
+        };
+      }) => {
+        const flags = json.data?.flags;
+        if (!flags) return;
+        if (flags.safeMode || flags.globalWriteLock) {
           setFlagsWarning(
-            data.globalWriteLock
+            flags.globalWriteLock
               ? "Global write lock is ON — messages will queue but will not send until unlocked."
               : "Help Desk safe mode is ON — messages will queue but will not send until safe mode is off.",
           );
-        } else if (!data.effectiveCanSendEbay) {
+        } else if (!flags.effectiveCanSendEbay) {
           setFlagsWarning("eBay send is disabled — messages will queue but will not send until enabled.");
         }
       })
