@@ -259,6 +259,9 @@ interface LabelFormatterActionStatus {
     exported: boolean;
     exportedAt: string | null;
     exportBatchId: string | null;
+    reshipped: boolean;
+    reshippedAt: string | null;
+    reshipTrackingNumber: string | null;
   };
   skuvault: {
     deducted: boolean;
@@ -1454,7 +1457,7 @@ function OrderInfoSection({
   const { data: ctx, loading, error } = order;
 
   useEffect(() => {
-    if (!canRunOrderActions || !ticket.ebayOrderNumber) {
+    if (!ticket.ebayOrderNumber) {
       setActionStatus(null);
       return;
     }
@@ -1477,7 +1480,7 @@ function OrderInfoSection({
         if (!controller.signal.aborted) setActionStatusLoading(false);
       });
     return () => controller.abort();
-  }, [canRunOrderActions, ticket.ebayOrderNumber, ticket.id]);
+  }, [ticket.ebayOrderNumber, ticket.id]);
 
   if (!ticket.ebayOrderNumber && ticket.kind !== "POST_SALES") {
     // Pre-sales inquiry with no order — hide the section entirely.
@@ -1737,6 +1740,19 @@ function OrderInfoSection({
             <p className="mb-3 text-xs text-amber-700 dark:text-amber-300">
               {error}
             </p>
+          ) : null}
+
+          {!actionStatusLoading && actionStatus?.labelFormatter.reshipped ? (
+            <div className="mb-3 rounded-md border border-sky-500/30 bg-sky-500/10 px-2.5 py-2 text-[11px] leading-snug text-sky-900 dark:text-sky-100">
+              Reshipped
+              {actionStatus.labelFormatter.reshipTrackingNumber
+                ? ` with ${actionStatus.labelFormatter.reshipTrackingNumber}`
+                : ""}
+              {actionStatus.labelFormatter.reshippedAt
+                ? ` on ${formatShortDate(actionStatus.labelFormatter.reshippedAt)}`
+                : ""}
+              .
+            </div>
           ) : null}
 
           {/* Body rows — every field gets its own block separated by a hairline

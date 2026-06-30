@@ -8,6 +8,7 @@ import {
   Download,
   FileSpreadsheet,
   Loader2,
+  MessageSquare,
   PackageCheck,
   Plus,
   Save,
@@ -30,6 +31,7 @@ import {
   type ShipOrdersFormValues,
 } from "@/components/label-formatter/ShipOrdersModal";
 import { ShipValidationModal } from "@/components/label-formatter/ShipValidationModal";
+import { MessageBuyersModal } from "@/components/label-formatter/MessageBuyersModal";
 import {
   formatLabelFormatterInvalidRowsMessage,
   normalizeLabelFormatterReshipBody,
@@ -67,6 +69,7 @@ type ReshipHistoryOrderRow = {
   id: string;
   note: string;
   orderNumber: string;
+  sourceStore: LabelFormatterSourceStore;
   sourceStoreLabel: string;
   buyerName: string;
   addressLine1: string;
@@ -283,6 +286,8 @@ export function LabelFormatterClient() {
   const [history, setHistory] = useState<HistoryRow[]>([]);
   const [reshipHistory, setReshipHistory] = useState<ReshipHistoryRow[]>([]);
   const [historyTab, setHistoryTab] = useState<HistoryTab>("exported");
+  const [selectedReshipIds, setSelectedReshipIds] = useState<Set<string>>(new Set());
+  const [messageBuyersOpen, setMessageBuyersOpen] = useState(false);
   const [shipModalOpen, setShipModalOpen] = useState(false);
   const [shipLoading, setShipLoading] = useState(false);
   const [shipValidationIssues, setShipValidationIssues] = useState<LabelFormatterRowValidationIssue[] | null>(null);
@@ -317,6 +322,16 @@ export function LabelFormatterClient() {
   }, [notesSortMode, rows]);
   const selectedRows = useMemo(() => sortedRows.filter((row) => selectedIds.has(row.id)), [sortedRows, selectedIds]);
   const allSelected = rows.length > 0 && rows.every((row) => selectedIds.has(row.id));
+  const reshipFlatRows = useMemo(
+    () => reshipHistory.flatMap((batch) => batch.rows),
+    [reshipHistory],
+  );
+  const selectedReshipRows = useMemo(
+    () => reshipFlatRows.filter((row) => selectedReshipIds.has(row.id)),
+    [reshipFlatRows, selectedReshipIds],
+  );
+  const allReshipSelected =
+    reshipFlatRows.length > 0 && reshipFlatRows.every((row) => selectedReshipIds.has(row.id));
   const workingRowsBusy = workingRowsSyncStatus === "saving" || workingRowsSyncStatus === "loading";
 
   useEffect(() => {
@@ -592,6 +607,24 @@ export function LabelFormatterClient() {
     setSelectedIds((current) => {
       if (rows.length > 0 && rows.every((row) => current.has(row.id))) return new Set();
       return new Set(rows.map((row) => row.id));
+    });
+  }
+
+  function toggleReshipSelected(id: string) {
+    setSelectedReshipIds((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleAllReshipSelected() {
+    setSelectedReshipIds((current) => {
+      if (reshipFlatRows.length > 0 && reshipFlatRows.every((row) => current.has(row.id))) {
+        return new Set();
+      }
+      return new Set(reshipFlatRows.map((row) => row.id));
     });
   }
 
@@ -1038,27 +1071,44 @@ export function LabelFormatterClient() {
                 Generated files download immediately; history records exported and reshipped batches.
               </p>
             </div>
-            <div className="inline-flex rounded-md border border-border p-0.5">
-              <button
-                type="button"
-                onClick={() => setHistoryTab("exported")}
-                className={cn(
-                  "cursor-pointer rounded px-3 py-1.5 text-xs font-medium",
-                  historyTab === "exported" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-accent",
-                )}
-              >
-                Exported Only
-              </button>
-              <button
-                type="button"
-                onClick={() => setHistoryTab("reshipped")}
-                className={cn(
-                  "cursor-pointer rounded px-3 py-1.5 text-xs font-medium",
-                  historyTab === "reshipped" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-accent",
-                )}
-              >
-                Reshipped
-              </button>
+            <div className="flex flex-wrap items-center gap-3">
+              {historyTab === "reshipped" && selectedReshipRows.length > 0 ? (
+                <>
+                  <span className="text-xs text-muted-foreground">
+                    {selectedReshipRows.length} selected
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setMessageBuyersOpen(true)}
+                    className="inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-md bg-primary px-2.5 text-xs font-semibold text-primary-foreground hover:bg-primary/90"
+                  >
+                    <MessageSquare className="h-3.5 w-3.5" />
+                    Message Buyer{selectedReshipRows.length === 1 ? "" : "s"}
+                  </button>
+                </>
+              ) : null}
+              <div className="inline-flex rounded-md border border-border p-0.5">
+                <button
+                  type="button"
+                  onClick={() => setHistoryTab("exported")}
+                  className={cn(
+                    "cursor-pointer rounded px-3 py-1.5 text-xs font-medium",
+                    historyTab === "exported" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-accent",
+                  )}
+                >
+                  Exported Only
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setHistoryTab("reshipped")}
+                  className={cn(
+                    "cursor-pointer rounded px-3 py-1.5 text-xs font-medium",
+                    historyTab === "reshipped" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-accent",
+                  )}
+                >
+                  Reshipped
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -1098,6 +1148,14 @@ export function LabelFormatterClient() {
           <table className="w-full min-w-[1400px] text-left text-sm">
             <thead className="border-b border-border bg-muted/30 text-xs uppercase text-muted-foreground">
               <tr>
+                <th className="w-12 px-3 py-3">
+                  <input
+                    type="checkbox"
+                    checked={allReshipSelected}
+                    onChange={toggleAllReshipSelected}
+                    aria-label="Select all reshipped rows"
+                  />
+                </th>
                 <th className="px-4 py-3">Batch Date</th>
                 <th className="px-4 py-3">Created By</th>
                 <th className="px-4 py-3">Order</th>
@@ -1115,10 +1173,18 @@ export function LabelFormatterClient() {
             </thead>
             <tbody className="divide-y divide-border">
               {reshipHistory.length === 0 ? (
-                <tr><td colSpan={13} className="px-4 py-6 text-center text-muted-foreground">No reshipped labels yet.</td></tr>
+                <tr><td colSpan={14} className="px-4 py-6 text-center text-muted-foreground">No reshipped labels yet.</td></tr>
               ) : reshipHistory.flatMap((batch) =>
                 batch.rows.map((row) => (
                   <tr key={row.id}>
+                    <td className="px-3 py-3">
+                      <input
+                        type="checkbox"
+                        checked={selectedReshipIds.has(row.id)}
+                        onChange={() => toggleReshipSelected(row.id)}
+                        aria-label={`Select ${row.orderNumber}`}
+                      />
+                    </td>
                     <td className="px-4 py-3 text-xs text-muted-foreground">{new Date(batch.createdAt).toLocaleString()}</td>
                     <td className="px-4 py-3 text-xs">{batch.createdBy?.name ?? batch.createdBy?.email ?? "Unknown"}</td>
                     <td className="px-4 py-3 font-mono text-xs">{row.orderNumber}</td>
@@ -1198,6 +1264,21 @@ export function LabelFormatterClient() {
         <ShipValidationModal
           issues={shipValidationIssues}
           onClose={() => setShipValidationIssues(null)}
+        />
+      ) : null}
+
+      {messageBuyersOpen ? (
+        <MessageBuyersModal
+          rows={selectedReshipRows.map((row) => ({
+            id: row.id,
+            orderNumber: row.orderNumber,
+            sourceStore: row.sourceStore,
+            sourceStoreLabel: row.sourceStoreLabel,
+            buyerName: row.buyerName,
+            trackingNumber: row.trackingNumber,
+            status: row.status,
+          }))}
+          onClose={() => setMessageBuyersOpen(false)}
         />
       ) : null}
     </div>

@@ -58,7 +58,7 @@ async function getActionStatus(
       select: { entityId: true, createdAt: true, details: true },
     }),
   ]);
-  const [workingRow, exportRow] = options
+  const [workingRow, exportRow, reshipRow] = options
     ? await Promise.all([
         db.labelFormatterWorkingRow.findFirst({
           where: {
@@ -75,8 +75,21 @@ async function getActionStatus(
           orderBy: { createdAt: "desc" },
           select: { id: true, createdAt: true, batch: { select: { id: true, createdAt: true } } },
         }),
+        db.labelFormatterReshipRow.findFirst({
+          where: {
+            orderNumber: options.orderNumber,
+            sourceStore: options.sourceStore,
+            status: "created",
+          },
+          orderBy: { createdAt: "desc" },
+          select: {
+            trackingNumber: true,
+            createdAt: true,
+            batch: { select: { createdAt: true } },
+          },
+        }),
       ])
-    : [null, null];
+    : [null, null, null];
 
   return {
     labelFormatter: {
@@ -88,6 +101,12 @@ async function getActionStatus(
       exported: Boolean(exportRow),
       exportedAt: exportRow?.batch?.createdAt?.toISOString() ?? null,
       exportBatchId: exportRow?.batch?.id ?? null,
+      reshipped: Boolean(reshipRow),
+      reshippedAt:
+        reshipRow?.batch?.createdAt?.toISOString() ??
+        reshipRow?.createdAt.toISOString() ??
+        null,
+      reshipTrackingNumber: reshipRow?.trackingNumber ?? null,
     },
     skuvault: {
       deducted: skuLogs.length > 0,
