@@ -23,7 +23,7 @@ test("normalizeLabelFormatterReshipBody coerces nullable optional strings", () =
   const normalized = normalizeLabelFormatterReshipBody({
     rows: [baseRow],
     serviceClass: "ground",
-    providerKey: "api",
+    providerKey: "API",
     seriesCode: "92121",
     fromAddress: {
       name: "REORG PK RTRN",
@@ -43,7 +43,7 @@ test("reship schema rejects empty SKU with readable issue path", () => {
   const normalized = normalizeLabelFormatterReshipBody({
     rows: [{ ...baseRow, lineItems: [{ sku: "", quantity: 1 }] }],
     serviceClass: "ground",
-    providerKey: "api",
+    providerKey: "API",
     seriesCode: "92121",
     fromAddress: {
       name: "REORG PK RTRN",
@@ -74,7 +74,7 @@ test("reship schema allows up to 500 rows", () => {
   const parsed = labelFormatterReshipSchema.safeParse({
     rows,
     serviceClass: "ground",
-    providerKey: "api",
+    providerKey: "API",
     seriesCode: "92121",
     fromAddress: {
       name: "REORG PK RTRN",

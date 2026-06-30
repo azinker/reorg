@@ -6,6 +6,7 @@ import { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import {
   findLabelCrowSeries,
+  isValidLabelCrowProviderCombo,
   resolveLabelCrowSeriesId,
 } from "@/lib/label-formatter/labelcrow-options";
 import { appendMergedOrderPdf } from "@/lib/label-formatter/reship-pdf";
@@ -19,6 +20,7 @@ import { sortLabelFormatterRowsByPrimarySku } from "@/lib/label-formatter/row-va
 import {
   createLabelCrowLabel,
   downloadLabelCrowLabel,
+  fetchLabelCrowAccountProviders,
   fetchLabelCrowAccountSeries,
   type LabelCrowAddress,
 } from "@/lib/services/labelcrow";
@@ -88,7 +90,18 @@ export async function createLabelFormatterReship(
   actorUserId: string,
 ): Promise<LabelFormatterReshipResult> {
   const fromAddress = buildFromAddress(input);
-  const accountSeries = await fetchLabelCrowAccountSeries();
+  const [accountSeries, accountProviders] = await Promise.all([
+    fetchLabelCrowAccountSeries(),
+    fetchLabelCrowAccountProviders(),
+  ]);
+  if (!isValidLabelCrowProviderCombo(accountProviders, {
+    serviceClass: input.serviceClass,
+    providerKey: input.providerKey,
+  })) {
+    throw new Error(
+      `No LabelCrow template for carrier=usps, service_class=${input.serviceClass}, provider_key=${input.providerKey}. Choose a provider listed for that service class.`,
+    );
+  }
   const matchedSeries = findLabelCrowSeries(accountSeries, {
     seriesCode: input.seriesCode,
     serviceClass: input.serviceClass,

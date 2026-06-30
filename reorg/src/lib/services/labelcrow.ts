@@ -17,8 +17,8 @@ export interface LabelCrowCreateInput {
   to: LabelCrowAddress;
   orderNumber: string;
   carrier?: "usps";
-  serviceClass?: "ground" | "priority";
-  providerKey?: "api" | "stamps" | "pitneybowes";
+  serviceClass?: "ground" | "priority" | string;
+  providerKey?: string;
   seriesId?: string;
   seriesCode?: string;
   weightLbs?: number;
@@ -47,6 +47,12 @@ export interface LabelCrowAccountSeries {
   id: number;
   series_code: string;
   display_name: string | null;
+  carrier: string;
+  service_class: string;
+  provider_key: string;
+}
+
+export interface LabelCrowAccountProvider {
   carrier: string;
   service_class: string;
   provider_key: string;
@@ -162,6 +168,7 @@ function labelCrowError(status: number, buffer: Buffer): Error {
 }
 
 let cachedAccountSeries: { fetchedAt: number; rows: LabelCrowAccountSeries[] } | null = null;
+let cachedAccountProviders: { fetchedAt: number; rows: LabelCrowAccountProvider[] } | null = null;
 const SERIES_CACHE_MS = 5 * 60 * 1000;
 
 function parseAccountSeries(value: unknown): LabelCrowAccountSeries[] {
@@ -186,6 +193,26 @@ function parseAccountSeries(value: unknown): LabelCrowAccountSeries[] {
   });
 }
 
+function parseAccountProviders(value: unknown): LabelCrowAccountProvider[] {
+  const root = asRecord(value);
+  const raw = root?.data;
+  if (!Array.isArray(raw)) return [];
+
+  return raw.flatMap((entry) => {
+    const row = asRecord(entry);
+    if (!row) return [];
+    const carrier = stringField(row, "carrier");
+    const serviceClass = stringField(row, "service_class");
+    const providerKey = stringField(row, "provider_key");
+    if (!carrier || !serviceClass || !providerKey) return [];
+    return [{
+      carrier,
+      service_class: serviceClass,
+      provider_key: providerKey,
+    }];
+  });
+}
+
 /** LabelCrow account series (cached ~5 min). Required to map UI series codes → numeric series_id. */
 export async function fetchLabelCrowAccountSeries(): Promise<LabelCrowAccountSeries[]> {
   if (cachedAccountSeries && Date.now() - cachedAccountSeries.fetchedAt < SERIES_CACHE_MS) {
@@ -198,6 +225,21 @@ export async function fetchLabelCrowAccountSeries(): Promise<LabelCrowAccountSer
 
   const rows = parseAccountSeries(parseJsonBuffer(buffer));
   cachedAccountSeries = { fetchedAt: Date.now(), rows };
+  return rows;
+}
+
+/** LabelCrow carrier/service/provider templates (cached ~5 min). */
+export async function fetchLabelCrowAccountProviders(): Promise<LabelCrowAccountProvider[]> {
+  if (cachedAccountProviders && Date.now() - cachedAccountProviders.fetchedAt < SERIES_CACHE_MS) {
+    return cachedAccountProviders.rows;
+  }
+
+  const response = await labelCrowFetch("/api/v1/account/providers", { method: "GET" });
+  const buffer = Buffer.from(await response.arrayBuffer());
+  if (!response.ok) throw labelCrowError(response.status, buffer);
+
+  const rows = parseAccountProviders(parseJsonBuffer(buffer));
+  cachedAccountProviders = { fetchedAt: Date.now(), rows };
   return rows;
 }
 

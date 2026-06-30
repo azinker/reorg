@@ -1,19 +1,20 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Loader2, Truck, X } from "lucide-react";
 import {
-  LABELCROW_PROVIDERS,
-  LABELCROW_SERVICE_CLASSES,
+  defaultLabelCrowShippingSelection,
+  type LabelCrowSelectOption,
   type LabelCrowSeriesOption,
+  type LabelCrowShippingOptions,
 } from "@/lib/label-formatter/labelcrow-options";
 import type { LabelFormatterRow, LabelFormatterShipFrom } from "@/lib/label-formatter/types";
 
 const SHIP_FROM_STORAGE_KEY = "reorg.labelFormatter.shipFrom.v1";
 
 export type ShipOrdersFormValues = {
-  serviceClass: "ground" | "priority";
-  providerKey: "stamps" | "api" | "pitneybowes";
+  serviceClass: string;
+  providerKey: string;
   seriesCode: string;
   fromAddress: LabelFormatterShipFrom;
 };
@@ -25,13 +26,6 @@ const DEFAULT_FROM: LabelFormatterShipFrom = {
   city: "",
   state: "",
   zip: "",
-};
-
-const DEFAULT_FORM: ShipOrdersFormValues = {
-  serviceClass: "ground",
-  providerKey: "api",
-  seriesCode: "9302",
-  fromAddress: DEFAULT_FROM,
 };
 
 function loadStoredFromAddress(): LabelFormatterShipFrom {
@@ -58,8 +52,26 @@ function validateForm(form: ShipOrdersFormValues): string | null {
   if (!form.fromAddress.city.trim()) return "City is required.";
   if (!form.fromAddress.state.trim()) return "State is required.";
   if (!form.fromAddress.zip.trim()) return "Zip is required.";
+  if (!form.serviceClass.trim()) return "Service class is required.";
+  if (!form.providerKey.trim()) return "Provider is required.";
   if (!form.seriesCode.trim()) return "Series is required.";
   return null;
+}
+
+function pickProvider(
+  providers: LabelCrowSelectOption[],
+  current: string,
+): string {
+  if (providers.some((option) => option.value === current)) return current;
+  return providers[0]?.value ?? "";
+}
+
+function pickSeries(
+  seriesOptions: LabelCrowSeriesOption[],
+  current: string,
+): string {
+  if (seriesOptions.some((option) => option.value === current)) return current;
+  return seriesOptions[0]?.value ?? "";
 }
 
 export function ShipOrdersModal({
@@ -73,12 +85,14 @@ export function ShipOrdersModal({
   onClose: () => void;
   onConfirm: (values: ShipOrdersFormValues) => void;
 }) {
-  const [form, setForm] = useState<ShipOrdersFormValues>(() => ({
-    ...DEFAULT_FORM,
+  const [form, setForm] = useState<ShipOrdersFormValues>({
+    serviceClass: "",
+    providerKey: "",
+    seriesCode: "",
     fromAddress: DEFAULT_FROM,
-  }));
-  const [seriesOptions, setSeriesOptions] = useState<LabelCrowSeriesOption[]>([]);
-  const [seriesLoading, setSeriesLoading] = useState(true);
+  });
+  const [shippingOptions, setShippingOptions] = useState<LabelCrowShippingOptions | null>(null);
+  const [optionsLoading, setOptionsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -91,51 +105,74 @@ export function ShipOrdersModal({
   useEffect(() => {
     let cancelled = false;
 
-    async function loadSeries() {
-      setSeriesLoading(true);
+    async function loadOptions() {
+      setOptionsLoading(true);
       try {
-        const res = await fetch(
-          `/api/label-formatter/series?serviceClass=${encodeURIComponent(form.serviceClass)}`,
-          { cache: "no-store" },
-        );
+        const res = await fetch("/api/label-formatter/shipping-options", { cache: "no-store" });
         const json = (await res.json()) as {
-          data?: { options: LabelCrowSeriesOption[] };
+          data?: LabelCrowShippingOptions;
           error?: string;
         };
-        if (!res.ok || !json.data?.options) {
-          throw new Error(json.error ?? "Could not load LabelCrow series.");
+        if (!res.ok || !json.data) {
+          throw new Error(json.error ?? "Could not load LabelCrow shipping options.");
         }
         if (cancelled) return;
 
-        setSeriesOptions(json.data.options);
+        setShippingOptions(json.data);
         setForm((current) => {
-          const stillValid = json.data!.options.some((option) => option.value === current.seriesCode);
+          const defaults = defaultLabelCrowShippingSelection(json.data!);
+          if (!defaults) return current;
           return {
             ...current,
-            seriesCode: stillValid ? current.seriesCode : (json.data!.options[0]?.value ?? ""),
+            serviceClass: defaults.serviceClass,
+            providerKey: defaults.providerKey,
+            seriesCode: defaults.seriesCode,
           };
         });
       } catch (loadError) {
         if (!cancelled) {
-          setSeriesOptions([]);
-          setError(loadError instanceof Error ? loadError.message : "Could not load LabelCrow series.");
+          setShippingOptions(null);
+          setError(loadError instanceof Error ? loadError.message : "Could not load LabelCrow shipping options.");
         }
       } finally {
-        if (!cancelled) setSeriesLoading(false);
+        if (!cancelled) setOptionsLoading(false);
       }
     }
 
-    void loadSeries();
+    void loadOptions();
     return () => {
       cancelled = true;
     };
-  }, [form.serviceClass]);
+  }, []);
+
+  const providerOptions = useMemo(
+    () => shippingOptions?.providersByServiceClass[form.serviceClass] ?? [],
+    [form.serviceClass, shippingOptions],
+  );
+
+  const seriesOptions = useMemo(
+    () => shippingOptions?.seriesByServiceClass[form.serviceClass] ?? [],
+    [form.serviceClass, shippingOptions],
+  );
 
   function updateFromAddress(patch: Partial<LabelFormatterShipFrom>) {
     setForm((current) => ({
       ...current,
       fromAddress: { ...current.fromAddress, ...patch },
     }));
+  }
+
+  function handleServiceClassChange(serviceClass: string) {
+    setForm((current) => {
+      const providers = shippingOptions?.providersByServiceClass[serviceClass] ?? [];
+      const series = shippingOptions?.seriesByServiceClass[serviceClass] ?? [];
+      return {
+        ...current,
+        serviceClass,
+        providerKey: pickProvider(providers, current.providerKey),
+        seriesCode: pickSeries(series, current.seriesCode),
+      };
+    });
   }
 
   function handleSubmit(event: React.FormEvent) {
@@ -196,19 +233,21 @@ export function ShipOrdersModal({
               <span className="font-medium">Service Class</span>
               <select
                 value={form.serviceClass}
-                onChange={(event) =>
-                  setForm((current) => ({
-                    ...current,
-                    serviceClass: event.target.value as ShipOrdersFormValues["serviceClass"],
-                  }))
-                }
-                className="h-10 w-full cursor-pointer rounded-md border border-input bg-background px-3 text-sm"
+                onChange={(event) => handleServiceClassChange(event.target.value)}
+                disabled={optionsLoading || !shippingOptions?.serviceClasses.length}
+                className="h-10 w-full cursor-pointer rounded-md border border-input bg-background px-3 text-sm disabled:cursor-not-allowed disabled:opacity-45"
               >
-                {LABELCROW_SERVICE_CLASSES.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
+                {optionsLoading ? (
+                  <option value="">Loading service classes…</option>
+                ) : shippingOptions?.serviceClasses.length ? (
+                  shippingOptions.serviceClasses.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))
+                ) : (
+                  <option value="">No service classes available</option>
+                )}
               </select>
             </label>
             <label className="space-y-1.5 text-sm">
@@ -218,16 +257,23 @@ export function ShipOrdersModal({
                 onChange={(event) =>
                   setForm((current) => ({
                     ...current,
-                    providerKey: event.target.value as ShipOrdersFormValues["providerKey"],
+                    providerKey: event.target.value,
                   }))
                 }
-                className="h-10 w-full cursor-pointer rounded-md border border-input bg-background px-3 text-sm"
+                disabled={optionsLoading || providerOptions.length === 0}
+                className="h-10 w-full cursor-pointer rounded-md border border-input bg-background px-3 text-sm disabled:cursor-not-allowed disabled:opacity-45"
               >
-                {LABELCROW_PROVIDERS.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
+                {optionsLoading ? (
+                  <option value="">Loading providers…</option>
+                ) : providerOptions.length ? (
+                  providerOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))
+                ) : (
+                  <option value="">No providers for this service class</option>
+                )}
               </select>
             </label>
             <label className="space-y-1.5 text-sm">
@@ -240,19 +286,19 @@ export function ShipOrdersModal({
                     seriesCode: event.target.value,
                   }))
                 }
-                disabled={seriesLoading || seriesOptions.length === 0}
+                disabled={optionsLoading || seriesOptions.length === 0}
                 className="h-10 w-full cursor-pointer rounded-md border border-input bg-background px-3 text-sm disabled:cursor-not-allowed disabled:opacity-45"
               >
-                {seriesLoading ? (
+                {optionsLoading ? (
                   <option value="">Loading series…</option>
-                ) : seriesOptions.length === 0 ? (
-                  <option value="">No series available</option>
-                ) : (
+                ) : seriesOptions.length ? (
                   seriesOptions.map((option) => (
                     <option key={`${option.seriesId}-${option.value}`} value={option.value}>
                       {option.label}
                     </option>
                   ))
+                ) : (
+                  <option value="">No series available</option>
                 )}
               </select>
             </label>
@@ -329,7 +375,7 @@ export function ShipOrdersModal({
             </button>
             <button
               type="submit"
-              disabled={loading || seriesLoading || !form.seriesCode}
+              disabled={loading || optionsLoading || !form.seriesCode || !form.providerKey}
               className="inline-flex h-10 cursor-pointer items-center gap-2 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-45"
             >
               {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Truck className="h-4 w-4" />}
