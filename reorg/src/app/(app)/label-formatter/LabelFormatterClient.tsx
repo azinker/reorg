@@ -103,6 +103,19 @@ type ReshipHistoryRow = {
 };
 
 type HistoryTab = "exported" | "reshipped";
+type ReshipSortKey = "batchDate" | "orderNumber" | "note";
+type SortDirection = "asc" | "desc";
+
+type ReshipSortState = {
+  key: ReshipSortKey;
+  direction: SortDirection;
+};
+
+type ReshipDisplayRow = ReshipHistoryOrderRow & {
+  batchId: string;
+  batchCreatedAt: string;
+  batchCreatedBy: ReshipHistoryRow["createdBy"];
+};
 
 type WorkingRowsResponse = {
   data?: WorkingRow[];
@@ -272,6 +285,18 @@ function formatShipErrorMessage(json: ShipErrorResponse) {
   return formatLabelFormatterInvalidRowsMessage(json.error ?? "Label creation failed.", json.invalidRows);
 }
 
+function dateInputToLocalStartIso(value: string) {
+  const [year, month, day] = value.split("-").map(Number);
+  if (!year || !month || !day) return null;
+  return new Date(year, month - 1, day, 0, 0, 0, 0).toISOString();
+}
+
+function dateInputToLocalEndExclusiveIso(value: string) {
+  const [year, month, day] = value.split("-").map(Number);
+  if (!year || !month || !day) return null;
+  return new Date(year, month - 1, day + 1, 0, 0, 0, 0).toISOString();
+}
+
 export function LabelFormatterClient() {
   const [orderNumber, setOrderNumber] = useState("");
   const [note, setNote] = useState("");
@@ -288,6 +313,14 @@ export function LabelFormatterClient() {
   const [reshipHistory, setReshipHistory] = useState<ReshipHistoryRow[]>([]);
   const [historyTab, setHistoryTab] = useState<HistoryTab>("exported");
   const [selectedReshipIds, setSelectedReshipIds] = useState<Set<string>>(new Set());
+  const [reshipDateFrom, setReshipDateFrom] = useState("");
+  const [reshipDateTo, setReshipDateTo] = useState("");
+  const [reshipHistoryLoading, setReshipHistoryLoading] = useState(false);
+  const [reshipHistoryError, setReshipHistoryError] = useState<string | null>(null);
+  const [reshipSort, setReshipSort] = useState<ReshipSortState>({
+    key: "batchDate",
+    direction: "desc",
+  });
   const [messageBuyersOpen, setMessageBuyersOpen] = useState(false);
   const [addTrackingsOpen, setAddTrackingsOpen] = useState(false);
   const [shipModalOpen, setShipModalOpen] = useState(false);
@@ -324,16 +357,49 @@ export function LabelFormatterClient() {
   }, [notesSortMode, rows]);
   const selectedRows = useMemo(() => sortedRows.filter((row) => selectedIds.has(row.id)), [sortedRows, selectedIds]);
   const allSelected = rows.length > 0 && rows.every((row) => selectedIds.has(row.id));
-  const reshipFlatRows = useMemo(
-    () => reshipHistory.flatMap((batch) => batch.rows),
+  const reshipFlatRows = useMemo<ReshipDisplayRow[]>(
+    () =>
+      reshipHistory.flatMap((batch) =>
+        batch.rows.map((row) => ({
+          ...row,
+          batchId: batch.id,
+          batchCreatedAt: batch.createdAt,
+          batchCreatedBy: batch.createdBy,
+        })),
+      ),
     [reshipHistory],
   );
+  const sortedReshipRows = useMemo(
+    () =>
+      reshipFlatRows
+        .map((row, index) => ({ row, index }))
+        .sort((a, b) => {
+          let compare = 0;
+          if (reshipSort.key === "batchDate") {
+            compare = new Date(a.row.batchCreatedAt).getTime() - new Date(b.row.batchCreatedAt).getTime();
+          } else if (reshipSort.key === "orderNumber") {
+            compare = a.row.orderNumber.localeCompare(b.row.orderNumber, undefined, {
+              sensitivity: "base",
+              numeric: true,
+            });
+          } else {
+            compare = (a.row.note ?? "").localeCompare(b.row.note ?? "", undefined, {
+              sensitivity: "base",
+              numeric: true,
+            });
+          }
+          if (compare === 0) compare = a.index - b.index;
+          return reshipSort.direction === "asc" ? compare : -compare;
+        })
+        .map(({ row }) => row),
+    [reshipFlatRows, reshipSort],
+  );
   const selectedReshipRows = useMemo(
-    () => reshipFlatRows.filter((row) => selectedReshipIds.has(row.id)),
-    [reshipFlatRows, selectedReshipIds],
+    () => sortedReshipRows.filter((row) => selectedReshipIds.has(row.id)),
+    [selectedReshipIds, sortedReshipRows],
   );
   const allReshipSelected =
-    reshipFlatRows.length > 0 && reshipFlatRows.every((row) => selectedReshipIds.has(row.id));
+    sortedReshipRows.length > 0 && sortedReshipRows.every((row) => selectedReshipIds.has(row.id));
   const workingRowsBusy = workingRowsSyncStatus === "saving" || workingRowsSyncStatus === "loading";
 
   useEffect(() => {
@@ -401,6 +467,14 @@ export function LabelFormatterClient() {
     });
   }, [rows]);
 
+  useEffect(() => {
+    setSelectedReshipIds((current) => {
+      const activeIds = new Set(sortedReshipRows.map((row) => row.id));
+      const next = new Set([...current].filter((id) => activeIds.has(id)));
+      return next.size === current.size ? current : next;
+    });
+  }, [sortedReshipRows]);
+
   async function refreshHistory() {
     try {
       const res = await fetch("/api/label-formatter/history?limit=20", { cache: "no-store" });
@@ -411,14 +485,32 @@ export function LabelFormatterClient() {
     }
   }
 
-  async function refreshReshipHistory() {
-    try {
-      const res = await fetch("/api/label-formatter/reship-history?limit=20", { cache: "no-store" });
-      const json = (await res.json()) as { data?: ReshipHistoryRow[] };
-      if (res.ok && json.data) setReshipHistory(json.data);
-    } catch {
-      // Reship history is secondary to the working export flow.
+  async function refreshReshipHistory(options?: { fromDate?: string; toDate?: string }) {
+    const fromDate = options?.fromDate ?? reshipDateFrom;
+    const toDate = options?.toDate ?? reshipDateTo;
+    const query = new URLSearchParams();
+    const hasDateFilter = Boolean(fromDate || toDate);
+    query.set("limit", hasDateFilter ? "500" : "20");
+    if (fromDate) {
+      const createdFrom = dateInputToLocalStartIso(fromDate);
+      if (createdFrom) query.set("createdFrom", createdFrom);
     }
+    if (toDate) {
+      const createdTo = dateInputToLocalEndExclusiveIso(toDate);
+      if (createdTo) query.set("createdTo", createdTo);
+    }
+
+    setReshipHistoryLoading(true);
+    setReshipHistoryError(null);
+    try {
+      const res = await fetch(`/api/label-formatter/reship-history?${query.toString()}`, { cache: "no-store" });
+      const json = (await res.json()) as { data?: ReshipHistoryRow[]; error?: string };
+      if (!res.ok || !json.data) throw new Error(json.error ?? "Failed to load reship history.");
+      setReshipHistory(json.data);
+    } catch {
+      setReshipHistoryError("Could not load reship history.");
+    }
+    setReshipHistoryLoading(false);
   }
 
   async function saveWorkingRows(options?: { signal?: AbortSignal; silent?: boolean }) {
@@ -623,10 +715,40 @@ export function LabelFormatterClient() {
 
   function toggleAllReshipSelected() {
     setSelectedReshipIds((current) => {
-      if (reshipFlatRows.length > 0 && reshipFlatRows.every((row) => current.has(row.id))) {
+      if (sortedReshipRows.length > 0 && sortedReshipRows.every((row) => current.has(row.id))) {
         return new Set();
       }
-      return new Set(reshipFlatRows.map((row) => row.id));
+      return new Set(sortedReshipRows.map((row) => row.id));
+    });
+  }
+
+  function applyReshipDateFilter(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (reshipDateFrom && reshipDateTo && reshipDateFrom > reshipDateTo) {
+      setBanner({ type: "error", message: "Reship date range start must be before the end date." });
+      return;
+    }
+    void refreshReshipHistory({ fromDate: reshipDateFrom, toDate: reshipDateTo });
+  }
+
+  function resetReshipDateFilter() {
+    setReshipDateFrom("");
+    setReshipDateTo("");
+    void refreshReshipHistory({ fromDate: "", toDate: "" });
+  }
+
+  function toggleReshipSort(key: ReshipSortKey) {
+    setReshipSort((current) => {
+      if (current.key === key) {
+        return {
+          key,
+          direction: current.direction === "asc" ? "desc" : "asc",
+        };
+      }
+      return {
+        key,
+        direction: key === "batchDate" ? "desc" : "asc",
+      };
     });
   }
 
@@ -1154,6 +1276,52 @@ export function LabelFormatterClient() {
           </table>
         </div>
         ) : (
+        <>
+        <form
+          onSubmit={applyReshipDateFilter}
+          className="flex flex-wrap items-end gap-3 border-b border-border bg-muted/10 px-4 py-3"
+        >
+          <label className="space-y-1 text-xs">
+            <span className="font-medium text-muted-foreground">Batch Date From</span>
+            <input
+              type="date"
+              value={reshipDateFrom}
+              onChange={(event) => setReshipDateFrom(event.target.value)}
+              className="h-9 rounded-md border border-input bg-background px-2 font-mono text-xs outline-none focus:border-primary"
+            />
+          </label>
+          <label className="space-y-1 text-xs">
+            <span className="font-medium text-muted-foreground">Batch Date To</span>
+            <input
+              type="date"
+              value={reshipDateTo}
+              onChange={(event) => setReshipDateTo(event.target.value)}
+              className="h-9 rounded-md border border-input bg-background px-2 font-mono text-xs outline-none focus:border-primary"
+            />
+          </label>
+          <button
+            type="submit"
+            disabled={reshipHistoryLoading}
+            className="inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-md bg-primary px-3 text-xs font-semibold text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {reshipHistoryLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Search className="h-3.5 w-3.5" />}
+            Apply
+          </button>
+          <button
+            type="button"
+            onClick={resetReshipDateFilter}
+            disabled={reshipHistoryLoading || (!reshipDateFrom && !reshipDateTo)}
+            className="inline-flex h-9 cursor-pointer items-center rounded-md border border-border px-3 text-xs font-medium hover:bg-accent disabled:cursor-not-allowed disabled:opacity-45"
+          >
+            Reset
+          </button>
+          <div className="text-xs text-muted-foreground">
+            {reshipHistoryLoading ? "Loading" : `${sortedReshipRows.length} order${sortedReshipRows.length === 1 ? "" : "s"}`}
+          </div>
+          {reshipHistoryError ? (
+            <div className="text-xs text-red-300">{reshipHistoryError}</div>
+          ) : null}
+        </form>
         <div className="overflow-x-auto">
           <table className="w-full min-w-[1400px] text-left text-sm">
             <thead className="border-b border-border bg-muted/30 text-xs uppercase text-muted-foreground">
@@ -1166,10 +1334,25 @@ export function LabelFormatterClient() {
                     aria-label="Select all reshipped rows"
                   />
                 </th>
-                <th className="px-4 py-3">Batch Date</th>
+                <ReshipSortableHeader
+                  label="Batch Date"
+                  sortKey="batchDate"
+                  currentSort={reshipSort}
+                  onSort={toggleReshipSort}
+                />
                 <th className="px-4 py-3">Created By</th>
-                <th className="px-4 py-3">Order</th>
-                <th className="px-4 py-3">Note</th>
+                <ReshipSortableHeader
+                  label="Order"
+                  sortKey="orderNumber"
+                  currentSort={reshipSort}
+                  onSort={toggleReshipSort}
+                />
+                <ReshipSortableHeader
+                  label="Note"
+                  sortKey="note"
+                  currentSort={reshipSort}
+                  onSort={toggleReshipSort}
+                />
                 <th className="px-4 py-3">Store</th>
                 <th className="px-4 py-3">Buyer</th>
                 <th className="px-4 py-3">Address</th>
@@ -1182,10 +1365,15 @@ export function LabelFormatterClient() {
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
-              {reshipHistory.length === 0 ? (
-                <tr><td colSpan={14} className="px-4 py-6 text-center text-muted-foreground">No reshipped labels yet.</td></tr>
-              ) : reshipHistory.flatMap((batch) =>
-                batch.rows.map((row) => (
+              {reshipHistoryLoading ? (
+                <tr><td colSpan={14} className="px-4 py-6 text-center text-muted-foreground">Loading reshipped labels.</td></tr>
+              ) : sortedReshipRows.length === 0 ? (
+                <tr>
+                  <td colSpan={14} className="px-4 py-6 text-center text-muted-foreground">
+                    {reshipDateFrom || reshipDateTo ? "No reshipped labels in that date range." : "No reshipped labels yet."}
+                  </td>
+                </tr>
+              ) : sortedReshipRows.map((row) => (
                   <tr key={row.id}>
                     <td className="px-3 py-3">
                       <input
@@ -1195,8 +1383,8 @@ export function LabelFormatterClient() {
                         aria-label={`Select ${row.orderNumber}`}
                       />
                     </td>
-                    <td className="px-4 py-3 text-xs text-muted-foreground">{new Date(batch.createdAt).toLocaleString()}</td>
-                    <td className="px-4 py-3 text-xs">{batch.createdBy?.name ?? batch.createdBy?.email ?? "Unknown"}</td>
+                    <td className="px-4 py-3 text-xs text-muted-foreground">{new Date(row.batchCreatedAt).toLocaleString()}</td>
+                    <td className="px-4 py-3 text-xs">{row.batchCreatedBy?.name ?? row.batchCreatedBy?.email ?? "Unknown"}</td>
                     <td className="px-4 py-3 font-mono text-xs">{row.orderNumber}</td>
                     <td className="px-4 py-3 text-xs">{row.note || "—"}</td>
                     <td className="px-4 py-3 text-xs">{row.sourceStoreLabel}</td>
@@ -1218,11 +1406,11 @@ export function LabelFormatterClient() {
                     <td className="px-4 py-3 text-xs capitalize">{row.providerKey}</td>
                     <td className="px-4 py-3 text-xs uppercase">{row.seriesCode}</td>
                   </tr>
-                )),
-              )}
+                ))}
             </tbody>
           </table>
         </div>
+        </>
         )}
       </section>
 
@@ -1334,6 +1522,38 @@ function EditableCell({
         )}
       />
     </td>
+  );
+}
+
+function ReshipSortableHeader({
+  label,
+  sortKey,
+  currentSort,
+  onSort,
+}: {
+  label: string;
+  sortKey: ReshipSortKey;
+  currentSort: ReshipSortState;
+  onSort: (key: ReshipSortKey) => void;
+}) {
+  const active = currentSort.key === sortKey;
+  return (
+    <th
+      className="px-4 py-3"
+      aria-sort={active ? (currentSort.direction === "asc" ? "ascending" : "descending") : "none"}
+    >
+      <button
+        type="button"
+        onClick={() => onSort(sortKey)}
+        className={cn(
+          "inline-flex cursor-pointer items-center gap-1 rounded-md px-1 py-0.5 hover:bg-accent hover:text-foreground",
+          active && "text-foreground",
+        )}
+      >
+        {label}
+        <ArrowUpDown className="h-3.5 w-3.5" />
+      </button>
+    </th>
   );
 }
 

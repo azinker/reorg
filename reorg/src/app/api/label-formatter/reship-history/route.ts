@@ -35,6 +35,12 @@ function parseLineItems(value: unknown): LabelFormatterLineItem[] {
   });
 }
 
+function parseDateParam(value: string | null) {
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
 export async function GET(request: NextRequest) {
   if (!(await isAllowed())) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -42,7 +48,19 @@ export async function GET(request: NextRequest) {
 
   try {
     const limit = Number(request.nextUrl.searchParams.get("limit") ?? 25);
-    const rows = await listLabelFormatterReshipHistory(limit);
+    const createdFromParam = request.nextUrl.searchParams.get("createdFrom");
+    const createdToParam = request.nextUrl.searchParams.get("createdTo");
+    const createdFrom = parseDateParam(createdFromParam);
+    const createdTo = parseDateParam(createdToParam);
+    if ((createdFromParam && !createdFrom) || (createdToParam && !createdTo)) {
+      return NextResponse.json({ error: "Invalid reship date range." }, { status: 400 });
+    }
+
+    const rows = await listLabelFormatterReshipHistory({
+      limit,
+      createdFrom,
+      createdTo,
+    });
     return NextResponse.json({
       data: rows.map((batch) => ({
         id: batch.id,

@@ -299,10 +299,37 @@ export async function buildReshipDataSheetForBatch(batchId: string): Promise<Buf
   return buildReshipDataSheet(rows);
 }
 
-export async function listLabelFormatterReshipHistory(limit = 25) {
+export type ListLabelFormatterReshipHistoryOptions = {
+  limit?: number;
+  createdFrom?: Date | null;
+  createdTo?: Date | null;
+};
+
+function clampHistoryLimit(limit: number | undefined) {
+  const value = limit ?? 25;
+  if (!Number.isFinite(value)) return 25;
+  return Math.min(Math.max(Math.trunc(value), 1), 500);
+}
+
+export async function listLabelFormatterReshipHistory(
+  limitOrOptions: number | ListLabelFormatterReshipHistoryOptions = 25,
+) {
+  const options =
+    typeof limitOrOptions === "number"
+      ? { limit: limitOrOptions }
+      : limitOrOptions;
+  const where: Prisma.LabelFormatterReshipBatchWhereInput = {};
+  if (options.createdFrom || options.createdTo) {
+    where.createdAt = {
+      ...(options.createdFrom ? { gte: options.createdFrom } : {}),
+      ...(options.createdTo ? { lt: options.createdTo } : {}),
+    };
+  }
+
   return db.labelFormatterReshipBatch.findMany({
+    where,
     orderBy: { createdAt: "desc" },
-    take: Math.min(Math.max(limit, 1), 100),
+    take: clampHistoryLimit(options.limit),
     include: {
       createdBy: { select: { id: true, name: true, email: true } },
       rows: { orderBy: { createdAt: "asc" } },
