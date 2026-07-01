@@ -19,8 +19,9 @@ test("fetchNeweggOrdersPage parses OrderInfoList when returned as a bare array",
         ShipToStateCode: "CA",
         ShipToZipCode: "92501",
         ShipToCountryCode: "USA",
+        ShipService: "Standard Shipping (5-7 business days)",
         ItemInfoList: [{
-          SellerPartNumber: "AB84 DIG METER BLU",
+          SellerPartNumber: "AB84_DIG_METER_BLU",
           OrderedQty: 1,
           ShippedQty: 0,
           Status: 0,
@@ -39,7 +40,46 @@ test("fetchNeweggOrdersPage parses OrderInfoList when returned as a bare array",
     assert.equal(result.totalCount, 1);
     assert.equal(result.orders.length, 1);
     assert.equal(result.orders[0]?.orderNumber, "565421574");
-    assert.equal(result.orders[0]?.items[0]?.sellerPartNumber, "AB84 DIG METER BLU");
+    assert.equal(result.orders[0]?.items[0]?.sellerPartNumber, "AB84_DIG_METER_BLU");
+    assert.equal(result.orders[0]?.shipService, "Standard Shipping (5-7 business days)");
+  } finally {
+    globalThis.fetch = originalFetch;
+    delete process.env.NEWEGG_SELLER_ID;
+    delete process.env.NEWEGG_API_KEY;
+    delete process.env.NEWEGG_SECRET_KEY;
+  }
+});
+
+test("shipNeweggOrder uses v304 orderstatus endpoint and order ship service", async () => {
+  const originalFetch = globalThis.fetch;
+  let requestedUrl = "";
+  globalThis.fetch = (async (input, init) => {
+    requestedUrl = String(input);
+    const body = JSON.parse(String(init?.body));
+    assert.equal(body.Value.Shipment.PackageList.Package[0].ShipCarrier, "USPS");
+    assert.equal(body.Value.Shipment.PackageList.Package[0].ShipService, "Standard Shipping (5-7 business days)");
+    return new Response(JSON.stringify({
+      IsSuccess: true,
+      PackageProcessingSummary: { FailCount: 0 },
+      Result: { OrderStatus: "Shipped" },
+    }), { status: 200 });
+  }) as typeof fetch;
+
+  process.env.NEWEGG_SELLER_ID = "BBFJ";
+  process.env.NEWEGG_API_KEY = "test-key";
+  process.env.NEWEGG_SECRET_KEY = "test-secret";
+
+  const { shipNeweggOrder } = await import("@/lib/services/newegg");
+
+  try {
+    await shipNeweggOrder({
+      orderNumber: "565421574",
+      trackingNumber: "9400111899223197428490",
+      shipService: "Standard Shipping (5-7 business days)",
+      items: [{ sellerPartNumber: "AB84_DIG_METER_BLU", neweggItemNumber: "9SIBBFJK1P9860", shippedQty: 1 }],
+    });
+    assert.match(requestedUrl, /version=304/);
+    assert.match(requestedUrl, /565421574/);
   } finally {
     globalThis.fetch = originalFetch;
     delete process.env.NEWEGG_SELLER_ID;

@@ -29,6 +29,7 @@ export function mapNeweggOrder(order: NeweggOrder): MarketplaceOrderRow {
     zipCode: order.shipToZip,
     country: order.shipToCountry,
     orderTotal: order.orderTotalAmount,
+    shipService: order.shipService,
     trackingNumbers: order.trackingNumbers,
     lineItems: lineItems.length > 0 ? lineItems : [{ sku: "UNKNOWN", quantity: 1 }],
     canShip: UNSHIPPED_STATUSES.has(order.orderStatus) && lineItems.length > 0,

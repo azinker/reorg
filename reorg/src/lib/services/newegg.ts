@@ -1,5 +1,7 @@
 const NEWEGG_API_BASE = "https://api.newegg.com/marketplace";
-const NEWEGG_API_VERSION = process.env.NEWEGG_API_VERSION?.trim() || "313";
+const NEWEGG_ORDER_API_VERSION = process.env.NEWEGG_API_VERSION?.trim() || "313";
+/** Ship-order endpoint rejects v313 — Newegg requires v304 for orderstatus updates. */
+const NEWEGG_SHIP_API_VERSION = process.env.NEWEGG_SHIP_API_VERSION?.trim() || "304";
 const REQUEST_TIMEOUT_MS = 45_000;
 
 export type NeweggOrderStatusCode = 0 | 1 | 2 | 3 | 4 | 5;
@@ -26,6 +28,7 @@ export type NeweggOrder = {
   orderStatus: number;
   orderStatusDescription: string;
   orderDate: string;
+  shipService: string | null;
   customerName: string;
   customerEmail: string | null;
   customerPhone: string | null;
@@ -167,6 +170,7 @@ function parseOrderInfo(value: unknown): NeweggOrder | null {
     orderStatus: numberField(row, "OrderStatus") ?? -1,
     orderStatusDescription: stringField(row, "OrderStatusDescription") || "Unknown",
     orderDate: stringField(row, "OrderDate"),
+    shipService: stringField(row, "ShipService") || null,
     customerName: stringField(row, "CustomerName"),
     customerEmail: stringField(row, "CustomerEmailAddress") || null,
     customerPhone: stringField(row, "CustomerPhoneNumber") || null,
@@ -185,9 +189,16 @@ function parseOrderInfo(value: unknown): NeweggOrder | null {
 
 function neweggError(status: number, body: string): Error {
   try {
-    const parsed = JSON.parse(body) as { Memo?: string; Message?: string };
-    const message = parsed.Memo || parsed.Message;
-    if (message) return new Error(`Newegg ${status}: ${message}`);
+    const parsed = JSON.parse(body) as
+      | { Memo?: string; Message?: string; Code?: string }
+      | Array<{ Code?: string; Message?: string }>;
+    if (Array.isArray(parsed)) {
+      const message = parsed.map((entry) => entry.Message).filter(Boolean).join("; ");
+      if (message) return new Error(`Newegg ${status}: ${message}`);
+    } else {
+      const message = parsed.Memo || parsed.Message;
+      if (message) return new Error(`Newegg ${status}: ${message}`);
+    }
   } catch {
     // fall through
   }
@@ -212,7 +223,7 @@ export async function fetchNeweggOrdersPage(args: {
   if (args.orderDateFrom) requestCriteria.OrderDateFrom = args.orderDateFrom;
   if (args.orderDateTo) requestCriteria.OrderDateTo = args.orderDateTo;
 
-  const url = `/ordermgmt/order/orderinfo?sellerid=${encodeURIComponent(sellerId)}&version=${NEWEGG_API_VERSION}`;
+  const url = `/ordermgmt/order/orderinfo?sellerid=${encodeURIComponent(sellerId)}&version=${NEWEGG_ORDER_API_VERSION}`;
   const response = await neweggFetch(url, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
@@ -292,11 +303,13 @@ export async function shipNeweggOrder(args: {
   orderNumber: string;
   trackingNumber: string;
   shipCarrier?: string;
-  shipService?: string;
+  shipService?: string | null;
   items: NeweggShipLineItem[];
 }): Promise<void> {
   const { sellerId } = getCredentials();
-  const url = `/ordermgmt/orderstatus/orders/${encodeURIComponent(args.orderNumber)}?sellerid=${encodeURIComponent(sellerId)}&version=${NEWEGG_API_VERSION}`;
+  const url = `/ordermgmt/orderstatus/orders/${encodeURIComponent(args.orderNumber)}?sellerid=${encodeURIComponent(sellerId)}&version=${NEWEGG_SHIP_API_VERSION}`;
+
+  const shipService = args.shipService?.trim() || "Standard Shipping (5-7 business days)";
 
   const response = await neweggFetch(url, {
     method: "PUT",
@@ -313,7 +326,7 @@ export async function shipNeweggOrder(args: {
             Package: [{
               TrackingNumber: args.trackingNumber,
               ShipCarrier: args.shipCarrier ?? "USPS",
-              ShipService: args.shipService ?? "USPS Ground Advantage",
+              ShipService: shipService,
               ItemList: {
                 Item: args.items.map((item) => ({
                   SellerPartNumber: item.sellerPartNumber,
@@ -331,8 +344,16 @@ export async function shipNeweggOrder(args: {
   const body = await response.text();
   if (!response.ok) throw neweggError(response.status, body);
 
-  const parsed = JSON.parse(body) as { IsSuccess?: boolean; Memo?: string };
+  const parsed = JSON.parse(body) as {
+    IsSuccess?: boolean;
+    Memo?: string;
+    PackageProcessingSummary?: { FailCount?: number };
+    Result?: { OrderStatus?: string };
+  };
   if (parsed.IsSuccess === false) {
     throw new Error(parsed.Memo?.trim() || "Newegg ship order failed.");
+  }
+  if ((parsed.PackageProcessingSummary?.FailCount ?? 0) > 0) {
+    throw new Error("Newegg ship order reported package failures.");
   }
 }

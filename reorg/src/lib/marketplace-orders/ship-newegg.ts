@@ -66,6 +66,7 @@ export async function shipNeweggOrdersWithLabels(
         await shipNeweggOrder({
           orderNumber: reshipRow.orderNumber,
           trackingNumber: reshipRow.trackingNumber,
+          shipService: sourceRow.shipService,
           items: neweggShipItemsFromRow(sourceRow),
         });
         trackingPushedCount += 1;

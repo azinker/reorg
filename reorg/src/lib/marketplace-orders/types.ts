@@ -25,6 +25,7 @@ export type MarketplaceOrderRow = {
   zipCode: string;
   country: string;
   orderTotal: number | null;
+  shipService: string | null;
   trackingNumbers: string[];
   lineItems: Array<{
     sku: string;
@@ -38,6 +39,7 @@ export type MarketplaceOrderRow = {
 
 export const marketplaceOrderRowSchema = labelFormatterRowSchema.extend({
   sourceStore: z.enum(["NEWEGG", "ETSY"]),
+  shipService: z.string().trim().max(200).optional(),
   lineItems: z.array(labelFormatterLineItemSchema.extend({
     sellerPartNumber: z.string().trim().max(120).optional(),
     neweggItemNumber: z.string().trim().max(120).nullable().optional(),

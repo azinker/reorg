@@ -8,6 +8,7 @@ const sampleOrder: NeweggOrder = {
   orderStatus: 0,
   orderStatusDescription: "Unshipped",
   orderDate: "06/20/2026 10:15:20",
+  shipService: "Standard Shipping (5-7 business days)",
   customerName: "Jane Buyer",
   customerEmail: "buyer@example.com",
   customerPhone: "555-0100",

@@ -169,6 +169,7 @@ export function MarketplaceOrdersClient() {
       const payload = {
         rows: selectedRows.map((row) => ({
           ...toLabelFormatterRow(row),
+          shipService: row.shipService ?? undefined,
           lineItems: row.lineItems.map((item) => ({
             sku: item.sku,
             quantity: item.quantity,
@@ -209,8 +210,12 @@ export function MarketplaceOrdersClient() {
           const parts = [
             `Created ${successCount} label${successCount === 1 ? "" : "s"}.`,
             trackingPushed > 0 ? `Pushed tracking for ${trackingPushed} order${trackingPushed === 1 ? "" : "s"} on Newegg.` : null,
-            trackingFailed > 0 ? `${trackingFailed} Newegg tracking push${trackingFailed === 1 ? "" : "es"} failed.` : null,
+            trackingFailed > 0 ? `${trackingFailed} Newegg tracking push${trackingFailed === 1 ? "" : "es"} failed — check Engine Room audit logs.` : null,
+            options?.pushMarketplaceTracking && trackingPushed === 0 && trackingFailed === 0 && successCount > 0
+              ? "Labels were created but Newegg was not updated — verify the tracking checkbox was enabled."
+              : null,
             failedCount > 0 ? `${failedCount} label${failedCount === 1 ? "" : "s"} failed.` : null,
+            firstError ? firstError : null,
           ].filter(Boolean);
           setBanner({
             type: failedCount > 0 || trackingFailed > 0 ? "warning" : "success",
