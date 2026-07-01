@@ -58,6 +58,8 @@ import {
 import { BuyerFeedbackCard } from "./BuyerFeedbackCard";
 import { useCurrentUser } from "@/contexts/current-user-context";
 import { canUseHelpdeskOrderActionsPermission } from "@/lib/helpdesk/order-actions-permission";
+import type { ReturnLabelShippingSelection } from "@/lib/helpdesk/return-label-options";
+import { ReturnLabelOptionsModal } from "@/components/helpdesk/ReturnLabelOptionsModal";
 
 type ActionKey =
   | "APPROVE_RETURN"
@@ -1873,6 +1875,8 @@ function ActionModal({
   // UPLOAD_LABEL "Generate return label" (reuses the ticket-pane generator).
   const [genBusy, setGenBusy] = useState(false);
   const [genNote, setGenNote] = useState<string | null>(null);
+  const [returnLabelOptionsOpen, setReturnLabelOptionsOpen] = useState(false);
+  const [returnLabelForce, setReturnLabelForce] = useState(false);
   // ISSUE_REFUND (eBay "Provide a refund" parity): Amount/Percent toggle, live
   // deduction calc, required reason checkboxes + comment.
   const [refundMode, setRefundMode] = useState<"amount" | "percent">("amount");
@@ -1933,7 +1937,10 @@ function ActionModal({
   // Generate a USPS return label via the existing ticket generator, then load
   // its PDF into this modal's file + carrier + tracking so the user can submit
   // it to the eBay case exactly like a hand-uploaded label.
-  async function generateAndAttachLabel(force: boolean) {
+  async function generateAndAttachLabel(
+    force: boolean,
+    selection: ReturnLabelShippingSelection,
+  ) {
     if (!detail.ticketId) return;
     setGenBusy(true);
     setErr(null);
@@ -1944,7 +1951,7 @@ function ActionModal({
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ force }),
+          body: JSON.stringify({ force, ...selection }),
         },
       );
       const json = (await res.json().catch(() => ({}))) as {
@@ -1959,7 +1966,7 @@ function ActionModal({
             "A return label was already generated for this order. Generate another one?",
           )
         ) {
-          await generateAndAttachLabel(true);
+          await generateAndAttachLabel(true, selection);
         }
         return;
       }
@@ -1976,6 +1983,7 @@ function ActionModal({
       setLabelFileName(`return-label-${label.trackingNumber}.pdf`);
       setCarrier("USPS");
       setTracking(label.trackingNumber);
+      setReturnLabelOptionsOpen(false);
       setGenNote(
         `Generated USPS label ${label.trackingNumber}. Review and submit below to attach it to the case.`,
       );
@@ -1984,6 +1992,15 @@ function ActionModal({
     } finally {
       setGenBusy(false);
     }
+  }
+
+  function onGenerateReturnLabelClick() {
+    setReturnLabelForce(false);
+    setReturnLabelOptionsOpen(true);
+  }
+
+  async function onConfirmReturnLabelOptions(selection: ReturnLabelShippingSelection) {
+    await generateAndAttachLabel(returnLabelForce, selection);
   }
 
   async function runPreview() {
@@ -2154,6 +2171,7 @@ function ActionModal({
       typed.trim().toUpperCase() === confirmWord);
 
   return (
+    <>
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
       <div className="w-full max-w-md rounded-xl border border-hairline bg-card shadow-xl">
         <div className="flex items-center justify-between border-b border-hairline px-5 py-3">
@@ -2189,7 +2207,7 @@ function ActionModal({
                 <div className="rounded-lg border border-brand/30 bg-brand/5 p-3">
                   <button
                     type="button"
-                    onClick={() => void generateAndAttachLabel(false)}
+                    onClick={onGenerateReturnLabelClick}
                     disabled={genBusy}
                     className="inline-flex h-9 w-full cursor-pointer items-center justify-center gap-1.5 rounded-md bg-brand px-2 text-xs font-semibold text-primary-foreground hover:bg-brand/90 disabled:cursor-not-allowed disabled:opacity-50"
                   >
@@ -2201,9 +2219,9 @@ function ActionModal({
                     Generate return label
                   </button>
                   <p className="mt-1.5 text-[11px] leading-relaxed text-muted-foreground">
-                    Creates a USPS Ground return label (from the buyer&apos;s
-                    address to our returns dept) and attaches it below. Submit to
-                    provide it to the buyer on this case.
+                    Creates a USPS return label (from the buyer&apos;s address to our
+                    returns dept) using your chosen LabelCrow service, provider, and
+                    series. Submit below to attach it to the case.
                   </p>
                   {genNote ? (
                     <p className="mt-1.5 rounded border border-emerald-500/30 bg-emerald-500/10 px-2 py-1.5 text-[11px] leading-snug text-emerald-800 dark:text-emerald-200">
@@ -2687,6 +2705,15 @@ function ActionModal({
         </div>
       </div>
     </div>
+
+    {returnLabelOptionsOpen ? (
+      <ReturnLabelOptionsModal
+        loading={genBusy}
+        onClose={() => setReturnLabelOptionsOpen(false)}
+        onConfirm={(selection) => void onConfirmReturnLabelOptions(selection)}
+      />
+    ) : null}
+    </>
   );
 }
 

@@ -3,9 +3,20 @@ import type { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { canUseHelpdeskOrderActionsPermission } from "@/lib/helpdesk/order-actions-permission";
+import {
+  displayServiceClass,
+  returnLabelShippingSelectionSchema,
+} from "@/lib/helpdesk/return-label-options";
 import { getActor } from "@/lib/impersonation";
 import {
+  findLabelCrowSeries,
+  isValidLabelCrowProviderCombo,
+  resolveLabelCrowSeriesId,
+} from "@/lib/label-formatter/labelcrow-options";
+import {
   createLabelCrowLabel,
+  fetchLabelCrowAccountProviders,
+  fetchLabelCrowAccountSeries,
   type LabelCrowAddress,
 } from "@/lib/services/labelcrow";
 import { buildEbayConfig } from "@/lib/services/auto-responder-ebay";
@@ -20,6 +31,9 @@ interface RouteParams {
 
 const bodySchema = z.object({
   force: z.boolean().default(false),
+  serviceClass: z.string().trim().min(1).max(40),
+  providerKey: z.string().trim().min(1).max(40),
+  seriesCode: z.string().trim().min(1).max(20),
 });
 
 const RETURN_LABEL_GENERATED_ACTION = "HELPDESK_RETURN_LABEL_GENERATED";
@@ -215,14 +229,43 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     const orderNumber = order.orderId || ticket.ebayOrderNumber;
     const fromAddress = buildReturnFromAddress(orderNumber, order.shippingAddress);
     const toAddress = destinationForPlatform(platform);
+
+    const shipping = returnLabelShippingSelectionSchema.parse(parsed.data);
+    const [accountProviders, accountSeries] = await Promise.all([
+      fetchLabelCrowAccountProviders(),
+      fetchLabelCrowAccountSeries(),
+    ]);
+    if (!isValidLabelCrowProviderCombo(accountProviders, {
+      serviceClass: shipping.serviceClass,
+      providerKey: shipping.providerKey,
+    })) {
+      return NextResponse.json(
+        {
+          error: `No LabelCrow template for USPS ${shipping.serviceClass} with provider ${shipping.providerKey}. Choose a different combination.`,
+        },
+        { status: 400 },
+      );
+    }
+    const matchedSeries = findLabelCrowSeries(accountSeries, {
+      seriesCode: shipping.seriesCode,
+      serviceClass: shipping.serviceClass,
+    });
+    const seriesId = resolveLabelCrowSeriesId(accountSeries, {
+      seriesCode: shipping.seriesCode,
+      serviceClass: shipping.serviceClass,
+    });
+    const seriesCodeForApi = matchedSeries?.series_code ?? shipping.seriesCode;
+    const serviceClassLabel = displayServiceClass(shipping.serviceClass);
+
     const label = await createLabelCrowLabel({
       from: fromAddress,
       to: toAddress,
       orderNumber,
       carrier: "usps",
-      serviceClass: "ground",
-      providerKey: "api",
-      seriesCode: "9302",
+      serviceClass: shipping.serviceClass,
+      providerKey: shipping.providerKey,
+      seriesCode: seriesCodeForApi,
+      seriesId,
       weightLbs: 2,
     });
 
@@ -235,10 +278,10 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         labelCrowDownloadUrl: label.downloadUrl,
         trackingNumber: label.trackingNumber,
         carrier: "USPS",
-        serviceClass: "Ground",
-        providerKey: "api",
-        seriesCode: "9302",
-        seriesId: process.env.LABELCROW_USPS_GROUND_SERIES_ID?.trim() || "13",
+        serviceClass: serviceClassLabel,
+        providerKey: shipping.providerKey,
+        seriesCode: shipping.seriesCode,
+        seriesId,
         weightLbs: 2,
         fromAddress,
         toAddress,
@@ -270,9 +313,9 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
           labelCrowId: label.labelCrowId,
           trackingNumber: label.trackingNumber,
           carrier: "USPS",
-          serviceClass: "Ground",
-          providerKey: "api",
-          seriesCode: "9302",
+          serviceClass: serviceClassLabel,
+          providerKey: shipping.providerKey,
+          seriesCode: shipping.seriesCode,
           weightLbs: 2,
           duplicateGeneration: existingLabels.length > 0,
         },

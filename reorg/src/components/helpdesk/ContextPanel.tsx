@@ -85,6 +85,8 @@ import { Avatar, AvatarStack } from "@/components/ui/avatar";
 import { fetchOrderContextShared } from "@/components/helpdesk/order-context-client";
 import { useCurrentUser } from "@/contexts/current-user-context";
 import { canUseHelpdeskOrderActionsPermission } from "@/lib/helpdesk/order-actions-permission";
+import type { ReturnLabelShippingSelection } from "@/lib/helpdesk/return-label-options";
+import { ReturnLabelOptionsModal } from "@/components/helpdesk/ReturnLabelOptionsModal";
 import {
   labelFormatterActionNoteSuffix,
   resolveLabelFormatterActionNote,
@@ -703,14 +705,17 @@ function useReturnLabels(ticket: HelpdeskTicketDetail, enabled: boolean) {
     return () => ac.abort();
   }, [cacheKey, enabled, ticket.ebayOrderNumber, ticket.id]);
 
-  async function generate(force: boolean): Promise<ReturnLabelSummary> {
+  async function generate(
+    force: boolean,
+    selection: ReturnLabelShippingSelection,
+  ): Promise<ReturnLabelSummary> {
     setGenerating(true);
     setError(null);
     try {
       const res = await fetch(`/api/helpdesk/tickets/${ticket.id}/return-labels`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ force }),
+        body: JSON.stringify({ force, ...selection }),
       });
       const json = (await res.json().catch(() => ({}))) as GenerateReturnLabelResponse;
       if (!res.ok || !json.data) {
@@ -2257,10 +2262,12 @@ function ReturnLabelSection({ ticket }: { ticket: HelpdeskTicketDetail }) {
   const enabled = canGenerate && isEbay && Boolean(ticket.ebayOrderNumber);
   const { labels, loading, generating, error, generate } = useReturnLabels(ticket, enabled);
   const [banner, setBanner] = useState<string | null>(null);
+  const [optionsOpen, setOptionsOpen] = useState(false);
+  const [pendingForce, setPendingForce] = useState(false);
 
   if (!enabled) return null;
 
-  async function onGenerateClick() {
+  function onGenerateClick() {
     setBanner(null);
     const hasExisting = labels.length > 0;
     if (
@@ -2271,11 +2278,16 @@ function ReturnLabelSection({ ticket }: { ticket: HelpdeskTicketDetail }) {
     ) {
       return;
     }
+    setPendingForce(hasExisting);
+    setOptionsOpen(true);
+  }
 
+  async function onConfirmOptions(selection: ReturnLabelShippingSelection) {
     const popup = window.open("about:blank", "_blank");
     if (popup) popup.opener = null;
     try {
-      const label = await generate(hasExisting);
+      const label = await generate(pendingForce, selection);
+      setOptionsOpen(false);
       if (popup) {
         popup.location.href = label.openUrl;
       } else {
@@ -2306,7 +2318,7 @@ function ReturnLabelSection({ ticket }: { ticket: HelpdeskTicketDetail }) {
       </div>
       <button
         type="button"
-        onClick={() => void onGenerateClick()}
+        onClick={onGenerateClick}
         disabled={generating}
         className="inline-flex h-8 w-full cursor-pointer items-center justify-center gap-1.5 rounded-md bg-brand px-2 text-xs font-semibold text-primary-foreground hover:bg-brand/90 disabled:cursor-not-allowed disabled:opacity-50"
       >
@@ -2349,6 +2361,14 @@ function ReturnLabelSection({ ticket }: { ticket: HelpdeskTicketDetail }) {
         >
           {banner ?? error}
         </p>
+      ) : null}
+
+      {optionsOpen ? (
+        <ReturnLabelOptionsModal
+          loading={generating}
+          onClose={() => setOptionsOpen(false)}
+          onConfirm={(selection) => void onConfirmOptions(selection)}
+        />
       ) : null}
     </section>
   );
