@@ -12,6 +12,8 @@ export const labelFormatterSourceStoreSchema = z.enum([
   "EBAY_TT",
   "BIGCOMMERCE",
   "SHOPIFY",
+  "NEWEGG",
+  "ETSY",
   "MANUAL",
 ]);
 export type LabelFormatterSourceStore = z.infer<typeof labelFormatterSourceStoreSchema>;
@@ -130,6 +132,10 @@ export function sourceStoreLabel(sourceStore: LabelFormatterSourceStore): string
       return "BigCommerce";
     case "SHOPIFY":
       return "Shopify";
+    case "NEWEGG":
+      return "Newegg";
+    case "ETSY":
+      return "Etsy";
     case "MANUAL":
       return "Manual";
   }

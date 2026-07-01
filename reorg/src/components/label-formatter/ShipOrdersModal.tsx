@@ -79,11 +79,20 @@ export function ShipOrdersModal({
   loading,
   onClose,
   onConfirm,
+  marketplacePushTracking,
 }: {
   rows: LabelFormatterRow[];
   loading: boolean;
   onClose: () => void;
-  onConfirm: (values: ShipOrdersFormValues) => void;
+  onConfirm: (
+    values: ShipOrdersFormValues,
+    options?: { pushMarketplaceTracking?: boolean },
+  ) => void;
+  marketplacePushTracking?: {
+    label: string;
+    defaultChecked?: boolean;
+    confirmHint?: string;
+  };
 }) {
   const [form, setForm] = useState<ShipOrdersFormValues>({
     serviceClass: "",
@@ -94,6 +103,9 @@ export function ShipOrdersModal({
   const [shippingOptions, setShippingOptions] = useState<LabelCrowShippingOptions | null>(null);
   const [optionsLoading, setOptionsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [pushMarketplaceTracking, setPushMarketplaceTracking] = useState(
+    marketplacePushTracking?.defaultChecked ?? false,
+  );
 
   useEffect(() => {
     setForm((current) => ({
@@ -188,7 +200,9 @@ export function ShipOrdersModal({
     } catch {
       // Non-blocking if storage is unavailable.
     }
-    onConfirm(form);
+    onConfirm(form, marketplacePushTracking
+      ? { pushMarketplaceTracking }
+      : undefined);
   }
 
   return (
@@ -362,6 +376,23 @@ export function ShipOrdersModal({
             <p className="rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-300">
               {error}
             </p>
+          ) : null}
+
+          {marketplacePushTracking ? (
+            <label className="flex cursor-pointer items-start gap-3 rounded-md border border-border px-4 py-3 text-sm">
+              <input
+                type="checkbox"
+                checked={pushMarketplaceTracking}
+                onChange={(event) => setPushMarketplaceTracking(event.target.checked)}
+                className="mt-0.5 cursor-pointer"
+              />
+              <span>
+                <span className="font-medium">{marketplacePushTracking.label}</span>
+                {marketplacePushTracking.confirmHint ? (
+                  <span className="mt-1 block text-white/50">{marketplacePushTracking.confirmHint}</span>
+                ) : null}
+              </span>
+            </label>
           ) : null}
 
           <div className="flex flex-wrap items-center justify-end gap-2 border-t border-border pt-4">

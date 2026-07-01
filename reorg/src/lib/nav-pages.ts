@@ -33,6 +33,7 @@ export type PageKey =
   | "sync"
   | "manage-orders"
   | "label-formatter"
+  | "newegg-etsy-orders"
   | "tracking-check"
   | "ship-orders"
   | "auto-responder"
@@ -154,6 +155,13 @@ export const NAV_PAGES: NavPage[] = [
     label: "Label Formatter",
     icon: "PackageCheck",
     description: "Look up eBay resend orders and export LabelCrow Excel plus 4x6 packing slips.",
+  },
+  {
+    key: "newegg-etsy-orders",
+    href: "/newegg-etsy-orders",
+    label: "Newegg & Etsy Orders",
+    icon: "PackageCheck",
+    description: "View Newegg and Etsy orders, create LabelCrow labels, and push tracking to marketplaces.",
   },
   {
     key: "tracking-check",
