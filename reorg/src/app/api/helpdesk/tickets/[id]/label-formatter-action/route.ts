@@ -28,6 +28,7 @@ interface RouteParams {
 const bodySchema = z.object({
   inr: z.boolean().default(false),
   postageIssue: z.boolean().default(false),
+  customNote: z.string().trim().max(250).optional().default(""),
 });
 
 const LABEL_FORMATTER_ACTION = "HELPDESK_ORDER_TO_LABEL_FORMATTER";
@@ -182,6 +183,11 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       { status: 400 },
     );
   }
+  const labelFormatterNote = resolveLabelFormatterActionNote({
+    inr: parsed.data.inr,
+    postageIssue: parsed.data.postageIssue,
+    customNote: parsed.data.customNote,
+  });
 
   const { id } = await params;
   const ticket = await db.helpdeskTicket.findUnique({
@@ -401,6 +407,8 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
           lineItem: line,
           inrNoteRequested: parsed.data.inr,
           postageIssueNoteRequested: parsed.data.postageIssue,
+          customNoteRequested: parsed.data.customNote || null,
+          labelFormatterNote,
           result,
         },
       },
@@ -409,10 +417,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
 
   const address = order.shippingAddress;
   const labelResult = await appendOrUpdateLabelFormatterWorkingRow(actor.userId, {
-    note: resolveLabelFormatterActionNote({
-      inr: parsed.data.inr,
-      postageIssue: parsed.data.postageIssue,
-    }),
+    note: labelFormatterNote,
     orderNumber: order.orderId || ticket.ebayOrderNumber,
     sourceStore,
     buyerName:
@@ -442,6 +447,8 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         totalLabelFormatterRows: labelResult.totalRows,
         inr: parsed.data.inr,
         postageIssue: parsed.data.postageIssue,
+        customNote: parsed.data.customNote || null,
+        labelFormatterNote,
         skuvaultDeducted: skuvault.length > 0,
         skuvaultAlreadyDeducted,
       },

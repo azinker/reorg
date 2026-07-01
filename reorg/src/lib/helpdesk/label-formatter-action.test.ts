@@ -10,9 +10,21 @@ test("resolveLabelFormatterActionNote maps checkboxes to Label Formatter note", 
   assert.equal(resolveLabelFormatterActionNote({ inr: true, postageIssue: false }), "INR CASE");
   assert.equal(resolveLabelFormatterActionNote({ inr: false, postageIssue: true }), "COUNTERFEIT");
   assert.equal(resolveLabelFormatterActionNote({ inr: true, postageIssue: true }), "COUNTERFEIT");
+  assert.equal(
+    resolveLabelFormatterActionNote({ inr: false, postageIssue: false, customNote: "Warranty reship" }),
+    "Warranty reship",
+  );
+  assert.equal(
+    resolveLabelFormatterActionNote({ inr: true, postageIssue: false, customNote: "Warranty reship" }),
+    "INR CASE",
+  );
 });
 
 test("labelFormatterActionNoteSuffix formats button suffix", () => {
   assert.equal(labelFormatterActionNoteSuffix({ inr: false, postageIssue: true }), " + COUNTERFEIT");
   assert.equal(labelFormatterActionNoteSuffix({ inr: true, postageIssue: false }), " + INR CASE");
+  assert.equal(
+    labelFormatterActionNoteSuffix({ inr: false, postageIssue: false, customNote: "Warranty reship" }),
+    " + Warranty reship",
+  );
 });

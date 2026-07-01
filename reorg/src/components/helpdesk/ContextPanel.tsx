@@ -1445,6 +1445,7 @@ function OrderInfoSection({
   const [open, setOpen] = useState(true);
   const [inrChecked, setInrChecked] = useState(false);
   const [postageIssueChecked, setPostageIssueChecked] = useState(false);
+  const [customLabelFormatterNote, setCustomLabelFormatterNote] = useState("");
   const [actionLoading, setActionLoading] = useState(false);
   const [actionBanner, setActionBanner] = useState<{
     type: "success" | "error";
@@ -1611,7 +1612,11 @@ function OrderInfoSection({
       const res = await fetch(`/api/helpdesk/tickets/${ticket.id}/label-formatter-action`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ inr: inrChecked, postageIssue: postageIssueChecked }),
+        body: JSON.stringify({
+          inr: inrChecked,
+          postageIssue: postageIssueChecked,
+          customNote: customLabelFormatterNote,
+        }),
       });
       const json = (await res.json().catch(() => ({}))) as LabelFormatterActionResponse;
       if (!res.ok || !json.data) {
@@ -1643,6 +1648,7 @@ function OrderInfoSection({
       const note = resolveLabelFormatterActionNote({
         inr: inrChecked,
         postageIssue: postageIssueChecked,
+        customNote: customLabelFormatterNote,
       });
       const notePart = note ? ` Added ${note} note.` : "";
       setActionBanner({
@@ -1662,8 +1668,11 @@ function OrderInfoSection({
   const labelFormatterNoteOptions = {
     inr: inrChecked,
     postageIssue: postageIssueChecked,
+    customNote: customLabelFormatterNote,
   };
   const labelFormatterNoteSuffix = labelFormatterActionNoteSuffix(labelFormatterNoteOptions);
+  const labelFormatterButtonNoteSuffix =
+    labelFormatterNoteSuffix.length > 32 ? " + Custom note" : labelFormatterNoteSuffix;
 
   return (
     <section className="border-b border-hairline bg-card/40">
@@ -1767,7 +1776,7 @@ function OrderInfoSection({
                     Label Formatter action
                   </p>
                   <p className="text-[11px] leading-snug text-muted-foreground">
-                    Adds this order to Label Formatter and deducts the order SKUs from SkuVault. Optional notes: INR CASE or COUNTERFEIT (Postage Issue).
+                    Adds this order to Label Formatter and deducts the order SKUs from SkuVault. Optional notes: INR CASE, COUNTERFEIT, or custom.
                   </p>
                 </div>
               </div>
@@ -1818,7 +1827,10 @@ function OrderInfoSection({
                 <input
                   type="checkbox"
                   checked={inrChecked}
-                  onChange={(event) => setInrChecked(event.target.checked)}
+                  onChange={(event) => {
+                    setInrChecked(event.target.checked);
+                    if (event.target.checked) setCustomLabelFormatterNote("");
+                  }}
                   disabled={actionLoading}
                 />
                 Add INR CASE note
@@ -1827,10 +1839,31 @@ function OrderInfoSection({
                 <input
                   type="checkbox"
                   checked={postageIssueChecked}
-                  onChange={(event) => setPostageIssueChecked(event.target.checked)}
+                  onChange={(event) => {
+                    setPostageIssueChecked(event.target.checked);
+                    if (event.target.checked) setCustomLabelFormatterNote("");
+                  }}
                   disabled={actionLoading}
                 />
                 Postage Issue note
+              </label>
+              <label className="mb-2 block text-xs text-foreground">
+                <span className="mb-1 block">Custom note</span>
+                <input
+                  value={customLabelFormatterNote}
+                  onChange={(event) => {
+                    const value = event.target.value;
+                    setCustomLabelFormatterNote(value);
+                    if (value.trim()) {
+                      setInrChecked(false);
+                      setPostageIssueChecked(false);
+                    }
+                  }}
+                  disabled={actionLoading}
+                  maxLength={250}
+                  placeholder="Enter note text"
+                  className="h-8 w-full rounded-md border border-emerald-500/25 bg-background/80 px-2 text-xs text-foreground outline-none placeholder:text-muted-foreground focus:border-emerald-400 disabled:cursor-not-allowed disabled:opacity-50"
+                />
               </label>
               <button
                 type="button"
@@ -1840,19 +1873,19 @@ function OrderInfoSection({
               >
                 {actionLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
                 {actionStatus?.labelFormatter.added && !actionStatus.labelFormatter.currentWorkingRow && !actionStatus.labelFormatter.exported
-                  ? labelFormatterNoteSuffix
-                    ? `Restore${labelFormatterNoteSuffix}`
+                  ? labelFormatterButtonNoteSuffix
+                    ? `Restore${labelFormatterButtonNoteSuffix}`
                     : "Restore to Label Formatter"
                   : actionStatus?.labelFormatter.added
-                  ? labelFormatterNoteSuffix
-                    ? `Already Added${labelFormatterNoteSuffix}`
+                  ? labelFormatterButtonNoteSuffix
+                    ? `Already Added${labelFormatterButtonNoteSuffix}`
                     : "Already Added To List"
                   : actionStatus?.skuvault.deducted
-                    ? labelFormatterNoteSuffix
-                      ? `Re-add${labelFormatterNoteSuffix}`
+                    ? labelFormatterButtonNoteSuffix
+                      ? `Re-add${labelFormatterButtonNoteSuffix}`
                       : "Re-add to Label Formatter"
-                    : labelFormatterNoteSuffix
-                      ? `Add + Deduct${labelFormatterNoteSuffix}`
+                    : labelFormatterButtonNoteSuffix
+                      ? `Add + Deduct${labelFormatterButtonNoteSuffix}`
                       : "Add + Deduct SkuVault"}
               </button>
               {actionBanner ? (
