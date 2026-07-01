@@ -77,6 +77,14 @@ function asArray<T>(value: unknown): T[] {
   return [value as T];
 }
 
+/** Newegg may return a list as a bare array or wrapped as { Item: [...] } / { OrderInfo: [...] }. */
+function unwrapNamedList(value: unknown, itemKey: string): unknown[] {
+  if (Array.isArray(value)) return value;
+  const record = asRecord(value);
+  if (!record) return [];
+  return asArray(record[itemKey]);
+}
+
 function stringField(record: Record<string, unknown>, key: string): string {
   const value = record[key];
   if (typeof value === "string") return value.trim();
@@ -146,10 +154,10 @@ function parseOrderInfo(value: unknown): NeweggOrder | null {
   const orderNumber = stringField(row, "OrderNumber");
   if (!orderNumber) return null;
 
-  const items = asArray<unknown>(asRecord(row.ItemInfoList)?.Item)
+  const items = unwrapNamedList(row.ItemInfoList, "Item")
     .map(parseItemInfo)
     .filter(Boolean) as NeweggItemInfo[];
-  const packages = asArray<unknown>(asRecord(row.PackageInfoList)?.Package).map(parsePackageInfo);
+  const packages = unwrapNamedList(row.PackageInfoList, "Package").map(parsePackageInfo);
   const trackingNumbers = packages
     .map((pkg) => pkg.trackingNumber)
     .filter((tracking): tracking is string => Boolean(tracking));
@@ -238,7 +246,7 @@ export async function fetchNeweggOrdersPage(args: {
   }
 
   const pageInfo = parsed.ResponseBody?.PageInfo ?? {};
-  const orders = asArray<unknown>(parsed.ResponseBody?.OrderInfoList?.OrderInfo)
+  const orders = unwrapNamedList(parsed.ResponseBody?.OrderInfoList, "OrderInfo")
     .map(parseOrderInfo)
     .filter(Boolean) as NeweggOrder[];
 
