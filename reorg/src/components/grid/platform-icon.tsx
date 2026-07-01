@@ -8,6 +8,7 @@ const LOGO_SRC: Record<Platform, string> = {
   BIGCOMMERCE: "/logos/bigcommerce.svg",
   SHOPIFY: "/logos/shopify.svg",
   AMAZON: "/logos/amazon.svg",
+  WALMART: "/logos/walmart.svg",
 };
 
 const LOGO_ALT: Record<Platform, string> = {
@@ -16,6 +17,7 @@ const LOGO_ALT: Record<Platform, string> = {
   BIGCOMMERCE: "BigCommerce",
   SHOPIFY: "Shopify",
   AMAZON: "Amazon",
+  WALMART: "Walmart",
 };
 
 interface PlatformIconProps {
@@ -44,6 +46,7 @@ export function PlatformLabel({ platform }: { platform: Platform }) {
     BIGCOMMERCE: "BigCommerce",
     SHOPIFY: "Shopify",
     AMAZON: "Amazon",
+    WALMART: "Walmart",
   };
 
   return (

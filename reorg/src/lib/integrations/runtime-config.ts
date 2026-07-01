@@ -138,6 +138,19 @@ const DEFAULT_SYNC_PROFILES: Record<Platform, SyncProfile> = {
     incrementalStrategy: "full_only",
     skipUpcHydration: true,
   },
+  // Walmart is Ship Orders-only for now; catalog sync can be added later.
+  WALMART: {
+    autoSyncEnabled: false,
+    timezone: DEFAULT_TIMEZONE,
+    dayStartHour: 7,
+    dayEndHour: 21,
+    dayIntervalMinutes: 0,
+    overnightIntervalMinutes: 0,
+    preferredMode: "full",
+    fullReconcileIntervalHours: 0,
+    incrementalStrategy: "full_only",
+    skipUpcHydration: true,
+  },
 };
 
 const EMPTY_SYNC_STATE: SyncState = {

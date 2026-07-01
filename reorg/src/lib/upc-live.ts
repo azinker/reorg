@@ -37,6 +37,7 @@ const PLATFORM_SHORT: Record<Platform, string> = {
   BIGCOMMERCE: "BC",
   SHOPIFY: "SHPFY",
   AMAZON: "AMZ",
+  WALMART: "WMT",
 };
 
 function asRecord(value: unknown): Record<string, unknown> | null {

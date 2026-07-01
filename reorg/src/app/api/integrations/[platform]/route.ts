@@ -6,7 +6,7 @@ import { db } from "@/lib/db";
 import type { Platform } from "@prisma/client";
 import { mergeIntegrationConfig } from "@/lib/integrations/runtime-config";
 
-const PLATFORMS: Platform[] = ["TPP_EBAY", "TT_EBAY", "BIGCOMMERCE", "SHOPIFY"];
+const PLATFORMS: Platform[] = ["TPP_EBAY", "TT_EBAY", "BIGCOMMERCE", "SHOPIFY", "WALMART"];
 const syncProfileSchema = z
   .object({
     autoSyncEnabled: z.boolean().optional(),

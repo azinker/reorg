@@ -11,7 +11,7 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
 const VALID_PLATFORMS = new Set<string>([
-  "TPP_EBAY", "TT_EBAY", "BIGCOMMERCE", "SHOPIFY", "AMAZON",
+  "TPP_EBAY", "TT_EBAY", "BIGCOMMERCE", "SHOPIFY", "AMAZON", "WALMART",
 ]);
 
 const bcProductSchema = z.object({

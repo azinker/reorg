@@ -44,6 +44,7 @@ const PLATFORM_META: Record<Platform, { label: string; color: string }> = {
   BIGCOMMERCE: { label: "BigCommerce", color: "bg-blue-500/20 text-blue-300 border-blue-500/30" },
   SHOPIFY: { label: "Shopify", color: "bg-green-500/20 text-green-300 border-green-500/30" },
   AMAZON: { label: "Amazon", color: "bg-amber-500/20 text-amber-300 border-amber-500/30" },
+  WALMART: { label: "Walmart", color: "bg-sky-500/20 text-sky-300 border-sky-500/30" },
 };
 
 function PlatformBadge({ platform }: { platform: Platform }) {
@@ -711,7 +712,7 @@ function VerificationInfo({ result }: { result: ShipResult }) {
       <div className="space-y-0.5">
         <div className="flex items-center gap-1.5">
           <span className="font-mono text-xs text-emerald-300">{verifiedTrackingNumber ?? trackingNumber}</span>
-          <span className="text-xs text-emerald-400/70">confirmed on eBay</span>
+          <span className="text-xs text-emerald-400/70">confirmed on marketplace</span>
         </div>
         {appendNote}
       </div>
@@ -727,7 +728,7 @@ function VerificationInfo({ result }: { result: ShipResult }) {
           <span className="font-mono text-xs text-white/60">{trackingNumber}</span>
         </div>
         <div className="flex items-center gap-1.5">
-          <span className="text-xs text-amber-400/80">On eBay:</span>
+          <span className="text-xs text-amber-400/80">On marketplace:</span>
           <span className="font-mono text-xs text-amber-300">{verifiedTrackingNumber}</span>
         </div>
         {appendNote}

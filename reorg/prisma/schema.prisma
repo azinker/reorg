@@ -21,6 +21,7 @@ enum Platform {
   BIGCOMMERCE
   SHOPIFY
   AMAZON
+  WALMART
 }
 
 enum SyncStatus {

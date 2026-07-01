@@ -23,6 +23,7 @@ const LISTING_URL_TEMPLATES: Record<Platform, (id: string) => string> = {
   },
   SHOPIFY: (id) => `https://admin.shopify.com/store/fd7279/products/${id.replace(/^SH-/, "")}`,
   AMAZON: (id) => `https://sellercentral.amazon.com/orders-v3/order/${id}`,
+  WALMART: () => "#",
 };
 
 const PLATFORM_TEXT_COLORS: Record<Platform, string> = {
@@ -31,6 +32,7 @@ const PLATFORM_TEXT_COLORS: Record<Platform, string> = {
   BIGCOMMERCE: "text-orange-900 dark:text-orange-400",
   SHOPIFY: "text-lime-900 dark:text-lime-400",
   AMAZON: "text-amber-900 dark:text-amber-400",
+  WALMART: "text-sky-900 dark:text-sky-400",
 };
 
 function buildListingUrl(platform: Platform, listingId: string, explicitUrl?: string): string {

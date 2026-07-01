@@ -43,6 +43,11 @@ function getEnvConfig(platform: Platform) {
     case "AMAZON":
       // Amazon is Ship Orders only — no catalog sync adapter
       return {};
+    case "WALMART":
+      return {
+        clientId: process.env.WALMART_CLIENT_ID,
+        clientSecret: process.env.WALMART_CLIENT_SECRET,
+      };
   }
 }
 
@@ -70,6 +75,11 @@ export function hasConnectedCredentials(
       );
     case "AMAZON":
       return !!getString(rawConfig.refreshToken);
+    case "WALMART":
+      return !!(
+        (getString(rawConfig.clientId) ?? getString((envConfig as Record<string, unknown>).clientId)) &&
+        (getString(rawConfig.clientSecret) ?? getString((envConfig as Record<string, unknown>).clientSecret))
+      );
   }
 }
 
@@ -129,5 +139,7 @@ export function buildAdapter(
     }
     case "AMAZON":
       throw new Error("Amazon does not have a catalog sync adapter. Use Ship Orders instead.");
+    case "WALMART":
+      throw new Error("Walmart does not have a catalog sync adapter yet. Use Ship Orders instead.");
   }
 }

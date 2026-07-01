@@ -13,7 +13,7 @@
  */
 
 import { XMLParser } from "fast-xml-parser";
-import { createHash, createHmac } from "crypto";
+import { createHash, createHmac, randomUUID } from "crypto";
 import { db } from "@/lib/db";
 import { checkWriteSafety } from "@/lib/safety";
 import { recordNetworkTransferSample } from "@/lib/services/network-transfer-samples";
@@ -46,6 +46,8 @@ const SHOPIFY_MAX_RETRIES = 5;
 const AMAZON_MAX_RETRIES = 8;
 /** Amazon identify concurrency — kept low to respect 0.5 req/sec rate limit. */
 const AMAZON_CONCURRENCY = 1;
+const WALMART_CONCURRENCY = 2;
+const WALMART_TIMEOUT_MS = 120_000;
 
 const parser = new XMLParser({
   ignoreAttributes: true,
@@ -133,9 +135,10 @@ interface AmazonConfig {
 async function fetchWithTimeout(
   url: string,
   options: RequestInit = {},
+  timeoutMs = REQUEST_TIMEOUT_MS,
 ): Promise<{ ok: boolean; status: number; body: string }> {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const response = await fetch(url, { ...options, signal: controller.signal });
     const body = await response.text();
@@ -604,6 +607,415 @@ async function shipAmazon(
 
 // ─── Parsing ──────────────────────────────────────────────────────────────────
 
+// ─── Walmart Marketplace ──────────────────────────────────────────────────────
+
+const WALMART_DEFAULT_BASE_URL = "https://marketplace.walmartapis.com";
+export const WALMART_ORDER_REGEX = /^\d{12,20}$/;
+
+type WalmartJsonObject = Record<string, unknown>;
+
+type WalmartClient = {
+  request: (
+    pathname: string,
+    options?: RequestInit,
+  ) => Promise<{ ok: boolean; status: number; body: unknown; text: string }>;
+};
+
+type WalmartConfig = {
+  clientId: string;
+  clientSecret: string;
+  baseUrl: string;
+  tokenUrl: string;
+  serviceName: string;
+  market: string;
+  consumerChannelType?: string;
+};
+
+type WalmartIdentifyResult = {
+  found: boolean;
+  orderId?: string;
+  error?: string;
+};
+
+type WalmartShipResult = {
+  verifiedTrackingNumber: string | null;
+  verificationStatus: "verified" | "mismatch" | "unverified";
+};
+
+const walmartTokenCache = new Map<string, { token: string; expiresAt: number }>();
+
+function asWalmartRecord(value: unknown): WalmartJsonObject | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as WalmartJsonObject)
+    : null;
+}
+
+function walmartString(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function walmartArray(value: unknown): WalmartJsonObject[] {
+  if (!value) return [];
+  const values = Array.isArray(value) ? value : [value];
+  return values.flatMap((entry) => {
+    const record = asWalmartRecord(entry);
+    return record ? [record] : [];
+  });
+}
+
+function walmartQuantity(value: unknown): number {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : 0;
+}
+
+function formatWalmartQuantity(value: number): string {
+  return Number.isInteger(value) ? String(value) : String(value);
+}
+
+function normalizeTrackingNumber(value: string | null | undefined): string {
+  return value?.trim().replace(/\s+/g, "").toUpperCase() ?? "";
+}
+
+function parseWalmartJson(text: string): unknown {
+  if (!text.trim()) return {};
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    return text;
+  }
+}
+
+function formatWalmartError(body: unknown, text: string): string {
+  if (body && typeof body === "object") {
+    const record = body as WalmartJsonObject;
+    const detail = record.errors ?? record.error ?? record;
+    return JSON.stringify(detail).slice(0, 1000);
+  }
+  return String(text || "").slice(0, 1000);
+}
+
+function getWalmartConfig(): WalmartConfig {
+  const clientId = process.env.WALMART_CLIENT_ID?.trim();
+  const clientSecret = process.env.WALMART_CLIENT_SECRET?.trim();
+  if (!clientId || !clientSecret) {
+    throw new Error("Walmart credentials not configured (WALMART_CLIENT_ID / WALMART_CLIENT_SECRET)");
+  }
+
+  const baseUrl = (process.env.WALMART_API_BASE_URL?.trim() || WALMART_DEFAULT_BASE_URL).replace(/\/+$/, "");
+  return {
+    clientId,
+    clientSecret,
+    baseUrl,
+    tokenUrl: process.env.WALMART_TOKEN_URL?.trim() || `${baseUrl}/v3/token`,
+    serviceName: process.env.WALMART_SERVICE_NAME?.trim() || "Walmart Marketplace",
+    market: process.env.WALMART_MARKETPLACE?.trim() || "US",
+    consumerChannelType: process.env.WALMART_CONSUMER_CHANNEL_TYPE?.trim() || undefined,
+  };
+}
+
+async function getWalmartAccessToken(config: WalmartConfig): Promise<string> {
+  const cached = walmartTokenCache.get(config.clientId);
+  if (cached && cached.expiresAt > Date.now() + 60_000) return cached.token;
+
+  const basic = Buffer.from(`${config.clientId}:${config.clientSecret}`, "ascii").toString("base64");
+  const res = await fetchWithTimeout(
+    config.tokenUrl,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Basic ${basic}`,
+        Accept: "application/json",
+        "Content-Type": "application/x-www-form-urlencoded",
+        "WM_SVC.NAME": config.serviceName,
+        "WM_QOS.CORRELATION_ID": randomUUID(),
+      },
+      body: "grant_type=client_credentials",
+    },
+    WALMART_TIMEOUT_MS,
+  );
+
+  if (!res.ok) {
+    throw new Error(`Walmart token failed (${res.status}): ${res.body.slice(0, 500)}`);
+  }
+
+  const parsed = JSON.parse(res.body) as { access_token?: string; expires_in?: number };
+  if (!parsed.access_token) throw new Error("Walmart token response missing access_token.");
+
+  walmartTokenCache.set(config.clientId, {
+    token: parsed.access_token,
+    expiresAt: Date.now() + (parsed.expires_in ?? 900) * 1000,
+  });
+  return parsed.access_token;
+}
+
+async function createWalmartClient(): Promise<WalmartClient> {
+  const config = getWalmartConfig();
+  const token = await getWalmartAccessToken(config);
+
+  return {
+    async request(pathname: string, requestOptions: RequestInit = {}) {
+      const res = await fetchWithTimeout(
+        `${config.baseUrl}${pathname}`,
+        {
+          ...requestOptions,
+          headers: {
+            "WM_SEC.ACCESS_TOKEN": token,
+            "WM_QOS.CORRELATION_ID": randomUUID(),
+            "WM_SVC.NAME": config.serviceName,
+            "WM_MARKET": config.market,
+            Accept: "application/json",
+            ...(config.consumerChannelType
+              ? { "WM_CONSUMER.CHANNEL.TYPE": config.consumerChannelType }
+              : {}),
+            ...(requestOptions.headers ?? {}),
+          },
+        },
+        WALMART_TIMEOUT_MS,
+      );
+      return {
+        ok: res.ok,
+        status: res.status,
+        body: parseWalmartJson(res.body),
+        text: res.body,
+      };
+    },
+  };
+}
+
+function walmartOrderFromBody(body: unknown): WalmartJsonObject | null {
+  const root = asWalmartRecord(body);
+  if (!root) return null;
+  return asWalmartRecord(root.order) ?? root;
+}
+
+function getWalmartOrderLines(order: WalmartJsonObject): WalmartJsonObject[] {
+  const orderLines = asWalmartRecord(order.orderLines);
+  return walmartArray(orderLines?.orderLine);
+}
+
+function getWalmartLineStatuses(line: WalmartJsonObject): WalmartJsonObject[] {
+  const statuses = asWalmartRecord(line.orderLineStatuses);
+  return walmartArray(statuses?.orderLineStatus);
+}
+
+function getWalmartStatusQuantity(line: WalmartJsonObject, names: string[]): number {
+  const wanted = new Set(names.map((name) => name.toLowerCase()));
+  return getWalmartLineStatuses(line)
+    .filter((status) => wanted.has(String(status.status ?? "").trim().toLowerCase()))
+    .reduce((sum, status) => {
+      const statusQuantity = asWalmartRecord(status.statusQuantity);
+      return sum + walmartQuantity(statusQuantity?.amount);
+    }, 0);
+}
+
+function getWalmartRemainingQuantity(line: WalmartJsonObject): number {
+  const orderLineQuantity = asWalmartRecord(line.orderLineQuantity);
+  const total = walmartQuantity(orderLineQuantity?.amount);
+  const shipped = getWalmartStatusQuantity(line, ["Shipped", "Delivered"]);
+  const canceled = getWalmartStatusQuantity(line, ["Canceled", "Cancelled"]);
+  if (total > 0) return Math.max(0, total - shipped - canceled);
+
+  const acknowledged = getWalmartStatusQuantity(line, ["Acknowledged"]);
+  const created = getWalmartStatusQuantity(line, ["Created"]);
+  return Math.max(0, acknowledged + created);
+}
+
+function walmartLineHasCreatedStatus(line: WalmartJsonObject): boolean {
+  return getWalmartStatusQuantity(line, ["Created"]) > 0;
+}
+
+function walmartNeedsAcknowledge(order: WalmartJsonObject): boolean {
+  return getWalmartOrderLines(order).some(
+    (line) => getWalmartRemainingQuantity(line) > 0 && walmartLineHasCreatedStatus(line),
+  );
+}
+
+function getWalmartMethodCode(order: WalmartJsonObject, line: WalmartJsonObject): string {
+  const shippingInfo = asWalmartRecord(order.shippingInfo);
+  const fulfillment = asWalmartRecord(line.fulfillment);
+  const firstStatus = getWalmartLineStatuses(line)[0];
+  const trackingInfo = firstStatus ? asWalmartRecord(firstStatus.trackingInfo) : null;
+
+  return (
+    walmartString(shippingInfo?.methodCode) ??
+    walmartString(fulfillment?.shipMethod) ??
+    walmartString(trackingInfo?.methodCode) ??
+    "Standard"
+  );
+}
+
+function walmartTrackingUrl(trackingNumber: string): string {
+  return `https://tools.usps.com/go/TrackConfirmAction?tLabels=${encodeURIComponent(trackingNumber)}`;
+}
+
+function buildWalmartShipmentPayload(
+  order: WalmartJsonObject,
+  trackingNumber: string,
+): { payload: WalmartJsonObject; lineCount: number } {
+  const orderLine = getWalmartOrderLines(order)
+    .map((line) => ({ line, quantity: getWalmartRemainingQuantity(line) }))
+    .filter(({ quantity }) => quantity > 0)
+    .map(({ line, quantity }) => {
+      const orderLineQuantity = asWalmartRecord(line.orderLineQuantity);
+      return {
+        lineNumber: String(line.lineNumber ?? ""),
+        orderLineStatuses: {
+          orderLineStatus: [
+            {
+              status: "Shipped",
+              statusQuantity: {
+                unitOfMeasurement: walmartString(orderLineQuantity?.unitOfMeasurement) ?? "EACH",
+                amount: formatWalmartQuantity(quantity),
+              },
+              trackingInfo: {
+                shipDateTime: Date.now(),
+                carrierName: { carrier: CARRIER },
+                methodCode: getWalmartMethodCode(order, line),
+                trackingNumber,
+                trackingURL: walmartTrackingUrl(trackingNumber),
+              },
+            },
+          ],
+        },
+      };
+    });
+
+  return {
+    payload: {
+      orderShipment: {
+        orderLines: {
+          orderLine,
+        },
+      },
+    },
+    lineCount: orderLine.length,
+  };
+}
+
+function validateWalmartOrderForShipping(order: WalmartJsonObject, purchaseOrderId: string): string | null {
+  const shipNode = asWalmartRecord(order.shipNode);
+  const shipNodeType = walmartString(shipNode?.type);
+  if (shipNodeType && shipNodeType !== "SellerFulfilled") {
+    return `Walmart order ${purchaseOrderId} shipNode type is ${shipNodeType}, not SellerFulfilled.`;
+  }
+
+  if (walmartNeedsAcknowledge(order)) {
+    return "Walmart order has Created line quantity; acknowledge it in Walmart before shipping.";
+  }
+
+  return null;
+}
+
+function findWalmartTracking(order: WalmartJsonObject, submittedTrackingNumber: string): string | null {
+  const submitted = normalizeTrackingNumber(submittedTrackingNumber);
+  let firstTracking: string | null = null;
+
+  for (const line of getWalmartOrderLines(order)) {
+    for (const status of getWalmartLineStatuses(line)) {
+      const trackingInfo = asWalmartRecord(status.trackingInfo);
+      const tracking = walmartString(trackingInfo?.trackingNumber);
+      if (!tracking) continue;
+      firstTracking ??= tracking;
+      if (normalizeTrackingNumber(tracking) === submitted) return tracking;
+    }
+  }
+
+  return firstTracking;
+}
+
+async function ensureWalmartIntegrationRow() {
+  return db.integration.upsert({
+    where: { platform: "WALMART" },
+    update: {},
+    create: {
+      platform: "WALMART",
+      label: "Walmart",
+      enabled: true,
+      writeLocked: false,
+      config: { credentialSource: "env", shipOrders: true },
+    },
+    select: { id: true, platform: true, config: true },
+  });
+}
+
+async function identifyWalmartOrder(
+  client: WalmartClient,
+  purchaseOrderId: string,
+): Promise<WalmartIdentifyResult> {
+  const res = await client.request(`/v3/orders/${encodeURIComponent(purchaseOrderId)}`);
+  if (!res.ok) {
+    if (res.status === 404) return { found: false };
+    return {
+      found: false,
+      error: `Walmart getOrder failed (${res.status}): ${formatWalmartError(res.body, res.text)}`,
+    };
+  }
+
+  const order = walmartOrderFromBody(res.body);
+  if (!order) {
+    return { found: false, error: "Walmart getOrder returned an unexpected response." };
+  }
+
+  const error = validateWalmartOrderForShipping(order, purchaseOrderId);
+  if (error) return { found: false, error };
+
+  const { lineCount } = buildWalmartShipmentPayload(order, "TRACKING-CHECK");
+  if (lineCount === 0) {
+    return { found: false, error: "No remaining Walmart quantity to ship." };
+  }
+
+  return {
+    found: true,
+    orderId: walmartString(order.purchaseOrderId) ?? purchaseOrderId,
+  };
+}
+
+async function shipWalmart(
+  client: WalmartClient,
+  purchaseOrderId: string,
+  trackingNumber: string,
+): Promise<WalmartShipResult> {
+  const getBefore = await client.request(`/v3/orders/${encodeURIComponent(purchaseOrderId)}`);
+  if (!getBefore.ok) {
+    throw new Error(`Walmart getOrder failed (${getBefore.status}): ${formatWalmartError(getBefore.body, getBefore.text)}`);
+  }
+
+  const order = walmartOrderFromBody(getBefore.body);
+  if (!order) throw new Error("Walmart getOrder returned an unexpected response.");
+
+  const validationError = validateWalmartOrderForShipping(order, purchaseOrderId);
+  if (validationError) throw new Error(validationError);
+
+  const { payload, lineCount } = buildWalmartShipmentPayload(order, trackingNumber);
+  if (lineCount === 0) throw new Error("No remaining Walmart quantity to ship.");
+
+  const ship = await client.request(`/v3/orders/${encodeURIComponent(purchaseOrderId)}/shipping`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+
+  if (!ship.ok) {
+    throw new Error(`Walmart shipment failed (${ship.status}): ${formatWalmartError(ship.body, ship.text)}`);
+  }
+
+  const verify = await client.request(`/v3/orders/${encodeURIComponent(purchaseOrderId)}`);
+  if (!verify.ok) {
+    return { verifiedTrackingNumber: null, verificationStatus: "unverified" };
+  }
+
+  const verifiedOrder = walmartOrderFromBody(verify.body);
+  const verifiedTrackingNumber = verifiedOrder ? findWalmartTracking(verifiedOrder, trackingNumber) : null;
+  const verificationStatus =
+    verifiedTrackingNumber && normalizeTrackingNumber(verifiedTrackingNumber) === normalizeTrackingNumber(trackingNumber)
+      ? "verified"
+      : verifiedTrackingNumber
+        ? "mismatch"
+        : "unverified";
+
+  return { verifiedTrackingNumber, verificationStatus };
+}
+
 /** eBay order numbers look like: `01-14458-12363` */
 export const EBAY_ORDER_REGEX = /^\d{2}-\d{5}-\d{5}$/;
 
@@ -845,8 +1257,10 @@ export async function identifyOrders(
 ): Promise<IdentifyResult[]> {
   if (lines.length === 0) return [];
 
+  await ensureWalmartIntegrationRow();
+
   const integrations = await db.integration.findMany({
-    where: { platform: { in: ["TPP_EBAY", "TT_EBAY", "BIGCOMMERCE", "SHOPIFY", "AMAZON"] }, enabled: true },
+    where: { platform: { in: ["TPP_EBAY", "TT_EBAY", "BIGCOMMERCE", "SHOPIFY", "AMAZON", "WALMART"] }, enabled: true },
     select: { id: true, platform: true, config: true },
   });
   const byPlatform = new Map(integrations.map((i) => [i.platform, i]));
@@ -856,6 +1270,7 @@ export async function identifyOrders(
   const bcRow = byPlatform.get("BIGCOMMERCE");
   const shopifyRow = byPlatform.get("SHOPIFY");
   const amazonRow = byPlatform.get("AMAZON");
+  const walmartRow = byPlatform.get("WALMART");
 
   const tpp = tppRow ? { id: tppRow.id, config: buildEbayConfig(tppRow.config as Record<string, unknown>) } : null;
   const tt = ttRow ? { id: ttRow.id, config: buildEbayConfig(ttRow.config as Record<string, unknown>) } : null;
@@ -936,11 +1351,23 @@ export async function identifyOrders(
 
   // Identify numeric (BC / Shopify) — Shopify rate limit applies here too,
   // so cap to SHOPIFY_CONCURRENCY even though BC is faster.
+  const walmartCandidateLines = numericLines.filter((line) => WALMART_ORDER_REGEX.test(line.orderNumber));
+  let walmartClient: WalmartClient | null = null;
+  let walmartClientError: string | null = null;
+  if (walmartRow && walmartCandidateLines.length > 0) {
+    try {
+      walmartClient = await createWalmartClient();
+    } catch (err) {
+      walmartClientError = err instanceof Error ? err.message : "Unknown Walmart configuration error";
+    }
+  }
+
   const numericResultMap = new Map<string, IdentifyResult>();
-  await runConcurrently(numericLines, SHOPIFY_CONCURRENCY, async (line) => {
+  await runConcurrently(numericLines, Math.min(SHOPIFY_CONCURRENCY, WALMART_CONCURRENCY), async (line) => {
     const { orderNumber, trackingNumber } = line;
     try {
-      const [bcResult, shopifyResult] = await Promise.all([
+      const shouldCheckWalmart = !!walmartRow && WALMART_ORDER_REGEX.test(orderNumber);
+      const [bcResult, shopifyResult, walmartResult] = await Promise.all([
         bcRow
           ? queryBcOrder(
               (bcRow.config as Record<string, unknown>).storeHash as string,
@@ -956,6 +1383,12 @@ export async function identifyOrders(
               orderNumber,
             )
           : Promise.resolve({ found: false, platformOrderId: null }),
+        shouldCheckWalmart && walmartClient
+          ? identifyWalmartOrder(walmartClient, orderNumber)
+          : Promise.resolve({
+              found: false,
+              error: shouldCheckWalmart ? walmartClientError ?? undefined : undefined,
+            } satisfies WalmartIdentifyResult),
       ]);
 
       const matches: IdentifiedOrder[] = [];
@@ -981,15 +1414,33 @@ export async function identifyOrders(
           status: "found",
         });
       }
+      if (walmartResult.found && walmartRow && walmartResult.orderId) {
+        matches.push({
+          orderNumber,
+          trackingNumber,
+          platform: "WALMART",
+          integrationId: walmartRow.id,
+          platformOrderId: walmartResult.orderId,
+          status: "found",
+        });
+      }
 
       if (matches.length === 1) {
         numericResultMap.set(orderNumber, matches[0]!);
       } else if (matches.length > 1) {
+        const stores = matches.map((match) => match.platform).join(", ");
         numericResultMap.set(orderNumber, {
           orderNumber,
           trackingNumber,
           status: "ambiguous",
-          error: "Order found on both BigCommerce and Shopify.",
+          error: `Order found on multiple stores: ${stores}.`,
+        });
+      } else if (walmartResult.error) {
+        numericResultMap.set(orderNumber, {
+          orderNumber,
+          trackingNumber,
+          status: "error",
+          error: walmartResult.error,
         });
       } else {
         numericResultMap.set(orderNumber, { orderNumber, trackingNumber, status: "not_found" });
@@ -1606,6 +2057,7 @@ export async function executeShipments(
 
   const results: ShipResult[] = Array(orders.length).fill(null);
   const successfulEbayOrders: Array<{ orderNumber: string; trackingNumber: string; integrationId: string; platformOrderId: string; index: number }> = [];
+  let walmartClientPromise: Promise<WalmartClient> | null = null;
 
   // Phase 1: Execute all shipments concurrently.
   // Shopify has a strict 2 calls/second rate limit so Shopify + Amazon orders run at
@@ -1619,6 +2071,7 @@ export async function executeShipments(
     ({ order }) =>
       order.platform !== "SHOPIFY" &&
       order.platform !== "AMAZON" &&
+      order.platform !== "WALMART" &&
       !(order.platform === "BIGCOMMERCE" && options?.replaceExistingTracking),
   );
   const shopifyOrders = orders.map((o, i) => ({ order: o, index: i })).filter(
@@ -1626,6 +2079,9 @@ export async function executeShipments(
   );
   const amazonOrders = orders.map((o, i) => ({ order: o, index: i })).filter(
     ({ order }) => order.platform === "AMAZON",
+  );
+  const walmartOrders = orders.map((o, i) => ({ order: o, index: i })).filter(
+    ({ order }) => order.platform === "WALMART",
   );
 
   const executeOne = async ({ order, index }: { order: IdentifiedOrder; index: number }) => {
@@ -1753,6 +2209,21 @@ export async function executeShipments(
             options?.amazonShippingMethod,
           );
           results[index] = { orderNumber: order.orderNumber, trackingNumber: order.trackingNumber, platform: order.platform, success: true, verificationStatus: "unverified" };
+        } else if (order.platform === "WALMART") {
+          walmartClientPromise ??= createWalmartClient();
+          const walmartResult = await shipWalmart(
+            await walmartClientPromise,
+            order.platformOrderId,
+            order.trackingNumber,
+          );
+          results[index] = {
+            orderNumber: order.orderNumber,
+            trackingNumber: order.trackingNumber,
+            platform: order.platform,
+            success: true,
+            verifiedTrackingNumber: walmartResult.verifiedTrackingNumber,
+            verificationStatus: walmartResult.verificationStatus,
+          };
         }
 
         // Record outbound push in Public Network Transfer
@@ -1825,6 +2296,8 @@ export async function executeShipments(
   await runConcurrently(shopifyOrders, SHOPIFY_CONCURRENCY, executeOne);
   // Amazon: 1 at a time with built-in 429 retry to respect 0.5 req/sec limit
   await runConcurrently(amazonOrders, AMAZON_CONCURRENCY, executeOne);
+  // Walmart: low concurrency; each order does GET + POST + verification GET.
+  await runConcurrently(walmartOrders, WALMART_CONCURRENCY, executeOne);
 
   // Phase 2: Verify eBay tracking in batches
   if (successfulEbayOrders.length > 0) {

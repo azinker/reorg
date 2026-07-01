@@ -44,6 +44,7 @@ const PLATFORM_LABELS: Record<Platform, string> = {
   SHOPIFY: "Shopify",
   BIGCOMMERCE: "BigCommerce",
   AMAZON: "Amazon",
+  WALMART: "Walmart",
 };
 
 export async function runInventoryForecast(input: {

@@ -218,6 +218,8 @@ function getEnvConfig(platform: Platform) {
       };
     case "AMAZON":
       return {};
+    case "WALMART":
+      return {};
   }
 }
 
@@ -254,6 +256,8 @@ function resolveIntegrationConfig(integration: RevenueIntegration): IntegrationC
     }
     case "AMAZON":
       throw new Error("Amazon does not support revenue sync in v1.");
+    case "WALMART":
+      throw new Error("Walmart does not support revenue sync yet.");
     case "BIGCOMMERCE": {
       const storeHash =
         getString(rawConfig.storeHash) ?? getString(envConfig.storeHash);
