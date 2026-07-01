@@ -31,6 +31,7 @@ import {
   type ShipOrdersFormValues,
 } from "@/components/label-formatter/ShipOrdersModal";
 import { ShipValidationModal } from "@/components/label-formatter/ShipValidationModal";
+import { AddTrackingsModal } from "@/components/label-formatter/AddTrackingsModal";
 import { MessageBuyersModal } from "@/components/label-formatter/MessageBuyersModal";
 import {
   formatLabelFormatterInvalidRowsMessage,
@@ -288,6 +289,7 @@ export function LabelFormatterClient() {
   const [historyTab, setHistoryTab] = useState<HistoryTab>("exported");
   const [selectedReshipIds, setSelectedReshipIds] = useState<Set<string>>(new Set());
   const [messageBuyersOpen, setMessageBuyersOpen] = useState(false);
+  const [addTrackingsOpen, setAddTrackingsOpen] = useState(false);
   const [shipModalOpen, setShipModalOpen] = useState(false);
   const [shipLoading, setShipLoading] = useState(false);
   const [shipValidationIssues, setShipValidationIssues] = useState<LabelFormatterRowValidationIssue[] | null>(null);
@@ -1085,6 +1087,14 @@ export function LabelFormatterClient() {
                     <MessageSquare className="h-3.5 w-3.5" />
                     Message Buyer{selectedReshipRows.length === 1 ? "" : "s"}
                   </button>
+                  <button
+                    type="button"
+                    onClick={() => setAddTrackingsOpen(true)}
+                    className="inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-md border border-border px-2.5 text-xs font-semibold hover:bg-accent"
+                  >
+                    <Truck className="h-3.5 w-3.5" />
+                    Add Trackings to Orders
+                  </button>
                 </>
               ) : null}
               <div className="inline-flex rounded-md border border-border p-0.5">
@@ -1279,6 +1289,21 @@ export function LabelFormatterClient() {
             status: row.status,
           }))}
           onClose={() => setMessageBuyersOpen(false)}
+        />
+      ) : null}
+
+      {addTrackingsOpen ? (
+        <AddTrackingsModal
+          rows={selectedReshipRows.map((row) => ({
+            id: row.id,
+            orderNumber: row.orderNumber,
+            sourceStore: row.sourceStore,
+            sourceStoreLabel: row.sourceStoreLabel,
+            buyerName: row.buyerName,
+            trackingNumber: row.trackingNumber,
+            status: row.status,
+          }))}
+          onClose={() => setAddTrackingsOpen(false)}
         />
       ) : null}
     </div>
