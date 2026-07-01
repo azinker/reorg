@@ -29,6 +29,7 @@ const bodySchema = z.object({
   inr: z.boolean().default(false),
   postageIssue: z.boolean().default(false),
   customNote: z.string().trim().max(250).optional().default(""),
+  deductSkuVault: z.boolean().default(true),
 });
 
 const LABEL_FORMATTER_ACTION = "HELPDESK_ORDER_TO_LABEL_FORMATTER";
@@ -166,21 +167,22 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       { status: 403 },
     );
   }
-  if (!isSkuVaultConfigured()) {
-    return NextResponse.json(
-      {
-        error:
-          "SkuVault is not configured on this server. Set SKUVAULT_USERNAME and SKUVAULT_PASSWORD (or token pair) in production before running Help Desk order actions.",
-      },
-      { status: 503 },
-    );
-  }
 
   const parsed = bodySchema.safeParse(await request.json().catch(() => ({})));
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid order action request.", details: parsed.error.flatten() },
       { status: 400 },
+    );
+  }
+  const shouldDeductSkuVault = parsed.data.deductSkuVault;
+  if (shouldDeductSkuVault && !isSkuVaultConfigured()) {
+    return NextResponse.json(
+      {
+        error:
+          "SkuVault is not configured on this server. Set SKUVAULT_USERNAME and SKUVAULT_PASSWORD (or token pair) in production before running Help Desk order actions.",
+      },
+      { status: 503 },
     );
   }
   const labelFormatterNote = resolveLabelFormatterActionNote({
@@ -259,160 +261,164 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     sourceStore,
   });
   let skuvault: SkuVaultAdjustmentResult[] = [];
-  let skippedAlreadyDeducted = 0;
-  const linesToDeduct: LabelFormatterLineItem[] = [];
-  for (const line of lineItems) {
-    const deductionEntityId = `${ticket.id}:${line.sku}`;
-    const priorLineDeduction = await db.auditLog.findFirst({
-      where: {
-        action: { in: [SKUVAULT_DEDUCTED_ACTION, LEGACY_INR_SKUVAULT_DEDUCTED_ACTION] },
-        entityType: "HelpdeskTicketSku",
-        entityId: deductionEntityId,
-      },
-      select: { id: true },
-    });
-    if (priorLineDeduction) {
-      skippedAlreadyDeducted += 1;
-      continue;
-    }
-    linesToDeduct.push(line);
-  }
-  const skuvaultAlreadyDeducted = skippedAlreadyDeducted === lineItems.length;
+  let skuvaultAlreadyDeducted = false;
 
-  let quantityChecks: Array<{
-    line: LabelFormatterLineItem;
-    current: Awaited<ReturnType<typeof getSkuVaultQuantity>>;
-  }> = [];
-  try {
-    quantityChecks = await Promise.all(
-      linesToDeduct.map(async (line) => ({
-        line,
-        current: await getSkuVaultQuantity(line.sku),
-      })),
-    );
-  } catch (error) {
-    return NextResponse.json(
-      {
-        error: `Could not read SkuVault inventory before deducting. ${formatOrderActionError(error, "SkuVault lookup failed.")}`,
-      },
-      { status: 502 },
-    );
-  }
-  const shortages = quantityChecks
-    .filter((check) => check.current.quantityOnHand < check.line.quantity)
-    .map((check) => ({
-      sku: check.line.sku,
-      requestedQuantity: check.line.quantity,
-      availableQuantity: check.current.quantityOnHand,
-    }));
-  if (shortages.length > 0) {
-    return NextResponse.json(
-      {
-        error: formatInsufficientSkuVaultMessage(shortages),
-        details: { shortages },
-      },
-      { status: 409 },
-    );
-  }
-  const availableQuantityBySku = new Map(
-    quantityChecks.map((check) => [check.line.sku, check.current.quantityOnHand]),
-  );
-
-  try {
-    for (const line of linesToDeduct) {
-      const currentQuantityOnHand = availableQuantityBySku.get(line.sku);
-      if (currentQuantityOnHand === undefined) {
-        throw new Error(`Missing SkuVault preflight quantity for ${line.sku}.`);
-      }
-      const result = await adjustSkuVaultQuantity({
-        sku: line.sku,
-        quantity: line.quantity,
-        action: "remove",
-      }, {
-        currentQuantityOnHand,
-        fetchUpdatedQuantity: false,
-        skipRemoveQuantityCheck: true,
+  if (shouldDeductSkuVault) {
+    let skippedAlreadyDeducted = 0;
+    const linesToDeduct: LabelFormatterLineItem[] = [];
+    for (const line of lineItems) {
+      const deductionEntityId = `${ticket.id}:${line.sku}`;
+      const priorLineDeduction = await db.auditLog.findFirst({
+        where: {
+          action: { in: [SKUVAULT_DEDUCTED_ACTION, LEGACY_INR_SKUVAULT_DEDUCTED_ACTION] },
+          entityType: "HelpdeskTicketSku",
+          entityId: deductionEntityId,
+        },
+        select: { id: true },
       });
-      skuvault.push(result);
-    }
-  } catch (error) {
-    const rollbackErrors: string[] = [];
-    for (const deduction of [...skuvault].reverse()) {
-      try {
-        await adjustSkuVaultQuantity({
-          sku: deduction.sku,
-          quantity: deduction.quantityChanged,
-          action: "add",
-        }, {
-          currentQuantityOnHand: deduction.quantityOnHand,
-          fetchUpdatedQuantity: false,
-        });
-      } catch (rollbackError) {
-        rollbackErrors.push(
-          rollbackError instanceof Error ? rollbackError.message : `Failed to roll back ${deduction.sku}`,
-        );
+      if (priorLineDeduction) {
+        skippedAlreadyDeducted += 1;
+        continue;
       }
+      linesToDeduct.push(line);
     }
+    skuvaultAlreadyDeducted = skippedAlreadyDeducted === lineItems.length;
 
-    if (rollbackErrors.length > 0) {
+    let quantityChecks: Array<{
+      line: LabelFormatterLineItem;
+      current: Awaited<ReturnType<typeof getSkuVaultQuantity>>;
+    }> = [];
+    try {
+      quantityChecks = await Promise.all(
+        linesToDeduct.map(async (line) => ({
+          line,
+          current: await getSkuVaultQuantity(line.sku),
+        })),
+      );
+    } catch (error) {
       return NextResponse.json(
         {
-          error: `SkuVault deduction failed and automatic rollback had errors. Check SkuVault before retrying. ${rollbackErrors.join("; ")}`,
+          error: `Could not read SkuVault inventory before deducting. ${formatOrderActionError(error, "SkuVault lookup failed.")}`,
+        },
+        { status: 502 },
+      );
+    }
+    const shortages = quantityChecks
+      .filter((check) => check.current.quantityOnHand < check.line.quantity)
+      .map((check) => ({
+        sku: check.line.sku,
+        requestedQuantity: check.line.quantity,
+        availableQuantity: check.current.quantityOnHand,
+      }));
+    if (shortages.length > 0) {
+      return NextResponse.json(
+        {
+          error: formatInsufficientSkuVaultMessage(shortages),
+          details: { shortages },
+        },
+        { status: 409 },
+      );
+    }
+    const availableQuantityBySku = new Map(
+      quantityChecks.map((check) => [check.line.sku, check.current.quantityOnHand]),
+    );
+
+    try {
+      for (const line of linesToDeduct) {
+        const currentQuantityOnHand = availableQuantityBySku.get(line.sku);
+        if (currentQuantityOnHand === undefined) {
+          throw new Error(`Missing SkuVault preflight quantity for ${line.sku}.`);
+        }
+        const result = await adjustSkuVaultQuantity({
+          sku: line.sku,
+          quantity: line.quantity,
+          action: "remove",
+        }, {
+          currentQuantityOnHand,
+          fetchUpdatedQuantity: false,
+          skipRemoveQuantityCheck: true,
+        });
+        skuvault.push(result);
+      }
+    } catch (error) {
+      const rollbackErrors: string[] = [];
+      for (const deduction of [...skuvault].reverse()) {
+        try {
+          await adjustSkuVaultQuantity({
+            sku: deduction.sku,
+            quantity: deduction.quantityChanged,
+            action: "add",
+          }, {
+            currentQuantityOnHand: deduction.quantityOnHand,
+            fetchUpdatedQuantity: false,
+          });
+        } catch (rollbackError) {
+          rollbackErrors.push(
+            rollbackError instanceof Error ? rollbackError.message : `Failed to roll back ${deduction.sku}`,
+          );
+        }
+      }
+
+      if (rollbackErrors.length > 0) {
+        return NextResponse.json(
+          {
+            error: `SkuVault deduction failed and automatic rollback had errors. Check SkuVault before retrying. ${rollbackErrors.join("; ")}`,
+          },
+          { status: 502 },
+        );
+      }
+
+      if (error instanceof InsufficientSkuVaultQuantityError) {
+        return NextResponse.json(
+          {
+            error: formatInsufficientSkuVaultMessage([{
+              sku: error.sku,
+              requestedQuantity: error.requestedQuantity,
+              availableQuantity: error.availableQuantity,
+            }]),
+            details: {
+              shortages: [{
+                sku: error.sku,
+                requestedQuantity: error.requestedQuantity,
+                availableQuantity: error.availableQuantity,
+              }],
+            },
+          },
+          { status: 409 },
+        );
+      }
+
+      return NextResponse.json(
+        {
+          error: `SkuVault deduction failed. No Label Formatter row was added. ${formatOrderActionError(error, "")}`.trim(),
         },
         { status: 502 },
       );
     }
 
-    if (error instanceof InsufficientSkuVaultQuantityError) {
-      return NextResponse.json(
-        {
-          error: formatInsufficientSkuVaultMessage([{
-            sku: error.sku,
-            requestedQuantity: error.requestedQuantity,
-            availableQuantity: error.availableQuantity,
-          }]),
+    for (const result of skuvault) {
+      const line = lineItems.find((item) => item.sku === result.sku);
+      if (!line) continue;
+      const deductionEntityId = `${ticket.id}:${line.sku}`;
+      await db.auditLog.create({
+        data: {
+          userId: actor.userId,
+          action: SKUVAULT_DEDUCTED_ACTION,
+          entityType: "HelpdeskTicketSku",
+          entityId: deductionEntityId,
           details: {
-            shortages: [{
-              sku: error.sku,
-              requestedQuantity: error.requestedQuantity,
-              availableQuantity: error.availableQuantity,
-            }],
+            orderNumber: ticket.ebayOrderNumber,
+            ticketId: ticket.id,
+            lineItem: line,
+            inrNoteRequested: parsed.data.inr,
+            postageIssueNoteRequested: parsed.data.postageIssue,
+            customNoteRequested: parsed.data.customNote || null,
+            labelFormatterNote,
+            result,
           },
         },
-        { status: 409 },
-      );
+      });
     }
-
-    return NextResponse.json(
-      {
-        error: `SkuVault deduction failed. No Label Formatter row was added. ${formatOrderActionError(error, "")}`.trim(),
-      },
-      { status: 502 },
-    );
-  }
-
-  for (const result of skuvault) {
-    const line = lineItems.find((item) => item.sku === result.sku);
-    if (!line) continue;
-    const deductionEntityId = `${ticket.id}:${line.sku}`;
-    await db.auditLog.create({
-      data: {
-        userId: actor.userId,
-        action: SKUVAULT_DEDUCTED_ACTION,
-        entityType: "HelpdeskTicketSku",
-        entityId: deductionEntityId,
-        details: {
-          orderNumber: ticket.ebayOrderNumber,
-          ticketId: ticket.id,
-          lineItem: line,
-          inrNoteRequested: parsed.data.inr,
-          postageIssueNoteRequested: parsed.data.postageIssue,
-          customNoteRequested: parsed.data.customNote || null,
-          labelFormatterNote,
-          result,
-        },
-      },
-    });
   }
 
   const address = order.shippingAddress;
@@ -449,6 +455,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         postageIssue: parsed.data.postageIssue,
         customNote: parsed.data.customNote || null,
         labelFormatterNote,
+        deductSkuVaultRequested: shouldDeductSkuVault,
         skuvaultDeducted: skuvault.length > 0,
         skuvaultAlreadyDeducted,
       },
@@ -469,6 +476,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       skuvault: {
         deducted: skuvault,
         alreadyDeducted: skuvaultAlreadyDeducted,
+        deductionRequested: shouldDeductSkuVault,
       },
       status: await getActionStatus(ticket.id, {
         orderNumber: ticket.ebayOrderNumber,

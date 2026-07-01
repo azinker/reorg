@@ -243,6 +243,7 @@ interface LabelFormatterActionResponse {
         location: string;
       }>;
       alreadyDeducted: boolean;
+      deductionRequested: boolean;
     };
     status: LabelFormatterActionStatus;
   };
@@ -1446,7 +1447,7 @@ function OrderInfoSection({
   const [inrChecked, setInrChecked] = useState(false);
   const [postageIssueChecked, setPostageIssueChecked] = useState(false);
   const [customLabelFormatterNote, setCustomLabelFormatterNote] = useState("");
-  const [actionLoading, setActionLoading] = useState(false);
+  const [actionLoading, setActionLoading] = useState<"add" | "deduct" | null>(null);
   const [actionBanner, setActionBanner] = useState<{
     type: "success" | "error";
     message: string;
@@ -1456,6 +1457,7 @@ function OrderInfoSection({
   const currentUser = useCurrentUser();
   const canRunOrderActions = canUseHelpdeskOrderActionsPermission(currentUser ?? {});
   const { data: ctx, loading, error } = order;
+  const actionBusy = actionLoading !== null;
 
   useEffect(() => {
     if (!ticket.ebayOrderNumber) {
@@ -1605,8 +1607,9 @@ function OrderInfoSection({
             } satisfies OrderContextLineItem,
           ]
         : [];
-  async function runLabelFormatterAction() {
-    setActionLoading(true);
+  async function runLabelFormatterAction(options: { deductSkuVault: boolean }) {
+    const actionKind = options.deductSkuVault ? "deduct" : "add";
+    setActionLoading(actionKind);
     setActionBanner(null);
     try {
       const res = await fetch(`/api/helpdesk/tickets/${ticket.id}/label-formatter-action`, {
@@ -1616,6 +1619,7 @@ function OrderInfoSection({
           inr: inrChecked,
           postageIssue: postageIssueChecked,
           customNote: customLabelFormatterNote,
+          deductSkuVault: options.deductSkuVault,
         }),
       });
       const json = (await res.json().catch(() => ({}))) as LabelFormatterActionResponse;
@@ -1640,11 +1644,13 @@ function OrderInfoSection({
       const deductedLines = json.data.skuvault.deducted
         .map((line) => `${line.sku} x${line.quantityChanged}`)
         .join(", ");
-      const skuvaultPart = deductedLines
-        ? `Deducted ${deductedLines} from SkuVault.`
-        : json.data.skuvault.alreadyDeducted || json.data.status.skuvault.deducted
-          ? "SkuVault was already deducted for this ticket, so it was not deducted again."
-          : "SkuVault deduction is still not recorded for this ticket.";
+      const skuvaultPart = json.data.skuvault.deductionRequested
+        ? deductedLines
+          ? `Deducted ${deductedLines} from SkuVault.`
+          : json.data.skuvault.alreadyDeducted || json.data.status.skuvault.deducted
+            ? "SkuVault was already deducted for this ticket, so it was not deducted again."
+            : "SkuVault deduction is still not recorded for this ticket."
+        : "SkuVault was not deducted.";
       const note = resolveLabelFormatterActionNote({
         inr: inrChecked,
         postageIssue: postageIssueChecked,
@@ -1661,7 +1667,7 @@ function OrderInfoSection({
         message: err instanceof Error ? err.message : "Order action failed.",
       });
     } finally {
-      setActionLoading(false);
+      setActionLoading(null);
     }
   }
 
@@ -1673,6 +1679,21 @@ function OrderInfoSection({
   const labelFormatterNoteSuffix = labelFormatterActionNoteSuffix(labelFormatterNoteOptions);
   const labelFormatterButtonNoteSuffix =
     labelFormatterNoteSuffix.length > 32 ? " + Custom note" : labelFormatterNoteSuffix;
+  const addDeductButtonLabel = !actionStatus?.skuvault.deducted
+    ? labelFormatterButtonNoteSuffix
+      ? `Add + Deduct${labelFormatterButtonNoteSuffix}`
+      : "Add + Deduct SkuVault"
+    : actionStatus.labelFormatter.added && !actionStatus.labelFormatter.currentWorkingRow && !actionStatus.labelFormatter.exported
+      ? labelFormatterButtonNoteSuffix
+        ? `Restore${labelFormatterButtonNoteSuffix}`
+        : "Restore to Label Formatter"
+      : actionStatus.labelFormatter.added
+        ? labelFormatterButtonNoteSuffix
+          ? `Already Added${labelFormatterButtonNoteSuffix}`
+          : "Already Added To List"
+        : labelFormatterButtonNoteSuffix
+          ? `Re-add${labelFormatterButtonNoteSuffix}`
+          : "Re-add to Label Formatter";
 
   return (
     <section className="border-b border-hairline bg-card/40">
@@ -1776,7 +1797,7 @@ function OrderInfoSection({
                     Label Formatter action
                   </p>
                   <p className="text-[11px] leading-snug text-muted-foreground">
-                    Adds this order to Label Formatter and deducts the order SKUs from SkuVault. Optional notes: INR CASE, COUNTERFEIT, or custom.
+                    Adds this order to Label Formatter. Deduct option also removes the order SKUs from SkuVault. Optional notes: INR CASE, COUNTERFEIT, or custom.
                   </p>
                 </div>
               </div>
@@ -1831,7 +1852,7 @@ function OrderInfoSection({
                     setInrChecked(event.target.checked);
                     if (event.target.checked) setCustomLabelFormatterNote("");
                   }}
-                  disabled={actionLoading}
+                  disabled={actionBusy}
                 />
                 Add INR CASE note
               </label>
@@ -1843,7 +1864,7 @@ function OrderInfoSection({
                     setPostageIssueChecked(event.target.checked);
                     if (event.target.checked) setCustomLabelFormatterNote("");
                   }}
-                  disabled={actionLoading}
+                  disabled={actionBusy}
                 />
                 Postage Issue note
               </label>
@@ -1859,35 +1880,32 @@ function OrderInfoSection({
                       setPostageIssueChecked(false);
                     }
                   }}
-                  disabled={actionLoading}
+                  disabled={actionBusy}
                   maxLength={250}
                   placeholder="Enter note text"
                   className="h-8 w-full rounded-md border border-emerald-500/25 bg-background/80 px-2 text-xs text-foreground outline-none placeholder:text-muted-foreground focus:border-emerald-400 disabled:cursor-not-allowed disabled:opacity-50"
                 />
               </label>
-              <button
-                type="button"
-                onClick={() => void runLabelFormatterAction()}
-                disabled={actionLoading || loading || !ctx || productItems.length === 0}
-                className="inline-flex h-8 w-full cursor-pointer items-center justify-center gap-1.5 rounded-md bg-emerald-600 px-2 text-xs font-semibold text-white hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {actionLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
-                {actionStatus?.labelFormatter.added && !actionStatus.labelFormatter.currentWorkingRow && !actionStatus.labelFormatter.exported
-                  ? labelFormatterButtonNoteSuffix
-                    ? `Restore${labelFormatterButtonNoteSuffix}`
-                    : "Restore to Label Formatter"
-                  : actionStatus?.labelFormatter.added
-                  ? labelFormatterButtonNoteSuffix
-                    ? `Already Added${labelFormatterButtonNoteSuffix}`
-                    : "Already Added To List"
-                  : actionStatus?.skuvault.deducted
-                    ? labelFormatterButtonNoteSuffix
-                      ? `Re-add${labelFormatterButtonNoteSuffix}`
-                      : "Re-add to Label Formatter"
-                    : labelFormatterButtonNoteSuffix
-                      ? `Add + Deduct${labelFormatterButtonNoteSuffix}`
-                      : "Add + Deduct SkuVault"}
-              </button>
+              <div className="space-y-2">
+                <button
+                  type="button"
+                  onClick={() => void runLabelFormatterAction({ deductSkuVault: false })}
+                  disabled={actionBusy || loading || !ctx || productItems.length === 0}
+                  className="inline-flex h-8 w-full cursor-pointer items-center justify-center gap-1.5 rounded-md bg-emerald-600 px-2 text-xs font-semibold text-white hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {actionLoading === "add" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+                  Add
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void runLabelFormatterAction({ deductSkuVault: true })}
+                  disabled={actionBusy || loading || !ctx || productItems.length === 0}
+                  className="inline-flex h-8 w-full cursor-pointer items-center justify-center gap-1.5 rounded-md bg-emerald-600 px-2 text-xs font-semibold text-white hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {actionLoading === "deduct" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+                  {addDeductButtonLabel}
+                </button>
+              </div>
               {actionBanner ? (
                 <p
                   className={cn(
